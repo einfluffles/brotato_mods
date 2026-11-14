@@ -22,7 +22,10 @@ static func _disable_areas(node: Node) -> void:
 
 
 # Facing + walk animation from the interpolated motion (Unit.update_animation flips sprites;
-# Player.update_animation also switches idle/move animations).
+# Player.update_animation also switches idle/move animations). Projectiles face their motion.
 static func animate(node: Node, motion: Vector2) -> void:
-	if node.has_method("update_animation"):
+	if node is Projectile:
+		if motion.length_squared() > 0.01:
+			node.rotation = motion.angle()
+	elif node.has_method("update_animation"):
 		node.update_animation(motion)

@@ -62,12 +62,12 @@ func _ready() -> void:
 	battle_host = BattleHost.new()
 	battle_host.name = "BattleHost"
 	add_child(battle_host)
-	battle_host.setup(session)
+	battle_host.setup(session, input_sync)
 
 	battle_client = BattleClient.new()
 	battle_client.name = "BattleClient"
 	add_child(battle_client)
-	battle_client.setup(session)
+	battle_client.setup(session, input_sync)
 
 	var overlay := DebugOverlay.new()
 	overlay.name = "DebugOverlay"

@@ -95,7 +95,7 @@ func _test_run_state_round_trip() -> void:
 	RunData.set_player_count(2)
 	for i in 2:
 		RunData.add_character(ItemService.characters[i], i)
-	RunData.add_weapon(ItemService.weapons[0], 0)
+	RunData.add_weapon(_find_by_id(ItemService.weapons, "weapon_pistol_1"), 0)
 	# +1 weapon slot (the item from the BrotatoOnline bug report); DLC items may be absent here.
 	var arm = _find_by_id(ItemService.items, "item_cybernetic_arm")
 	if arm == null:
@@ -199,10 +199,62 @@ func _test_battle_loopback(together: Node):
 		_check(not node.is_physics_processing(), "entity puppetized")
 	var player: Node2D = puppet_main.get("_players")[0]
 	_check(player.global_position.distance_to(last.players[0][0]) < 1.0, "player follows host")
+	var host_weapons: PoolRealArray = last.players[0][Snapshot.PlayerField.WEAPONS]
+	_check(host_weapons.size() == 4 * player.current_weapons.size(), "weapon state per weapon")
+	if host_weapons.size() >= 4 and player.current_weapons.size() > 0:
+		var diff := abs(wrapf(player.current_weapons[0].rotation - host_weapons[0], -PI, PI))
+		_check(diff < 0.01, "weapon aim mirrored")
 	_check(puppet_main.get_tree().current_scene == puppet_main, "wave did not end locally")
+	var kinds := {}
+	for path in host._types:
+		kinds[path.get_file()] = true
+	print("  info: mirrored types %s" % [kinds.keys()])
+	_check(
+		kinds.has("player_projectile.tscn") or _has_projectile_type(kinds), "projectiles mirrored"
+	)
+
+	# Own-player prediction: newest host position + un-acked inputs (ack is 0 for local players).
+	var input_sync: Node = together.input_sync
+	client._you = 0
+	input_sync.history = [[1, Vector2(0.3, 0)], [2, Vector2(1, 0)]]
+	yield(get_tree(), "idle_frame")
+	yield(get_tree(), "idle_frame")
+	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
+	var expected_x: float = min(
+		last.players[0][0].x + 2 * step, ZoneService.get_current_zone_rect().end.x
+	)
+	_check(
+		abs(player.global_position.x - expected_x) < 0.5,
+		"prediction replays un-acked inputs (%.1f vs %.1f)" % [player.global_position.x, expected_x]
+	)
+	input_sync.history = []
+
+	# Death: a vanished unit plays its death animation, then returns to main's pool.
+	client.set_process(false)
+	var victim = null
+	for id in client._entities:
+		if client._entities[id] is Enemy:
+			victim = client._entities[id]
+			break
+	_check(victim != null, "found an enemy puppet")
+	if victim != null:
+		client._despawn(victim)
+		_check(victim.dead and victim.is_inside_tree(), "death animation playing")
+		yield(get_tree().create_timer(2.0), "timeout")
+		_check(puppet_main.is_in_pool(victim), "dead puppet returned to pool")
+		var reused: Node = client._spawn(host._types[victim.filename])
+		_check(reused == victim and not reused.dead, "puppet reused from pool")
+	client.set_process(true)
 	client._leave_battle()
 	Puppet.set_active(false)
 	host.set_process(true)
+
+
+func _has_projectile_type(kinds: Dictionary) -> bool:
+	for kind in kinds:
+		if "projectile" in kind or "bullet" in kind:
+			return true
+	return false
 
 
 func _find_by_id(elements: Array, my_id: String):

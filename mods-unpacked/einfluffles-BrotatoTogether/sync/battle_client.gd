@@ -22,12 +22,15 @@ const PuppetEntity := preload(
 )
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
+const PF := Snapshot.PlayerField
 const INTERP_DELAY_MSEC := 100
+const PREDICTION_ERROR_DECAY := 12.0  # 1/s: how fast prediction corrections are smoothed out
 const MAX_BUFFERED := 32
 const CLOCK_CREEP_MSEC := 0.5  # per snapshot: lets the offset follow rising latency / drift
 const WAVE_TIMER_TOLERANCE := 0.3
 
 var session: Node = null
+var input_sync: Node = null
 var interp_lag_msec := 0  # render time vs newest snapshot, for the debug overlay
 
 var _battle_id := 0
@@ -38,10 +41,15 @@ var _has_clock := false
 var _main: Node = null
 var _entities := {}  # net id -> node
 var _last_positions := {}  # net id / "p<i>" -> Vector2
+var _you := -1  # player slot this client controls (-1: spectator)
+var _own_base_t := -1
+var _own_error := Vector2.ZERO
+var _own_display := Vector2.ZERO
 
 
-func setup(netplay_session: Node) -> void:
+func setup(netplay_session: Node, local_input: Node) -> void:
 	session = netplay_session
+	input_sync = local_input
 	session.connect("message", self, "_on_message")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
 	get_tree().connect("node_added", self, "_on_node_added")
@@ -83,6 +91,7 @@ func _on_battle_start(body) -> void:
 		return
 	_reset_battle_state()
 	_battle_id = body.battle_id
+	_you = int(body.get("you", -1)) if typeof(body.get("you")) == TYPE_INT else -1
 	var types = body.get("types")
 	if typeof(types) == TYPE_DICTIONARY:
 		for idx in types:
@@ -116,6 +125,9 @@ func _reset_battle_state() -> void:
 	_entities.clear()
 	_last_positions.clear()
 	_has_clock = false
+	_you = -1
+	_own_base_t = -1
+	_own_error = Vector2.ZERO
 
 
 # main.tscn spawns players from CoopService.connected_players; give it one slot per host player.
@@ -198,7 +210,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		_buffer.pop_front()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not is_in_battle() or _buffer.empty():
 		return
 	var render_t := OS.get_ticks_msec() - _clock_offset - INTERP_DELAY_MSEC
@@ -211,24 +223,90 @@ func _process(_delta: float) -> void:
 	if to.t > from.t:
 		alpha = clamp((render_t - from.t) / float(to.t - from.t), 0.0, 1.0)
 	interp_lag_msec = int(_buffer[-1].t - render_t)
-	_apply_players(from, to, alpha)
+	_apply_players(from, to, alpha, _buffer[-1], delta)
 	_apply_entities(from, to, alpha)
 	_apply_wave_timer(to.wave_time_left)
 
 
-func _apply_players(from: Dictionary, to: Dictionary, alpha: float) -> void:
+func _apply_players(
+	from: Dictionary, to: Dictionary, alpha: float, newest: Dictionary, delta: float
+) -> void:
 	var players: Array = _main.get("_players")
 	for i in min(players.size(), to.players.size()):
-		var target: Array = to.players[i]
-		var position: Vector2 = target[0]
-		if i < from.players.size():
-			position = from.players[i][0].linear_interpolate(target[0], alpha)
-		_move(players[i], "p%s" % i, position)
 		var player = players[i]
-		if player.current_stats.health != target[1] or player.max_stats.health != target[2]:
-			player.current_stats.health = target[1]
-			player.max_stats.health = target[2]
-			player.emit_signal("health_updated", player, target[1], target[2])
+		if i == _you and i < newest.players.size():
+			_predict_own(player, i, newest, delta)
+		else:
+			var position: Vector2 = to.players[i][PF.POSITION]
+			if i < from.players.size():
+				position = from.players[i][PF.POSITION].linear_interpolate(position, alpha)
+			_move(player, "p%s" % i, position)
+		_apply_player_stats(player, i, newest.players[i])
+		var from_weapons: PoolRealArray = (
+			from.players[i][PF.WEAPONS]
+			if i < from.players.size()
+			else PoolRealArray()
+		)
+		Snapshot.apply_weapons(
+			player.current_weapons, from_weapons, to.players[i][PF.WEAPONS], alpha
+		)
+
+
+# Own player: newest host position + replay of inputs the host hasn't applied yet, so movement
+# responds immediately. Corrections (host disagrees) are blended out instead of snapping.
+func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> void:
+	var entry: Array = newest.players[i]
+	var predicted: Vector2 = entry[PF.POSITION]
+	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
+	for input in input_sync.history:
+		if input[0] > entry[PF.INPUT_ACK]:
+			predicted += input[1].normalized() * step
+	var zone: Rect2 = ZoneService.get_current_zone_rect()
+	predicted.x = clamp(predicted.x, zone.position.x, zone.end.x)
+	predicted.y = clamp(predicted.y, zone.position.y, zone.end.y)
+	if _own_base_t < 0:
+		_own_display = predicted
+	elif newest.t != _own_base_t:
+		_own_error = _own_display - predicted
+	_own_base_t = newest.t
+	_own_error *= exp(-delta * PREDICTION_ERROR_DECAY)
+	_own_display = predicted + _own_error
+	_move(player, "p%s" % i, _own_display)
+
+
+# HUD values (the HUD listens to these signals). Level-ups only update visuals here: the game's
+# own levelled_up handler would also change stats, which is the host's job.
+func _apply_player_stats(player: Node, i: int, entry: Array) -> void:
+	if (
+		player.current_stats.health != entry[PF.HEALTH]
+		or player.max_stats.health != entry[PF.MAX_HEALTH]
+	):
+		player.current_stats.health = entry[PF.HEALTH]
+		player.max_stats.health = entry[PF.MAX_HEALTH]
+		player.emit_signal("health_updated", player, entry[PF.HEALTH], entry[PF.MAX_HEALTH])
+	var data = RunData.players_data[i]
+	if data.gold != entry[PF.GOLD]:
+		data.gold = entry[PF.GOLD]
+		RunData.emit_signal("gold_changed", data.gold, i)
+	var levelled_up: bool = entry[PF.LEVEL] > data.current_level
+	if data.current_xp != entry[PF.XP] or levelled_up:
+		data.current_level = entry[PF.LEVEL]
+		data.current_xp = entry[PF.XP]
+		RunData.emit_signal("xp_added", data.current_xp, RunData.get_next_level_xp_needed(i), i)
+	if levelled_up:
+		_show_level_up(i)
+
+
+func _show_level_up(i: int) -> void:
+	var players_ui = _main.get("_players_ui")
+	if players_ui != null and i < players_ui.size():
+		players_ui[i].update_level_label()
+	var containers = _main.get("_things_to_process_player_containers")
+	if containers != null and i < containers.size():
+		containers[i].upgrades.add_element(
+			ItemService.get_icon(Keys.icon_upgrade_to_process_hash), RunData.get_player_level(i)
+		)
+	SoundManager.play(_main.level_up_sound, 0, 0, true)
 
 
 func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
@@ -266,24 +344,56 @@ func _spawn(type_idx: int) -> Node:
 	var scene = _types.get(type_idx)
 	if scene == null:
 		return null
-	var node: Node = scene.instance()
+	# Units go through main's pool like in the game: they return themselves to it when their
+	# death animation ends (Entity.free_entity), and are reused from it here.
+	var pool_id: int = scene.get_instance_id()
+	if not _main._pool.has(pool_id):
+		_main._pool[pool_id] = []
+	var pool: Array = _main._pool[pool_id]
+	var pooled = null
+	while pooled == null and not pool.empty():
+		var candidate = pool.pop_back()
+		if is_instance_valid(candidate):
+			pooled = candidate
+	var node: Node = pooled if pooled != null else scene.instance()
 	var container = _container_for(node)
 	if container == null:
-		node.free()
+		if node != pooled:
+			node.free()
 		return null
 	container.add_child(node)
+	if node is Entity:
+		node.pool_id = pool_id
+		if node == pooled:
+			node.respawn()
+	if node is Projectile:
+		node.shoot()  # starts its animation; hitbox is disabled again by puppetize()
 	PuppetEntity.puppetize(node)
 	return node
 
 
 func _container_for(node: Node) -> Node:
+	if node is PlayerProjectile:
+		return _main.get("_player_projectiles")
+	if node is Projectile:
+		return _main.get("_enemy_projectiles")
 	if node.get_script() != null and node.get_script().resource_path.begins_with("res://items/"):
 		return _main.get("_materials_container")
 	return _main.get("_entities_container")
 
 
+# Units play their real death animation (cleaning_up: no loot, stats or challenge side effects)
+# and pool themselves afterwards; everything else just goes away.
 func _despawn(node) -> void:
-	if is_instance_valid(node):
+	if not is_instance_valid(node):
+		return
+	if node is Entity:
+		if not node.dead:
+			var args := Entity.DieArgs.new()
+			args.cleaning_up = true
+			args.enemy_killed_by_player = false
+			node.die(args)
+	else:
 		node.queue_free()
 
 

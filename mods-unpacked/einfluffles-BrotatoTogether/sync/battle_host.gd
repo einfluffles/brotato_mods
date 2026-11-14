@@ -18,6 +18,7 @@ const SPAWNER_RESPAWN_SIGNALS := [
 ]
 
 var session: Node = null
+var input_sync: Node = null
 var snapshot_bytes := 0  # size of the last snapshot, for the debug overlay
 
 var _main: Node = null
@@ -28,8 +29,9 @@ var _seen_last_snapshot := {}  # instance id -> true
 var _accumulator := 0.0
 
 
-func setup(netplay_session: Node) -> void:
+func setup(netplay_session: Node, remote_input: Node) -> void:
 	session = netplay_session
+	input_sync = remote_input
 	session.connect("peer_ready", self, "_on_peer_ready")
 
 
@@ -82,7 +84,9 @@ func _start_battle(main: Node) -> void:
 			spawner.connect(signal_name, self, "_on_entity_respawned")
 	ModLoaderLog.info("Battle %s started (wave %s)" % [_battle_id, RunData.current_wave], LOG_NAME)
 	var start := _battle_start_body()
-	session.broadcast_reliable(Protocol.Msg.BATTLE_START, start)
+	for steam_id in session.peers:
+		if session.peers[steam_id].ready:
+			_send_battle_start(steam_id, start)
 
 
 func _end_battle() -> void:
@@ -101,7 +105,35 @@ func _battle_start_body() -> Dictionary:
 
 func _on_peer_ready(steam_id: int) -> void:
 	if session.is_host() and is_in_battle():
-		session.send_reliable(steam_id, Protocol.Msg.BATTLE_START, _battle_start_body())
+		_send_battle_start(steam_id, _battle_start_body())
+
+
+# Each client also learns which player slot it controls (-1: spectator).
+func _send_battle_start(steam_id: int, start: Dictionary) -> void:
+	var body := start.duplicate()
+	body["you"] = _player_index_of(steam_id)
+	session.send_reliable(steam_id, Protocol.Msg.BATTLE_START, body)
+
+
+func _player_index_of(steam_id: int) -> int:
+	var device = input_sync.devices.get(steam_id)
+	if device == null:
+		return -1
+	for i in CoopService.connected_players.size():
+		if CoopService.connected_players[i][0] == device:
+			return i
+	return -1
+
+
+# Last INPUT seq applied for the peer controlling player i (0 for local players).
+func _input_ack_of(player_index: int) -> int:
+	if player_index >= CoopService.connected_players.size():
+		return 0
+	var device: int = CoopService.connected_players[player_index][0]
+	for steam_id in input_sync.devices:
+		if input_sync.devices[steam_id] == device:
+			return input_sync.last_applied_seq(steam_id)
+	return 0
 
 
 # Pooled nodes are reused for new entities; every (re)spawn gets a fresh net id.
@@ -114,12 +146,19 @@ func _on_entity_respawned(entity: Node) -> void:
 
 func _build_snapshot() -> Array:
 	var players := []
-	for player in _main.get("_players"):
+	var main_players: Array = _main.get("_players")
+	for i in main_players.size():
+		var player = main_players[i]
 		players.append(
 			[
 				player.global_position,
 				int(player.current_stats.health),
 				int(player.max_stats.health),
+				_input_ack_of(i),
+				RunData.get_player_gold(i),
+				RunData.get_player_level(i),
+				float(RunData.get_player_xp(i)),
+				Snapshot.pack_weapons(player.current_weapons),
 			]
 		)
 	var ids := PoolIntArray()
@@ -158,6 +197,13 @@ func _tracked_nodes() -> Array:
 		var list = _main.get(list_name)
 		if list is Array:
 			nodes += list
+	# Pooled projectiles are removed from the tree, so container children are the live ones.
+	for container_name in ["_player_projectiles", "_enemy_projectiles"]:
+		var container = _main.get(container_name)
+		if container != null:
+			for child in container.get_children():
+				if child is Projectile:
+					nodes.append(child)
 	return nodes
 
 

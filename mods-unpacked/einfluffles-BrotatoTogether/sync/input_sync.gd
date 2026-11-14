@@ -9,11 +9,15 @@ const VirtualDevices := preload(
 )
 const LOG_NAME := "einfluffles-BrotatoTogether:InputSync"
 const INPUT_TIMEOUT_MSEC := 300
+const HISTORY_SIZE := 180  # 3 s at 60 Hz
 
 var session: Node = null
 # host: steam_id -> device. Kept for the whole lobby so a rejoining player gets the same
 # device and therefore the same co-op slot.
 var devices := {}
+
+# client: recent [seq, move] pairs, replayed on top of the host's position for prediction
+var history := []
 
 # client
 var _seq := 0
@@ -54,9 +58,11 @@ func _send_local_input() -> void:
 	for i in VirtualDevices.BUTTON_ACTIONS.size():
 		if Input.is_action_pressed(VirtualDevices.BUTTON_ACTIONS[i]):
 			buttons |= 1 << i
-	session.send_unreliable(
-		host_id, Protocol.Msg.INPUT, [_seq, _local_movement(), _local_aim(), buttons]
-	)
+	var move := _local_movement()
+	session.send_unreliable(host_id, Protocol.Msg.INPUT, [_seq, move, _local_aim(), buttons])
+	history.append([_seq, move])
+	if history.size() > HISTORY_SIZE:
+		history.pop_front()
 
 
 # Mirrors PlayerMovementBehavior.get_movement(): the stronger of analog and digital input.
@@ -75,6 +81,10 @@ func _local_aim() -> Vector2:
 
 
 # --- host ---
+
+
+func last_applied_seq(steam_id: int) -> int:
+	return _remote[steam_id].seq if _remote.has(steam_id) else 0
 
 
 func _on_peer_ready(steam_id: int) -> void:
@@ -100,6 +110,7 @@ func _on_peer_removed(steam_id: int) -> void:
 
 
 func _on_lobby_left() -> void:
+	history.clear()
 	for steam_id in devices:
 		var device: int = devices[steam_id]
 		VirtualDevices.release_all(device)
