@@ -127,7 +127,9 @@ func _stream(path):
 
 
 static func _is_number(value) -> bool:
-	return typeof(value) == TYPE_REAL or typeof(value) == TYPE_INT
+	if typeof(value) == TYPE_INT:
+		return true
+	return typeof(value) == TYPE_REAL and not is_nan(value) and not is_inf(value)
 
 
 # The puppet shop reacts to mirrored state/cursors with its own sounds; the host's replace them.

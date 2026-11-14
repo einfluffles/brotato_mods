@@ -18,6 +18,10 @@ const SOUND_EXTENSIONS := ["wav", "ogg", "mp3"]
 static func intercept(sound: Resource, position, volume_mod: float, pitch_rand: float) -> bool:
 	# The battle sink wins: during a battle UI sounds (level-up panels) travel with the snapshots.
 	var sink = _get_object(META_SINK)
+	# The battle scene is gone a frame before BattleHost notices; sounds of the next screen (the
+	# shop's _ready / first focus) belong to the UI sink already.
+	if sink != null and not sink.is_in_battle():
+		sink = null
 	if sink == null:
 		sink = _get_object(META_UI_SINK)
 	if sink != null:

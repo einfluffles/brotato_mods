@@ -6,6 +6,7 @@ extends Node
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
@@ -33,6 +34,7 @@ var _seen_last_snapshot := {}  # instance id -> true
 var _accumulator := 0.0
 var _paused := false
 var _events := []  # one-shot feedback since the last snapshot
+var _pose = Pose.new()
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -189,6 +191,8 @@ func _build_snapshot() -> Array:
 	var ids := PoolIntArray()
 	var types := PoolIntArray()
 	var positions := PoolVector2Array()
+	var flags := []
+	var poses := PoolRealArray()
 	var seen := {}
 	for node in _tracked_nodes():
 		if not is_instance_valid(node) or not node.is_inside_tree() or node.get("dead"):
@@ -203,15 +207,41 @@ func _build_snapshot() -> Array:
 		ids.append(node.get_meta(NET_ID_META))
 		types.append(_type_idx(_type_key(node)))
 		positions.append(node.global_position)
+		flags.append(_flags_of(node))
+		var pose: PoolRealArray = _pose.capture(node)
+		if not pose.empty():
+			poses.append(ids.size() - 1)
+			poses.append(pose.size())
+			poses.append_array(pose)
 	_seen_last_snapshot = seen
 	var wave_timer = _main.get("_wave_timer")
 	var time_left: float = wave_timer.time_left if wave_timer != null else 0.0
 	var events := _events
 	_events = []
 	var snapshot := Snapshot.build(
-		_battle_id, OS.get_ticks_msec(), time_left, players, ids, types, positions, events
+		_battle_id,
+		OS.get_ticks_msec(),
+		time_left,
+		players,
+		ids,
+		types,
+		positions,
+		events,
+		Snapshot.pack_flags(flags),
+		poses
 	)
 	return [Protocol.Msg.SNAPSHOT, snapshot]
+
+
+# Facing is host state: behaviors turn units toward their target, and knockback would flip a
+# puppet that faced its interpolated motion. Hidden: e.g. stampede dinos before their charge.
+func _flags_of(node: Node) -> int:
+	var flags := 0
+	if node is Unit and node.sprite != null and node.sprite.scale.x < 0:
+		flags |= Snapshot.FLAG_FACING_LEFT
+	if not node.visible:
+		flags |= Snapshot.FLAG_HIDDEN
+	return flags
 
 
 # --- one-shot feedback (damage numbers, hit flashes/particles, sounds) ---

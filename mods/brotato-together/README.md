@@ -3,7 +3,7 @@
 Online co-op for [Brotato](https://store.steampowered.com/app/1942280/Brotato/) over Steam P2P —
 instead of Steam Remote Play's video stream.
 
-**Status:** early development, not yet tested over Steam with real players.
+**Status:** early development; first sessions over Steam with friends work. Expect rough edges — please report them with `modloader.log`.
 
 Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogether`](src/einfluffles-BrotatoTogether)
 
