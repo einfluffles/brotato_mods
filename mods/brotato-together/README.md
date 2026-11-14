@@ -48,4 +48,5 @@ The host opens co-op character selection; remote players hold *accept* to join l
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
 run-state round trip, a recorded host battle replayed on a client, shop purchase mirroring, level-up/crate
-panels, cursor mirroring, character-selection cards, shop UI sounds.
+panels, cursor mirroring, character-selection cards and grid, shop UI sounds, F9 panel
+keyboard/pad input, the wave-failed prompt and the battle -> shop transition on clients.
