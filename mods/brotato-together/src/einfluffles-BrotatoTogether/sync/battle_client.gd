@@ -24,6 +24,7 @@ const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
+const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -61,6 +62,7 @@ var _paused := false
 var _banner: CanvasLayer = null
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
+var _anim_mirror = AnimMirror.new()
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -477,6 +479,7 @@ func _spawn(type_idx: int) -> Node:
 			particles.queue_free()
 			node.curse_particle_instance = null
 	PuppetEntity.puppetize(node)
+	AnimMirror.detach_game_handlers(node)
 	return node
 
 
@@ -518,6 +521,8 @@ func _fire_events(render_t: float) -> void:
 			var sound = _types.get(event[1])
 			if sound is AudioStream and (event[2] == null or typeof(event[2]) == TYPE_VECTOR2):
 				SoundRelay.replay(sound, event[2], float(event[3]), float(event[4]))
+		elif event[0] == Snapshot.EVENT_ANIM:
+			_anim_mirror.replay(_entities, event)
 
 
 # Same handlers main.gd connects to Unit.took_damage (numbers, particles) + the hit flash.

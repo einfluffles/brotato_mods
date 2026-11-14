@@ -7,6 +7,7 @@ extends Node
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
+const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
@@ -35,6 +36,7 @@ var _accumulator := 0.0
 var _paused := false
 var _events := []  # one-shot feedback since the last snapshot
 var _pose = Pose.new()
+var _anim_mirror = AnimMirror.new()
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -93,6 +95,7 @@ func _start_battle(main: Node) -> void:
 	_battle_id += 1
 	_paused = false
 	_events.clear()
+	_anim_mirror = AnimMirror.new()
 	SoundRelay.set_sink(self)
 	var main_players: Array = main.get("_players")
 	for i in main_players.size():
@@ -208,12 +211,14 @@ func _build_snapshot() -> Array:
 		types.append(_type_idx(_type_key(node)))
 		positions.append(node.global_position)
 		flags.append(_flags_of(node))
+		_anim_mirror.capture(node, ids[ids.size() - 1], _events)
 		var pose: PoolRealArray = _pose.capture(node)
 		if not pose.empty():
 			poses.append(ids.size() - 1)
 			poses.append(pose.size())
 			poses.append_array(pose)
 	_seen_last_snapshot = seen
+	_anim_mirror.end_snapshot()
 	var wave_timer = _main.get("_wave_timer")
 	var time_left: float = wave_timer.time_left if wave_timer != null else 0.0
 	var events := _events

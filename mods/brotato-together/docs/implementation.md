@@ -25,10 +25,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   children (predator, giant, jellyfish) spin rings of `EnemyProjectileRotating`, whose `position.x` grows
   outwards first; `CatlingGun._orient_gun` sets `rotation` + `scale.y` of `%Gun_pivot_l/r` and their draw
   order. Layout = per-scene list of (node path, kind), derived identically on host and client.
-- Not mirrored yet: the turret "shoot" pump animation (`Animation` position/scale, played from
-  `_physics_process`; its method track calls `shoot()`, so the client can't simply play it), boss pivots
-  added at runtime (eel, tyrannosaurus, brachiosaurus `pivots_scene`), `sprite.flip_h` of jump attacks,
-  catling "mad mode" animations.
+- Not mirrored yet: boss pivots added at runtime (eel, tyrannosaurus, brachiosaurus `pivots_scene`),
+  `sprite.flip_h` of jump attacks.
+- Animations (`sync/anim_mirror.gd`): physics code / behaviors start most non-idle animations (turret
+  "shoot", enemy "shoot" wind-ups and charges, jump attacks, brachiosaurus foot stomps, pet states like
+  the catling gun's "enter_in_mad_mode"/"idle_attack"). Host: `EVENT_ANIM` [net id, name, position, speed]
+  when an entity's `_animation_player.current_animation` changes or a non-looping one restarts; nothing
+  for entities in their `autoplay` animation; re-sent ~1/s while away from it (snapshots are unreliable).
+  Client: replayed at render time under the same name (the game's `update_animation` guards check names),
+  whitelisted by the puppet's own `has_animation`; "death*"/"RESET" never. Animations with method tracks
+  (`shoot()`/`start_shoot()` spawn projectiles) are swapped on the puppet for a cached copy with those
+  tracks removed (`Animation.duplicate` + `remove_track`; the shared original stays intact). Every entity
+  puppet loses the game's own `animation_finished` handlers at spawn (turret cooldown needs stats; attack
+  behaviors have no `_parent` on puppets — a dying puppet spitter errored).
 - Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
 
 ## Menus

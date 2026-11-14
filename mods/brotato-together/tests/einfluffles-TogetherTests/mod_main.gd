@@ -15,6 +15,7 @@ const SoundRelay := preload(
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const AnimMirrorTest := preload("res://mods-unpacked/einfluffles-TogetherTests/anim_mirror_test.gd")
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 170.0
 const DEVICE := VirtualDevices.FIRST
@@ -22,6 +23,7 @@ const BIT_ACCEPT := 1
 
 var _failures := []
 var _seq := 0
+var _anim_test = AnimMirrorTest.new()  # kept alive across its yields
 
 
 func _ready() -> void:
@@ -117,6 +119,7 @@ func _run() -> void:
 	_test_run_state_round_trip()
 	yield(_test_battle_loopback(together), "completed")
 	yield(_test_pose_mirror(together), "completed")
+	yield(_anim_test.run(self, together), "completed")
 	# Variants the game actually uses (ZoneService.bullets_hell); BulletHell_0..3 are unused
 	# leftovers (2 and 3 are even broken in the game: bullet groups in a single-bullet variable).
 	for variant in ["BulletHell_Left", "BulletHell_Top_2", "BulletHell_Bottom_3"]:
