@@ -4,14 +4,29 @@ extends Reference
 # local input and sends intents instead of deciding, and the other panels stay mirrored.
 # Called from mod_main.gd's battle loopback (host part while the host battle exists, client
 # part on the puppet); checks go through its _check.
+# Player 1's crates give weapons (give_crate_weapons), so its crate panel has the weapons list
+# whose popup combines / recycles / meca-upgrades: those are intents too.
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const RunStateCodec := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
+)
+const MECA_DLC := "primal_dread"
+const PISTOL := "weapon_pistol_1"
 const BIT_ACCEPT := 1
 
 var _t: Node = null
+
+
+# Before the host's battle scene loads (UpgradesUI reads the effect in _ready): player p's
+# crates give weapons, and it owns three pistols (two combine, one is left to recycle).
+func give_crate_weapons(t: Node, p: int) -> void:
+	RunData.get_player_effects(p)[Keys.effect_crate_give_weapon_hash] = 1
+	for _i in 3:
+		RunData.add_weapon(t._find_by_id(ItemService.weapons, PISTOL), p)
 
 
 # host_panels: player 0 has a level-up, player 1 a crate item (see _test_battle_loopback).
@@ -58,6 +73,8 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 	panels.host_apply_focus(ui, 0, 0, ["junk"])
 	t._check(container.carousel.index == 0, "page back, junk path ignored")
 
+	_host_weapons(t, panels, ui, msg.battle_id)
+
 	# Decisions: only for what the sender's panel shows right now.
 	var intent := {"battle_id": msg.battle_id, "seq": msg.seqs[0], "kind": "choose", "id": upgrade_id}
 	var stale := intent.duplicate()
@@ -72,10 +89,123 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 	t._check(panels.capture(ui)[0][0] == "done", "host panel moved on (%s)" % [panels.capture(ui)[0]])
 	t._check(not panels.host_apply_intent(ui, 0, intent), "the same press twice applies once")
 	var discard := {
-		"battle_id": msg.battle_id, "seq": msg.seqs[1], "kind": "discard", "id": host_panels[1][2]
+		"battle_id": msg.battle_id, "seq": panels._seqs[1], "kind": "discard", "id": host_panels[1][2]
 	}
 	t._check(panels.host_apply_intent(ui, 1, discard), "crate item discarded by intent")
 	t._check(panels.capture(ui)[1][0] != "item", "crate panel moved on")
+
+
+# Crate weapon popup intents (player 1, whose crate panel shows an item): the host applies
+# them to the weapon the intent names, by the game's own rules.
+func _host_weapons(t: Node, panels: Node, ui: Node, battle_id: int) -> void:
+	var list = ui._get_player_container(1).crate_weapons_container
+	t._check(
+		ui._weapons_inventory_enabled[1] and not ui._weapons_inventory_enabled[0],
+		"weapons list only for the player whose crates give weapons"
+	)
+	t._check(list.get_element_count() == 3, "host lists its weapons (%d)" % list.get_element_count())
+	var seq: int = panels._seqs[1]
+	var gold: int = RunData.get_player_gold(1)
+	var combine := {
+		"battle_id": battle_id, "seq": seq, "kind": "weapon_combine", "id": PISTOL, "weapon": 0
+	}
+	var stale := combine.duplicate()
+	stale.seq -= 1
+	t._check(not panels.host_apply_intent(ui, 1, stale), "weapon intent: stale revision dropped")
+	var other_id := combine.duplicate()
+	other_id.id = "weapon_smg_1"
+	t._check(not panels.host_apply_intent(ui, 1, other_id), "weapon intent: wrong id dropped")
+	for slot in [3, -1, "0", null]:
+		var other_slot := combine.duplicate()
+		other_slot.weapon = slot
+		t._check(
+			not panels.host_apply_intent(ui, 1, other_slot), "weapon intent: slot %s dropped" % [slot]
+		)
+	# Player 0 owns a pistol too, but its crates don't give weapons: no popup actions for it.
+	var not_enabled := combine.duplicate()
+	not_enabled.seq = panels._seqs[0]
+	not_enabled.kind = "weapon_discard"
+	t._check(not panels.host_apply_intent(ui, 0, not_enabled), "weapon intent: feature off dropped")
+	t._check(
+		_weapon_ids(0) == [PISTOL] and _weapon_ids(1) == [PISTOL, PISTOL, PISTOL],
+		"rejected weapon intents changed nothing (%s)" % [_weapon_ids(1)]
+	)
+	t._check(panels._seqs[1] == seq and RunData.get_player_gold(1) == gold, "nor revision or gold")
+
+	t._check(panels.host_apply_intent(ui, 1, combine), "combine applied")
+	t._check(
+		_weapon_ids(1) == [PISTOL, "weapon_pistol_2"], "two pistols combined (%s)" % [_weapon_ids(1)]
+	)
+	t._check(panels._seqs[1] == seq + 1, "weapons changed: new panel revision")
+	t._check(list.get_element_count() == 2, "host list follows")
+	t._check(not panels.host_apply_intent(ui, 1, combine), "the same combine twice applies once")
+	t._check(_weapon_ids(1).size() == 2, "double press changed nothing")
+	var alone := combine.duplicate()
+	alone.seq = panels._seqs[1]
+	t._check(not panels.host_apply_intent(ui, 1, alone), "combine without a partner: game says no")
+	t._check(panels._seqs[1] == seq + 1, "revision unchanged by a refused action")
+
+	var recycle := {
+		"battle_id": battle_id, "seq": seq + 1, "kind": "weapon_discard", "id": PISTOL, "weapon": 0
+	}
+	t._check(panels.host_apply_intent(ui, 1, recycle), "recycle applied")
+	t._check(_weapon_ids(1) == ["weapon_pistol_2"], "pistol recycled (%s)" % [_weapon_ids(1)])
+	t._check(RunData.get_player_gold(1) > gold, "recycling paid out")
+	t._check(panels._seqs[1] == seq + 2 and list.get_element_count() == 1, "revision and list follow")
+	t._check(panels.capture(ui)[1][0] == "item", "the crate item is still on offer")
+	_host_meca(t, panels, ui, battle_id)
+
+
+# Meca upgrade (primal_dread): the client names the stat, the host builds the upgrade.
+# Headless the game owns no DLC, so it is switched on for these checks only (the upgrade
+# itself needs none of the DLC content), and the meca weapon is gone again afterwards.
+func _host_meca(t: Node, panels: Node, ui: Node, battle_id: int) -> void:
+	var dlc = ItemService.get_dlc_data_by_id(MECA_DLC)
+	if dlc == null:
+		print("  info: no %s data, meca upgrade intent not tested" % MECA_DLC)
+		return
+	var weapon = RunData.get_player_weapons(1)[0]
+	var cost: int = dlc.get_meca_upgrade_cost(weapon)
+	var stat: int = dlc._get_allowed_meca_stats(1).values()[0][0]
+	var meca := {
+		"battle_id": battle_id,
+		"seq": panels._seqs[1],
+		"kind": "weapon_meca",
+		"id": weapon.my_id,
+		"weapon": 0,
+		"stat": stat,
+	}
+	RunData.players_data[1].meca_parts = cost + 1
+	var was_active: bool = MECA_DLC in ProgressData.active_update_data
+	if not was_active:
+		t._check(not panels.host_apply_intent(ui, 1, meca), "meca upgrade without the DLC dropped")
+		ProgressData.active_update_data.push_back(MECA_DLC)
+	RunData.players_data[1].meca_parts = 0
+	t._check(not panels.host_apply_intent(ui, 1, meca), "meca upgrade without parts dropped")
+	RunData.players_data[1].meca_parts = cost + 1
+	var junk := meca.duplicate()
+	junk.stat = 12345
+	t._check(not panels.host_apply_intent(ui, 1, junk), "meca upgrade with an unknown stat dropped")
+	t._check(_weapon_ids(1) == [weapon.my_id] and not weapon.is_meca, "nothing upgraded so far")
+	t._check(panels.host_apply_intent(ui, 1, meca), "meca upgrade applied")
+	var upgraded = RunData.get_player_weapons(1)[0]
+	var has_stat := false
+	for effect in upgraded.effects:
+		has_stat = has_stat or effect.key_hash == stat
+	t._check(upgraded != weapon and upgraded.is_meca and has_stat, "weapon is meca with the stat")
+	t._check(RunData.get_player_meca_parts(1) == 1, "meca parts paid")
+	t._check(not panels.host_apply_intent(ui, 1, meca), "the same upgrade twice applies once")
+	if not was_active:
+		ProgressData.active_update_data.erase(MECA_DLC)
+	RunData.players_data[1].meca_parts = 0
+	t._check(RunData.remove_weapon_by_index(0, 1) >= 0, "meca weapon removed again")
+
+
+static func _weapon_ids(p: int) -> Array:
+	var ids := []
+	for weapon in RunData.get_player_weapons(p):
+		ids.append(weapon.my_id)
+	return ids
 
 
 # The puppet shows msg (player 0: level-up, player 1: crate). This client becomes player 0.
@@ -167,6 +297,98 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 		"local control ends when the own panel is done"
 	)
 	t._check(focus_sync.local_emulators.empty(), "own emulator mirrored again")
+	yield(_client_weapons(t, together, main, msg), "completed")
+
+
+# This client as player 1: its crate panel lists its weapons, and the popup's actions leave
+# as intents. msg is the host's state from before it applied any (three pistols).
+func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
+	var panels: Node = together.upgrades_sync
+	var client: Node = together.battle_client
+	var ui = main.get("_coop_upgrades_ui")
+	var own = ui._get_player_container(1)
+	var list = own.crate_weapons_container
+	var popup = own.item_popup
+	t._check(
+		(
+			list.get_element_count() == 3
+			and ui._get_player_container(0).crate_weapons_container.get_element_count() == 0
+		),
+		"a mirrored panel lists the weapons (%d)" % list.get_element_count()
+	)
+	client._you = 1
+	panels._guarded_ui = null
+	own.carousel.index = 0  # mirrored to another page while this client was player 0
+	panels.apply(main, msg)
+	yield(t.get_tree(), "idle_frame")
+	yield(t.get_tree(), "idle_frame")
+	t._check(panels._local_active and list.get_element_count() == 3, "own crate panel lists them")
+	var connected := false
+	for signal_name in panels.WEAPON_POPUP_HANDLERS:
+		var handler: String = panels.WEAPON_POPUP_HANDLERS[signal_name]
+		for p in 2:
+			var any_popup = ui._get_player_container(p).item_popup
+			connected = connected or any_popup.is_connected(signal_name, ui, handler)
+	t._check(not connected, "no popup keeps the game's weapon handlers on a client")
+
+	var weapons: Array = RunData.get_player_weapons(1)
+	var gold: int = RunData.get_player_gold(1)
+	popup.emit_signal("item_combine_button_pressed", weapons[1])
+	var sent: Dictionary = panels.last_intent
+	t._check(
+		sent.get("kind") == "weapon_combine" and sent.get("weapon") == 1 and sent.get("id") == PISTOL,
+		"combine sends an intent (%s)" % [sent]
+	)
+	t._check(sent.get("seq") == msg.seqs[1], "weapon intent names the panel revision")
+	popup.emit_signal("item_discard_button_pressed", weapons[2])
+	sent = panels.last_intent
+	t._check(
+		sent.get("kind") == "weapon_discard" and sent.get("weapon") == 2, "recycle sends an intent"
+	)
+	# Meca upgrade: the stat comes from the options the popup showed, by the button pressed.
+	panels._meca_stats = [111, 222]
+	popup.emit_signal("item_meca_upgrade_selected", weapons[0], weapons[0])
+	t._check(panels.last_intent.get("kind") == "weapon_discard", "no meca intent before the choice")
+	panels._on_own_meca_choice(1)
+	sent = panels.last_intent
+	t._check(
+		sent.get("kind") == "weapon_meca" and sent.get("weapon") == 0 and sent.get("stat") == 222,
+		"meca upgrade sends the stat picked (%s)" % [sent]
+	)
+	t._check(
+		RunData.get_player_weapons(1) == weapons and RunData.get_player_gold(1) == gold,
+		"weapon intents change nothing locally"
+	)
+	panels.last_intent = {}
+	popup.emit_signal("item_combine_button_pressed", weapons[0].duplicate())
+	t._check(panels.last_intent.empty(), "a weapon the player doesn't own sends nothing")
+	var other_popup = ui._get_player_container(0).item_popup
+	other_popup.emit_signal("item_discard_button_pressed", RunData.get_player_weapons(0)[0])
+	t._check(
+		panels.last_intent.empty() and RunData.get_player_weapons(0).size() == 1,
+		"another player's popup decides nothing here"
+	)
+
+	# The host's answer (a recycled pistol): the list follows and the cursor keeps its slot.
+	own.focus_emulator.focused_control = list.get_element(2)
+	RunData.players_data[1].weapons.remove(2)
+	var answer: Dictionary = msg.duplicate(true)
+	answer.run = bytes2var(var2bytes(RunStateCodec.encode()), false)
+	answer.seqs[1] += 1
+	panels.apply(main, answer)
+	yield(t.get_tree(), "idle_frame")
+	yield(t.get_tree(), "idle_frame")
+	t._check(list.get_element_count() == 2, "own list follows the host's answer")
+	t._check(
+		own.focus_emulator.focused_control == list.get_element(1),
+		"own cursor stays in the weapons list"
+	)
+	t._check(panels._own_seq == answer.seqs[1], "next intent names the new revision")
+	answer = answer.duplicate(true)
+	answer.players[1] = ["done"]
+	answer.seqs[1] += 1
+	panels.apply(main, answer)
+	t._check(not panels._local_active, "local control ends when the crate panel is done")
 	# Back to a spectator, with no prediction state left over for the tests that follow.
 	client._you = -1
 	client._own_base_t = -1

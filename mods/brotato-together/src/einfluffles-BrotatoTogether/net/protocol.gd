@@ -24,14 +24,16 @@ enum Msg {
 	RETRY_PROMPT,  # host -> client: battle_id, visible, retry, retries, player, name
 	SHOP_PAUSE,  # host -> client: paused, by, by_id (like BATTLE_PAUSE, while in the shop)
 	# client -> host: battle_id, seq (of the sender's panel), kind ("choose" | "reroll" |
-	# "take" | "discard" | "ban"), id (upgrade / item my_id, "" for reroll), meca (-1: none)
+	# "take" | "discard" | "ban"), id (upgrade / item my_id, "" for reroll), meca (-1: none).
+	# Crate weapon popup: kind "weapon_combine" | "weapon_discard" | "weapon_meca", id (the
+	# weapon's my_id), weapon (its slot in the sender's weapons), stat (meca: stat key hash)
 	UPGRADE_INTENT,
 	# client -> host: battle_id, page (the sender's carousel page), path (its cursor as a
 	# child-index path inside its own panel, empty: none). Cosmetic: what the others see.
 	UPGRADE_FOCUS,
 }
 
-const VERSION := 6
+const VERSION := 7
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

@@ -169,9 +169,27 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - Guard, every client and every container: the four decision signals lose `UpgradesUI`'s handlers
     (`choose_button_pressed`, `item_take/discard/ban_button_pressed`), the reroll button loses
     `_on_RerollButton_pressed` (removes gold, rolls), the crate weapon popup loses combine / discard / meca
-    upgrade (those call `RunData` directly; not sent yet, so they do nothing on a client). The own
-    container's signals go to `UPGRADE_INTENT` instead. The container-local part still runs (press delay,
+    upgrade (`UpgradesUI._on_weapon_*`, which call `RunData` directly). The own container's signals, and
+    its popup's, go to `UPGRADE_INTENT` instead. The container-local part still runs (press delay,
     meca choice, the hold-to-ban loop with its progress bar). Mouse clicks on a panel take the same path.
+  - Crate weapon popup (protocol 7; characters whose crates give weapons, `effect_crate_give_weapon`):
+    `UpgradesUI._setup_weapons_inventory` runs in the puppet's `_ready` too (the run state is applied
+    before the scene loads), but only the host's `_show_next_player_options` fills the list, so the client
+    calls `_refresh_weapons_inventory` for every panel it rebuilds and whenever the run state changed (new
+    weapon objects). A cursor in the list keeps its slot. The own popup's combine / recycle / meca upgrade
+    leave as `UPGRADE_INTENT` kinds `weapon_combine` / `weapon_discard` / `weapon_meca` with `weapon` (slot
+    in `RunData.get_player_weapons`) and `id` (its `my_id`); the popup then closes like after a cancel
+    (`_on_weapon_cancel_button_pressed`) and the weapons change when the host answers. The host checks
+    revision, `_weapons_inventory_enabled`, slot and id, calls the game's handler
+    (`UpgradesUI._on_weapon_combine_button_pressed` / `_on_weapon_discard_button_pressed`) and counts the
+    intent as applied only if the weapons changed (the game refuses locked weapons or a missing partner
+    itself). The player's weapons are part of the panel revision, so a second press is stale. Meca
+    upgrade: the popup rolls its two stat options where it runs (`DLC2Data.meca_item`), so the client sends the stat it picked (`stat`, key hash; read from the popup
+    on `meca_upgrade_choice_toggled`, picked by the effect button pressed). The host takes it only if it is
+    in `_get_allowed_meca_stats` for that player and the parts suffice, sets it on a freshly rolled
+    `meca_item` option with `get_meca_stat_value` and hands the result to
+    `_on_weapon_meca_upgrade_selected`. So a modified client could pick any stat the game allows that
+    player, not only the two it was shown; amount and cost are the host's.
   - Host: `UPGRADES_STATE` carries a revision per player (`seqs`: bumped when the panel shows something
     new, keyed on the entry, the option being processed, the item instance and the reroll count, so the same
     crate item twice still counts) and the carousel page (`pages`). `host_apply_intent` drops an intent whose
@@ -187,8 +205,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - The client rebuilds a panel only when its revision or entry changed, and re-applies the run state only
     when its bytes changed (a rebuild of the own panel would fight the local cursor).
   - Open: a keyboard client is still typed as a gamepad (trigger glyphs, no arrow buttons), the client's
-    hold-to-ban depends on its own `chal_banned_items` unlock, crate weapon popup actions, and none of this
-    has run between two real machines yet (headless tests only).
+    hold-to-ban depends on its own `chal_banned_items` unlock, after a combine the client's cursor keeps
+    its slot where the host's copy jumps to the new weapon (until the next `UPGRADE_FOCUS`), and none of
+    this has run between two real machines yet (headless tests only; the crate weapon popup was never
+    driven through its real buttons, only through its signals).
 - **Cursors** (`sync/focus_sync.gd`): every `FocusEmulator` in the scene; emulator + focused control sent as
   child-index paths from the scene root (`ui/scene_paths.gd`), applied through the `focused_control` setter.
   The latest message per scene stays pending (10 s) until every cursor resolves to a visible control
