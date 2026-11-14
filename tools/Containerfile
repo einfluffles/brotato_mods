@@ -2,6 +2,8 @@
 FROM docker.io/library/debian:bookworm-slim
 
 ARG GDRE_VERSION=v2.7.4
+# Brotato runs a custom Godot 3.7 build; 3.6.x headless is the closest official build (used for parse checks).
+ARG GODOT_VERSION=3.6.2
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -14,6 +16,11 @@ RUN curl -fsSL -o /tmp/gdre.zip \
  && mkdir -p /opt/gdre && unzip -q /tmp/gdre.zip -d /opt/gdre && rm /tmp/gdre.zip \
  && chmod +x /opt/gdre/*.x86_64 \
  && ln -s /opt/gdre/gdre_tools.x86_64 /usr/local/bin/gdre_tools
+
+RUN curl -fsSL -o /tmp/godot.zip \
+      "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux_headless.64.zip" \
+ && unzip -q /tmp/godot.zip -d /opt/godot && rm /tmp/godot.zip \
+ && ln -s /opt/godot/Godot_v${GODOT_VERSION}-stable_linux_headless.64 /usr/local/bin/godot3
 
 RUN pip3 install --no-cache-dir --break-system-packages "gdtoolkit==3.*"
 

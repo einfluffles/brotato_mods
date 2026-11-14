@@ -65,7 +65,7 @@ func _build_text() -> String:
 			var state := "ready" if peer.ready else "handshake"
 			if session.is_peer_stale(steam_id):
 				state = "STALE"
-			var rtt := "%d ms" % peer.rtt_ms if peer.rtt_ms >= 0 else "-"
+			var rtt: String = ("%d ms" % peer.rtt_ms) if peer.rtt_ms >= 0 else "-"
 			lines.append("  %s  %s  rtt %s" % [peer.name, state, rtt])
 	if _last_error != "":
 		lines.append("! " + _last_error)

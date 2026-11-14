@@ -1,13 +1,12 @@
 extends Node
 
 const MOD_ID := "einfluffles-BrotatoTogether"
-const MOD_DIR := "res://mods-unpacked/" + MOD_ID + "/"
 const LOG_NAME := MOD_ID + ":Main"
 
-const SteamTransport := preload(MOD_DIR + "net/steam_transport.gd")
-const Session := preload(MOD_DIR + "session/session.gd")
-const Protocol := preload(MOD_DIR + "net/protocol.gd")
-const DebugOverlay := preload(MOD_DIR + "ui/debug_overlay.gd")
+const SteamTransport := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/steam_transport.gd")
+const Session := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/session.gd")
+const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
+const DebugOverlay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/debug_overlay.gd")
 
 var transport: Node = null
 var session: Node = null
