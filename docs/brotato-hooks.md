@@ -29,6 +29,11 @@ decompiled sources at the time of writing and will drift between game versions �
   → Register virtual players as `PlayerType.GAMEPAD_XBOX` so rjoy aim applies.
   → *Hook*: `Utils.get_player_rjoy_vector` (note: also used for UI scrolling).
 - Mouse aim/move is effectively disabled in co-op (`InputService` hides the mouse when player count > 1).
+  `Utils.is_manual_aim` in co-op: manual only for gamepad players (with `settings.manual_aim`), or while the
+  right stick is pushed (`manual_aim_on_mouse_press`); solo keyboard players aim at the mouse
+  (`weapon.gd :: _physics_process`, `get_global_mouse_position()`). Cached per frame (`_manual_aim_cache`).
+- `InputService` and `Utils` are autoloads after `ModLoader`, so script extensions apply. Godot 3 calls
+  `_input`/`_process` of every script level (multilevel): an extension can add to them, not replace them.
 
 ## 3. UI input per player
 
@@ -60,7 +65,23 @@ decompiled sources at the time of writing and will drift between game versions �
 
 - In wave: `main.gd :: _check_for_pause` — any player's `ui_pause_<dev>` release pauses (`PauseMenu.pause(i)`).
 - Shop: `base_shop.gd :: _is_pause_requested`. Pause menu: `ui/menus/ingame/pause_menu.gd`.
-- Policy: forward remote `ui_pause` only if host allows it (default: remote players can pause, host-only quit).
+- Pause triggers on the **release** of `ui_pause` (polled `is_action_just_released` in main, press+release
+  events in the shop). `PauseMenu.pause(i)` emits `paused` *before* `_main_menu.init(i)`; the menu is operated
+  by player `i` only (`_player_index`, its `FocusEmulator`). Ownership change = the steps in
+  `PauseMenu.on_game_lost_focus`: `_player_index`, `_focus_emulator.player_index`, `_menus.reset()`,
+  `_main_menu.init(i)`. `PauseMenu.enabled = false` makes `pause()` a no-op.
+- Local pause triggers: `ui_pause_<dev>` (above), `InputService.game_lost_focus` (window focus out, pad
+  disconnect) → `main.gd :: _on_game_lost_focus` (connected in `_ready`) and `coop_shop.gd` (only while paused,
+  to hand the menu to player 0). Default `settings.pause_on_focus_lost = true`.
+- Policy (brotato:together): remote players can pause; the menu goes to the host's first local player (no
+  blind quit/restart); the remote player who paused resumes with pause. Clients never pause locally.
+
+### Menu echo
+
+- `InputService._process` repeats held d-pad / left-stick directions as `ui_*_<dev>` pressed
+  `InputEventAction`s (delay 0.3 s, interval 0.09 s) for real pads `0..7` only; switched by
+  `set_gamepad_echo_processing` (off during waves). Emulated actions are never released, so the base
+  `ui_left` etc. can stay "pressed" in `Input` after stick navigation.
 
 ## 6. Mod loading (Steam build)
 

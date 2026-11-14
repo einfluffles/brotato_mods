@@ -73,3 +73,24 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   tree (mirrored state and cursors would replay e.g. button focus sounds); ClientView isn't mirrored and
   stays audible. Sounds played while the host's tree is paused (pause menu) aren't recorded. UI pages that
   play their own `AudioStreamPlayer` (profile, codex, item sets) bypass SoundManager; they're host-only.
+
+## Remote input, pause, absent players
+
+- `INPUT` (unreliable, every physics frame): held mask + a 4-bit press counter per button
+  (`sync/press_counter.gd`) + aim flags. Host (`sync/remote_buttons.gd`): a press needs a counted edge (a
+  button still held after the 300 ms timeout release or at rejoin does nothing until released), a tap lost in
+  a loss burst is replayed once, `ui_pause` is never held (delivered as press+release on the client's release,
+  so timeouts/disconnects can't pause), held menu directions repeat like the game's pad echo (following
+  `set_gamepad_echo_processing`).
+- Client mode (`VirtualDevices.set_client_mode`): the client's InputService tracks pad vs. mouse like solo
+  play, shows the mouse when it moves and doesn't emulate echo actions; the left stick is sent as menu
+  directions.
+- Aim (`sync/local_aim.gd`): the client's own `manual_aim` / `manual_aim_on_mouse_press` and device decide;
+  mouse users send the direction from their predicted player to the mouse as the stick. Host: `Utils`
+  extension answers `is_manual_aim` for virtual devices from that flag.
+- Pause (`sync/pause_control.gd`): client puppet battle/shop get `PauseMenu.enabled = false` and lose the
+  `game_lost_focus` connection. Host: a remote pause hands the menu to the first local player; the pauser
+  resumes with pause (main page only). `BATTLE_PAUSE` / `SHOP_PAUSE` carry who paused ("Paused by …").
+- Absent players (`sync/absent_players.gd`): after 20 s without messages (stale or left), the host makes the
+  player's pending choice the game's way: first level-up option, crate take (recycle if it can't be taken),
+  shop Go. Listed in the F9 panel / pill; a returning player just plays on.

@@ -16,6 +16,9 @@ const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const PauseControl := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
+)
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const CHECK_INTERVAL := 0.1
@@ -161,6 +164,7 @@ func _on_shop_ready(shop: Node) -> void:
 	# Leaving the shop would roll curses on locked items locally; the host decides those.
 	if shop.is_connected("tree_exited", shop, "_on_tree_exited"):
 		shop.disconnect("tree_exited", shop, "_on_tree_exited")
+	PauseControl.disable_local_pause(shop)
 	_apply_pending()
 	emit_signal("shop_entered")
 

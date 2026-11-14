@@ -15,6 +15,12 @@ const SoundRelay := preload(
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const PressCounter := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/press_counter.gd"
+)
+const PauseInputTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/pause_input_tests.gd"
+)
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 170.0
 const DEVICE := VirtualDevices.FIRST
@@ -22,6 +28,7 @@ const BIT_ACCEPT := 1
 
 var _failures := []
 var _seq := 0
+var _presses = PressCounter.new()
 
 
 func _ready() -> void:
@@ -73,6 +80,7 @@ func _run() -> void:
 	CoopService.listening_for_inputs = true
 	CoopService.set_process_input(true)
 	input_sync.devices[FAKE_PEER] = DEVICE
+	_send(input_sync, Vector2.ZERO, Vector2.ZERO, 0)  # first packet: nothing held
 	# Hold accept for longer than CoopService.HOLD_DURATION (time-based: headless frames are uncapped).
 	var hold_until := OS.get_ticks_msec() + int(CoopService.HOLD_DURATION * 1000) + 300
 	while OS.get_ticks_msec() < hold_until:
@@ -122,6 +130,7 @@ func _run() -> void:
 	for variant in ["BulletHell_Left", "BulletHell_Top_2", "BulletHell_Bottom_3"]:
 		yield(_test_bullet_hell(together, variant), "completed")
 	yield(_test_shop_loopback(together), "completed")
+	yield(PauseInputTests.new(self, together).run(), "completed")  # needs the run state
 	yield(_test_menu_mirror(together), "completed")
 	_finish()
 
@@ -307,6 +316,9 @@ func _test_battle_loopback(together: Node):
 	_check(client._banner != null and client._banner.visible, "pause banner shown")
 	client._set_paused(false)
 	_check(not client._banner.visible, "pause banner hidden")
+	ProgressData.settings.pause_on_focus_lost = true
+	InputService.emit_signal("game_lost_focus")  # alt-tab / pad disconnect
+	_check(not get_tree().paused, "client battle ignores focus loss")
 
 	# Player 1 dies on the host: the puppet plays dead without running game logic.
 	var dead_snap: Array = recorded[-1][1].duplicate(true)
@@ -732,6 +744,7 @@ func _test_shop_loopback(together: Node):
 	yield(shop_sync, "shop_entered")
 	var client_shop: Node = shop_sync._client_shop
 	_check(client_shop != host_shop, "client loaded its own shop")
+	_check(not client_shop._pause_menu.enabled, "client shop can't pause locally")
 	_check(
 		_shop_slots(client_shop, 0) == host_before,
 		"client shows host's items %s" % [_shop_slots(client_shop, 0)]
@@ -927,7 +940,7 @@ func _find_by_id(elements: Array, my_id: String):
 
 func _send(input_sync: Node, move: Vector2, aim: Vector2, buttons: int) -> void:
 	_seq += 1
-	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons])
+	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons, _presses.sample(buttons), 0])
 
 
 func _tap_key(scancode: int) -> void:

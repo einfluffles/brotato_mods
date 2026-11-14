@@ -1,17 +1,27 @@
 extends Node
 # Client: sample local input every physics frame and send it to the host (unreliable and
-# state-based, so a lost packet only delays). Host: apply each peer's input to that peer's
-# virtual device.
+# state-based, so a lost packet only delays; button presses also travel as counters, see
+# press_counter.gd). Host: apply each peer's input to that peer's virtual device
+# (remote_buttons.gd: edges, pause, menu echo).
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
+const PressCounter := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/press_counter.gd"
+)
+const RemoteButtons := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/remote_buttons.gd"
+)
+const LocalAim := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_aim.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:InputSync"
 const INPUT_TIMEOUT_MSEC := 300
 const HISTORY_SIZE := 180  # 3 s at 60 Hz
+const NAV_DEADZONE := 0.5  # InputService.joystick_deadzone (left stick -> menu directions)
 
 var session: Node = null
+var battle_client: Node = null  # client: own player position for mouse aim
 # host: steam_id -> device. Kept for the whole lobby so a rejoining player gets the same
 # device and therefore the same co-op slot.
 var devices := {}
@@ -21,8 +31,9 @@ var history := []
 
 # client
 var _seq := 0
+var _presses = PressCounter.new()
 
-# host: steam_id -> {seq, buttons, last_msec, released}
+# host: steam_id -> {seq, last_msec, released, buttons: RemoteButtons}
 var _remote := {}
 
 
@@ -40,10 +51,25 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	if session.is_client() != VirtualDevices.is_client_mode():
+		VirtualDevices.set_client_mode(session.is_client())
 	if session.is_client():
 		_send_local_input()
 	elif session.is_host():
 		_release_timed_out()
+
+
+func _process(delta: float) -> void:
+	if not session.is_host():
+		return
+	var echo: bool = InputService.is_virtual_echo_enabled()
+	for steam_id in _remote:
+		_remote[steam_id].buttons.process_echo(delta, echo)
+
+
+func _input(event: InputEvent) -> void:
+	if session.is_client():
+		_presses.on_event(event)
 
 
 # --- client ---
@@ -54,12 +80,15 @@ func _send_local_input() -> void:
 	if not session.peers.has(host_id) or not session.peers[host_id].ready:
 		return
 	_seq += 1
-	var buttons := 0
-	for i in VirtualDevices.BUTTON_ACTIONS.size():
-		if Input.is_action_pressed(VirtualDevices.BUTTON_ACTIONS[i]):
-			buttons |= 1 << i
+	var buttons := local_buttons()
+	var counts: int = _presses.sample(buttons)
 	var move := _local_movement()
-	session.send_unreliable(host_id, Protocol.Msg.INPUT, [_seq, move, _local_aim(), buttons])
+	var aim: Array = LocalAim.sample(
+		LocalAim.own_player(battle_client), InputService.using_gamepad
+	)
+	session.send_unreliable(
+		host_id, Protocol.Msg.INPUT, [_seq, move, aim[1], buttons, counts, aim[0]]
+	)
 	history.append([_seq, move])
 	if history.size() > HISTORY_SIZE:
 		history.pop_front()
@@ -76,8 +105,24 @@ func _local_movement() -> Vector2:
 	return analog if analog.length() > digital.length() else digital
 
 
-func _local_aim() -> Vector2:
-	return Input.get_vector("rjoy_left", "rjoy_right", "rjoy_up", "rjoy_down")
+# Held mask of BUTTON_ACTIONS. The left stick also counts as menu directions (the game turns it
+# into ui_* actions only through its echo emulation, which a client doesn't run).
+static func local_buttons() -> int:
+	var buttons := 0
+	for i in VirtualDevices.BUTTON_ACTIONS.size():
+		if Input.is_action_pressed(VirtualDevices.BUTTON_ACTIONS[i]):
+			buttons |= 1 << i
+	for pad in Input.get_connected_joypads():
+		var x := Input.get_joy_axis(pad, JOY_AXIS_0)
+		var y := Input.get_joy_axis(pad, JOY_AXIS_1)
+		var nav := ""
+		if abs(x) > NAV_DEADZONE:
+			nav = "ui_right" if x > 0 else "ui_left"
+		elif abs(y) > NAV_DEADZONE:
+			nav = "ui_down" if y > 0 else "ui_up"
+		if nav != "":
+			buttons |= 1 << VirtualDevices.BUTTON_ACTIONS.find(nav)
+	return buttons
 
 
 # --- host ---
@@ -85,6 +130,14 @@ func _local_aim() -> Vector2:
 
 func last_applied_seq(steam_id: int) -> int:
 	return _remote[steam_id].seq if _remote.has(steam_id) else 0
+
+
+# msec timestamp of the last pause press delivered for this device (-1: none).
+func last_pause_msec(device: int) -> int:
+	for steam_id in _remote:
+		if _remote[steam_id].buttons.device == device:
+			return _remote[steam_id].buttons.last_pause_msec
+	return -1
 
 
 func _on_peer_ready(steam_id: int) -> void:
@@ -103,6 +156,7 @@ func _on_peer_removed(steam_id: int) -> void:
 		return
 	var device: int = devices[steam_id]
 	VirtualDevices.release_all(device)
+	VirtualDevices.set_manual_aim(device, false)
 	_remote.erase(steam_id)
 	# Free the co-op slot only while players can still join; mid-run the slot waits for a rejoin.
 	if CoopService.listening_for_inputs and CoopService.is_device_assigned(device):
@@ -114,6 +168,7 @@ func _on_lobby_left() -> void:
 	for steam_id in devices:
 		var device: int = devices[steam_id]
 		VirtualDevices.release_all(device)
+		VirtualDevices.set_manual_aim(device, false)
 		if CoopService.is_device_assigned(device):
 			CoopService._remove_player(device)
 	devices.clear()
@@ -128,17 +183,23 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 func _apply_input(steam_id: int, body) -> void:
 	if (
 		typeof(body) != TYPE_ARRAY
-		or body.size() != 4
+		or body.size() != 6
 		or typeof(body[0]) != TYPE_INT
 		or typeof(body[1]) != TYPE_VECTOR2
 		or typeof(body[2]) != TYPE_VECTOR2
 		or typeof(body[3]) != TYPE_INT
+		or typeof(body[4]) != TYPE_INT
+		or typeof(body[5]) != TYPE_INT
 	):
 		return
-	var state: Dictionary = _remote.get(steam_id, {"seq": 0, "buttons": 0})
+	var device: int = devices[steam_id]
+	if not _remote.has(steam_id):
+		_remote[steam_id] = {
+			"seq": 0, "last_msec": 0, "released": false, "buttons": RemoteButtons.new(device)
+		}
+	var state: Dictionary = _remote[steam_id]
 	if body[0] <= state.seq:
 		return  # stale / reordered
-	var device: int = devices[steam_id]
 	var move: Vector2 = body[1].clamped(1.0)
 	var aim: Vector2 = body[2].clamped(1.0)
 	VirtualDevices.set_axis_pair(
@@ -159,17 +220,11 @@ func _apply_input(steam_id: int, body) -> void:
 	VirtualDevices.set_axis_pair(
 		VirtualDevices.action("rjoy_up", device), VirtualDevices.action("rjoy_down", device), aim.y
 	)
-	var changed: int = state.buttons ^ body[3]
-	for i in VirtualDevices.BUTTON_ACTIONS.size():
-		if changed & (1 << i):
-			VirtualDevices.press_button(
-				VirtualDevices.action(VirtualDevices.BUTTON_ACTIONS[i], device),
-				device,
-				bool(body[3] & (1 << i))
-			)
-	_remote[steam_id] = {
-		"seq": body[0], "buttons": body[3], "last_msec": OS.get_ticks_msec(), "released": false
-	}
+	VirtualDevices.set_manual_aim(device, bool(body[5] & LocalAim.FLAG_MANUAL))
+	state.buttons.apply(body[3], body[4])
+	state.seq = body[0]
+	state.last_msec = OS.get_ticks_msec()
+	state.released = false
 
 
 # Never leave a remote player running into a wall because their packets stopped.
@@ -178,8 +233,8 @@ func _release_timed_out() -> void:
 	for steam_id in _remote:
 		var state: Dictionary = _remote[steam_id]
 		if not state.released and now - state.last_msec > INPUT_TIMEOUT_MSEC:
-			VirtualDevices.release_all(devices[steam_id])
-			state.buttons = 0
+			VirtualDevices.release_analog(devices[steam_id])
+			state.buttons.release_held()
 			state.released = true
 
 

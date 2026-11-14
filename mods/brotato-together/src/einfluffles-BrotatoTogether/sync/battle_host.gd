@@ -25,6 +25,7 @@ const SPAWNER_RESPAWN_SIGNALS := [
 var session: Node = null
 var input_sync: Node = null
 var snapshot_bytes := 0  # size of the last snapshot, for the F9 menu
+var pause_control: Node = null  # who paused (BATTLE_PAUSE)
 
 var _main: Node = null
 var _battle_id := 0
@@ -69,8 +70,10 @@ func _physics_process(delta: float) -> void:
 		return
 	if get_tree().paused != _paused:
 		_paused = get_tree().paused
+		var by: Array = pause_control.paused_by() if pause_control != null else ["", 0]
 		session.broadcast_reliable(
-			Protocol.Msg.BATTLE_PAUSE, {"battle_id": _battle_id, "paused": _paused}
+			Protocol.Msg.BATTLE_PAUSE,
+			{"battle_id": _battle_id, "paused": _paused, "by": by[0], "by_id": by[1]}
 		)
 	if _paused:
 		return

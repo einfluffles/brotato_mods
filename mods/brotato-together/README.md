@@ -37,6 +37,10 @@ game's keys (F8 is the game's bug reporter).
 
 The host opens co-op character selection; remote players hold *accept* to join like local players.
 
+Anyone can pause; the host operates the pause menu, and whoever paused can resume with pause again.
+Aiming follows each player's own manual-aim setting (mouse or right stick). If a player drops and
+doesn't come back within 20 s, the host makes their level-up / crate / shop choices so the run goes on.
+
 ## Tests
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,

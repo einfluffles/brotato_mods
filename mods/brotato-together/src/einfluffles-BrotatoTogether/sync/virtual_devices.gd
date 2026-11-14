@@ -6,6 +6,8 @@ extends Reference
 
 const FIRST := 12
 const COUNT := 4
+const CLIENT_MODE_META := "brotato_together_client"
+const MANUAL_AIM_META := "brotato_together_manual_aim"
 
 const ANALOG_ACTIONS := [
 	"analog_move_left",
@@ -34,6 +36,10 @@ const BUTTON_ACTIONS := [
 	"rtrigger",
 ]
 
+# Indices into BUTTON_ACTIONS.
+const PAUSE_INDEX := 4
+const NAV_INDICES := [6, 7, 8, 9]  # ui_left/right/up/down: repeated while held (echo)
+
 # Exist so the game's per-device lookups never hit a missing action; never pressed.
 const UNUSED_ACTIONS := [
 	"button_move_left",
@@ -61,13 +67,40 @@ static func register_actions() -> void:
 				InputMap.add_action(name, 0.0)
 
 
+# Host: the remote player's own aim preference (Utils.is_manual_aim for virtual devices).
+static func set_manual_aim(device: int, manual: bool) -> void:
+	var by_device := {}
+	if Engine.has_meta(MANUAL_AIM_META):
+		by_device = Engine.get_meta(MANUAL_AIM_META)
+	by_device[device] = manual
+	Engine.set_meta(MANUAL_AIM_META, by_device)
+
+
+static func is_manual_aim(device: int) -> bool:
+	return Engine.has_meta(MANUAL_AIM_META) and Engine.get_meta(MANUAL_AIM_META).get(device, false)
+
+
+# Set while this game is a client of a brotato:together lobby: its one local player's input goes
+# to the host, so local co-op input handling (mouse hiding, menu echo) must not apply.
+static func set_client_mode(active: bool) -> void:
+	Engine.set_meta(CLIENT_MODE_META, active)
+
+
+static func is_client_mode() -> bool:
+	return Engine.has_meta(CLIENT_MODE_META) and Engine.get_meta(CLIENT_MODE_META)
+
+
 static func release_all(device: int) -> void:
-	for base in ANALOG_ACTIONS:
-		Input.action_release(action(base, device))
+	release_analog(device)
 	for base in BUTTON_ACTIONS:
 		var name := action(base, device)
 		if Input.is_action_pressed(name):
 			press_button(name, device, false)
+
+
+static func release_analog(device: int) -> void:
+	for base in ANALOG_ACTIONS:
+		Input.action_release(action(base, device))
 
 
 # Button edges go through the event pipeline so FocusEmulators and screen _input handlers see them.

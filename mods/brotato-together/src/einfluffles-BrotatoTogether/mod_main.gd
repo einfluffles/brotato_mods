@@ -21,6 +21,12 @@ const UpgradesSync := preload(
 )
 const MenuSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/menu_sync.gd")
 const UiSounds := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/ui_sounds.gd")
+const PauseControl := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
+)
+const AbsentPlayers := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/absent_players.gd"
+)
 const TogetherMenu := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/together_menu.gd")
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 
@@ -31,6 +37,7 @@ const EXTENSIONS := [
 	"extensions/singletons/challenge_service.gd",
 	"extensions/singletons/sound_manager.gd",
 	"extensions/singletons/sound_manager_2d.gd",
+	"extensions/singletons/utils.gd",
 ]
 
 var transport: Node = null
@@ -43,6 +50,8 @@ var shop_sync: Node = null
 var upgrades_sync: Node = null
 var menu_sync: Node = null
 var ui_sounds: Node = null
+var pause_control: Node = null
+var absent_players: Node = null
 
 var _client_active := false
 
@@ -109,15 +118,32 @@ func _ready() -> void:
 	add_child(ui_sounds)
 	ui_sounds.setup(session)
 
+	_add_player_control()
+
 	var menu := TogetherMenu.new()
 	menu.name = "TogetherMenu"
 	menu.setup(transport, session, battle_host, battle_client)
+	menu.absent_players = absent_players
 	add_child(menu)
 
 	session.connect("peer_ready", self, "_on_peer_ready")
 	battle_client.connect("battle_left", self, "_on_client_battle_left")
 	transport.connect("lobby_left", self, "_on_lobby_left")
 	ModLoaderLog.info("Ready", LOG_NAME)
+
+
+# Pause ownership, absent players, client aim (needs the client's own player).
+func _add_player_control() -> void:
+	input_sync.battle_client = battle_client
+	pause_control = PauseControl.new()
+	pause_control.name = "PauseControl"
+	add_child(pause_control)
+	pause_control.setup(session, input_sync)
+	battle_host.pause_control = pause_control
+	absent_players = AbsentPlayers.new()
+	absent_players.name = "AbsentPlayers"
+	add_child(absent_players)
+	absent_players.setup(session, input_sync, battle_host)
 
 
 func _on_peer_ready(steam_id: int) -> void:

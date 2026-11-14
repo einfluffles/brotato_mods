@@ -14,6 +14,7 @@ var transport: Node = null
 var session: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
+var absent_players: Node = null  # host: players away mid-run (sync/absent_players.gd)
 
 var _pill := PanelContainer.new()
 var _pill_label := Label.new()
@@ -179,7 +180,9 @@ func pill_text() -> String:
 	for steam_id in session.peers:
 		worst_rtt = int(max(worst_rtt, session.peers[steam_id].rtt_ms))
 		stale = stale or session.is_peer_stale(steam_id)
-	if stale:
+	if absent_players != null and not absent_players.absent.empty():
+		text += " · %d away" % absent_players.absent.size()
+	elif stale:
 		text += " · connection lost?"
 	elif worst_rtt >= 0:
 		text += " · %d ms" % worst_rtt
@@ -202,6 +205,8 @@ func details_text() -> String:
 				state = "no response"
 			var rtt: String = ("%d ms" % peer.rtt_ms) if peer.rtt_ms >= 0 else "-"
 			lines.append("  %s — %s — %s" % [peer.name, state, rtt])
+	if absent_players != null:
+		lines += absent_players.describe()
 	if battle_host.is_in_battle():
 		lines.append(
 			"Battle: %d B snapshots at %d Hz" % [battle_host.snapshot_bytes, battle_host.SNAPSHOT_HZ]

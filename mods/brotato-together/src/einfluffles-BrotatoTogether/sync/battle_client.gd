@@ -24,6 +24,9 @@ const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
+const PauseControl := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
+)
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -58,6 +61,7 @@ var _own_base_t := -1
 var _own_error := Vector2.ZERO
 var _own_display := Vector2.ZERO
 var _paused := false
+var _pause_text := ""
 var _banner: CanvasLayer = null
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
@@ -95,6 +99,13 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 			_on_snapshot(Snapshot.parse(body))
 		Protocol.Msg.BATTLE_PAUSE:
 			if typeof(body) == TYPE_DICTIONARY and body.get("battle_id") == _battle_id:
+				var by = body.get("by")
+				var by_id = body.get("by_id")
+				_pause_text = PauseControl.banner_text(
+					by if typeof(by) == TYPE_STRING else "",
+					by_id if typeof(by_id) == TYPE_INT else 0,
+					session.transport.local_id
+				)
 				_set_paused(bool(body.get("paused", false)))
 
 
@@ -149,6 +160,7 @@ func _reset_battle_state() -> void:
 	_has_clock = false
 	_you = -1
 	_paused = false
+	_pause_text = ""
 	_banner = null
 	_events.clear()
 	SoundRelay.set_muted(false)
@@ -174,8 +186,9 @@ func _on_node_added(node: Node) -> void:
 func _on_battle_scene_ready(main: Node) -> void:
 	_main = main
 	# Local pause/aim handling off; pause goes to the host via input. main._physics_process stays
-	# on: it only recolors life bars.
+	# on: it only recolors life bars. Focus loss / pad disconnect would open the local pause menu.
 	main.set_process(false)
+	PauseControl.disable_local_pause(main)
 	for node_name in ["_wave_manager", "_entity_spawner", "_effect_behaviors", "_stats_manager"]:
 		var node = main.get(node_name)
 		if node != null:
@@ -203,16 +216,8 @@ func _set_paused(paused: bool) -> void:
 	if not is_in_battle():
 		return
 	if _banner == null or not is_instance_valid(_banner):
-		_banner = CanvasLayer.new()
-		_banner.layer = 100
-		var label := Label.new()
-		label.text = "Paused by the host"
-		label.align = Label.ALIGN_CENTER
-		label.valign = Label.VALIGN_CENTER
-		label.anchor_right = 1.0
-		label.anchor_bottom = 1.0
-		_banner.add_child(label)
-		_main.add_child(_banner)
+		_banner = PauseControl.make_banner(_main)
+	_banner.get_node("Label").text = _pause_text if _pause_text != "" else "Paused by the host"
 	_banner.visible = paused
 
 
