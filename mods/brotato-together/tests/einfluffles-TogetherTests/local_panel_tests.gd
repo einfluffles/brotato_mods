@@ -29,6 +29,16 @@ func give_crate_weapons(t: Node, p: int) -> void:
 		RunData.add_weapon(t._find_by_id(ItemService.weapons, PISTOL), p)
 
 
+# Counts the mouse events that get as far as its place in the tree.
+class MouseCounter:
+	extends Node
+	var events := 0
+
+	func _input(event: InputEvent) -> void:
+		if event is InputEventMouse:
+			events += 1
+
+
 # host_panels: player 0 has a level-up, player 1 a crate item (see _test_battle_loopback).
 # Runs after the state message for the client was captured, so the host may move on.
 func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dictionary):
@@ -219,6 +229,8 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	var own = ui._get_player_container(0)
 	var other = ui._get_player_container(1)
 	client._you = 0
+	var was_using_gamepad: bool = InputService.using_gamepad
+	InputService.using_gamepad = true  # this player came out of the wave with a pad
 	panels._guarded_ui = null  # the pending state was applied as a spectator: guard again
 	panels.apply(main, msg)
 	yield(t.get_tree(), "idle_frame")
@@ -287,6 +299,8 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	t._check(own.carousel.index == 1, "own page stays local")
 	t._check(own._level == 99, "unchanged panel not rebuilt")
 
+	yield(_keyboard_and_mouse(panels, own, other, ui), "completed")
+
 	# Done: local control ends.
 	var finished := msg.duplicate(true)
 	finished.players[0] = ["done"]
@@ -297,7 +311,31 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 		"local control ends when the own panel is done"
 	)
 	t._check(focus_sync.local_emulators.empty(), "own emulator mirrored again")
+
+	# No emulator swallows the mouse now (the own one is parked, the other has no cursor):
+	# only LocalPanel stops a mouse event over another player's panel.
+	# The counter sits in the other panel, so it comes after LocalPanel in _input order.
+	other.focus_emulator.focused_control = null
+	var counter := MouseCounter.new()
+	other.add_child(counter)
+	yield(_click(other._discard_button), "completed")
+	t._check(counter.events == 0, "a click on another player's panel ends at LocalPanel")
+	# Control: while the F9 panel is open the mouse is not LocalPanel's, so the click arrives.
+	input_sync.local_input_blocked = true
+	yield(t.get_tree(), "idle_frame")
+	yield(_click(other._discard_button), "completed")
+	t._check(
+		counter.events == 2,
+		"(control) the same click passes while the F9 panel is open (%d events)" % counter.events
+	)
+	input_sync.local_input_blocked = false
+	counter.free()
+	InputService.using_gamepad = was_using_gamepad
 	yield(_client_weapons(t, together, main, msg), "completed")
+	# Back to a spectator, with no prediction state left over for the tests that follow.
+	client._you = -1
+	client._own_base_t = -1
+	client._own_error = Vector2.ZERO
 
 
 # This client as player 1: its crate panel lists its weapons, and the popup's actions leave
@@ -369,6 +407,8 @@ func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
 		"another player's popup decides nothing here"
 	)
 
+	yield(_popup_mouse(panels, own, weapons), "completed")
+
 	# The host's answer (a recycled pistol): the list follows and the cursor keeps its slot.
 	own.focus_emulator.focused_control = list.get_element(2)
 	RunData.players_data[1].weapons.remove(2)
@@ -389,7 +429,208 @@ func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
 	answer.seqs[1] += 1
 	panels.apply(main, answer)
 	t._check(not panels._local_active, "local control ends when the crate panel is done")
-	# Back to a spectator, with no prediction state left over for the tests that follow.
-	client._you = -1
-	client._own_base_t = -1
-	client._own_error = Vector2.ZERO
+
+
+# The mouse on the own crate weapons list and its popup (this client is player 1, three
+# pistols): a click on a weapon opens the popup, which keeps the cursor like it does for the
+# keys; its buttons are pressed as this player, and a held press ends with the mouse button.
+func _popup_mouse(panels: Node, own: Node, weapons: Array):
+	var t := _t
+	var emulator = own.focus_emulator
+	var list = own.crate_weapons_container
+	var popup = own.item_popup
+	yield(_mouse(list.get_element(1), "move"), "completed")
+	t._check(emulator.focused_control == list.get_element(1), "mouse hover reaches the weapons list")
+	t._check(not popup._focused, "hovering a weapon does not open its popup's buttons")
+	yield(_click(list.get_element(1)), "completed")
+	t._check(
+		popup._focused and popup.is_a_parent_of(emulator.focused_control),
+		"a click on a weapon opens its popup with the cursor in it"
+	)
+	# A focusable control of the own panel that the popup does not cover.
+	var outside: Control = null
+	for control in [own._discard_button, own._take_button, list.get_element(0), list.get_element(2)]:
+		var middle: Vector2 = control.get_global_rect().position + control.rect_size / 2.0
+		if control.is_visible_in_tree() and not popup.get_global_rect().has_point(middle):
+			outside = control
+			break
+	t._check(outside != null, "a control beside the open popup to aim at")
+	if outside == null:
+		outside = own._discard_button
+	yield(_mouse(outside, "move"), "completed")
+	yield(_click(outside), "completed")
+	var cursor = emulator.focused_control
+	t._check(
+		popup._focused and popup.is_a_parent_of(cursor) and panels.last_intent.empty(),
+		"the mouse stays inside an open popup (%s, %s)" % [outside.name, panels.last_intent]
+	)
+	yield(_click(popup._combine_button), "completed")
+	var sent: Dictionary = panels.last_intent
+	t._check(
+		sent.get("kind") == "weapon_combine" and sent.get("weapon") == 1 and sent.get("id") == PISTOL,
+		"a click on the popup's combine sends its intent (%s)" % [sent]
+	)
+	t._check(
+		not popup._focused and emulator.focused_control == list.get_element(1),
+		"the popup closed and the cursor is back on the weapon"
+	)
+
+	# Hold to recycle: the hold lasts as long as the mouse button, not for ever.
+	var was_holding: bool = ProgressData.settings.holding_button
+	ProgressData.settings.holding_button = true
+	panels.last_intent = {}
+	yield(_click(list.get_element(2)), "completed")
+	if popup._focused and popup._requires_recycle_hold():
+		yield(_mouse(popup._discard_button, "down"), "completed")
+		t._check(popup._recycle_button_held, "mouse down on recycle starts the hold")
+		yield(_mouse(popup._discard_button, "up"), "completed")
+		t._check(
+			not popup._recycle_button_held and panels.last_intent.empty(),
+			"mouse up ends the hold: a short click recycles nothing"
+		)
+	else:
+		print("  info: no hold-to-recycle in this popup, mouse hold not tested")
+	ProgressData.settings.holding_button = was_holding
+	yield(_click(popup._cancel_button), "completed")
+	t._check(
+		not popup._focused and weapons == RunData.get_player_weapons(1),
+		"a click on cancel closes the popup"
+	)
+
+
+# The own panel runs locally and its slot is typed as a pad, page 1. A key makes it the game's
+# keyboard co-op panel (no trigger binding: the page arrows take focus), the mouse moves and
+# presses the own cursor, and a pad button turns it back. sync/local_panel.gd.
+func _keyboard_and_mouse(panels: Node, own: Node, other: Node, ui: Node):
+	var t := _t
+	var emulator = own.focus_emulator
+	var carousel = own.carousel
+	var arrows := [carousel.arrow_left, carousel.arrow_right]
+	var keyboard: int = CoopService.PlayerType.KEYBOARD_AND_MOUSE
+	var pad: int = CoopService.PlayerType.GAMEPAD_XBOX
+	var glyph: Texture = CoopService.gamepad_rtrigger_icon
+	t._check(
+		carousel.are_trigger_buttons_active() and arrows[1].texture_hover == glyph,
+		"pad-typed own slot: the arrows are trigger glyphs"
+	)
+	yield(_tap("ltrigger"), "completed")
+	t._check(carousel.index == 0, "pad: the left trigger pages back")
+
+	yield(t._tap_key(KEY_SHIFT), "completed")  # any key: this player is on the keyboard now
+	t._check(
+		CoopService.get_player_input_type(0) == keyboard and not InputService.using_gamepad,
+		"a key types the own slot as keyboard"
+	)
+	t._check(CoopService.get_player_input_type(1) == pad, "the other slots stay pads")
+	t._check(other.carousel.are_trigger_buttons_active(), "another player's panel keeps triggers")
+	t._check(
+		not carousel.are_trigger_buttons_active()
+		and not arrows[1].disabled
+		and arrows[1].texture_hover != null
+		and arrows[1].texture_hover != glyph,
+		"keyboard: the page arrows are arrows again and enabled"
+	)
+	yield(_tap("rtrigger"), "completed")
+	t._check(carousel.index == 0, "keyboard: a trigger does not page")
+	var downs := 0
+	while downs < 8 and not (emulator.focused_control in arrows):
+		downs += 1
+		yield(_tap("ui_down"), "completed")
+	t._check(
+		emulator.focused_control == arrows[1],
+		"keyboard: the cursor reaches the right arrow (%d x down)" % downs
+	)
+	yield(_tap("ui_accept"), "completed")
+	t._check(carousel.index == 1, "keyboard: accept on the arrow pages")
+	var last_page: int = carousel._get_max_index()
+	for _i in last_page - 1:
+		yield(_tap("ui_accept"), "completed")
+	t._check(
+		carousel.index == last_page and emulator.focused_control == arrows[0],
+		"keyboard: on the last page (%d) the cursor moves to the left arrow" % carousel.index
+	)
+	for _i in last_page:
+		yield(_tap("ui_accept"), "completed")
+	t._check(carousel.index == 0, "keyboard: and pages back with it")
+
+	# Mouse. Hover moves the own cursor, a click presses through the own emulator.
+	var uis: Array = own._get_upgrade_uis()
+	var upgrades: Array = own._old_upgrades
+	var last: int = upgrades.size() - 1
+	yield(_mouse(uis[last].button, "move"), "completed")
+	t._check(emulator.focused_control == uis[last].button, "mouse hover moves the own cursor")
+	var other_cursor = other.focus_emulator.focused_control
+	panels.last_intent = {}
+	yield(_mouse(other._discard_button, "move"), "completed")
+	yield(_click(other._discard_button), "completed")
+	t._check(
+		emulator.focused_control == uis[last].button
+		and other.focus_emulator.focused_control == other_cursor
+		and panels.last_intent.empty()
+		and panels.capture(ui)[1][0] == "item",
+		"the mouse does nothing on another player's panel"
+	)
+	own._button_pressed = false  # the press delay of the earlier choice
+	yield(_click(uis[0].button), "completed")
+	t._check(
+		panels.last_intent.get("kind") == "choose"
+		and panels.last_intent.get("id") == upgrades[0].my_id
+		and emulator.focused_control == uis[0].button,
+		"a click on an own option sends its intent (%s)" % [panels.last_intent]
+	)
+	yield(_click(arrows[1]), "completed")
+	t._check(carousel.index == 1, "a click on the own page arrow pages")
+	t._check(emulator.focused_control == arrows[1], "the cursor is on the clicked arrow")
+
+	# Pad again: glyphs, triggers, and a cursor that is not left on a disabled arrow.
+	for pressed in [true, false]:
+		var button := InputEventJoypadButton.new()
+		button.button_index = JOY_L3
+		button.pressed = pressed
+		Input.parse_input_event(button)
+		yield(t.get_tree(), "idle_frame")
+	yield(t.get_tree(), "idle_frame")
+	t._check(
+		CoopService.get_player_input_type(0) == pad
+		and carousel.are_trigger_buttons_active()
+		and arrows[1].disabled
+		and arrows[1].texture_hover == glyph,
+		"a pad button types the own slot as a pad again"
+	)
+	t._check(not (emulator.focused_control in arrows), "pad: the cursor left the arrow")
+	yield(_tap("ltrigger"), "completed")
+	t._check(carousel.index == 0, "pad: triggers page again")
+
+
+
+# Press and release on the own slot's virtual device, as RemoteButtons delivers it.
+func _tap(action: String):
+	for pressed in [true, false]:
+		VirtualDevices.press_button(VirtualDevices.action(action, _t.DEVICE), _t.DEVICE, pressed)
+		yield(_t.get_tree(), "idle_frame")
+	yield(_t.get_tree(), "idle_frame")
+
+
+func _click(control: Control):
+	yield(_mouse(control, "down"), "completed")
+	yield(_mouse(control, "up"), "completed")
+
+
+# A mouse event at the middle of a control, in window coordinates like a real one.
+func _mouse(control: Control, kind: String):
+	var canvas_pos: Vector2 = control.get_global_transform_with_canvas().xform(
+		control.rect_size / 2.0
+	)
+	var pos: Vector2 = control.get_viewport().get_final_transform().xform(canvas_pos)
+	var event = null  # InputEventMouseMotion or InputEventMouseButton
+	if kind == "move":
+		event = InputEventMouseMotion.new()
+	else:
+		event = InputEventMouseButton.new()
+		event.button_index = BUTTON_LEFT
+		event.pressed = kind == "down"
+	event.position = pos
+	event.global_position = pos
+	Input.parse_input_event(event)
+	for _i in 3:  # flushed by the test mod, then resolved by LocalPanel in its _process
+		yield(_t.get_tree(), "idle_frame")
