@@ -15,6 +15,9 @@ const SoundRelay := preload(
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const SessionLifecycleTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
+)
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 170.0
 const DEVICE := VirtualDevices.FIRST
@@ -114,6 +117,7 @@ func _run() -> void:
 	)
 
 	_test_host_timeout(together)
+	SessionLifecycleTests.new().run(self, together)
 	_test_run_state_round_trip()
 	yield(_test_battle_loopback(together), "completed")
 	yield(_test_pose_mirror(together), "completed")

@@ -119,7 +119,7 @@ func _on_battle_start(body) -> void:
 
 	Puppet.set_active(true)
 	RunStateCodec.apply(state)
-	_fill_coop_slots(RunData.get_player_count())
+	VirtualDevices.fill_puppet_slots(RunData.get_player_count())
 	get_tree().paused = false
 	if get_tree().change_scene(BATTLE_SCENE) != OK:
 		ModLoaderLog.error("Could not load the battle scene", LOG_NAME)
@@ -133,8 +133,10 @@ func _leave_battle() -> void:
 
 func _on_lobby_left() -> void:
 	_reset_battle_state()
-	Puppet.set_active(false)
-	CoopService.clear_coop_players()
+	if session.transport.was_host:
+		return  # the host's own run (and its co-op slots) goes on: see InputSync._on_lobby_left
+	Puppet.set_active(false)  # restores the client's own saved run (session/puppet.gd)
+	CoopService.clear_coop_players()  # the puppet slots
 
 
 func _reset_battle_state() -> void:
@@ -154,15 +156,6 @@ func _reset_battle_state() -> void:
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
-
-
-# main.tscn spawns players from CoopService.connected_players; give it one slot per host player.
-func _fill_coop_slots(count: int) -> void:
-	CoopService.connected_players.clear()
-	for i in count:
-		CoopService.connected_players.push_back(
-			[VirtualDevices.FIRST + i, CoopService.PlayerType.GAMEPAD_XBOX]
-		)
 
 
 func _on_node_added(node: Node) -> void:

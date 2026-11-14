@@ -2,7 +2,7 @@ extends Reference
 # Wire format: var2bytes([msg_type, body]). Decoding never allows objects.
 
 enum Msg {
-	HELLO,  # client -> host: version, name
+	HELLO,  # client -> host, resent until WELCOME: see session/compat.gd local_info
 	WELCOME,  # host -> client: version, accepted, reason
 	PING,  # any -> any: t
 	PONG,  # any -> any: t
@@ -19,7 +19,7 @@ enum Msg {
 	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
 }
 
-const VERSION := 2
+const VERSION := 4
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

@@ -61,6 +61,14 @@ static func register_actions() -> void:
 				InputMap.add_action(name, 0.0)
 
 
+# Client puppet runs (battle, shop): the scenes spawn players from CoopService.connected_players,
+# so give them one slot per host player. Cleared again when the client leaves the lobby.
+static func fill_puppet_slots(count: int) -> void:
+	CoopService.connected_players.clear()
+	for i in count:
+		CoopService.connected_players.push_back([FIRST + i, CoopService.PlayerType.GAMEPAD_XBOX])
+
+
 static func release_all(device: int) -> void:
 	for base in ANALOG_ACTIONS:
 		Input.action_release(action(base, device))
