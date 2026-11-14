@@ -230,6 +230,7 @@ func _test_battle_loopback(together: Node):
 	for i in 2:
 		CoopService.connected_players.push_back([i, CoopService.PlayerType.GAMEPAD_XBOX])
 	RunData.current_wave = 3
+	_local_panel.give_crate_weapons(self, 1)  # player 1's crate panel gets the weapons popup
 	get_tree().change_scene("res://main.tscn")
 	yield(get_tree(), "idle_frame")
 	yield(get_tree(), "idle_frame")
