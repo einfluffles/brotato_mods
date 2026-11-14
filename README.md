@@ -14,7 +14,7 @@ mods/<folder>/
   src/<mod_id>/        everything that ships (manifest.json, mod_main.gd, ...)
   tests/<test_mod_id>/ dev-only headless test mod (never packaged)
   docs/, README.md
-  preview.png          optional Workshop preview image (packaged next to the zip)
+  preview.svg|png      optional Workshop preview (svg is rendered to a 1024x1024 png when packaging)
 docs/brotato-hooks.md  where the game does what, and how to hook it (shared by all mods)
 tools/                 containerized toolchain and scripts
 ```

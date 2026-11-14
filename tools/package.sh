@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Package every mod (mods/*/src/<mod_id>/) into a Steam-Workshop-ready folder:
 #   <target>/<mod_id>/<mod_id>.zip   zip layout mods-unpacked/<mod_id>/... (Godot Mod Loader)
-#   <target>/<mod_id>/preview.png    if mods/<folder>/preview.png exists
+#   <target>/<mod_id>/preview.png    mods/<folder>/preview.png, or rendered from mods/<folder>/preview.svg
 # Upload each folder with the game's GodotWorkshopUtility (select the zip + preview image).
 # Usage: tools/package.sh [target_dir]   (default: dist)
 set -euo pipefail
@@ -37,8 +37,11 @@ PY
       stage=$(mktemp -d)
       mkdir -p "$stage/mods-unpacked"
       cp -r "$3" "$stage/mods-unpacked/$2"
-      cd "$stage" && zip -qr "/out/$2.zip" mods-unpacked -x "*/.*" "*.import"
-    ' _ "$rel_src/manifest.json" "$mod_id" "$rel_src"
-  [ -f "$mod_folder/preview.png" ] && cp "$mod_folder/preview.png" "$out/preview.png"
+      (cd "$stage" && zip -qr "/out/$2.zip" mods-unpacked -x "*/.*" "*.import")
+      if [ -f "$4/preview.svg" ] && [ ! -f "$4/preview.png" ]; then
+        rsvg-convert -w 1024 -h 1024 "$4/preview.svg" -o /out/preview.png
+      fi
+    ' _ "$rel_src/manifest.json" "$mod_id" "$rel_src" "${mod_folder#$ROOT/}"
+  if [ -f "$mod_folder/preview.png" ]; then cp "$mod_folder/preview.png" "$out/preview.png"; fi
   echo "  -> ${out#$ROOT/}/"
 done
