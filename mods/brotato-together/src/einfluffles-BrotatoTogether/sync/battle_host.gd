@@ -6,6 +6,9 @@ extends Node
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const SoundRelay := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
+)
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
@@ -28,6 +31,7 @@ var _types := {}  # scene path -> type idx
 var _seen_last_snapshot := {}  # instance id -> true
 var _accumulator := 0.0
 var _paused := false
+var _events := []  # one-shot feedback since the last snapshot
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -85,6 +89,11 @@ func _start_battle(main: Node) -> void:
 	_main = main
 	_battle_id += 1
 	_paused = false
+	_events.clear()
+	SoundRelay.set_sink(self)
+	var main_players: Array = main.get("_players")
+	for i in main_players.size():
+		main_players[i].connect("took_damage", self, "_on_took_damage", [-(i + 1)])
 	_types.clear()
 	_seen_last_snapshot.clear()
 	var spawner = main.get("_entity_spawner")
@@ -101,6 +110,7 @@ func _start_battle(main: Node) -> void:
 func _end_battle() -> void:
 	ModLoaderLog.info("Battle %s ended" % _battle_id, LOG_NAME)
 	_main = null
+	SoundRelay.set_sink(null)
 	if session.is_host():
 		session.broadcast_reliable(Protocol.Msg.BATTLE_END, {"battle_id": _battle_id})
 
@@ -187,16 +197,62 @@ func _build_snapshot() -> Array:
 		if not node.has_meta(NET_ID_META) or not _seen_last_snapshot.has(instance_id):
 			node.set_meta(NET_ID_META, _new_net_id())
 		seen[instance_id] = true
+		if node is Unit and not node.is_connected("took_damage", self, "_on_took_damage"):
+			node.connect("took_damage", self, "_on_took_damage", [0])
 		ids.append(node.get_meta(NET_ID_META))
 		types.append(_type_idx(_type_key(node)))
 		positions.append(node.global_position)
 	_seen_last_snapshot = seen
 	var wave_timer = _main.get("_wave_timer")
 	var time_left: float = wave_timer.time_left if wave_timer != null else 0.0
-	return [
-		Protocol.Msg.SNAPSHOT,
-		Snapshot.build(_battle_id, OS.get_ticks_msec(), time_left, players, ids, types, positions)
-	]
+	var events := _events
+	_events = []
+	var snapshot := Snapshot.build(
+		_battle_id, OS.get_ticks_msec(), time_left, players, ids, types, positions, events
+	)
+	return [Protocol.Msg.SNAPSHOT, snapshot]
+
+
+# --- one-shot feedback (damage numbers, hit flashes/particles, sounds) ---
+
+
+# player_target: -(player_index + 1) for players, 0 for entities (looked up by net id).
+func _on_took_damage(
+	unit: Node,
+	value: int,
+	knockback: Vector2,
+	is_crit: bool,
+	is_dodge: bool,
+	is_protected: bool,
+	armor_did_something: bool,
+	args,
+	hit_type: int,
+	is_one_shot: bool,
+	player_target: int
+) -> void:
+	if not is_in_battle() or (args != null and args.hide_feedback):
+		return
+	var target := player_target
+	if target == 0:
+		if not unit.has_meta(NET_ID_META):
+			return
+		target = unit.get_meta(NET_ID_META)
+	var flags := 0
+	flags |= Snapshot.DAMAGE_CRIT if is_crit else 0
+	flags |= Snapshot.DAMAGE_DODGE if is_dodge else 0
+	flags |= Snapshot.DAMAGE_PROTECTED if is_protected else 0
+	flags |= Snapshot.DAMAGE_ARMOR if armor_did_something else 0
+	flags |= Snapshot.DAMAGE_ONE_SHOT if is_one_shot else 0
+	_events.append([Snapshot.EVENT_DAMAGE, target, value, knockback, flags, hit_type])
+
+
+# Called by SoundRelay for every sound the host plays during the battle.
+func record_sound(sound: Resource, position, volume_mod: float, pitch_rand: float) -> void:
+	if not is_in_battle() or sound == null or sound.resource_path == "":
+		return
+	_events.append(
+		[Snapshot.EVENT_SOUND, _type_idx(sound.resource_path), position, volume_mod, pitch_rand]
+	)
 
 
 func _tracked_nodes() -> Array:

@@ -10,6 +10,9 @@ const RunStateCodec := preload(
 )
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
+const SoundRelay := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
+)
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const FAKE_PEER := 4242
@@ -165,8 +168,7 @@ func _test_battle_loopback(together: Node):
 	yield(get_tree(), "idle_frame")
 	var main := get_tree().current_scene
 	_check(main != null and main.filename == "res://main.tscn", "host battle scene loaded")
-	host._main = main
-	host._battle_id = 1
+	host._start_battle(main)  # installs the sound recorder and player damage hooks
 	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
 	var recorded := []
 	var t0 := OS.get_ticks_msec()
@@ -186,7 +188,15 @@ func _test_battle_loopback(together: Node):
 	var host_panels: Array = upgrades_sync.capture(upgrades_ui)
 	var upgrades_msg: Dictionary = bytes2var(var2bytes(upgrades_sync.body(host_panels)), false)
 	upgrades_ui.hide()
-	host._main = null
+	host._end_battle()
+	var damage_events := 0
+	var sound_events := 0
+	for msg in recorded:
+		for event in msg[1][7]:
+			damage_events += 1 if event[0] == Snapshot.EVENT_DAMAGE else 0
+			sound_events += 1 if event[0] == Snapshot.EVENT_SOUND else 0
+	print("  info: recorded %d damage and %d sound events" % [damage_events, sound_events])
+	_check(damage_events > 0 and sound_events > 0, "host records damage and sound events")
 	var last: Dictionary = Snapshot.parse(recorded[-1][1])
 	_check(not last.empty(), "host snapshot well-formed")
 	_check(last.players.size() == 2, "snapshot has both players")
@@ -222,6 +232,15 @@ func _test_battle_loopback(together: Node):
 		client._on_snapshot(Snapshot.parse(snap))
 	yield(get_tree().create_timer(0.3), "timeout")
 	_check(spawner.enemies.empty(), "client spawner spawned nothing itself")
+	var floating_texts = puppet_main.get_node("%FloatingTexts")
+	_check(floating_texts.get_child_count() > 0, "damage numbers replayed on the client")
+	# Local sounds are muted while mirroring; the host's replayed sounds play.
+	var stream: AudioStream = load("res://entities/units/player/step_sounds/Step 1.mp3")
+	var queued: int = SoundManager2D.sounds_to_play.size()
+	SoundManager2D.play(stream, Vector2.ZERO)
+	_check(SoundManager2D.sounds_to_play.size() == queued, "local sound muted while mirroring")
+	SoundRelay.replay(stream, Vector2.ZERO, 0.0, 0.0)
+	_check(SoundManager2D.sounds_to_play.size() == queued + 1, "replayed host sound plays")
 	_check(
 		client._entities.size() == last.ids.size(),
 		"client mirrors all entities (%d/%d)" % [client._entities.size(), last.ids.size()]

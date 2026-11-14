@@ -40,3 +40,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   shows `ItemPanelUI` cards for the item id under each cursor + `_has_player_selected` instead.
 - Puppet pitfalls found by tests: `Enemy.respawn()` → `update_target()` needs a spawner (use a visual revive);
   `PlayerProjectile.shoot()` needs weapon stats; enemy scenes have internal Timers (pause them).
+
+## One-shot feedback (damage numbers, hit flashes, sounds)
+
+- Snapshots carry an `events` list (see `sync/snapshot.gd`), queued on the client and fired when render time
+  reaches the snapshot, so feedback lines up with the interpolated visuals.
+- Damage: the host connects to every mirrored unit's `took_damage` (players with a bound
+  `-(player_index + 1)` target); the client calls the same handlers main.gd uses —
+  `FloatingTextManager._on_unit_took_damage`, `EffectsManager._on_unit_took_damage` — with a hitbox-less
+  `TakeDamageArgs`, plus `Unit.flash()`.
+- Sounds: extensions of `SoundManager.play/playSingle` and `SoundManager2D.play` route through
+  `session/sound_relay.gd`. The host records every sound (stream path via the per-battle type table); a client
+  in a battle drops locally triggered sounds (e.g. step sounds from puppet walk animations, which are method
+  tracks) and plays only replays.

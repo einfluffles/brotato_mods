@@ -6,7 +6,11 @@ extends Reference
 #                     gold: int, level: int, xp: float,
 #                     weapons: PoolRealArray, per weapon [rotation, sprite_x, sprite_y,
 #                     sprite_rotation]],
-#  ids: PoolIntArray, types: PoolIntArray, positions: PoolVector2Array]
+#  ids: PoolIntArray, types: PoolIntArray, positions: PoolVector2Array,
+#  events: Array — one-shot feedback since the last snapshot:
+#    [EVENT_DAMAGE, target, value, knockback: Vector2, flags, hit_type]
+#      target: entity net id, or -(player_index + 1) for players
+#    [EVENT_SOUND, type idx of the stream, position: Vector2 or null, volume, pitch]]
 #
 # Entity ids are host-assigned net ids (stable while the entity lives); types index a per-battle
 # table of scene paths sent reliably (BATTLE_START / TYPE_DEF). input_ack is the last INPUT seq the
@@ -14,7 +18,14 @@ extends Reference
 
 enum PlayerField { POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEAPONS }
 
-const FIELD_COUNT := 7
+const FIELD_COUNT := 8
+const EVENT_DAMAGE := 0
+const EVENT_SOUND := 1
+const DAMAGE_CRIT := 1
+const DAMAGE_DODGE := 2
+const DAMAGE_PROTECTED := 4
+const DAMAGE_ARMOR := 8
+const DAMAGE_ONE_SHOT := 16
 const PLAYER_FIELD_TYPES := [
 	TYPE_VECTOR2, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_REAL, TYPE_REAL_ARRAY
 ]
@@ -28,9 +39,10 @@ static func build(
 	players: Array,
 	ids: PoolIntArray,
 	types: PoolIntArray,
-	positions: PoolVector2Array
+	positions: PoolVector2Array,
+	events: Array
 ) -> Array:
-	return [battle_id, t_msec, wave_time_left, players, ids, types, positions]
+	return [battle_id, t_msec, wave_time_left, players, ids, types, positions, events]
 
 
 # Returns a Dictionary view or {} if malformed.
@@ -45,6 +57,7 @@ static func parse(body) -> Dictionary:
 		or typeof(body[4]) != TYPE_INT_ARRAY
 		or typeof(body[5]) != TYPE_INT_ARRAY
 		or typeof(body[6]) != TYPE_VECTOR2_ARRAY
+		or typeof(body[7]) != TYPE_ARRAY
 	):
 		return {}
 	var ids: PoolIntArray = body[4]
@@ -64,6 +77,7 @@ static func parse(body) -> Dictionary:
 		"ids": ids,
 		"types": body[5],
 		"positions": body[6],
+		"events": body[7],
 	}
 
 

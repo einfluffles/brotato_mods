@@ -17,6 +17,9 @@ const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const SoundRelay := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
+)
 const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
@@ -26,6 +29,8 @@ const PF := Snapshot.PlayerField
 const INTERP_DELAY_MSEC := 100
 const PREDICTION_ERROR_DECAY := 12.0  # 1/s: how fast prediction corrections are smoothed out
 const MAX_BUFFERED := 32
+const MAX_QUEUED_EVENTS := 512
+const SOUND_EXTENSIONS := ["wav", "ogg", "mp3"]
 const CLOCK_CREEP_MSEC := 0.5  # per snapshot: lets the offset follow rising latency / drift
 const WAVE_TIMER_TOLERANCE := 0.3
 
@@ -48,6 +53,7 @@ var _own_error := Vector2.ZERO
 var _own_display := Vector2.ZERO
 var _paused := false
 var _banner: CanvasLayer = null
+var _events := []  # [host t, event] waiting for render time
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -136,6 +142,8 @@ func _reset_battle_state() -> void:
 	_you = -1
 	_paused = false
 	_banner = null
+	_events.clear()
+	SoundRelay.set_muted(false)
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
 
@@ -177,6 +185,7 @@ func _on_battle_scene_ready(main: Node) -> void:
 	for player in main.get("_players"):
 		PuppetEntity.puppetize(player)
 	_set_paused(_paused)
+	SoundRelay.set_muted(true)  # only the host's sounds from now on
 	emit_signal("battle_entered")
 
 
@@ -216,8 +225,9 @@ func _define_type(idx, key) -> void:
 		return
 	var parts: PoolStringArray = key.split("#", false, 1)
 	var path: String = parts[0] if parts.size() > 0 else ""
-	# Only game/mod scenes; the host is trusted but paths still come from the network.
-	if not path.begins_with("res://") or not path.ends_with(".tscn") or ".." in path:
+	# Only game/mod scenes and sounds; the host is trusted but paths come from the network.
+	var allowed: bool = path.ends_with(".tscn") or path.get_extension() in SOUND_EXTENSIONS
+	if not path.begins_with("res://") or not allowed or ".." in path:
 		_types[idx] = null
 		return
 	_types[idx] = load(path)
@@ -247,6 +257,9 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 	if i > 0 and _buffer[i - 1].t == snapshot.t:
 		return
 	_buffer.insert(i, snapshot)
+	for event in snapshot.events:
+		if _events.size() < MAX_QUEUED_EVENTS:
+			_events.append([snapshot.t, event])
 	while _buffer.size() > MAX_BUFFERED:
 		_buffer.pop_front()
 
@@ -267,6 +280,7 @@ func _process(delta: float) -> void:
 	_apply_players(from, to, alpha, _buffer[-1], delta)
 	_apply_entities(from, to, alpha)
 	_apply_wave_timer(to.wave_time_left)
+	_fire_events(render_t)
 
 
 func _apply_players(
@@ -351,7 +365,6 @@ func _show_level_up(i: int) -> void:
 		containers[i].upgrades.add_element(
 			ItemService.get_icon(Keys.icon_upgrade_to_process_hash), RunData.get_player_level(i)
 		)
-	SoundManager.play(_main.level_up_sound, 0, 0, true)
 
 
 func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
@@ -445,6 +458,58 @@ func _despawn(node) -> void:
 			node.die(args)
 	else:
 		node.queue_free()
+
+
+# One-shot feedback fires when its snapshot's time is rendered, so a damage number appears
+# together with the hit it belongs to.
+func _fire_events(render_t: float) -> void:
+	while not _events.empty() and _events[0][0] <= render_t:
+		var event = _events.pop_front()[1]
+		if typeof(event) != TYPE_ARRAY or event.empty() or typeof(event[0]) != TYPE_INT:
+			continue
+		if event[0] == Snapshot.EVENT_DAMAGE and event.size() == 6:
+			_show_damage(event)
+		elif event[0] == Snapshot.EVENT_SOUND and event.size() == 5:
+			var sound = _types.get(event[1])
+			if sound is AudioStream and (event[2] == null or typeof(event[2]) == TYPE_VECTOR2):
+				SoundRelay.replay(sound, event[2], float(event[3]), float(event[4]))
+
+
+# Same handlers main.gd connects to Unit.took_damage (numbers, particles) + the hit flash.
+func _show_damage(event: Array) -> void:
+	var target = _damage_target(event[1])
+	if target == null or typeof(event[3]) != TYPE_VECTOR2:
+		return
+	var flags := int(event[4])
+	var args := [
+		target,
+		int(event[2]),
+		event[3],
+		bool(flags & Snapshot.DAMAGE_CRIT),
+		bool(flags & Snapshot.DAMAGE_DODGE),
+		bool(flags & Snapshot.DAMAGE_PROTECTED),
+		bool(flags & Snapshot.DAMAGE_ARMOR),
+		TakeDamageArgs.new(RunData.DUMMY_PLAYER_INDEX),  # no hitbox: feedback at the unit
+		int(event[5]),
+		bool(flags & Snapshot.DAMAGE_ONE_SHOT),
+	]
+	for manager_name in ["_floating_text_manager", "_effects_manager"]:
+		var manager = _main.get(manager_name)
+		if manager != null:
+			manager.callv("_on_unit_took_damage", args)
+	if int(event[2]) > 0 and target.has_method("flash") and not target.dead:
+		target.flash()
+
+
+func _damage_target(id):
+	if typeof(id) != TYPE_INT:
+		return null
+	if id < 0:
+		var players: Array = _main.get("_players")
+		var index: int = -id - 1
+		return players[index] if index < players.size() else null
+	var node = _entities.get(id)
+	return node if node != null and is_instance_valid(node) else null
 
 
 func _apply_wave_timer(host_time_left: float) -> void:

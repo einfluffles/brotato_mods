@@ -28,6 +28,8 @@ const EXTENSIONS := [
 	"extensions/singletons/coop_service.gd",
 	"extensions/singletons/progress_data.gd",
 	"extensions/singletons/challenge_service.gd",
+	"extensions/singletons/sound_manager.gd",
+	"extensions/singletons/sound_manager_2d.gd",
 ]
 
 var transport: Node = null
