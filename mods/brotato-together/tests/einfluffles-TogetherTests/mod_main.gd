@@ -35,6 +35,7 @@ const DlcBorrowTests := preload("res://mods-unpacked/einfluffles-TogetherTests/d
 const LocalPanelTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/local_panel_tests.gd"
 )
+const LocalShopTests := preload("res://mods-unpacked/einfluffles-TogetherTests/local_shop_tests.gd")
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 170.0
 const DEVICE := VirtualDevices.FIRST
@@ -48,6 +49,7 @@ var _anim_test = AnimMirrorTest.new()  # kept alive across its yields
 var _runtime_parts = null  # kept alive across its coroutines
 var _perf = null  # kept alive across its coroutines
 var _local_panel = LocalPanelTests.new()  # kept alive across its yields
+var _local_shop = LocalShopTests.new()  # kept alive across its yields
 
 
 func _ready() -> void:
@@ -160,6 +162,7 @@ func _run() -> void:
 	var menu_ux = MenuUxTests.new()
 	yield(menu_ux.run_battle_tests(self, together), "completed")
 	yield(_test_shop_loopback(together), "completed")
+	yield(_local_shop.run(self, together), "completed")
 	_pause_input = PauseInputTests.new(self, together)
 	yield(_pause_input.run(), "completed")  # needs the run state
 	yield(_test_menu_mirror(together), "completed")
