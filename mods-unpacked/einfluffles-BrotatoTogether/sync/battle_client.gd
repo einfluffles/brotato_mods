@@ -35,6 +35,7 @@ var interp_lag_msec := 0  # render time vs newest snapshot, for the debug overla
 
 var _battle_id := 0
 var _types := {}  # idx -> PackedScene (null if rejected)
+var _type_data := {}  # idx -> spawn-time data (ConsumableData) or null
 var _buffer := []  # parsed snapshots, ascending t
 var _clock_offset := 0.0  # local_msec - host_msec (min-filtered)
 var _has_clock := false
@@ -121,6 +122,7 @@ func _reset_battle_state() -> void:
 	_main = null
 	_battle_id = 0
 	_types.clear()
+	_type_data.clear()
 	_buffer.clear()
 	_entities.clear()
 	_last_positions.clear()
@@ -180,14 +182,25 @@ func _disconnect_timer_callbacks(main: Node) -> void:
 # --- snapshots ---
 
 
-func _define_type(idx, path) -> void:
-	if typeof(idx) != TYPE_INT or typeof(path) != TYPE_STRING:
+# Type key: "<scene path>[#<data id>]" (see BattleHost._type_key).
+func _define_type(idx, key) -> void:
+	if typeof(idx) != TYPE_INT or typeof(key) != TYPE_STRING:
 		return
+	var parts: PoolStringArray = key.split("#", false, 1)
+	var path: String = parts[0] if parts.size() > 0 else ""
 	# Only game/mod scenes; the host is trusted but paths still come from the network.
 	if not path.begins_with("res://") or not path.ends_with(".tscn") or ".." in path:
 		_types[idx] = null
 		return
 	_types[idx] = load(path)
+	_type_data[idx] = _find_consumable(parts[1]) if parts.size() > 1 else null
+
+
+func _find_consumable(my_id: String):
+	for data in ItemService.consumables:
+		if data.my_id == my_id:
+			return data
+	return null
 
 
 func _on_snapshot(snapshot: Dictionary) -> void:
@@ -368,6 +381,10 @@ func _spawn(type_idx: int) -> Node:
 			node.respawn()
 	if node is Projectile:
 		node.shoot()  # starts its animation; hitbox is disabled again by puppetize()
+	var data = _type_data.get(type_idx)
+	if data != null and node is Consumable:
+		node.consumable_data = data
+		node.set_texture(data.icon)
 	PuppetEntity.puppetize(node)
 	return node
 

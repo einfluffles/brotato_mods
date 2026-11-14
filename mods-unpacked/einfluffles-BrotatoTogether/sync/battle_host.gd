@@ -174,7 +174,7 @@ func _build_snapshot() -> Array:
 			node.set_meta(NET_ID_META, _new_net_id())
 		seen[instance_id] = true
 		ids.append(node.get_meta(NET_ID_META))
-		types.append(_type_idx(node.filename))
+		types.append(_type_idx(_type_key(node)))
 		positions.append(node.global_position)
 	_seen_last_snapshot = seen
 	var wave_timer = _main.get("_wave_timer")
@@ -205,6 +205,14 @@ func _tracked_nodes() -> Array:
 				if child is Projectile:
 					nodes.append(child)
 	return nodes
+
+
+# Scene path, plus "#<data id>" where the look comes from data assigned at spawn (consumables:
+# fruit vs. crate vs. legendary crate share one scene).
+func _type_key(node: Node) -> String:
+	if node is Consumable and node.consumable_data != null:
+		return "%s#%s" % [node.filename, node.consumable_data.my_id]
+	return node.filename
 
 
 func _type_idx(path: String) -> int:

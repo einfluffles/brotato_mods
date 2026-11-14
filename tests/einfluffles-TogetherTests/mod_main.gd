@@ -244,6 +244,14 @@ func _test_battle_loopback(together: Node):
 		_check(puppet_main.is_in_pool(victim), "dead puppet returned to pool")
 		var reused: Node = client._spawn(host._types[victim.filename])
 		_check(reused == victim and not reused.dead, "puppet reused from pool")
+	# Consumables share one scene; their look comes from data (crate vs. fruit).
+	var crate = ItemService.consumables[-1]
+	client._define_type(999, "res://items/consumables/consumable.tscn#%s" % crate.my_id)
+	var consumable: Node = client._spawn(999)
+	_check(
+		consumable != null and consumable.consumable_data == crate,
+		"consumable gets its data (%s)" % crate.my_id
+	)
 	client.set_process(true)
 	client._leave_battle()
 	Puppet.set_active(false)
