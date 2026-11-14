@@ -29,6 +29,12 @@ static func pack(json: String) -> Dictionary:
 
 # Returns the run state dictionary (game objects resolved), or {} if the payload is invalid.
 static func decode(payload) -> Dictionary:
+	return deserialize(parse(payload))
+
+
+# The run state as it was sent (JSON-shaped: string keys, serialized items), or {} if the
+# payload is invalid. For callers that compare parts of it before building game objects.
+static func parse(payload) -> Dictionary:
 	if (
 		typeof(payload) != TYPE_DICTIONARY
 		or typeof(payload.get("size")) != TYPE_INT
@@ -42,7 +48,13 @@ static func decode(payload) -> Dictionary:
 	var parsed := JSON.parse(text)
 	if parsed.error != OK or typeof(parsed.result) != TYPE_DICTIONARY:
 		return {}
-	return ProgressDataLoaderV3.new().deserialize_run_state(parsed.result)
+	return parsed.result
+
+
+static func deserialize(raw: Dictionary) -> Dictionary:
+	if raw.empty():
+		return {}
+	return ProgressDataLoaderV3.new().deserialize_run_state(raw)
 
 
 static func apply(state: Dictionary) -> void:
