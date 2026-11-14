@@ -89,11 +89,26 @@ func _run() -> void:
 		Input.get_action_strength("analog_move_right_%s" % DEVICE) == 0.0, "timeout releases move"
 	)
 
+	_test_host_timeout(together)
 	_test_run_state_round_trip()
 	yield(_test_battle_loopback(together), "completed")
 	yield(_test_shop_loopback(together), "completed")
 	yield(_test_menu_mirror(together), "completed")
 	_finish()
+
+
+func _test_host_timeout(together: Node) -> void:
+	var session: Node = together.session
+	var transport: Node = session.transport
+	var saved_host: int = transport.host_id
+	transport.host_id = 77
+	session.peers[77] = {"name": "h", "ready": true, "rtt_ms": 1, "last_seen_msec": 0}
+	var now := OS.get_ticks_msec()
+	_check(session._host_timed_out(now + session.HOST_TIMEOUT_MSEC + 1), "silent host detected")
+	session.peers[77].last_seen_msec = now
+	_check(not session._host_timed_out(now + 1000), "live host kept")
+	session.peers.erase(77)
+	transport.host_id = saved_host
 
 
 # Host run state survives encode -> var2bytes -> bytes2var(no objects) -> apply.
@@ -192,6 +207,8 @@ func _test_battle_loopback(together: Node):
 	# --- client: replay ---
 	client._on_battle_start(start)
 	_check(Puppet.is_active(), "puppet mode on")
+	# Rejoin during the level-up phase: panel state arrives while the scene is still loading.
+	together.upgrades_sync._pending = upgrades_msg
 	yield(client, "battle_entered")
 	var puppet_main: Node = client._main
 	_check(puppet_main != null and puppet_main != main, "client loaded its own battle scene")
@@ -230,7 +247,6 @@ func _test_battle_loopback(together: Node):
 		host_panels[0][0] == "upgrades" and host_panels[1][0] == "item",
 		"host panels %s" % [[host_panels[0][0], host_panels[1][0]]]
 	)
-	upgrades_sync.apply(puppet_main, upgrades_msg)
 	var client_panels: Array = upgrades_sync.capture(puppet_main.get("_coop_upgrades_ui"))
 	_check(client_panels[0] == host_panels[0], "client shows host's level-up options")
 	_check(
@@ -238,6 +254,20 @@ func _test_battle_loopback(together: Node):
 		"client shows host's crate item (%s)" % host_panels[1][2]
 	)
 	puppet_main.get("_coop_upgrades_ui").hide()
+	client._set_paused(true)
+	_check(client._banner != null and client._banner.visible, "pause banner shown")
+	client._set_paused(false)
+	_check(not client._banner.visible, "pause banner hidden")
+
+	# Player 1 dies on the host: the puppet plays dead without running game logic.
+	var dead_snap: Array = recorded[-1][1].duplicate(true)
+	dead_snap[1] = client._buffer[-1].t + 1000  # newer than anything buffered
+	dead_snap[3][1][Snapshot.PlayerField.HEALTH] = 0
+	client._on_snapshot(Snapshot.parse(dead_snap))
+	yield(get_tree().create_timer(1.3), "timeout")
+	var player2: Node = puppet_main.get("_players")[1]
+	_check(player2.dead and not player2._weapons_container.visible, "dead player shown dead")
+	_check(puppet_main.get_tree().current_scene == puppet_main, "death did not end the wave")
 	var kinds := {}
 	for path in host._types:
 		kinds[path.get_file()] = true

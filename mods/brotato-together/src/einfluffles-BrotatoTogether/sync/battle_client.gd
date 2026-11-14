@@ -46,6 +46,8 @@ var _you := -1  # player slot this client controls (-1: spectator)
 var _own_base_t := -1
 var _own_error := Vector2.ZERO
 var _own_display := Vector2.ZERO
+var _paused := false
+var _banner: CanvasLayer = null
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -78,6 +80,9 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 				_define_type(body.get("idx"), body.get("path"))
 		Protocol.Msg.SNAPSHOT:
 			_on_snapshot(Snapshot.parse(body))
+		Protocol.Msg.BATTLE_PAUSE:
+			if typeof(body) == TYPE_DICTIONARY and body.get("battle_id") == _battle_id:
+				_set_paused(bool(body.get("paused", false)))
 
 
 # --- battle lifecycle ---
@@ -93,6 +98,7 @@ func _on_battle_start(body) -> void:
 	_reset_battle_state()
 	_battle_id = body.battle_id
 	_you = int(body.get("you", -1)) if typeof(body.get("you")) == TYPE_INT else -1
+	_paused = bool(body.get("paused", false))
 	var types = body.get("types")
 	if typeof(types) == TYPE_DICTIONARY:
 		for idx in types:
@@ -128,6 +134,8 @@ func _reset_battle_state() -> void:
 	_last_positions.clear()
 	_has_clock = false
 	_you = -1
+	_paused = false
+	_banner = null
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
 
@@ -168,7 +176,27 @@ func _on_battle_scene_ready(main: Node) -> void:
 				timer.stop()
 	for player in main.get("_players"):
 		PuppetEntity.puppetize(player)
+	_set_paused(_paused)
 	emit_signal("battle_entered")
+
+
+# Host paused: snapshots stop, so say why the world froze.
+func _set_paused(paused: bool) -> void:
+	_paused = paused
+	if not is_in_battle():
+		return
+	if _banner == null or not is_instance_valid(_banner):
+		_banner = CanvasLayer.new()
+		_banner.layer = 100
+		var label := Label.new()
+		label.text = "Paused by the host"
+		label.align = Label.ALIGN_CENTER
+		label.valign = Label.VALIGN_CENTER
+		label.anchor_right = 1.0
+		label.anchor_bottom = 1.0
+		_banner.add_child(label)
+		_main.add_child(_banner)
+	_banner.visible = paused
 
 
 # Wave end, half-wave events, harvesting, ... are host decisions. Timers keep counting (the wave
@@ -247,7 +275,9 @@ func _apply_players(
 	var players: Array = _main.get("_players")
 	for i in min(players.size(), to.players.size()):
 		var player = players[i]
-		if i == _you and i < newest.players.size():
+		if player.dead:
+			_move(player, "p%s" % i, to.players[i][PF.POSITION])
+		elif i == _you and i < newest.players.size():
 			_predict_own(player, i, newest, delta)
 		else:
 			var position: Vector2 = to.players[i][PF.POSITION]
@@ -290,6 +320,8 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 # HUD values (the HUD listens to these signals). Level-ups only update visuals here: the game's
 # own levelled_up handler would also change stats, which is the host's job.
 func _apply_player_stats(player: Node, i: int, entry: Array) -> void:
+	if entry[PF.HEALTH] <= 0 and not player.dead:
+		PuppetEntity.player_died(player)
 	if (
 		player.current_stats.health != entry[PF.HEALTH]
 		or player.max_stats.health != entry[PF.MAX_HEALTH]
@@ -350,7 +382,8 @@ func _move(node: Node, key, position: Vector2) -> void:
 	var last: Vector2 = _last_positions.get(key, position)
 	node.global_position = position
 	_last_positions[key] = position
-	PuppetEntity.animate(node, position - last)
+	if not node.get("dead"):
+		PuppetEntity.animate(node, position - last)
 
 
 func _spawn(type_idx: int) -> Node:

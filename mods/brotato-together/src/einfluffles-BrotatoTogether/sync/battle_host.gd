@@ -27,6 +27,7 @@ var _next_net_id := 1
 var _types := {}  # scene path -> type idx
 var _seen_last_snapshot := {}  # instance id -> true
 var _accumulator := 0.0
+var _paused := false
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -57,7 +58,14 @@ func _process(_delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if not is_in_battle() or not session.is_host() or get_tree().paused:
+	if not is_in_battle() or not session.is_host():
+		return
+	if get_tree().paused != _paused:
+		_paused = get_tree().paused
+		session.broadcast_reliable(
+			Protocol.Msg.BATTLE_PAUSE, {"battle_id": _battle_id, "paused": _paused}
+		)
+	if _paused:
 		return
 	_accumulator += delta
 	if _accumulator < 1.0 / SNAPSHOT_HZ:
@@ -76,6 +84,7 @@ func _physics_process(delta: float) -> void:
 func _start_battle(main: Node) -> void:
 	_main = main
 	_battle_id += 1
+	_paused = false
 	_types.clear()
 	_seen_last_snapshot.clear()
 	var spawner = main.get("_entity_spawner")
@@ -100,7 +109,12 @@ func _battle_start_body() -> Dictionary:
 	var types_by_idx := {}
 	for path in _types:
 		types_by_idx[_types[path]] = path
-	return {"battle_id": _battle_id, "run": RunStateCodec.encode(), "types": types_by_idx}
+	return {
+		"battle_id": _battle_id,
+		"run": RunStateCodec.encode(),
+		"types": types_by_idx,
+		"paused": _paused,
+	}
 
 
 func _on_peer_ready(steam_id: int) -> void:

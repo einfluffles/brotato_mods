@@ -16,6 +16,7 @@ var battle_client: Node = null
 
 var _last_sent_key := ""
 var _check_left := 0.0
+var _pending := {}  # client: state that arrived while the battle scene was still loading
 
 
 func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> void:
@@ -23,6 +24,8 @@ func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> voi
 	battle_host = host_battle
 	battle_client = client_battle
 	session.connect("message", self, "_on_message")
+	session.connect("peer_ready", self, "_on_peer_ready")
+	battle_client.connect("battle_entered", self, "_on_battle_entered")
 
 
 func _ready() -> void:
@@ -79,7 +82,18 @@ static func capture(ui: Node) -> Array:
 	return players
 
 
+# A (re)joining client needs the current panels too: force a resend.
+func _on_peer_ready(_steam_id: int) -> void:
+	_last_sent_key = ""
+
+
 # --- client ---
+
+
+func _on_battle_entered() -> void:
+	if not _pending.empty() and _pending.get("battle_id") == battle_client._battle_id:
+		apply(battle_client._main, _pending)
+	_pending = {}
 
 
 func _on_message(steam_id: int, msg_type: int, msg) -> void:
@@ -87,7 +101,10 @@ func _on_message(steam_id: int, msg_type: int, msg) -> void:
 		return
 	if steam_id != session.transport.host_id or typeof(msg) != TYPE_DICTIONARY:
 		return
-	if msg.get("battle_id") != battle_client._battle_id or not battle_client.is_in_battle():
+	if msg.get("battle_id") != battle_client._battle_id:
+		return
+	if not battle_client.is_in_battle():
+		_pending = msg  # BATTLE_START just arrived; the scene is still loading
 		return
 	apply(battle_client._main, msg)
 

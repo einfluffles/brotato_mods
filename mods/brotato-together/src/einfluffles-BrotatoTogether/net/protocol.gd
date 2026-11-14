@@ -15,6 +15,7 @@ enum Msg {
 	SHOP_STATE,  # host -> client: shop_id, run (RunStateCodec incl. shop), slots, go
 	UPGRADES_STATE,  # host -> client: battle_id, visible, run, players (see upgrades_sync.gd)
 	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, is_random, ready]]
+	BATTLE_PAUSE,  # host -> client: battle_id, paused
 }
 
 const VERSION := 1

@@ -235,6 +235,7 @@ func _on_lobby_chat_update(
 		emit_signal("peer_left", changed_id)
 		if changed_id == host_id:
 			ModLoaderLog.warning("Host left the lobby", LOG_NAME)
+			emit_signal("lobby_failed", "The host left the lobby")
 			leave_lobby()
 
 

@@ -9,6 +9,7 @@ const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/p
 const LOG_NAME := "einfluffles-BrotatoTogether:Session"
 const PING_INTERVAL_MSEC := 1000
 const PEER_STALE_MSEC := 5000
+const HOST_TIMEOUT_MSEC := 15000  # client gives up on a silent host (crash, network loss)
 
 var transport: Node = null
 # steam_id -> {name, ready, rtt_ms, last_seen_msec}
@@ -62,11 +63,23 @@ func _process(_delta: float) -> void:
 	if not transport.is_active():
 		return
 	var now := OS.get_ticks_msec()
+	if is_client() and _host_timed_out(now):
+		ModLoaderLog.warning("No messages from the host for a while; leaving", LOG_NAME)
+		transport.emit_signal("lobby_failed", "Connection to the host lost")
+		transport.leave_lobby()
+		return
 	if now >= _next_ping_msec:
 		_next_ping_msec = now + PING_INTERVAL_MSEC
 		for steam_id in peers:
 			if peers[steam_id].ready:
 				send_unreliable(steam_id, Protocol.Msg.PING, {"t": now})
+
+
+func _host_timed_out(now: int) -> bool:
+	var host_id: int = transport.host_id
+	if not peers.has(host_id) or not peers[host_id].ready:
+		return false
+	return now - peers[host_id].last_seen_msec > HOST_TIMEOUT_MSEC
 
 
 func _add_peer(steam_id: int) -> Dictionary:
