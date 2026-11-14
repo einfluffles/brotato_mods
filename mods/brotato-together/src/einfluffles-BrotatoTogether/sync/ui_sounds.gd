@@ -4,15 +4,14 @@ extends Node
 #   frame and sent as UI_SOUNDS (reliable: discrete events, a few res:// paths per batch).
 #   In battle BattleHost records instead (snapshot events) — that includes the level-up/crate
 #   panels, which live in main.tscn.
-# Client: replays them. Local sounds are muted while the puppet shop runs: its mirrored state and
-#   cursors would play the same sounds a second time. ClientView isn't mirrored: it stays audible.
+# Client: replays them. Local sounds are muted while the puppet shop runs (ShopSync): its mirrored
+#   state and cursors would play the same sounds a second time. ClientView isn't mirrored: it stays
+#   audible.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
-const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
-const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const MAX_PER_BATCH := 16  # SoundManager.MAX_SOUNDS: more would not play in one frame anyway
 const MAX_CACHED := 256
 const VOLUME_RANGE := Vector2(-60.0, 12.0)
@@ -28,7 +27,6 @@ var _streams := {}  # client: path -> AudioStream, null if rejected
 func setup(netplay_session: Node) -> void:
 	session = netplay_session
 	session.connect("message", self, "_on_message")
-	get_tree().connect("node_added", self, "_on_node_added")
 
 
 func _ready() -> void:
@@ -50,7 +48,9 @@ func _process(_delta: float) -> void:
 
 
 # Called by SoundRelay for every sound the host plays outside a battle.
-func record_sound(sound: Resource, position, volume_mod: float, pitch_rand: float) -> void:
+func record_sound(
+	sound: Resource, position, volume_mod: float, pitch_rand: float, _always := false, _cooldown := 0.0
+) -> void:
 	# Paused: the host's pause menu is not shown on clients.
 	if get_tree().paused or sound == null or _batch.size() >= MAX_PER_BATCH:
 		return
@@ -130,17 +130,3 @@ static func _is_number(value) -> bool:
 	if typeof(value) == TYPE_INT:
 		return true
 	return typeof(value) == TYPE_REAL and not is_nan(value) and not is_inf(value)
-
-
-# The puppet shop reacts to mirrored state/cursors with its own sounds; the host's replace them.
-# node_added (not ready) so sounds from the shop's own _ready are covered too.
-func _on_node_added(node: Node) -> void:
-	if Puppet.is_active() and node.filename == SHOP_SCENE:
-		SoundRelay.set_muted(true)
-		node.connect("tree_exited", self, "_on_puppet_shop_exited", [], CONNECT_ONESHOT)
-
-
-# The old scene leaves the tree before the next one is added, so this never undoes the battle's
-# mute (BattleClient mutes when main.tscn is ready).
-func _on_puppet_shop_exited() -> void:
-	SoundRelay.set_muted(false)

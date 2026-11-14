@@ -12,9 +12,18 @@ const MAX_UNCOMPRESSED_SIZE := 8 * 1024 * 1024
 # shop_args: the shop's own save_run_state arguments ([shop_items, reroll_count, paid_reroll_count,
 # initial_free_rerolls, free_rerolls, item_steals]) to include the shop, or [] for none.
 static func encode(shop_args := []) -> Dictionary:
+	return pack(encode_json(shop_args))
+
+
+# The JSON text alone: cheap to compare before compressing (ShopSync checks for changes).
+static func encode_json(shop_args := []) -> String:
 	var state: Dictionary = ProgressData.callv("get_run_state", shop_args)
 	var serialized: Dictionary = ProgressDataLoaderV3.new().serialize_run_state(state)
-	var text := JSON.print(serialized).to_utf8()
+	return JSON.print(serialized)
+
+
+static func pack(json: String) -> Dictionary:
+	var text := json.to_utf8()
 	return {"size": text.size(), "data": text.compress(File.COMPRESSION_ZSTD)}
 
 

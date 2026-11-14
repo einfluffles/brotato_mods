@@ -31,6 +31,8 @@ const EXTENSIONS := [
 	"extensions/singletons/challenge_service.gd",
 	"extensions/singletons/sound_manager.gd",
 	"extensions/singletons/sound_manager_2d.gd",
+	"extensions/entities/brachiosaurus_foot.gd",
+	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
 ]
 
 var transport: Node = null

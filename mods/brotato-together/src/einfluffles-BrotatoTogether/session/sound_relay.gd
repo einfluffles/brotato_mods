@@ -1,7 +1,9 @@
 extends Reference
 # Routes game sounds for mirroring (used by the SoundManager/SoundManager2D extensions).
-# Host: every sound is also handed to a recording sink to be replayed on clients — BattleHost
-# during a battle (snapshot events), UiSounds otherwise (shop, menus; sync/ui_sounds.gd).
+# Host: every sound the game queues is also handed to a recording sink to be replayed on clients
+#   — BattleHost during a battle (snapshot events), UiSounds otherwise (shop, menus;
+#   sync/ui_sounds.gd). Sounds the game drops itself (all players busy, queue full, playSingle
+#   cooldown) aren't recorded.
 # Client in a mirrored scene (battle, shop): locally triggered sounds are dropped (puppets would
 # e.g. play step sounds from their walk animation, mirrored cursors focus sounds) — only replays
 # of the host's sounds are played.
@@ -12,20 +14,12 @@ const META_MUTE := "brotato_together_mute_local_sounds"
 const META_REPLAY := "brotato_together_sound_replay"
 const META_DROPPED := "brotato_together_sounds_dropped"
 const SOUND_EXTENSIONS := ["wav", "ogg", "mp3"]
+const SINGLE_COOLDOWN_SLACK := 0.1  # s, see replay()
 
 
-# Returns true if the sound must not be played.
-static func intercept(sound: Resource, position, volume_mod: float, pitch_rand: float) -> bool:
-	# The battle sink wins: during a battle UI sounds (level-up panels) travel with the snapshots.
-	var sink = _get_object(META_SINK)
-	# The battle scene is gone a frame before BattleHost notices; sounds of the next screen (the
-	# shop's _ready / first focus) belong to the UI sink already.
-	if sink != null and not sink.is_in_battle():
-		sink = null
-	if sink == null:
-		sink = _get_object(META_UI_SINK)
-	if sink != null:
-		sink.record_sound(sound, position, volume_mod, pitch_rand)
+# Client: true if a locally triggered sound must not be played (mirrored scene, not a replay).
+static func drop_local() -> bool:
+	if _sink() != null:
 		return false
 	if Engine.has_meta(META_MUTE) and Engine.get_meta(META_MUTE):
 		if Engine.has_meta(META_REPLAY) and Engine.get_meta(META_REPLAY):
@@ -33,6 +27,33 @@ static func intercept(sound: Resource, position, volume_mod: float, pitch_rand: 
 		Engine.set_meta(META_DROPPED, dropped_count() + 1)
 		return true
 	return false
+
+
+# Host: a sound the game queued. cooldown: playSingle's duplicate_cooldown (0 for play()).
+static func record(
+	sound: Resource, position, volume_mod: float, pitch_rand: float, always := false, cooldown := 0.0
+) -> void:
+	var sink = _sink()
+	if sink != null:
+		sink.record_sound(sound, position, volume_mod, pitch_rand, always, cooldown)
+
+
+# SoundManagerParent's own condition for queueing a sound without always_play.
+static func has_room(manager: Object) -> bool:
+	return (
+		not manager.players_available.empty()
+		and manager.sounds_to_play.size() < manager.MAX_SOUNDS
+	)
+
+
+static func _sink():
+	# The battle sink wins: during a battle UI sounds (level-up panels) travel with the snapshots.
+	var sink = _get_object(META_SINK)
+	# The battle scene is gone a frame before BattleHost notices; sounds of the next screen (the
+	# shop's _ready / first focus) belong to the UI sink already.
+	if sink != null and not sink.is_in_battle():
+		sink = null
+	return sink if sink != null else _get_object(META_UI_SINK)
 
 
 static func set_sink(sink: Object) -> void:
@@ -63,12 +84,19 @@ static func is_sound_path(path) -> bool:
 	return path.get_extension().to_lower() in SOUND_EXTENSIONS
 
 
-static func replay(sound: Resource, position, volume_mod: float, pitch_rand: float) -> void:
+# cooldown > 0: the host played it with playSingle; so does the client, with a slack for the
+# snapshot timing (sounds a cooldown apart on the host can fire a snapshot interval closer here).
+static func replay(
+	sound: Resource, position, volume_mod: float, pitch_rand: float, always := false, cooldown := 0.0
+) -> void:
 	Engine.set_meta(META_REPLAY, true)
-	if position == null:
-		SoundManager.play(sound, volume_mod, pitch_rand)
+	if position != null:
+		SoundManager2D.play(sound, position, volume_mod, pitch_rand, always)
+	elif cooldown > 0.0:
+		var client_cooldown: float = max(cooldown - SINGLE_COOLDOWN_SLACK, 0.01)
+		SoundManager.playSingle(sound, volume_mod, pitch_rand, always, client_cooldown)
 	else:
-		SoundManager2D.play(sound, position, volume_mod, pitch_rand)
+		SoundManager.play(sound, volume_mod, pitch_rand, always)
 	Engine.set_meta(META_REPLAY, false)
 
 

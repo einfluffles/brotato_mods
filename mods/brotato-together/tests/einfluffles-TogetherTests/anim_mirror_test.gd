@@ -3,6 +3,7 @@ extends Reference
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
 
 var t: Node = null  # the test mod (checks, helpers)
 
@@ -46,10 +47,10 @@ func run(test: Node, together: Node):
 	var anim_bytes := 0
 	var anim_count := 0
 	for msg in recorded:
-		for event in msg[1][7]:
+		for event in Snapshot.parse(msg[1]).events:
 			if event[0] == Snapshot.EVENT_ANIM:
 				anim_count += 1
-				anim_bytes += var2bytes(event).size()
+				anim_bytes += 8 + event[2].length()  # on the wire (sync/snapshot.gd)
 				if not anim_events.has(event[1]):
 					anim_events[event[1]] = {}
 				anim_events[event[1]][event[2]] = true
@@ -77,12 +78,11 @@ func run(test: Node, together: Node):
 	var seen := {"turret_shoot": false, "turret_y": 0.0, "spitter_shoot": false, "stray": 0}
 	var replay_start := OS.get_ticks_msec()
 	for msg in recorded:
-		var snap: Array = msg[1].duplicate()
-		snap[1] = replay_start + (snap[1] - recorded[0][1][1])
-		while OS.get_ticks_msec() < snap[1]:
+		var snap := SnapshotTests.retimed(msg, recorded, replay_start)
+		while OS.get_ticks_msec() < snap.t:
 			yield(t.get_tree(), "idle_frame")
 			_sample_anim_puppets(client, ids, seen)
-		client._on_snapshot(Snapshot.parse(snap))
+		client._on_snapshot(snap)
 	var drain_until := OS.get_ticks_msec() + 300
 	while OS.get_ticks_msec() < drain_until:
 		yield(t.get_tree(), "idle_frame")

@@ -5,6 +5,7 @@ extends Reference
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
 
 var _t: Node  # the test mod: _check, helpers, scene tree
 
@@ -220,11 +221,10 @@ func _check_runtime_snapshots(early, last, index: Dictionary, host_values: Dicti
 func _replay(client: Node, recorded: Array):
 	var replay_start := OS.get_ticks_msec()
 	for msg in recorded:
-		var snap: Array = msg[1].duplicate()
-		snap[1] = replay_start + (snap[1] - recorded[0][1][1])
-		while OS.get_ticks_msec() < snap[1]:
+		var snap := SnapshotTests.retimed(msg, recorded, replay_start)
+		while OS.get_ticks_msec() < snap.t:
 			yield(_t.get_tree(), "idle_frame")
-		client._on_snapshot(Snapshot.parse(snap))
+		client._on_snapshot(snap)
 	yield(_t.get_tree().create_timer(0.3), "timeout")
 
 

@@ -39,6 +39,19 @@ const WAVE_TIMER_TOLERANCE := 0.3
 # A killing blow's damage event arrives with the snapshot that drops the enemy, which the client
 # despawns a frame or two before replaying the event: keep the target findable for a moment.
 const DESPAWN_GRACE_MSEC := 1000
+# Own-player prediction only while the host's world moves: not while paused, not when the newest
+# snapshot is older than this (stall), and never more than MAX_REPLAY_INPUTS (0.5 s) ahead.
+const PREDICTION_STALE_MSEC := 250
+const MAX_REPLAY_INPUTS := 30
+# Faster than anything moves: a pooled node reused for a new entity under an old id; snap.
+const MAX_INTERP_SPEED := 6000.0  # px/s
+const MAX_POOLED_PER_TYPE := 128  # non-Entity puppets (projectiles, gold, consumables)
+const BRACHIOSAURUS_FOOT := (
+	"res://entities/units/enemies/jungle/bosses/brachiosaurus/"
+	+ "brachiosaurus_foot/brachiosaurus_foot.tscn"
+)
+const BOSS_PARTS := {BRACHIOSAURUS_FOOT: "Brachiosaurus"}  # scene -> boss node its _ready finds
+const PUPPET_TYPE_META := "brotato_together_puppet_type"
 
 var session: Node = null
 var input_sync: Node = null
@@ -52,6 +65,10 @@ var _clock_offset := 0.0  # local_msec - host_msec (min-filtered)
 var _has_clock := false
 var _main: Node = null
 var _entities := {}  # net id -> node
+var _entity_types := {}  # net id -> type idx of its node
+var _resolve_cache := {}  # see Snapshot.resolve
+var _newest_rx_msec := 0  # local time the newest snapshot (by host time) arrived
+var _puppet_pool := {}  # type idx -> pooled non-Entity puppets (out of the tree)
 var _last_positions := {}  # net id / "p<i>" -> Vector2
 var _despawned := {}  # net id -> [node, expires msec], for late damage events
 var _you := -1  # player slot this client controls (-1: spectator)
@@ -70,7 +87,6 @@ func setup(netplay_session: Node, local_input: Node) -> void:
 	input_sync = local_input
 	session.connect("message", self, "_on_message")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
-	get_tree().connect("node_added", self, "_on_node_added")
 
 
 func _ready() -> void:
@@ -123,6 +139,9 @@ func _on_battle_start(body) -> void:
 	RunStateCodec.apply(state)
 	_fill_coop_slots(RunData.get_player_count())
 	get_tree().paused = false
+	# Only until the battle scene is ready: no node_added handler for every node otherwise.
+	if not get_tree().is_connected("node_added", self, "_on_node_added"):
+		get_tree().connect("node_added", self, "_on_node_added")
 	if get_tree().change_scene(BATTLE_SCENE) != OK:
 		ModLoaderLog.error("Could not load the battle scene", LOG_NAME)
 	ModLoaderLog.info("Entering battle %s (wave %s)" % [_battle_id, RunData.current_wave], LOG_NAME)
@@ -146,6 +165,11 @@ func _reset_battle_state() -> void:
 	_type_data.clear()
 	_buffer.clear()
 	_entities.clear()
+	_entity_types.clear()
+	_resolve_cache = {}
+	_newest_rx_msec = 0
+	_free_puppet_pool()
+	_stop_watching_scenes()
 	_last_positions.clear()
 	_despawned.clear()
 	_has_clock = false
@@ -172,8 +196,14 @@ func _on_node_added(node: Node) -> void:
 		node.connect("ready", self, "_on_battle_scene_ready", [node], CONNECT_ONESHOT)
 
 
+func _stop_watching_scenes() -> void:
+	if get_tree().is_connected("node_added", self, "_on_node_added"):
+		get_tree().disconnect("node_added", self, "_on_node_added")
+
+
 # Runs right after main._ready(), before the first physics frame.
 func _on_battle_scene_ready(main: Node) -> void:
+	_stop_watching_scenes()
 	_main = main
 	# Local pause/aim handling off; pause goes to the host via input. main._physics_process stays
 	# on: it only recolors life bars.
@@ -268,6 +298,9 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		i -= 1
 	if i > 0 and _buffer[i - 1].t == snapshot.t:
 		return
+	if i == _buffer.size():
+		_newest_rx_msec = OS.get_ticks_msec()
+	Snapshot.resolve(snapshot, _resolve_cache)
 	_buffer.insert(i, snapshot)
 	for event in snapshot.events:
 		if _events.size() < MAX_QUEUED_EVENTS:
@@ -310,7 +343,8 @@ func _apply_players(
 			if i < from.players.size():
 				position = from.players[i][PF.POSITION].linear_interpolate(position, alpha)
 			_move(player, "p%s" % i, position)
-		_apply_player_stats(player, i, newest.players[i])
+		if Snapshot.has_stats(newest.players[i]):  # unknown until the host's first stats arrive
+			_apply_player_stats(player, i, newest.players[i])
 		var from_weapons: PoolRealArray = (
 			from.players[i][PF.WEAPONS]
 			if i < from.players.size()
@@ -324,15 +358,7 @@ func _apply_players(
 # Own player: newest host position + replay of inputs the host hasn't applied yet, so movement
 # responds immediately. Corrections (host disagrees) are blended out instead of snapping.
 func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> void:
-	var entry: Array = newest.players[i]
-	var predicted: Vector2 = entry[PF.POSITION]
-	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
-	for input in input_sync.history:
-		if input[0] > entry[PF.INPUT_ACK]:
-			predicted += input[1].normalized() * step
-	var zone: Rect2 = ZoneService.get_current_zone_rect()
-	predicted.x = clamp(predicted.x, zone.position.x, zone.end.x)
-	predicted.y = clamp(predicted.y, zone.position.y, zone.end.y)
+	var predicted := _own_target(player, newest.players[i])
 	if _own_base_t < 0:
 		_own_display = predicted
 	elif newest.t != _own_base_t:
@@ -341,6 +367,24 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 	_own_error *= exp(-delta * PREDICTION_ERROR_DECAY)
 	_own_display = predicted + _own_error
 	_move(player, "p%s" % i, _own_display)
+
+
+# Host position + the last MAX_REPLAY_INPUTS un-acked inputs; just the host position while the
+# host's world stands still (paused, or no fresh snapshots): else the client would walk through a
+# frozen world and glide back.
+func _own_target(player: Node2D, entry: Array) -> Vector2:
+	var predicted: Vector2 = entry[PF.POSITION]
+	if _paused or OS.get_ticks_msec() - _newest_rx_msec > PREDICTION_STALE_MSEC:
+		return predicted
+	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
+	var history: Array = input_sync.history
+	for k in range(max(0, history.size() - MAX_REPLAY_INPUTS), history.size()):
+		if history[k][0] > entry[PF.INPUT_ACK]:
+			predicted += history[k][1].normalized() * step
+	var zone: Rect2 = ZoneService.get_current_zone_rect()
+	predicted.x = clamp(predicted.x, zone.position.x, zone.end.x)
+	predicted.y = clamp(predicted.y, zone.position.y, zone.end.y)
+	return predicted
 
 
 # HUD values (the HUD listens to these signals). Level-ups only update visuals here: the game's
@@ -382,22 +426,31 @@ func _show_level_up(i: int) -> void:
 func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 	var alive := {}
 	var ids: PoolIntArray = to.ids
+	var max_jump: float = MAX_INTERP_SPEED * max(to.t - from.t, 1) / 1000.0
 	for i in ids.size():
 		var id := ids[i]
 		var node = _entities.get(id)
 		var fresh := false
+		if node != null and _entity_types.get(id) != to.types[i]:
+			_despawn(node)  # the host reused the id for another kind of entity
+			node = null
 		if node == null or not is_instance_valid(node):
 			node = _spawn(to.types[i])
 			if node == null:
 				continue
 			_entities[id] = node
+			_entity_types[id] = to.types[i]
 			_forget_despawned(node)  # reused from the pool: no longer the old id's target
 			fresh = true
 		alive[id] = true
 		var position: Vector2 = to.positions[i]
 		var j := Snapshot.index_of(from, id)
 		if j >= 0:
-			position = from.positions[j].linear_interpolate(position, alpha)
+			var start: Vector2 = from.positions[j]
+			if start.distance_to(position) <= max_jump:
+				position = start.linear_interpolate(position, alpha)
+			else:
+				_last_positions[id] = position  # teleport: no motion, no lerp across the map
 		_move(node, id, position)
 		if fresh:
 			_pose.spawned(node, _main)
@@ -410,6 +463,7 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 			_despawn(_entities[id])
 			_despawned[id] = [_entities[id], now + DESPAWN_GRACE_MSEC]
 			_entities.erase(id)
+			_entity_types.erase(id)
 			_last_positions.erase(id)
 	for id in _despawned.keys():
 		if now > _despawned[id][1]:
@@ -443,25 +497,25 @@ func _move(node: Node, key, position: Vector2) -> void:
 
 func _spawn(type_idx: int) -> Node:
 	var scene = _types.get(type_idx)
-	if scene == null:
+	if not scene is PackedScene or not _boss_present(scene):
 		return null
 	# Units go through main's pool like in the game: they return themselves to it when their
-	# death animation ends (Entity.free_entity), and are reused from it here.
+	# death animation ends (Entity.free_entity), and are reused from it here. Other puppets
+	# (projectiles, gold, consumables) use the client's own pool per type (_despawn).
 	var pool_id: int = scene.get_instance_id()
 	if not _main._pool.has(pool_id):
 		_main._pool[pool_id] = []
-	var pool: Array = _main._pool[pool_id]
-	var pooled = null
-	while pooled == null and not pool.empty():
-		var candidate = pool.pop_back()
-		if is_instance_valid(candidate):
-			pooled = candidate
+	var pooled = _pop_valid(_main._pool[pool_id])
+	if pooled == null:
+		pooled = _pop_valid(_puppet_pool.get(type_idx, []))
 	var node: Node = pooled if pooled != null else scene.instance()
 	var container = _container_for(node)
 	if container == null:
 		if node != pooled:
 			node.free()
 		return null
+	if not node is Entity:
+		node.set_meta(PUPPET_TYPE_META, type_idx)
 	container.add_child(node)
 	if node is Entity:
 		node.pool_id = pool_id
@@ -487,6 +541,21 @@ func _spawn(type_idx: int) -> Node:
 	return node
 
 
+static func _pop_valid(pool: Array):
+	while not pool.empty():
+		var candidate = pool.pop_back()
+		if is_instance_valid(candidate):
+			return candidate
+	return null
+
+
+# Boss parts find their boss in _ready (BrachiosaurusFoot: find_node("Brachiosaurus"), then calls
+# into it): wait for the boss puppet (snapshots list bosses first; its type may arrive later).
+func _boss_present(scene: PackedScene) -> bool:
+	var boss_name = BOSS_PARTS.get(scene.resource_path)
+	return boss_name == null or _main.find_node(boss_name, true, false) != null
+
+
 func _container_for(node: Node) -> Node:
 	if node is PlayerProjectile:
 		return _main.get("_player_projectiles")
@@ -498,7 +567,7 @@ func _container_for(node: Node) -> Node:
 
 
 # Units play their real death animation (cleaning_up: no loot, stats or challenge side effects)
-# and pool themselves afterwards; everything else just goes away.
+# and pool themselves afterwards; everything else goes to the client's pool for its type.
 func _despawn(node) -> void:
 	if not is_instance_valid(node):
 		return
@@ -508,8 +577,24 @@ func _despawn(node) -> void:
 			args.cleaning_up = true
 			args.enemy_killed_by_player = false
 			node.die(args)
-	else:
+		return
+	var type_idx = node.get_meta(PUPPET_TYPE_META) if node.has_meta(PUPPET_TYPE_META) else null
+	var pool: Array = _puppet_pool.get(type_idx, [])
+	if type_idx == null or pool.size() >= MAX_POOLED_PER_TYPE or node.get_parent() == null:
 		node.queue_free()
+		return
+	node.get_parent().remove_child(node)
+	pool.append(node)
+	_puppet_pool[type_idx] = pool
+
+
+# Pooled puppets are out of the tree: the scene change wouldn't free them.
+func _free_puppet_pool() -> void:
+	for pool in _puppet_pool.values():
+		for node in pool:
+			if is_instance_valid(node):
+				node.free()
+	_puppet_pool.clear()
 
 
 # One-shot feedback fires when its snapshot's time is rendered, so a damage number appears
@@ -521,10 +606,10 @@ func _fire_events(render_t: float) -> void:
 			continue
 		if event[0] == Snapshot.EVENT_DAMAGE and event.size() == 6:
 			_show_damage(event)
-		elif event[0] == Snapshot.EVENT_SOUND and event.size() == 5:
+		elif event[0] == Snapshot.EVENT_SOUND and event.size() == 7:
 			var sound = _types.get(event[1])
 			if sound is AudioStream and (event[2] == null or typeof(event[2]) == TYPE_VECTOR2):
-				SoundRelay.replay(sound, event[2], float(event[3]), float(event[4]))
+				SoundRelay.replay(sound, event[2], event[3], event[4], event[5], event[6])
 		elif event[0] == Snapshot.EVENT_ANIM:
 			_anim_mirror.replay(_entities, event)
 

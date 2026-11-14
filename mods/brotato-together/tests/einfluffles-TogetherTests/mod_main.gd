@@ -19,6 +19,8 @@ const AnimMirrorTest := preload("res://mods-unpacked/einfluffles-TogetherTests/a
 const RuntimePartsTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/runtime_parts_tests.gd"
 )
+const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
+const PerfTests := preload("res://mods-unpacked/einfluffles-TogetherTests/battle_perf_tests.gd")
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 170.0
 const DEVICE := VirtualDevices.FIRST
@@ -28,11 +30,13 @@ var _failures := []
 var _seq := 0
 var _anim_test = AnimMirrorTest.new()  # kept alive across its yields
 var _runtime_parts = null  # kept alive across its coroutines
+var _perf = null  # kept alive across its coroutines
 
 
 func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
 	_runtime_parts = RuntimePartsTests.new(self)
+	_perf = PerfTests.new(self)
 	call_deferred("_run")
 
 
@@ -47,6 +51,8 @@ func _run() -> void:
 	get_tree().create_timer(WATCHDOG_SEC).connect("timeout", self, "_on_watchdog")
 	var together := get_node("/root/ModLoader/einfluffles-BrotatoTogether")
 	var input_sync: Node = together.input_sync
+	_perf.test_no_global_hooks(together)
+	SnapshotTests.new(self).run()
 
 	# Virtual actions exist and survive the game's InputMap rebuild.
 	_check(InputMap.has_action("ui_accept_%s" % DEVICE), "virtual actions registered")
@@ -126,6 +132,7 @@ func _run() -> void:
 	yield(_test_pose_mirror(together), "completed")
 	yield(_anim_test.run(self, together), "completed")
 	yield(_runtime_parts.test_runtime_parts(together), "completed")
+	yield(_perf.test_battle(together), "completed")
 	# Variants the game actually uses (ZoneService.bullets_hell); BulletHell_0..3 are unused
 	# leftovers (2 and 3 are even broken in the game: bullet groups in a single-bullet variable).
 	for variant in ["BulletHell_Left", "BulletHell_Top_2", "BulletHell_Bottom_3"]:
@@ -227,12 +234,12 @@ func _test_battle_loopback(together: Node):
 	var damage_events := 0
 	var sound_events := 0
 	for msg in recorded:
-		for event in msg[1][7]:
+		for event in Snapshot.parse(msg[1]).events:
 			damage_events += 1 if event[0] == Snapshot.EVENT_DAMAGE else 0
 			sound_events += 1 if event[0] == Snapshot.EVENT_SOUND else 0
 	print("  info: recorded %d damage and %d sound events" % [damage_events, sound_events])
 	_check(damage_events > 0 and sound_events > 0, "host records damage and sound events")
-	var last: Dictionary = Snapshot.parse(recorded[-1][1])
+	var last: Dictionary = SnapshotTests.views(recorded)[-1]
 	_check(not last.empty(), "host snapshot well-formed")
 	_check(last.players.size() == 2, "snapshot has both players")
 	_check(last.ids.size() > 0, "host battle has entities after 6 s (%d)" % last.ids.size())
@@ -261,14 +268,13 @@ func _test_battle_loopback(together: Node):
 	var max_floating_texts := 0  # damage numbers only live ~1 s: sample during the replay
 	var replay_start := OS.get_ticks_msec()
 	for msg in recorded:
-		var snap: Array = msg[1].duplicate()
-		snap[1] = replay_start + (snap[1] - recorded[0][1][1])  # host t -> replay timeline
-		while OS.get_ticks_msec() < snap[1]:
+		var snap := SnapshotTests.retimed(msg, recorded, replay_start)  # host t -> replay timeline
+		while OS.get_ticks_msec() < snap.t:
 			yield(get_tree(), "idle_frame")
 			max_floating_texts = max(
 				max_floating_texts, puppet_main.get_node("%FloatingTexts").get_child_count()
 			)
-		client._on_snapshot(Snapshot.parse(snap))
+		client._on_snapshot(snap)
 	yield(get_tree().create_timer(0.3), "timeout")
 	_check(spawner.enemies.empty(), "client spawner spawned nothing itself")
 	if damage_events > 0:  # hits are random in a 6 s battle
@@ -318,10 +324,10 @@ func _test_battle_loopback(together: Node):
 	_check(not client._banner.visible, "pause banner hidden")
 
 	# Player 1 dies on the host: the puppet plays dead without running game logic.
-	var dead_snap: Array = recorded[-1][1].duplicate(true)
-	dead_snap[1] = client._buffer[-1].t + 1000  # newer than anything buffered
-	dead_snap[3][1][Snapshot.PlayerField.HEALTH] = 0
-	client._on_snapshot(Snapshot.parse(dead_snap))
+	var dead_snap := Snapshot.parse(recorded[-1][1])
+	dead_snap.t = client._buffer[-1].t + 1000  # newer than anything buffered
+	dead_snap.players[1][Snapshot.PlayerField.HEALTH] = 0
+	client._on_snapshot(dead_snap)
 	yield(get_tree().create_timer(1.3), "timeout")
 	var player2: Node = puppet_main.get("_players")[1]
 	_check(player2.dead and not player2._weapons_container.visible, "dead player shown dead")
@@ -337,7 +343,9 @@ func _test_battle_loopback(together: Node):
 	# Own-player prediction: newest host position + un-acked inputs (ack is 0 for local players).
 	var input_sync: Node = together.input_sync
 	client._you = 0
+	_perf.test_prediction(client, input_sync, player, last.players[0])
 	input_sync.history = [[1, Vector2(0.3, 0)], [2, Vector2(1, 0)]]
+	client._newest_rx_msec = OS.get_ticks_msec()  # fresh: prediction on
 	yield(get_tree(), "idle_frame")
 	yield(get_tree(), "idle_frame")
 	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
@@ -362,11 +370,11 @@ func _test_battle_loopback(together: Node):
 	_check(victim != null, "found an enemy puppet")
 	if victim != null:
 		# The snapshot that drops the enemy carries its killing blow; the event replays after.
-		var survivors := {"ids": PoolIntArray(), "types": PoolIntArray(), "positions": []}
+		var survivors := {"ids": PoolIntArray(), "types": PoolIntArray(), "positions": [], "t": 0}
 		for id in client._entities:
 			if id != victim_id:
 				survivors.ids.append(id)
-				survivors.types.append(0)
+				survivors.types.append(client._entity_types[id])
 				survivors.positions.append(client._entities[id].global_position)
 		survivors.positions = PoolVector2Array(survivors.positions)
 		var survivor_flags := []
@@ -532,11 +540,10 @@ func _test_pose_mirror(together: Node):
 	yield(client, "battle_entered")
 	var replay_start := OS.get_ticks_msec()
 	for msg in recorded:
-		var snap: Array = msg[1].duplicate()
-		snap[1] = replay_start + (snap[1] - recorded[0][1][1])
-		while OS.get_ticks_msec() < snap[1]:
+		var snap := SnapshotTests.retimed(msg, recorded, replay_start)
+		while OS.get_ticks_msec() < snap.t:
 			yield(get_tree(), "idle_frame")
-		client._on_snapshot(Snapshot.parse(snap))
+		client._on_snapshot(snap)
 	yield(get_tree().create_timer(0.3), "timeout")
 	client.set_process(false)
 	var puppets := {}
@@ -551,7 +558,6 @@ func _test_pose_mirror(together: Node):
 	client._leave_battle()
 	Puppet.set_active(false)
 	host.set_process(true)
-	_test_malformed_poses(recorded[-1][1])
 
 
 func _check_puppet_poses(client: Node, puppets: Dictionary, host_values: Dictionary, last) -> void:
@@ -593,27 +599,6 @@ func _check_puppet_poses(client: Node, puppets: Dictionary, host_values: Diction
 		puppets.tree, PoolRealArray([PI - 0.1, x]), PoolRealArray([-PI + 0.1, x]), 0.5
 	)
 	_check(_angle_diff(puppet_pivot.rotation, PI) < 0.01, "pose interpolates the shortest angle")
-
-
-# The client validates poses/flags it receives: any malformed snapshot is dropped as a whole.
-func _test_malformed_poses(body: Array) -> void:
-	var count: int = body[4].size()
-	var bad_poses := {
-		"index out of range": [count, 1, 0.5],
-		"indices not ascending": [1, 1, 0.5, 0, 1, 0.5],
-		"too many values": [0, 1000] + range(1000),
-		"truncated run": [0, 3, 0.5],
-		"fractional index": [0.5, 1, 0.5],
-		"NaN value": [0, 1, NAN],
-		"over the value limit": [0, 49] + range(49),
-	}
-	for label in bad_poses:
-		var snap := body.duplicate()
-		snap[9] = PoolRealArray(bad_poses[label])
-		_check(Snapshot.parse(snap).empty(), "malformed poses rejected: %s" % label)
-	var bad_flags := body.duplicate()
-	bad_flags[8] = PoolByteArray()
-	_check(count == 0 or Snapshot.parse(bad_flags).empty(), "flags of the wrong size rejected")
 
 
 func _spawn_on_host(spawner, path: String, type: int, position: Vector2, data = null) -> Node:
@@ -667,9 +652,9 @@ func _test_bullet_hell(together: Node, variant: String):
 
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
-	var snap2: Array = msg[1].duplicate(true)
-	snap2[1] = OS.get_ticks_msec() - 1000
-	client._on_snapshot(Snapshot.parse(snap2))
+	var snap2 := Snapshot.parse(msg[1])
+	snap2.t = OS.get_ticks_msec() - 1000
+	client._on_snapshot(snap2)
 	yield(get_tree(), "idle_frame")
 	yield(get_tree(), "idle_frame")
 	var client_visible := 0
@@ -711,6 +696,7 @@ func _test_shop_loopback(together: Node):
 	_check(host_shop.filename == shop_sync.SHOP_SCENE, "host co-op shop loaded")
 	shop_sync._host_shop = host_shop
 	shop_sync._shop_id = 7
+	_perf.test_shop_compare(shop_sync)
 	var before: Dictionary = bytes2var(var2bytes(shop_sync._shop_body()), false)
 	var host_before := _shop_slots(host_shop, 0)
 

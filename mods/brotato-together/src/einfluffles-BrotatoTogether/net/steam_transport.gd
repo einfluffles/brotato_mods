@@ -39,6 +39,7 @@ var host_id := 0
 var members := []  # steam ids in the lobby, excluding local
 
 var _lobby_tag := ""
+var _next_send_warning_msec := 0
 
 
 func setup(lobby_tag: String) -> bool:
@@ -121,8 +122,12 @@ func send(steam_id: int, channel: int, data: PoolByteArray) -> void:
 	else:
 		flags |= SEND_UNRELIABLE | SEND_NO_NAGLE
 	var result = steam.sendMessageToUser(steam_id, data, flags, channel)
-	if result != RESULT_OK:
-		ModLoaderLog.debug("send to %s failed: %s" % [steam_id, result], LOG_NAME)
+	if result != RESULT_OK and OS.get_ticks_msec() >= _next_send_warning_msec:
+		_next_send_warning_msec = OS.get_ticks_msec() + 1000  # at most one per second
+		ModLoaderLog.warning(
+			"send to %s failed: %s (%d B, channel %s)" % [steam_id, result, data.size(), channel],
+			LOG_NAME
+		)
 
 
 func broadcast(channel: int, data: PoolByteArray) -> void:

@@ -16,11 +16,15 @@ const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const SoundRelay := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
+)
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const CHECK_INTERVAL := 0.1
 
 var session: Node = null
+var states_packed := 0  # compressed run states built (tests)
 
 # host
 var _host_shop: Node = null
@@ -39,7 +43,6 @@ func setup(netplay_session: Node) -> void:
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
-	get_tree().connect("node_added", self, "_on_node_added")
 
 
 func _ready() -> void:
@@ -71,6 +74,20 @@ func _process(delta: float) -> void:
 
 
 func _shop_body() -> Dictionary:
+	return _body_from(_shop_parts())
+
+
+func _body_from(parts: Dictionary) -> Dictionary:
+	states_packed += 1
+	return {
+		"shop_id": _shop_id,
+		"run": RunStateCodec.pack(parts.json),
+		"slots": parts.slots,
+		"go": parts.go,
+	}
+
+
+func _shop_parts() -> Dictionary:
 	var shop := _host_shop
 	var shop_args := [
 		shop._shop_items,
@@ -88,20 +105,20 @@ func _shop_body() -> Dictionary:
 			active.append(container.get_shop_item_node(i).active)
 		slots.append(active)
 	return {
-		"shop_id": _shop_id,
-		"run": RunStateCodec.encode(shop_args),
+		"json": RunStateCodec.encode_json(shop_args),
 		"slots": slots,
 		"go": shop._player_pressed_go_button.duplicate(),
 	}
 
 
+# Compares the JSON text: compressing only happens when something changed.
 func _send_if_changed() -> void:
-	var body := _shop_body()
-	var key := str(body.run.data.hash()) + var2str(body.slots) + var2str(body.go)
+	var parts := _shop_parts()
+	var key: String = parts.json + var2str(parts.slots) + var2str(parts.go)
 	if key == _last_sent_key:
 		return
 	_last_sent_key = key
-	session.broadcast_reliable(Protocol.Msg.SHOP_STATE, body)
+	session.broadcast_reliable(Protocol.Msg.SHOP_STATE, _body_from(parts))
 
 
 func _on_peer_ready(steam_id: int) -> void:
@@ -147,16 +164,35 @@ func _enter_shop(state: Dictionary) -> void:
 			[VirtualDevices.FIRST + i, CoopService.PlayerType.GAMEPAD_XBOX]
 		)
 	get_tree().paused = false
+	# Only while the puppet shop loads: no node_added handler for every node otherwise.
+	if not get_tree().is_connected("node_added", self, "_on_node_added"):
+		get_tree().connect("node_added", self, "_on_node_added")
 	if get_tree().change_scene(SHOP_SCENE) != OK:
 		ModLoaderLog.error("Could not load the shop scene", LOG_NAME)
 
 
+# The puppet shop reacts to mirrored state/cursors with its own sounds; the host's replace them.
+# Muted from node_added (not ready) so sounds from the shop's own _ready are covered too.
 func _on_node_added(node: Node) -> void:
 	if Puppet.is_active() and node.filename == SHOP_SCENE:
 		node.connect("ready", self, "_on_shop_ready", [node], CONNECT_ONESHOT)
+		SoundRelay.set_muted(true)
+		node.connect("tree_exited", self, "_on_puppet_shop_exited", [], CONNECT_ONESHOT)
+
+
+# The old scene leaves the tree before the next one is added, so this never undoes the battle's
+# mute (BattleClient mutes when main.tscn is ready).
+func _on_puppet_shop_exited() -> void:
+	SoundRelay.set_muted(false)
+
+
+func _stop_watching_scenes() -> void:
+	if get_tree().is_connected("node_added", self, "_on_node_added"):
+		get_tree().disconnect("node_added", self, "_on_node_added")
 
 
 func _on_shop_ready(shop: Node) -> void:
+	_stop_watching_scenes()
 	_client_shop = shop
 	# Leaving the shop would roll curses on locked items locally; the host decides those.
 	if shop.is_connected("tree_exited", shop, "_on_tree_exited"):
@@ -225,6 +261,7 @@ func _refresh_player(shop: Node, state: Dictionary, p: int) -> void:
 
 
 func _on_lobby_left() -> void:
+	_stop_watching_scenes()
 	_client_shop = null
 	_client_shop_id = 0
 	_pending = {}

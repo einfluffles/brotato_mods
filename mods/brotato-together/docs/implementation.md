@@ -7,17 +7,46 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Run state travels the save-file path: `ProgressData.get_run_state()` → `ProgressDataLoaderV3.serialize_run_state`
   → `JSON.print` → zstd; client: `JSON.parse` → `deserialize_run_state` → `RunData.resume_from_state`.
   The JSON step is required: the deserializers expect string keys / float numbers (~5 KB for 2 players).
-- Client loads `main.tscn` itself; `SceneTree.node_added` + the scene's `ready` signal freeze it right after
+- Client loads `main.tscn` itself; `SceneTree.node_added` (connected only from BATTLE_START until the scene
+  is ready — no handler for every node otherwise, also in the shop) + the scene's `ready` signal freeze it right after
   `main._ready()` (before the first physics frame): `main.set_process(false)` (pause/aim),
   wave manager / entity spawner / effect behaviors / stats manager processing off, every Timer `timeout`
   connected to main disconnected (`get_incoming_connections()`), players puppetized.
 - `main.tscn` spawns players from `CoopService.connected_players` → client fills one slot per host player.
-- Net ids: `EntitySpawner.*_respawned` signals (fired on every spawn incl. pool reuse) + "absent from last
-  snapshot ⇒ new id" for gold/consumables. Type = node `filename`, sent once per battle (TYPE_DEF).
+- Net ids (u16, wrapping, skipping ids alive in the last snapshot): `EntitySpawner.*_respawned` signals (fired
+  on every spawn incl. pool reuse) + "absent from last snapshot ⇒ new id" + the id is dropped on
+  `tree_exiting` (pools take nodes out of the tree; the game's pools are LIFO, so a projectile/gold can be
+  pooled and reused between two snapshots). Clients snap instead of lerping when an entity moves faster than
+  6000 px/s, and respawn when an id comes back with another type. Type = node `filename`, sent once per
+  battle (TYPE_DEF); the wave's unit scenes, the players' projectile scenes and gold are announced with
+  BATTLE_START so clients `load()` them while the scene loads, not mid-wave.
+- Snapshot wire format (`sync/snapshot.gd`, protocol 4): hand-packed bytes, little endian. u32 battle id,
+  u32 host msec, u16 wave time (1/100 s); per player u8 flags, i16 x/y (0.5 px), varint input ack,
+  [zigzag varints health/max health/gold, varint level, f32 xp], u8 weapon count + "sprite moved" bitmask,
+  i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle); u16 entity count, types as runs
+  [varint type, varint length], u16 net ids, 4-bit flags, i16 x/y per entity not resting; poses as
+  [varint index, u8 count, f32 values]; u8 event count + events (damage 7-8 B, sound 5-10 B, anim
+  8 B + name). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
+  Sparse data: `FLAG_REST` entities (unmoved for 4 snapshots: gold, structures, idle units) leave out their
+  position except every 15th snapshot (staggered by id); player HUD stats only for 4 snapshots after a
+  change and every 10th. The client fills both from earlier snapshots (`Snapshot.resolve`, which also builds
+  the id → index map used for interpolation) and skips a resting entity it never saw until its refresh.
+  Events are capped at 48 per snapshot (`Snapshot.select_events`: duplicate sounds go first, then enemy
+  damage numbers, sounds, player damage; animations last). Sizes incl. envelope, synthetic waves (test
+  `snapshot_tests.gd`): small ~40 entities / mid ~140 / late ~300: see the test output; mid is well under
+  the ~1200 B Steam MTU.
+- Own-player prediction replays at most the last 30 un-acked inputs (0.5 s) and none while the host paused
+  or when the newest snapshot arrived more than 250 ms ago (stall): the player stays with the frozen world.
+- Client puppets of non-Entity scenes (projectiles, gold, consumables) are pooled per type like the game's
+  Entity pool (out of the tree; freed when the battle state resets).
+- Boss parts: clients spawn in snapshot order and the host lists `bosses` first; a `BrachiosaurusFoot` waits
+  until a "Brachiosaurus" puppet exists (its `_ready` finds it by name). Extensions skip, while puppeting,
+  the foot's `shoot()` and `StayEdgesOfMapMovementBehavior.move_away()` (called by the foot's `_ready` on its
+  boss; needs `init()`, which puppets never run).
 - Puppet = `propagate_call("set_physics_process", [false])`, body `MODE_STATIC`, no collision layers,
   all Area2D monitoring off; idle processing (AnimationPlayers) stays on. `update_animation(motion)` is called
   with the interpolated motion for walk animation; facing comes from the host afterwards.
-- Per-entity flags (3 bits each, packed): `sprite.scale.x < 0` (facing; behaviors turn units toward their
+- Per-entity flags (4 bits each, packed; the 4th is `FLAG_REST`): `sprite.scale.x < 0` (facing; behaviors turn units toward their
   target and knockback would otherwise flip puppets), `!visible` (stampede dinos hide before charging) and
   `sprite.flip_h` (`JumpAttackBehavior` turns the sprite toward its landing spot and never resets it).
 - Poses (`sync/pose.gd`): parts that physics code turns, sent sparsely only for scenes that have them,
@@ -67,7 +96,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   so `BaseShop._ready` rolls nothing; updates re-run the per-player part of `BaseShop._ready`
   (`set_weapons_data/items_data`, `_update_stats`, gold label, reroll price via `ItemService.get_reroll_price`,
   `ShopItem.set_shop_item/activate/deactivate`, `_update_visual_locks`, checkmarks). Client disconnects
-  `BaseShop._on_tree_exited` (rolls curses on locked items).
+  `BaseShop._on_tree_exited` (rolls curses on locked items). The host checks every 0.1 s by comparing the
+  run state's JSON text (+ slots, Go flags); zstd only runs when something changed.
 - **Level-up / crate panels** (`sync/upgrades_sync.gd`): per player container state from `_old_upgrades`,
   `_level`, `_reroll_price`, `_item_data`, `_checkmark_group`; client re-implements
   `show_upgrades_for_level` without `ItemService.get_upgrades` and uses `show_item` for crates (item rebuilt
@@ -89,14 +119,17 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `FloatingTextManager._on_unit_took_damage`, `EffectsManager._on_unit_took_damage` — with a hitbox-less
   `TakeDamageArgs`, plus `Unit.flash()`.
 - Sounds: extensions of `SoundManager.play/playSingle` and `SoundManager2D.play` route through
-  `session/sound_relay.gd`. The host records every sound (stream path via the per-battle type table); a client
-  in a battle drops locally triggered sounds (e.g. step sounds from puppet walk animations, which are method
-  tracks) and plays only replays.
+  `session/sound_relay.gd`. The host records only sounds the game queues (stream path via the per-battle type
+  table): not when all players are busy / the queue is full (`SoundManagerParent.MAX_SOUNDS`) without
+  `always_play`, nor `playSingle` within its cooldown (detected after the call: `can_play_sound` stamps
+  `_last_played` only when it passes). Clients replay `playSingle` sounds as `playSingle` (cooldown minus
+  0.1 s for snapshot timing) and pass `always_play` on. A client in a battle drops locally triggered sounds
+  (e.g. step sounds from puppet walk animations, which are method tracks) and plays only replays.
 - Outside battle (shop, selection screens, end of run) `sync/ui_sounds.gd` is the host's sink instead: sounds
   are batched per frame and sent as `UI_SOUNDS` (reliable; `res://` path, volume, pitch, position). The
   level-up/crate panels live in `main.tscn`, so their sounds already travel with the battle snapshots. The
   client checks paths like `BattleClient._define_type` (`SoundRelay.is_sound_path` + `ResourceLoader.exists`
-  + `AudioStream`) and clamps volume/pitch. The puppet shop is muted from `node_added` until it leaves the
-  tree (mirrored state and cursors would replay e.g. button focus sounds); ClientView isn't mirrored and
+  + `AudioStream`) and clamps volume/pitch. The puppet shop is muted (`ShopSync`, from `node_added` while it
+  loads) until it leaves the tree (mirrored state and cursors would replay e.g. button focus sounds); ClientView isn't mirrored and
   stays audible. Sounds played while the host's tree is paused (pause menu) aren't recorded. UI pages that
   play their own `AudioStreamPlayer` (profile, codex, item sets) bypass SoundManager; they're host-only.
