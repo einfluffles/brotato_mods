@@ -15,6 +15,7 @@ const SoundRelay := preload(
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const MenuUxTests := preload("res://mods-unpacked/einfluffles-TogetherTests/menu_ux_tests.gd")
 const AnimMirrorTest := preload("res://mods-unpacked/einfluffles-TogetherTests/anim_mirror_test.gd")
 const RuntimePartsTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/runtime_parts_tests.gd"
@@ -134,8 +135,11 @@ func _run() -> void:
 	# leftovers (2 and 3 are even broken in the game: bullet groups in a single-bullet variable).
 	for variant in ["BulletHell_Left", "BulletHell_Top_2", "BulletHell_Bottom_3"]:
 		yield(_test_bullet_hell(together, variant), "completed")
+	var menu_ux = MenuUxTests.new()
+	yield(menu_ux.run_battle_tests(self, together), "completed")
 	yield(_test_shop_loopback(together), "completed")
 	yield(_test_menu_mirror(together), "completed")
+	yield(menu_ux.run_menu_tests(self, together), "completed")
 	_finish()
 
 

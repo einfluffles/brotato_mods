@@ -1,10 +1,17 @@
 extends Control
 # Client screen outside battle and shop: connection status, plus — while the host is in a menu —
-# one card per player showing what that player's cursor is on (the game's own ItemPanelUI) and
-# whether they're ready. Replaces the local game scene so the client's own menus don't react to
+# the host's selection grid with every player's cursor (ui/selection_grid.gd) and one card per
+# player showing what that player's cursor is on (the game's own ItemPanelUI) and whether
+# they're ready. Replaces the local game scene so the client's own menus don't react to
 # its input (all input goes to the host).
 
+const SelectionGrid := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/selection_grid.gd"
+)
 const ITEM_PANEL_SCENE := "res://ui/menus/ingame/item_panel_ui.tscn"
+# Between two mirrored screens (battle -> shop) the view may show for a moment: stay neutral
+# instead of flashing "Waiting for the host" unless nothing arrives for this long.
+const WAITING_DELAY_SEC := 1.5
 const KIND_TITLES := {
 	"character_selection": "Character selection",
 	"weapon_selection": "Weapon selection",
@@ -17,8 +24,10 @@ var session: Node = null
 
 var _status := Label.new()
 var _title := Label.new()
+var _grid := SelectionGrid.new()
 var _cards := HBoxContainer.new()
 var _panels := []  # per player: {label: Label, panel: ItemPanelUI}
+var _age := 0.0
 
 
 func _ready() -> void:
@@ -38,12 +47,16 @@ func _ready() -> void:
 	for label in [_status, _title]:
 		label.align = Label.ALIGN_CENTER
 		column.add_child(label)
+	_grid.alignment = BoxContainer.ALIGN_CENTER
+	_grid.visible = false
+	column.add_child(_grid)
 	_cards.alignment = BoxContainer.ALIGN_CENTER
 	_cards.add_constant_override("separation", 32)
 	column.add_child(_cards)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_age += delta
 	if session == null:
 		return
 	var host_id: int = session.transport.host_id
@@ -54,7 +67,7 @@ func _process(_delta: float) -> void:
 		if session.peers[host_id].rtt_ms >= 0:
 			rtt = "%d ms" % session.peers[host_id].rtt_ms
 	_status.text = "brotato:together — connected to %s (rtt %s) — F9: menu" % [host_name, rtt]
-	if _panels.empty():
+	if _panels.empty() and _title.text == "" and _age >= WAITING_DELAY_SEC:
 		_title.text = "Waiting for the host…"
 
 
@@ -70,6 +83,9 @@ func show_menu(state: Dictionary) -> void:
 		_panels.append(_new_card())
 	for p in count:
 		_update_card(_panels[p], p, state.players[p], p == int(state.get("you", -1)))
+	_grid.set_grids(state.get("grids", {}))
+	_grid.set_cursors(state.players)
+	_grid.visible = _grid.inventory_count() > 0
 
 
 func _new_card() -> Dictionary:
@@ -84,7 +100,7 @@ func _new_card() -> Dictionary:
 
 
 func _update_card(card: Dictionary, p: int, entry, is_you: bool) -> void:
-	if typeof(entry) != TYPE_ARRAY or entry.size() != 4:
+	if typeof(entry) != TYPE_ARRAY or entry.size() < 4:
 		return
 	var id: String = str(entry[0])
 	var ready: bool = bool(entry[3])

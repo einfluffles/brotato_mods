@@ -14,9 +14,11 @@ enum Msg {
 	FOCUS,  # host -> client: scene, cursors [[emulator path, player, control path]]
 	SHOP_STATE,  # host -> client: shop_id, run (RunStateCodec incl. shop), slots, go
 	UPGRADES_STATE,  # host -> client: battle_id, visible, run, players (see upgrades_sync.gd)
-	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, is_random, ready]]
+	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, random, ready, inv, idx]],
+	#   grids (on change; see menu_sync.gd)
 	BATTLE_PAUSE,  # host -> client: battle_id, paused
 	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
+	RETRY_PROMPT,  # host -> client: battle_id, visible, retry, retries, player, name
 }
 
 const VERSION := 4

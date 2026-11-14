@@ -101,9 +101,32 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   from `ItemService` base + `deserialize_and_merge`).
 - **Cursors** (`sync/focus_sync.gd`): every `FocusEmulator` in the scene; emulator + focused control sent as
   child-index paths from the scene root (`ui/scene_paths.gd`), applied through the `focused_control` setter.
+  The latest message per scene stays pending (10 s) until every cursor resolves to a visible control
+  (scene still loading, retry prompt not shown yet) and is retried every frame.
 - **Selection screens / end of run** (`sync/menu_sync.gd` + `ui/client_view.gd`): grids depend on local
-  unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering), so the client
-  shows `ItemPanelUI` cards for the item id under each cursor + `_has_player_selected` instead.
+  unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
+  run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),
+  so they are not run on the client. Instead the host sends its grids (`BaseSelection._get_inventories()`,
+  visible ones: columns + ordered `[my_id, random/special/locked flags]`, only when they change) and each
+  cursor as `[inventory, element index]`; `ui/selection_grid.gd` draws them with ids looked up in
+  `ItemService` (unknown ids → "?") and per-player colour borders (thicker when `_has_player_selected`),
+  plus `ItemPanelUI` cards for the item under each cursor.
+- **Wave failed** (`sync/retry_sync.gd`): `main.gd :: _on_EndWaveTimer_timeout` shows `UI/RetryWave`, which
+  never runs on the puppet (timer callbacks disconnected). Host sends `RETRY_PROMPT` (visible, its
+  `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's `FocusEmulator` index 0 + name);
+  the client shows its copy with `confirm/cancel_button_pressed = true` (local clicks do nothing) and a
+  "waiting for Pn" line. FocusSync mirrors the cursor.
+- **Battle → next screen**: on `BATTLE_END` the client keeps the frozen battle (muted) until the shop / next
+  battle / menu state replaces it (fallback to the client view after 2 s); the view only says "Waiting for
+  the host" after 1.5 s.
+- **F9 panel input** (`ui/together_menu.gd`, `ui/menu_input_guard.gd`): `_input` runs in reverse tree order, so
+  while open a guard node kept as the root's last child sees key/pad events first, marks them handled (scene,
+  FocusEmulators, `CoopService`, GUI never see them) and `Input.action_release`s what they pressed (polling
+  stays neutral); after closing it also swallows the releases of keys pressed while open (the game pauses /
+  goes back on release). Mouse events pass; `InputService._input` hides the cursor on every event in co-op,
+  so the panel shows it again in `_input`/`_process`. Pad: hold `JOY_SELECT` (unbound in the game's InputMap).
+  Clients send neutral `INPUT` while it is open (`InputSync.local_input_blocked`). `ask_confirm()` = Yes/No
+  sub-state.
 - Puppet pitfalls found by tests: `Enemy.respawn()` → `update_target()` needs a spawner (use a visual revive);
   `PlayerProjectile.shoot()` needs weapon stats; enemy scenes have internal Timers (pause them).
 

@@ -198,11 +198,11 @@ func _test_leave_confirmation(transport: Node) -> void:
 	menu._on_leave_pressed()
 	_t._check(transport.is_active(), "first Leave click mid-run only asks")
 	_t._check(
-		menu._leave_button.text == "Really leave?" and "Leave the lobby?" in menu.details_text(),
+		menu._confirm_box.visible and "Leave the lobby?" in menu._confirm_label.text,
 		"leave confirmation shown"
 	)
-	menu._on_leave_pressed()
-	_t._check(not transport.is_active(), "second click leaves")
+	menu._on_confirm_yes()
+	_t._check(not transport.is_active(), "confirming leaves")
 	menu.close()
 
 	# Steam invite while mid-run: nothing happens until the player confirms.

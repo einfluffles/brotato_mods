@@ -18,6 +18,8 @@ var devices := {}
 
 # client: recent [seq, move] pairs, replayed on top of the host's position for prediction
 var history := []
+# client: the F9 panel is open and owns the keyboard/pad; the host gets neutral input
+var local_input_blocked := false
 
 # client
 var _seq := 0
@@ -55,11 +57,15 @@ func _send_local_input() -> void:
 		return
 	_seq += 1
 	var buttons := 0
-	for i in VirtualDevices.BUTTON_ACTIONS.size():
-		if Input.is_action_pressed(VirtualDevices.BUTTON_ACTIONS[i]):
-			buttons |= 1 << i
-	var move := _local_movement()
-	session.send_unreliable(host_id, Protocol.Msg.INPUT, [_seq, move, _local_aim(), buttons])
+	var move := Vector2.ZERO
+	var aim := Vector2.ZERO
+	if not local_input_blocked:
+		for i in VirtualDevices.BUTTON_ACTIONS.size():
+			if Input.is_action_pressed(VirtualDevices.BUTTON_ACTIONS[i]):
+				buttons |= 1 << i
+		move = _local_movement()
+		aim = _local_aim()
+	session.send_unreliable(host_id, Protocol.Msg.INPUT, [_seq, move, aim, buttons])
 	history.append([_seq, move])
 	if history.size() > HISTORY_SIZE:
 		history.pop_front()
