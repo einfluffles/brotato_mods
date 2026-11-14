@@ -148,6 +148,7 @@ func _battle_start_body() -> Dictionary:
 		"run": RunStateCodec.encode(),
 		"types": types_by_idx,
 		"paused": _paused,
+		"colors": CoopService.bt_slot_colors.duplicate(),
 	}
 
 

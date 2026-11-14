@@ -42,7 +42,7 @@ func _bt_init_colors() -> void:
 		bt_palette = player_colors.duplicate() + BT_EXTRA_COLORS
 		bt_slot_colors = range(player_colors.size())
 	if not is_connected("connected_players_updated", self, "_bt_on_players_updated"):
-		var _e = connect("connected_players_updated", self, "_bt_on_players_updated")
+		connect("connected_players_updated", self, "_bt_on_players_updated")
 
 
 func _bt_on_players_updated(_players) -> void:
@@ -83,7 +83,7 @@ func bt_apply_colors() -> void:
 			devices.append(player[0])
 		for device in _bt_picks.keys():
 			if not devices.has(device):
-				var _erased = _bt_picks.erase(device)
+				_bt_picks.erase(device)
 		for p in player_colors.size():
 			var pick = _bt_picks.get(devices[p], -1) if p < devices.size() else -1
 			slots.append(pick if pick >= 0 and not slots.has(pick) else -1)

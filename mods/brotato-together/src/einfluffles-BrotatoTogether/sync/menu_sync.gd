@@ -83,28 +83,63 @@ func _state() -> Dictionary:
 	var players := []
 	var selected = _scene.get("_has_player_selected")
 	var inventories := _inventories()
+	var locked_panels: Array = (
+		_scene._get_locked_panels() if _scene.has_method("_get_locked_panels") else []
+	)
 	for p in count:
 		var control = _focused_control(p)
 		var id := ""
 		var label := ""
 		var is_random := false
 		var position := [-1, -1]  # [inventory, index] in grids_state()
+		var lock_text := ""  # what the host's LockedPanel shows instead of the item
+		var locked := false  # locked by a challenge: the client localises the text itself
 		if control is InventoryElement:
 			is_random = control.is_random
 			if control.item != null:
 				id = control.item.my_id
+				locked = (
+					control.is_special
+					and not is_random
+					and control.item.get("is_locked") == true
+				)
+			if control.is_special and not is_random and p < locked_panels.size():
+				lock_text = _locked_text(locked_panels[p])
 			var inventory: int = inventories.find(control.get_parent())
 			if inventory >= 0:
 				position = [inventory, _elements_of(inventories[inventory]).find(control)]
 		elif control is Button:
 			label = control.text
 		var ready: bool = selected is Array and p < selected.size() and selected[p]
-		players.append([id, label, is_random, ready, position[0], position[1]])
-	return {
+		players.append(
+			[id, label, is_random, ready, position[0], position[1], lock_text, locked]
+		)
+	var state := {
 		"kind": _scene.filename.get_file().get_basename(),
 		"count": count,
 		"players": players,
+		"colors": CoopService.bt_slot_colors.duplicate(),
+		"max": CoopService.get_max_players(),
+		"reward": _scene._get_reward_type() if _scene.has_method("_get_reward_type") else -1,
 	}
+	# Character selection while players can join: hold progress of those joining right now.
+	if (
+		_scene.has_method("_get_coop_join_panels")
+		and RunData.is_coop_run
+		and CoopService.listening_for_inputs
+	):
+		var joining := []
+		for progress in CoopService.connection_progress:
+			joining.append(stepify(progress, 0.1))
+		state["join"] = joining
+	return state
+
+
+static func _locked_text(panel) -> String:
+	if panel == null or not panel.visible:
+		return ""
+	var description = panel.get("_description")
+	return description.text if description is Label else ""
 
 
 # Visible selection grids in tree order: {random_icon, inventories: [[columns, [[id, flags]]]]}.
@@ -170,6 +205,7 @@ func receive_state(body) -> void:
 		return
 	if typeof(body.get("kind")) != TYPE_STRING or typeof(body.get("players")) != TYPE_ARRAY:
 		return
+	CoopService.bt_apply_remote_colors(body.get("colors"))
 	if body.has("grids"):
 		_client_grids = body.grids if typeof(body.grids) == TYPE_DICTIONARY else {}
 	body["grids"] = _client_grids

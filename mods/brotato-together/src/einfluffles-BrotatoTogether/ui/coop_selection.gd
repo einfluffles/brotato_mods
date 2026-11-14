@@ -17,7 +17,7 @@ var _color_hint: Control = null
 
 
 func _ready() -> void:
-	var _e = CoopService.connect("bt_player_colors_changed", self, "_on_colors_changed")
+	CoopService.connect("bt_player_colors_changed", self, "_on_colors_changed")
 
 
 static func is_character_selection(scene: Node) -> bool:
@@ -65,7 +65,7 @@ func _slot_label(panel: Control, i: int) -> void:
 		label.valign = Label.VALIGN_TOP
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.add_child(label)
-	var text := Text.text("COOP_PLAYER", [str(i + 1)])
+	var text: String = Text.text("COOP_PLAYER", [str(i + 1)])
 	if label.text != text:
 		label.text = text
 	label.add_color_override("font_color", CoopService.get_player_color(i))
@@ -94,13 +94,13 @@ static func color_hint_row() -> HBoxContainer:
 	row.alignment = BoxContainer.ALIGN_CENTER
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_constant_override("separation", 10)
-	_add_icon(row, CoopService.get_input_type_key_texture(
+	add_icon(row, CoopService.get_input_type_key_texture(
 		COLOR_ACTION, CoopService.PlayerType.KEYBOARD_AND_MOUSE, 0
 	))
 	var slash := Label.new()
 	slash.text = "/"
 	row.add_child(slash)
-	_add_icon(row, CoopService.get_input_type_key_texture(
+	add_icon(row, CoopService.get_input_type_key_texture(
 		COLOR_ACTION, CoopService.PlayerType.GAMEPAD_XBOX, 0
 	))
 	var label := Label.new()
@@ -109,7 +109,7 @@ static func color_hint_row() -> HBoxContainer:
 	return row
 
 
-static func _add_icon(row: Control, texture: Texture) -> void:
+static func add_icon(row: Control, texture: Texture) -> void:
 	var icon := TextureRect.new()
 	icon.texture = texture
 	icon.expand = true
@@ -126,7 +126,7 @@ func _input(event: InputEvent) -> void:
 		return
 	for p in CoopService.connected_players.size():
 		if Utils.is_player_action_pressed(event, p, COLOR_ACTION):
-			var _changed: bool = CoopService.bt_cycle_color(p, 1)
+			CoopService.bt_cycle_color(p, 1)
 			return
 
 

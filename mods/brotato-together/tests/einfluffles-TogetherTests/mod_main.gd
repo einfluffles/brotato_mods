@@ -22,6 +22,9 @@ const PauseInputTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/pause_input_tests.gd"
 )
 const MenuUxTests := preload("res://mods-unpacked/einfluffles-TogetherTests/menu_ux_tests.gd")
+const CoopSelectionTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
+)
 const AnimMirrorTest := preload("res://mods-unpacked/einfluffles-TogetherTests/anim_mirror_test.gd")
 const RuntimePartsTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/runtime_parts_tests.gd"
@@ -160,6 +163,8 @@ func _run() -> void:
 	yield(_pause_input.run(), "completed")  # needs the run state
 	yield(_test_menu_mirror(together), "completed")
 	yield(menu_ux.run_menu_tests(self, together), "completed")
+	var coop_selection = CoopSelectionTests.new()
+	yield(coop_selection.run(self, together), "completed")
 	_finish()
 
 

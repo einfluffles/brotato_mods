@@ -87,6 +87,7 @@ func _body_from(parts: Dictionary) -> Dictionary:
 		"run": RunStateCodec.pack(parts.json),
 		"slots": parts.slots,
 		"go": parts.go,
+		"colors": CoopService.bt_slot_colors.duplicate(),
 	}
 
 
@@ -145,6 +146,7 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 	if state.empty() or not state.get("has_run_state", false):
 		ModLoaderLog.error("Invalid shop state", LOG_NAME)
 		return
+	CoopService.bt_apply_remote_colors(body.get("colors"))
 	_pending = {"state": state, "slots": body.slots, "go": body.go}
 	if body.shop_id != _client_shop_id or not is_in_shop():
 		_client_shop_id = body.shop_id
