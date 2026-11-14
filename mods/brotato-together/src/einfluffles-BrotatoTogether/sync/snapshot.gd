@@ -11,8 +11,9 @@ extends Reference
 #    [EVENT_DAMAGE, target, value, knockback: Vector2, flags, hit_type]
 #      target: entity net id, or -(player_index + 1) for players
 #    [EVENT_SOUND, type idx of the stream, position: Vector2 or null, volume, pitch],
+#    [EVENT_ANIM, ...]: see sync/anim_mirror.gd
 #  flags: PoolByteArray, FLAG_BITS bits per entity (entity i at bit i * FLAG_BITS):
-#    FLAG_FACING_LEFT (unit sprite mirrored), FLAG_HIDDEN,
+#    FLAG_FACING_LEFT (unit sprite mirrored), FLAG_HIDDEN, FLAG_FLIP_H (unit sprite.flip_h),
 #  poses: PoolRealArray, only for entities with moving parts (see sync/pose.gd), as runs of
 #    [entity index, value count, values...] with ascending entity indices]
 #
@@ -25,6 +26,7 @@ enum PlayerField { POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEA
 const FIELD_COUNT := 10
 const EVENT_DAMAGE := 0
 const EVENT_SOUND := 1
+const EVENT_ANIM := 2
 const DAMAGE_CRIT := 1
 const DAMAGE_DODGE := 2
 const DAMAGE_PROTECTED := 4
@@ -36,8 +38,9 @@ const PLAYER_FIELD_TYPES := [
 const WEAPON_STRIDE := 4
 const FLAG_FACING_LEFT := 1
 const FLAG_HIDDEN := 2
-const FLAG_BITS := 2
-const MAX_POSE_VALUES := 32
+const FLAG_FLIP_H := 4  # jump attacks turn the sprite with flip_h, not scale.x
+const FLAG_BITS := 3
+const MAX_POSE_VALUES := 48  # see sync/pose.gd
 
 
 static func build(

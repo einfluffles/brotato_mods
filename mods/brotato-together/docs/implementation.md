@@ -17,18 +17,45 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Puppet = `propagate_call("set_physics_process", [false])`, body `MODE_STATIC`, no collision layers,
   all Area2D monitoring off; idle processing (AnimationPlayers) stays on. `update_animation(motion)` is called
   with the interpolated motion for walk animation; facing comes from the host afterwards.
-- Per-entity flags (2 bits each, packed): `sprite.scale.x < 0` (facing; behaviors turn units toward their
-  target and knockback would otherwise flip puppets) and `!visible` (stampede dinos hide before charging).
+- Per-entity flags (3 bits each, packed): `sprite.scale.x < 0` (facing; behaviors turn units toward their
+  target and knockback would otherwise flip puppets), `!visible` (stampede dinos hide before charging) and
+  `sprite.flip_h` (`JumpAttackBehavior` turns the sprite toward its landing spot and never resets it).
 - Poses (`sync/pose.gd`): parts that physics code turns, sent sparsely only for scenes that have them,
   interpolated with `lerp_angle`. Turrets don't rotate in this game (`Turret.shoot` only aims projectiles).
   Found: `GoTowardsBorderOppositeMovementBehavior` rotates the whole unit (oviraptor, iguanodon); `Pivot`
   children (predator, giant, jellyfish) spin rings of `EnemyProjectileRotating`, whose `position.x` grows
   outwards first; `CatlingGun._orient_gun` sets `rotation` + `scale.y` of `%Gun_pivot_l/r` and their draw
-  order. Layout = per-scene list of (node path, kind), derived identically on host and client.
-- Not mirrored yet: the turret "shoot" pump animation (`Animation` position/scale, played from
-  `_physics_process`; its method track calls `shoot()`, so the client can't simply play it), boss pivots
-  added at runtime (eel, tyrannosaurus, brachiosaurus `pivots_scene`), `sprite.flip_h` of jump attacks,
-  catling "mad mode" animations.
+  order; `EnemyLaser(Follow)` never moves, so its `rotation` (aim) and the beam/aura sprites' `visible`
+  (one bitmask value) are sent; `BrachiosaurusFoot`: shadow/foot/release sprite `visible` + foot `flip_h`.
+  Layout = per-scene list of (node path, kind), derived from a pristine `instance()` of the scene (never from
+  a live one: a puppet's `die()` frees its `Pivot` via `Pivot._on_Enemy_died`), cached per scene path.
+- Pose groups: at most one per scene, appended to the base values only while active; the value count tells
+  the client. `PIVOTS`: `Eel`/`Tyranosaurus`/`Brachiosaurus.on_state_changed(1)` add a `pivots_scene`
+  instance (16 `Pivot`s + 16 bullets, 32 values); the host checks `entity.pivots`, the client instances the
+  same scene with the same name on its puppet (puppetized, `entity.pivots` set so its `die()` frees the
+  bullets). The ring bullets are children of the boss, not of `_enemy_projectiles`, so they aren't also
+  tracked as projectiles. `JUMP`: while `%Land_shadow_warning` is visible, its local position + `%Shadow`
+  height/scale (the body flies, the shadow stays on the ground). `WARNING_LINE`: while
+  `WarningChargingAttackBehavior._warning_line` is visible, its angle (client parents the behavior's own
+  `Line2D`, which `init()` would have done, and rebuilds the points like `show_warning`).
+- No values for a scene with base parts = the host's are gone (pooled entity without its `Pivot`): the client
+  hides its pivots; with values it re-creates missing `Pivot` children from a pristine instance (reused
+  puppets) and shows them. Stampede dinos: the client shakes its grass (`main._shake_zone_sprites`) when one
+  spawns, like `get_movement` does on the host (no bytes).
+- Animations (`sync/anim_mirror.gd`): physics code / behaviors start most non-idle animations (turret
+  "shoot", enemy "shoot" wind-ups and charges, jump attacks, brachiosaurus foot stomps, pet states like
+  the catling gun's "enter_in_mad_mode"/"idle_attack"). Host: `EVENT_ANIM` [net id, name, position, speed]
+  when an entity's `_animation_player.current_animation` changes or a non-looping one restarts; nothing
+  for entities in their `autoplay` animation; re-sent ~1/s while away from it (snapshots are unreliable).
+  Client: replayed at render time under the same name (the game's `update_animation` guards check names),
+  whitelisted by the puppet's own `has_animation`; "death*"/"RESET" never. Animations with method tracks
+  (`shoot()`/`start_shoot()` spawn projectiles) are swapped on the puppet for a cached copy with those
+  tracks removed (`Animation.duplicate` + `remove_track`; the shared original stays intact). Every entity
+  puppet loses the game's own `animation_finished` handlers at spawn (turret cooldown needs stats; attack
+  behaviors have no `_parent` on puppets — a dying puppet spitter errored).
+- Not mirrored yet: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
+  game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
+  respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
 - Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
 
 ## Menus
@@ -47,9 +74,32 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   from `ItemService` base + `deserialize_and_merge`).
 - **Cursors** (`sync/focus_sync.gd`): every `FocusEmulator` in the scene; emulator + focused control sent as
   child-index paths from the scene root (`ui/scene_paths.gd`), applied through the `focused_control` setter.
+  The latest message per scene stays pending (10 s) until every cursor resolves to a visible control
+  (scene still loading, retry prompt not shown yet) and is retried every frame.
 - **Selection screens / end of run** (`sync/menu_sync.gd` + `ui/client_view.gd`): grids depend on local
-  unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering), so the client
-  shows `ItemPanelUI` cards for the item id under each cursor + `_has_player_selected` instead.
+  unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
+  run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),
+  so they are not run on the client. Instead the host sends its grids (`BaseSelection._get_inventories()`,
+  visible ones: columns + ordered `[my_id, random/special/locked flags]`, only when they change) and each
+  cursor as `[inventory, element index]`; `ui/selection_grid.gd` draws them with ids looked up in
+  `ItemService` (unknown ids → "?") and per-player colour borders (thicker when `_has_player_selected`),
+  plus `ItemPanelUI` cards for the item under each cursor.
+- **Wave failed** (`sync/retry_sync.gd`): `main.gd :: _on_EndWaveTimer_timeout` shows `UI/RetryWave`, which
+  never runs on the puppet (timer callbacks disconnected). Host sends `RETRY_PROMPT` (visible, its
+  `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's `FocusEmulator` index 0 + name);
+  the client shows its copy with `confirm/cancel_button_pressed = true` (local clicks do nothing) and a
+  "waiting for Pn" line. FocusSync mirrors the cursor.
+- **Battle → next screen**: on `BATTLE_END` the client keeps the frozen battle (muted) until the shop / next
+  battle / menu state replaces it (fallback to the client view after 2 s); the view only says "Waiting for
+  the host" after 1.5 s.
+- **F9 panel input** (`ui/together_menu.gd`, `ui/menu_input_guard.gd`): `_input` runs in reverse tree order, so
+  while open a guard node kept as the root's last child sees key/pad events first, marks them handled (scene,
+  FocusEmulators, `CoopService`, GUI never see them) and `Input.action_release`s what they pressed (polling
+  stays neutral); after closing it also swallows the releases of keys pressed while open (the game pauses /
+  goes back on release). Mouse events pass; `InputService._input` hides the cursor on every event in co-op,
+  so the panel shows it again in `_input`/`_process`. Pad: hold `JOY_SELECT` (unbound in the game's InputMap).
+  Clients send neutral `INPUT` while it is open (`InputSync.local_input_blocked`). `ask_confirm()` = Yes/No
+  sub-state.
 - Puppet pitfalls found by tests: `Enemy.respawn()` → `update_target()` needs a spawner (use a visual revive);
   `PlayerProjectile.shoot()` needs weapon stats; enemy scenes have internal Timers (pause them).
 
