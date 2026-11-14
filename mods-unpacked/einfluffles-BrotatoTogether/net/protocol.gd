@@ -13,6 +13,7 @@ enum Msg {
 	SNAPSHOT,  # host -> client, unreliable: see sync/snapshot.gd
 	FOCUS,  # host -> client: scene, cursors [[emulator path, player, control path]]
 	SHOP_STATE,  # host -> client: shop_id, run (RunStateCodec incl. shop), slots, go
+	UPGRADES_STATE,  # host -> client: battle_id, visible, run, players (see upgrades_sync.gd)
 }
 
 const VERSION := 1

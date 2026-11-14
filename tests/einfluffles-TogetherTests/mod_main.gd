@@ -156,6 +156,19 @@ func _test_battle_loopback(together: Node):
 	while OS.get_ticks_msec() - t0 < 6000:
 		yield(get_tree().create_timer(1.0 / 30.0), "timeout")
 		recorded.append(bytes2var(var2bytes(host._build_snapshot()), false))
+	# End-of-wave panels on the host: player 0 levels up, player 1 opens a crate (both rolled).
+	var upgrades_ui = main.get("_coop_upgrades_ui")
+	var level_up = UpgradesUI.UpgradeToProcess.new()
+	level_up.level = 2
+	level_up.player_index = 0
+	var crate_open = UpgradesUI.ConsumableToProcess.new()
+	crate_open.consumable_data = _find_by_id(ItemService.consumables, "consumable_item_box")
+	crate_open.player_index = 1
+	upgrades_ui.show_options([[], [crate_open], [], []], [[level_up], [], [], []])
+	var upgrades_sync: Node = together.upgrades_sync
+	var host_panels: Array = upgrades_sync.capture(upgrades_ui)
+	var upgrades_msg: Dictionary = bytes2var(var2bytes(upgrades_sync.body(host_panels)), false)
+	upgrades_ui.hide()
 	host._main = null
 	var last: Dictionary = Snapshot.parse(recorded[-1][1])
 	_check(not last.empty(), "host snapshot well-formed")
@@ -210,6 +223,19 @@ func _test_battle_loopback(together: Node):
 		var diff := abs(wrapf(player.current_weapons[0].rotation - host_weapons[0], -PI, PI))
 		_check(diff < 0.01, "weapon aim mirrored")
 	_check(puppet_main.get_tree().current_scene == puppet_main, "wave did not end locally")
+	# Level-up / crate panels mirrored with the host's rolled options.
+	_check(
+		host_panels[0][0] == "upgrades" and host_panels[1][0] == "item",
+		"host panels %s" % [[host_panels[0][0], host_panels[1][0]]]
+	)
+	upgrades_sync.apply(puppet_main, upgrades_msg)
+	var client_panels: Array = upgrades_sync.capture(puppet_main.get("_coop_upgrades_ui"))
+	_check(client_panels[0] == host_panels[0], "client shows host's level-up options")
+	_check(
+		client_panels[1][0] == "item" and client_panels[1][2] == host_panels[1][2],
+		"client shows host's crate item (%s)" % host_panels[1][2]
+	)
+	puppet_main.get("_coop_upgrades_ui").hide()
 	var kinds := {}
 	for path in host._types:
 		kinds[path.get_file()] = true
