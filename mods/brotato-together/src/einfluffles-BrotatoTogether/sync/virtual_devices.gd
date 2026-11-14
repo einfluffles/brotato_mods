@@ -90,6 +90,14 @@ static func is_client_mode() -> bool:
 	return Engine.has_meta(CLIENT_MODE_META) and Engine.get_meta(CLIENT_MODE_META)
 
 
+# Client puppet runs (battle, shop): the scenes spawn players from CoopService.connected_players,
+# so give them one slot per host player. Cleared again when the client leaves the lobby.
+static func fill_puppet_slots(count: int) -> void:
+	CoopService.connected_players.clear()
+	for i in count:
+		CoopService.connected_players.push_back([FIRST + i, CoopService.PlayerType.GAMEPAD_XBOX])
+
+
 static func release_all(device: int) -> void:
 	release_analog(device)
 	for base in BUTTON_ACTIONS:

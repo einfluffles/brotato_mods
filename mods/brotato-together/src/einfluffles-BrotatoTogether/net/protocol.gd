@@ -2,7 +2,7 @@ extends Reference
 # Wire format: var2bytes([msg_type, body]). Decoding never allows objects.
 
 enum Msg {
-	HELLO,  # client -> host: version, name
+	HELLO,  # client -> host, resent until WELCOME: see session/compat.gd local_info
 	WELCOME,  # host -> client: version, accepted, reason
 	PING,  # any -> any: t
 	PONG,  # any -> any: t
@@ -16,9 +16,11 @@ enum Msg {
 	FOCUS,  # host -> client: scene, cursors [[emulator path, player, control path]]
 	SHOP_STATE,  # host -> client: shop_id, run (RunStateCodec incl. shop), slots, go
 	UPGRADES_STATE,  # host -> client: battle_id, visible, run, players (see upgrades_sync.gd)
-	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, is_random, ready]]
+	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, random, ready, inv, idx]],
+	#   grids (on change; see menu_sync.gd)
 	BATTLE_PAUSE,  # host -> client: battle_id, paused, by (name), by_id (steam id, 0: host)
 	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
+	RETRY_PROMPT,  # host -> client: battle_id, visible, retry, retries, player, name
 	SHOP_PAUSE,  # host -> client: paused, by, by_id (like BATTLE_PAUSE, while in the shop)
 }
 

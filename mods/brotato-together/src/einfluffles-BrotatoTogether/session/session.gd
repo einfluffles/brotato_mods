@@ -1,21 +1,30 @@
 extends Node
 # Session state on top of the transport: role, handshake, per-peer liveness/RTT.
+# Handshake: the client sends HELLO (session/compat.gd local_info) every HELLO_INTERVAL_MSEC
+# until WELCOME: the first one can be lost while Steam's member list / session acceptance on the
+# host lags behind the join. The host answers every HELLO; a repeated HELLO from a ready peer
+# means it missed WELCOME (and everything after it), so it gets a full resync.
 
+# Became ready, or needs a full resync (every sync module resends its whole state on this).
 signal peer_ready(steam_id)
 signal peer_removed(steam_id)
 signal message(steam_id, msg_type, body)
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
+const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:Session"
 const PING_INTERVAL_MSEC := 1000
 const PEER_STALE_MSEC := 5000
 const HOST_TIMEOUT_MSEC := 15000  # client gives up on a silent host (crash, network loss)
+const HELLO_INTERVAL_MSEC := 1000
+const RESYNC_INTERVAL_MSEC := 1000  # at most one full resync per peer and interval
 
 var transport: Node = null
-# steam_id -> {name, ready, rtt_ms, last_seen_msec}
+# steam_id -> {name, ready, rtt_ms, last_seen_msec, resync, last_resync_msec}
 var peers := {}
 
 var _next_ping_msec := 0
+var _next_hello_msec := -1  # client: next HELLO (re)send, -1 when not waiting for WELCOME
 
 
 func setup(steam_transport: Node) -> void:
@@ -25,6 +34,7 @@ func setup(steam_transport: Node) -> void:
 	transport.connect("peer_joined", self, "_on_peer_joined")
 	transport.connect("peer_left", self, "_on_peer_left")
 	transport.connect("message_received", self, "_on_message_received")
+	transport.connect("send_failed", self, "_on_send_failed")
 
 
 func is_host() -> bool:
@@ -68,6 +78,8 @@ func _process(_delta: float) -> void:
 		transport.emit_signal("lobby_failed", "Connection to the host lost")
 		transport.leave_lobby()
 		return
+	resend_hello(now)
+	process_resyncs(now)
 	if now >= _next_ping_msec:
 		_next_ping_msec = now + PING_INTERVAL_MSEC
 		for steam_id in peers:
@@ -82,6 +94,40 @@ func _host_timed_out(now: int) -> bool:
 	return now - peers[host_id].last_seen_msec > HOST_TIMEOUT_MSEC
 
 
+# Client: (re)send HELLO until the host's WELCOME arrives.
+func resend_hello(now: int) -> void:
+	if _next_hello_msec < 0 or now < _next_hello_msec or not is_client():
+		return
+	var host_id: int = transport.host_id
+	if not peers.has(host_id) or peers[host_id].ready:
+		_next_hello_msec = -1
+		return
+	_next_hello_msec = now + HELLO_INTERVAL_MSEC
+	var persona: String = transport.get_persona_name(transport.local_id)
+	send_reliable(host_id, Protocol.Msg.HELLO, Compat.local_info(persona))
+
+
+# Host: peers whose reliable stream lost a message get everything again (peer_ready path).
+func process_resyncs(now: int) -> void:
+	if not is_host():
+		return
+	for steam_id in peers.keys():
+		var peer: Dictionary = peers[steam_id]
+		if not peer.resync or not peer.ready:
+			continue
+		if now - peer.last_resync_msec < RESYNC_INTERVAL_MSEC:
+			continue
+		peer.resync = false
+		peer.last_resync_msec = now
+		ModLoaderLog.info("Full resync for %s (%s)" % [peer.name, steam_id], LOG_NAME)
+		emit_signal("peer_ready", steam_id)
+
+
+func request_resync(steam_id: int) -> void:
+	if peers.has(steam_id):
+		peers[steam_id].resync = true
+
+
 func _add_peer(steam_id: int) -> Dictionary:
 	if not peers.has(steam_id):
 		peers[steam_id] = {
@@ -89,15 +135,19 @@ func _add_peer(steam_id: int) -> Dictionary:
 			"ready": false,
 			"rtt_ms": -1,
 			"last_seen_msec": OS.get_ticks_msec(),
+			"resync": false,
+			"last_resync_msec": -RESYNC_INTERVAL_MSEC,
 		}
 	return peers[steam_id]
 
 
 func _on_lobby_ready(_lobby_id: int, _is_host: bool) -> void:
 	peers.clear()
+	_next_hello_msec = -1
 
 
 func _on_lobby_left() -> void:
+	_next_hello_msec = -1
 	for steam_id in peers.keys():
 		emit_signal("peer_removed", steam_id)
 	peers.clear()
@@ -108,11 +158,26 @@ func _on_peer_joined(steam_id: int) -> void:
 		_add_peer(steam_id)  # becomes ready after HELLO
 	elif steam_id == transport.host_id:
 		_add_peer(steam_id)
-		send_reliable(
-			steam_id,
-			Protocol.Msg.HELLO,
-			{"version": Protocol.VERSION, "name": transport.get_persona_name(transport.local_id)}
-		)
+		_next_hello_msec = 0
+		resend_hello(OS.get_ticks_msec())
+
+
+# Reliable messages are state the client can't do without (BATTLE_START, TYPE_DEF, SHOP_STATE,
+# ...): a failed send means a full resync. Unreliable ones are superseded by the next anyway.
+func _on_send_failed(steam_id: int, channel: int, result) -> void:
+	if channel != transport.CHANNEL_RELIABLE:
+		ModLoaderLog.debug("Unreliable send to %s failed: %s" % [steam_id, result], LOG_NAME)
+		return
+	var peer = peers.get(steam_id)
+	if is_host() and peer != null and peer.ready:
+		if not peer.resync:
+			ModLoaderLog.warning(
+				"Reliable send to %s failed (result %s); full resync queued" % [steam_id, result],
+				LOG_NAME
+			)
+		peer.resync = true
+	else:
+		ModLoaderLog.warning("Reliable send to %s failed (result %s)" % [steam_id, result], LOG_NAME)
 
 
 func _on_peer_left(steam_id: int) -> void:
@@ -144,30 +209,37 @@ func _on_message_received(steam_id: int, _channel: int, data: PoolByteArray) -> 
 				emit_signal("message", steam_id, msg_type, body)
 
 
+# Idempotent: answered every time (the client resends until it sees WELCOME).
 func _handle_hello(steam_id: int, body) -> void:
-	if not is_host() or typeof(body) != TYPE_DICTIONARY:
+	if not is_host():
 		return
-	var version := int(body.get("version", -1))
-	var accepted := version == Protocol.VERSION
-	var reason := "" if accepted else "protocol %s != host %s" % [version, Protocol.VERSION]
+	var local: Dictionary = Compat.local_info(transport.get_persona_name(transport.local_id))
+	var reason := Compat.incompatibility(local, body)
+	var accepted := reason == ""
 	send_reliable(
 		steam_id,
 		Protocol.Msg.WELCOME,
 		{"version": Protocol.VERSION, "accepted": accepted, "reason": reason}
 	)
-	if accepted:
-		_mark_ready(steam_id)
-	else:
+	if not accepted:
 		ModLoaderLog.warning("Rejected %s: %s" % [steam_id, reason], LOG_NAME)
+	elif peers[steam_id].ready:
+		request_resync(steam_id)  # it missed WELCOME, so it dropped what followed too
+	else:
+		_mark_ready(steam_id)
 
 
 func _handle_welcome(steam_id: int, body) -> void:
 	if steam_id != transport.host_id or typeof(body) != TYPE_DICTIONARY:
 		return
+	_next_hello_msec = -1
 	if body.get("accepted", false):
-		_mark_ready(steam_id)
+		if not peers[steam_id].ready:
+			_mark_ready(steam_id)
 	else:
-		ModLoaderLog.error("Host rejected us: %s" % body.get("reason", "?"), LOG_NAME)
+		var reason := "The host rejected the join: %s" % str(body.get("reason", "?"))
+		ModLoaderLog.error(reason, LOG_NAME)
+		transport.emit_signal("lobby_failed", reason)  # shown in the F9 menu
 		transport.leave_lobby()
 
 

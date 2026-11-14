@@ -24,6 +24,7 @@ const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
+const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
 const PauseControl := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
 )
@@ -65,6 +66,7 @@ var _pause_text := ""
 var _banner: CanvasLayer = null
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
+var _anim_mirror = AnimMirror.new()
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -130,7 +132,7 @@ func _on_battle_start(body) -> void:
 
 	Puppet.set_active(true)
 	RunStateCodec.apply(state)
-	_fill_coop_slots(RunData.get_player_count())
+	VirtualDevices.fill_puppet_slots(RunData.get_player_count())
 	get_tree().paused = false
 	if get_tree().change_scene(BATTLE_SCENE) != OK:
 		ModLoaderLog.error("Could not load the battle scene", LOG_NAME)
@@ -144,8 +146,10 @@ func _leave_battle() -> void:
 
 func _on_lobby_left() -> void:
 	_reset_battle_state()
-	Puppet.set_active(false)
-	CoopService.clear_coop_players()
+	if session.transport.was_host:
+		return  # the host's own run (and its co-op slots) goes on: see InputSync._on_lobby_left
+	Puppet.set_active(false)  # restores the client's own saved run (session/puppet.gd)
+	CoopService.clear_coop_players()  # the puppet slots
 
 
 func _reset_battle_state() -> void:
@@ -166,15 +170,6 @@ func _reset_battle_state() -> void:
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
-
-
-# main.tscn spawns players from CoopService.connected_players; give it one slot per host player.
-func _fill_coop_slots(count: int) -> void:
-	CoopService.connected_players.clear()
-	for i in count:
-		CoopService.connected_players.push_back(
-			[VirtualDevices.FIRST + i, CoopService.PlayerType.GAMEPAD_XBOX]
-		)
 
 
 func _on_node_added(node: Node) -> void:
@@ -388,22 +383,25 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 	for i in ids.size():
 		var id := ids[i]
 		var node = _entities.get(id)
+		var fresh := false
 		if node == null or not is_instance_valid(node):
 			node = _spawn(to.types[i])
 			if node == null:
 				continue
 			_entities[id] = node
 			_forget_despawned(node)  # reused from the pool: no longer the old id's target
+			fresh = true
 		alive[id] = true
 		var position: Vector2 = to.positions[i]
 		var j := Snapshot.index_of(from, id)
 		if j >= 0:
 			position = from.positions[j].linear_interpolate(position, alpha)
 		_move(node, id, position)
+		if fresh:
+			_pose.spawned(node, _main)
 		_apply_flags(node, Snapshot.get_flags(to.flags, i))
-		if to.poses.has(i):
-			var from_pose: PoolRealArray = from.poses.get(j, PoolRealArray())
-			_pose.apply(node, from_pose, to.poses[i], alpha)
+		var from_pose: PoolRealArray = from.poses.get(j, PoolRealArray())
+		_pose.apply(node, from_pose, to.poses.get(i, PoolRealArray()), alpha)  # also without a pose
 	var now := OS.get_ticks_msec()
 	for id in _entities.keys():
 		if not alive.has(id):
@@ -427,6 +425,7 @@ func _apply_flags(node: Node, flags: int) -> void:
 	if node is Unit and node.sprite != null:
 		var x: float = abs(node.sprite.scale.x)
 		node.sprite.scale.x = -x if flags & Snapshot.FLAG_FACING_LEFT else x
+		node.sprite.flip_h = bool(flags & Snapshot.FLAG_FLIP_H)
 	var hidden := bool(flags & Snapshot.FLAG_HIDDEN)
 	if node.visible == hidden:
 		node.visible = not hidden
@@ -482,6 +481,7 @@ func _spawn(type_idx: int) -> Node:
 			particles.queue_free()
 			node.curse_particle_instance = null
 	PuppetEntity.puppetize(node)
+	AnimMirror.detach_game_handlers(node)
 	return node
 
 
@@ -523,6 +523,8 @@ func _fire_events(render_t: float) -> void:
 			var sound = _types.get(event[1])
 			if sound is AudioStream and (event[2] == null or typeof(event[2]) == TYPE_VECTOR2):
 				SoundRelay.replay(sound, event[2], float(event[3]), float(event[4]))
+		elif event[0] == Snapshot.EVENT_ANIM:
+			_anim_mirror.replay(_entities, event)
 
 
 # Same handlers main.gd connects to Unit.took_damage (numbers, particles) + the hit flash.

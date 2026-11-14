@@ -28,6 +28,8 @@ var devices := {}
 
 # client: recent [seq, move] pairs, replayed on top of the host's position for prediction
 var history := []
+# client: the F9 panel is open and owns the keyboard/pad; the host gets neutral input
+var local_input_blocked := false
 
 # client
 var _seq := 0
@@ -51,8 +53,10 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if session.is_client() != VirtualDevices.is_client_mode():
-		VirtualDevices.set_client_mode(session.is_client())
+	# Off while the F9 panel owns the input: it navigates with InputService's echo actions.
+	var client_mode: bool = session.is_client() and not local_input_blocked
+	if client_mode != VirtualDevices.is_client_mode():
+		VirtualDevices.set_client_mode(client_mode)
 	if session.is_client():
 		_send_local_input()
 	elif session.is_host():
@@ -68,7 +72,7 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if session.is_client():
+	if session.is_client() and not local_input_blocked:
 		_presses.on_event(event)
 
 
@@ -80,12 +84,14 @@ func _send_local_input() -> void:
 	if not session.peers.has(host_id) or not session.peers[host_id].ready:
 		return
 	_seq += 1
-	var buttons := local_buttons()
+	var buttons := 0
+	var move := Vector2.ZERO
+	var aim := [0, Vector2.ZERO]
+	if not local_input_blocked:
+		buttons = local_buttons()
+		move = _local_movement()
+		aim = LocalAim.sample(LocalAim.own_player(battle_client), InputService.using_gamepad)
 	var counts: int = _presses.sample(buttons)
-	var move := _local_movement()
-	var aim: Array = LocalAim.sample(
-		LocalAim.own_player(battle_client), InputService.using_gamepad
-	)
 	session.send_unreliable(
 		host_id, Protocol.Msg.INPUT, [_seq, move, aim[1], buttons, counts, aim[0]]
 	)
@@ -143,6 +149,7 @@ func last_pause_msec(device: int) -> int:
 func _on_peer_ready(steam_id: int) -> void:
 	if not session.is_host() or devices.has(steam_id):
 		return
+	_forget_unassigned_devices()
 	var device := _free_device()
 	if device < 0:
 		ModLoaderLog.warning("No free virtual device for %s" % steam_id, LOG_NAME)
@@ -163,16 +170,24 @@ func _on_peer_removed(steam_id: int) -> void:
 		CoopService._remove_player(device)
 
 
+# Host leaving mid-run keeps the run: remote players' slots stay (idle, like a local pad
+# unplugged mid-run in the base game) and so does their steam id -> device mapping, so the same
+# friends get their own characters back if the host opens a new lobby. Before the run starts
+# (players can still join) their slots go away.
 func _on_lobby_left() -> void:
 	history.clear()
-	for steam_id in devices:
+	_remote.clear()
+	var was_host: bool = session.transport.was_host
+	for steam_id in devices.keys():
 		var device: int = devices[steam_id]
 		VirtualDevices.release_all(device)
 		VirtualDevices.set_manual_aim(device, false)
-		if CoopService.is_device_assigned(device):
+		if was_host and not CoopService.listening_for_inputs:
+			if CoopService.is_device_assigned(device):
+				continue
+		elif CoopService.is_device_assigned(device):
 			CoopService._remove_player(device)
-	devices.clear()
-	_remote.clear()
+		devices.erase(steam_id)
 
 
 func _on_message(steam_id: int, msg_type: int, body) -> void:
@@ -236,6 +251,13 @@ func _release_timed_out() -> void:
 			VirtualDevices.release_analog(devices[steam_id])
 			state.buttons.release_held()
 			state.released = true
+
+
+# Mappings kept from an earlier lobby (see _on_lobby_left) only matter while their slot exists.
+func _forget_unassigned_devices() -> void:
+	for steam_id in devices.keys():
+		if not session.peers.has(steam_id) and not CoopService.is_device_assigned(devices[steam_id]):
+			devices.erase(steam_id)
 
 
 func _free_device() -> int:

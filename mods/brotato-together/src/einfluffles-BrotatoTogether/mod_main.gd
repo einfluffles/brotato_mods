@@ -27,8 +27,15 @@ const PauseControl := preload(
 const AbsentPlayers := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/absent_players.gd"
 )
+const RetrySync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/retry_sync.gd")
+const SoundRelay := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
+)
 const TogetherMenu := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/together_menu.gd")
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
+
+# Battle over: how long the frozen battle may stay on screen while the next screen loads.
+const TRANSITION_GRACE_SEC := 2.0
 
 const EXTENSIONS := [
 	"extensions/singletons/input_service.gd",
@@ -52,6 +59,7 @@ var menu_sync: Node = null
 var ui_sounds: Node = null
 var pause_control: Node = null
 var absent_players: Node = null
+var retry_sync: Node = null
 
 var _client_active := false
 
@@ -118,6 +126,11 @@ func _ready() -> void:
 	add_child(ui_sounds)
 	ui_sounds.setup(session)
 
+	retry_sync = RetrySync.new()
+	retry_sync.name = "RetrySync"
+	add_child(retry_sync)
+	retry_sync.setup(session, battle_host, battle_client)
+
 	_add_player_control()
 
 	var menu := TogetherMenu.new()
@@ -125,6 +138,7 @@ func _ready() -> void:
 	menu.setup(transport, session, battle_host, battle_client)
 	menu.absent_players = absent_players
 	add_child(menu)
+	menu.connect("open_changed", self, "_on_menu_open_changed")
 
 	session.connect("peer_ready", self, "_on_peer_ready")
 	battle_client.connect("battle_left", self, "_on_client_battle_left")
@@ -152,9 +166,28 @@ func _on_peer_ready(steam_id: int) -> void:
 		_enter_client_view()
 
 
-# Between battles (upgrades, shop) the client shows the placeholder until menus are mirrored.
+# While the F9 panel owns the keyboard/pad, the host gets neutral input from us.
+func _on_menu_open_changed(is_open: bool) -> void:
+	input_sync.local_input_blocked = is_open
+
+
+# The next screen (shop, next battle, end-of-run menu) follows BATTLE_END closely and replaces
+# the scene itself: keep the frozen battle (muted) until then instead of flashing the client
+# view; fall back to the view if nothing replaces it in time.
 func _on_client_battle_left() -> void:
-	if _client_active:
+	if not _client_active:
+		return
+	SoundRelay.set_muted(true)
+	var stale := get_tree().current_scene
+	var stale_id := stale.get_instance_id() if stale != null else 0
+	get_tree().create_timer(TRANSITION_GRACE_SEC, true).connect(
+		"timeout", self, "_on_transition_grace_over", [stale_id]
+	)
+
+
+func _on_transition_grace_over(stale_id: int) -> void:
+	var current := get_tree().current_scene
+	if _client_active and (current == null or current.get_instance_id() == stale_id):
 		_enter_client_view()
 
 
@@ -183,6 +216,7 @@ func _on_lobby_left() -> void:
 func _enter_client_view() -> void:
 	var tree := get_tree()
 	tree.paused = false
+	SoundRelay.set_muted(false)  # the view isn't mirrored: its own sounds are fine
 	var previous := tree.current_scene
 	var view := ClientView.new()
 	view.name = "BrotatoTogetherClientView"

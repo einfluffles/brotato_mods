@@ -7,6 +7,7 @@ extends Node
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
+const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
@@ -36,6 +37,7 @@ var _accumulator := 0.0
 var _paused := false
 var _events := []  # one-shot feedback since the last snapshot
 var _pose = Pose.new()
+var _anim_mirror = AnimMirror.new()
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -96,6 +98,7 @@ func _start_battle(main: Node) -> void:
 	_battle_id += 1
 	_paused = false
 	_events.clear()
+	_anim_mirror = AnimMirror.new()
 	SoundRelay.set_sink(self)
 	var main_players: Array = main.get("_players")
 	for i in main_players.size():
@@ -211,12 +214,14 @@ func _build_snapshot() -> Array:
 		types.append(_type_idx(_type_key(node)))
 		positions.append(node.global_position)
 		flags.append(_flags_of(node))
+		_anim_mirror.capture(node, ids[ids.size() - 1], _events)
 		var pose: PoolRealArray = _pose.capture(node)
 		if not pose.empty():
 			poses.append(ids.size() - 1)
 			poses.append(pose.size())
 			poses.append_array(pose)
 	_seen_last_snapshot = seen
+	_anim_mirror.end_snapshot()
 	var wave_timer = _main.get("_wave_timer")
 	var time_left: float = wave_timer.time_left if wave_timer != null else 0.0
 	var events := _events
@@ -238,10 +243,12 @@ func _build_snapshot() -> Array:
 
 # Facing is host state: behaviors turn units toward their target, and knockback would flip a
 # puppet that faced its interpolated motion. Hidden: e.g. stampede dinos before their charge.
+# flip_h: JumpAttackBehavior turns the sprite toward its landing spot (and leaves it so).
 func _flags_of(node: Node) -> int:
 	var flags := 0
-	if node is Unit and node.sprite != null and node.sprite.scale.x < 0:
-		flags |= Snapshot.FLAG_FACING_LEFT
+	if node is Unit and node.sprite != null:
+		flags |= Snapshot.FLAG_FACING_LEFT if node.sprite.scale.x < 0 else 0
+		flags |= Snapshot.FLAG_FLIP_H if node.sprite.flip_h else 0
 	if not node.visible:
 		flags |= Snapshot.FLAG_HIDDEN
 	return flags
