@@ -5,6 +5,9 @@ extends Control
 # they're ready. Replaces the local game scene so the client's own menus don't react to
 # its input (all input goes to the host).
 
+const TitleBackground := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/title_background.gd"
+)
 const SelectionGrid := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/selection_grid.gd"
 )
@@ -33,11 +36,7 @@ var _age := 0.0
 func _ready() -> void:
 	anchor_right = 1.0
 	anchor_bottom = 1.0
-	var background := ColorRect.new()
-	background.color = Color(0.08, 0.08, 0.1)
-	background.anchor_right = 1.0
-	background.anchor_bottom = 1.0
-	add_child(background)
+	add_child(TitleBackground.new())
 	var column := VBoxContainer.new()
 	column.anchor_right = 1.0
 	column.anchor_bottom = 1.0

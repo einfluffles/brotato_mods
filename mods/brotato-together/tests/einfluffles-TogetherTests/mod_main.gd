@@ -921,6 +921,9 @@ func _test_menu_mirror(together: Node):
 		"card shows the host's character"
 	)
 	_check("(you)" in view._panels[1].label.text, "own card marked")
+	var backdrop: Node = view.get_child(0)
+	var art: Node = backdrop.get_child(0) if backdrop.get_child_count() > 1 else null
+	_check(art != null and not art is ColorRect, "waiting screen shows the title key art")
 	view.queue_free()
 	menu_sync.set_process(true)
 
