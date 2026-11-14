@@ -10,6 +10,10 @@ const SteamTransport := preload(
 const Session := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/session.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const InputSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/input_sync.gd")
+const BattleHost := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_host.gd")
+const BattleClient := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_client.gd"
+)
 const DebugOverlay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/debug_overlay.gd")
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 
@@ -23,8 +27,10 @@ const EXTENSIONS := [
 var transport: Node = null
 var session: Node = null
 var input_sync: Node = null
+var battle_host: Node = null
+var battle_client: Node = null
 
-var _in_client_view := false
+var _client_active := false
 
 
 func _init() -> void:
@@ -53,24 +59,42 @@ func _ready() -> void:
 	add_child(input_sync)
 	input_sync.setup(session)
 
+	battle_host = BattleHost.new()
+	battle_host.name = "BattleHost"
+	add_child(battle_host)
+	battle_host.setup(session)
+
+	battle_client = BattleClient.new()
+	battle_client.name = "BattleClient"
+	add_child(battle_client)
+	battle_client.setup(session)
+
 	var overlay := DebugOverlay.new()
 	overlay.name = "DebugOverlay"
-	overlay.setup(transport, session)
+	overlay.setup(transport, session, battle_host, battle_client)
 	add_child(overlay)
 
 	session.connect("peer_ready", self, "_on_peer_ready")
+	battle_client.connect("battle_left", self, "_on_client_battle_left")
 	transport.connect("lobby_left", self, "_on_lobby_left")
 	ModLoaderLog.info("Ready", LOG_NAME)
 
 
 func _on_peer_ready(steam_id: int) -> void:
-	if session.is_client() and steam_id == transport.host_id and not _in_client_view:
+	if session.is_client() and steam_id == transport.host_id and not _client_active:
+		_client_active = true
+		_enter_client_view()
+
+
+# Between battles (upgrades, shop) the client shows the placeholder until menus are mirrored.
+func _on_client_battle_left() -> void:
+	if _client_active:
 		_enter_client_view()
 
 
 func _on_lobby_left() -> void:
-	if _in_client_view:
-		_in_client_view = false
+	if _client_active:
+		_client_active = false
 		get_tree().paused = false
 		if get_tree().change_scene(MenuData.title_screen_scene) != OK:
 			ModLoaderLog.error("Could not return to the title screen", LOG_NAME)
@@ -79,7 +103,6 @@ func _on_lobby_left() -> void:
 # Manual scene swap (no PackedScene needed): the view becomes current_scene, so the game's own
 # change_scene() calls later free it normally.
 func _enter_client_view() -> void:
-	_in_client_view = true
 	var tree := get_tree()
 	tree.paused = false
 	var previous := tree.current_scene

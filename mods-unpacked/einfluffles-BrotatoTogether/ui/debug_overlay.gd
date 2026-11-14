@@ -6,15 +6,21 @@ const REFRESH_SEC := 0.25
 
 var transport: Node = null
 var session: Node = null
+var battle_host: Node = null
+var battle_client: Node = null
 
 var _label := Label.new()
 var _last_error := ""
 var _refresh_left := 0.0
 
 
-func setup(steam_transport: Node, netplay_session: Node) -> void:
+func setup(
+	steam_transport: Node, netplay_session: Node, host_battle: Node, client_battle: Node
+) -> void:
 	transport = steam_transport
 	session = netplay_session
+	battle_host = host_battle
+	battle_client = client_battle
 	transport.connect("lobby_failed", self, "_on_lobby_failed")
 
 
@@ -67,6 +73,15 @@ func _build_text() -> String:
 				state = "STALE"
 			var rtt: String = ("%d ms" % peer.rtt_ms) if peer.rtt_ms >= 0 else "-"
 			lines.append("  %s  %s  rtt %s" % [peer.name, state, rtt])
+	if battle_host.is_in_battle():
+		lines.append(
+			(
+				"  battle: snapshot %d B @ %d Hz"
+				% [battle_host.snapshot_bytes, battle_host.SNAPSHOT_HZ]
+			)
+		)
+	if battle_client.is_in_battle():
+		lines.append("  battle: render lag %d ms" % battle_client.interp_lag_msec)
 	if _last_error != "":
 		lines.append("! " + _last_error)
 	return PoolStringArray(lines).join("\n")

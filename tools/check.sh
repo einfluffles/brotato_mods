@@ -16,7 +16,7 @@ podman run --rm --userns=keep-id -e HOME=/tmp \
   -v "$ROOT/tests/$TEST_ID:/proj/mods-unpacked/$TEST_ID:ro,Z" \
   brotato-modtools timeout 120 godot3 --path /proj --no-window > "$LOG" 2>&1
 own_errors=$(grep -A2 "SCRIPT ERROR" "$LOG" | grep -B1 "mods-unpacked" || true)
-grep -E "^  (ok  |FAIL) |TOGETHER-TESTS" "$LOG"
+grep -E "^  (ok  |FAIL|info:) |TOGETHER-TESTS" "$LOG"
 if [ -n "$own_errors" ]; then echo "Script errors in mod code:"; echo "$own_errors"; fi
 if [ -n "$own_errors" ] || ! grep -q "TOGETHER-TESTS: PASS" "$LOG"; then
   echo "check FAILED (full log: $LOG)"; exit 1

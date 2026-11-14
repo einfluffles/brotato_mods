@@ -143,3 +143,20 @@ RNG is unseeded (`Utils._rng.randomize()`), so shops/upgrades **must** be rolled
   stop `_structure_timer`; pause `_wave_timer` / `HalfWaveTimer` / `EndWaveTimer` and drive them from host;
   per unit `set_physics_process(false)` + mode static, positions from snapshots; `Hurtbox.disable()`;
   `Utils.disable_node(weapons_container)`; `Player.disable_gold_pickup()`.
+
+## 13. Client battle mirror (as implemented)
+
+- Run state travels the save-file path: `ProgressData.get_run_state()` → `ProgressDataLoaderV3.serialize_run_state`
+  → `JSON.print` → zstd; client: `JSON.parse` → `deserialize_run_state` → `RunData.resume_from_state`.
+  The JSON step is required: the deserializers expect string keys / float numbers (~5 KB for 2 players).
+- Client loads `main.tscn` itself; `SceneTree.node_added` + the scene's `ready` signal freeze it right after
+  `main._ready()` (before the first physics frame): `main.set_process(false)` (pause/aim),
+  wave manager / entity spawner / effect behaviors / stats manager processing off, every Timer `timeout`
+  connected to main disconnected (`get_incoming_connections()`), players puppetized.
+- `main.tscn` spawns players from `CoopService.connected_players` → client fills one slot per host player.
+- Net ids: `EntitySpawner.*_respawned` signals (fired on every spawn incl. pool reuse) + "absent from last
+  snapshot ⇒ new id" for gold/consumables. Type = node `filename`, sent once per battle (TYPE_DEF).
+- Puppet = `propagate_call("set_physics_process", [false])`, body `MODE_STATIC`, no collision layers,
+  all Area2D monitoring off; idle processing (AnimationPlayers) stays on. `update_animation(motion)` is called
+  with the interpolated motion for facing/walk animation.
+- Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).

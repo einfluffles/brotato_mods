@@ -8,6 +8,7 @@ const VirtualDevices := preload(
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
+const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const FAKE_PEER := 4242
 const DEVICE := VirtualDevices.FIRST
 const BIT_ACCEPT := 1
@@ -83,6 +84,7 @@ func _run() -> void:
 	)
 
 	_test_run_state_round_trip()
+	yield(_test_battle_loopback(together), "completed")
 	_finish()
 
 
@@ -122,6 +124,85 @@ func _test_run_state_round_trip() -> void:
 		"slots1": RunData.get_player_effect(Keys.weapon_slot_hash, 1),
 	}
 	_check(str(actual) == str(expected), "run state round trip %s == %s" % [actual, expected])
+
+
+# Host records a real battle; the client replays the recording in puppet mode.
+func _test_battle_loopback(together: Node):
+	var host: Node = together.battle_host
+	var client: Node = together.battle_client
+	var Puppet = load("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+	host.set_process(false)  # driven by hand: no Steam session, so it would end the battle
+
+	# --- host: start a 2-player co-op battle (run from the round-trip test) ---
+	CoopService.clear_coop_players()
+	for i in 2:
+		CoopService.connected_players.push_back([i, CoopService.PlayerType.GAMEPAD_XBOX])
+	RunData.current_wave = 3
+	get_tree().change_scene("res://main.tscn")
+	yield(get_tree(), "idle_frame")
+	yield(get_tree(), "idle_frame")
+	var main := get_tree().current_scene
+	_check(main != null and main.filename == "res://main.tscn", "host battle scene loaded")
+	host._main = main
+	host._battle_id = 1
+	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
+	var recorded := []
+	var t0 := OS.get_ticks_msec()
+	while OS.get_ticks_msec() - t0 < 6000:
+		yield(get_tree().create_timer(1.0 / 30.0), "timeout")
+		recorded.append(bytes2var(var2bytes(host._build_snapshot()), false))
+	host._main = null
+	var last: Dictionary = Snapshot.parse(recorded[-1][1])
+	_check(not last.empty(), "host snapshot well-formed")
+	_check(last.players.size() == 2, "snapshot has both players")
+	_check(last.ids.size() > 0, "host battle has entities after 6 s (%d)" % last.ids.size())
+	start.types = {}
+	for path in host._types:
+		start.types[host._types[path]] = path
+	var max_bytes := 0
+	for msg in recorded:
+		max_bytes = max(max_bytes, var2bytes(msg).size())
+	print(
+		(
+			"  info: %d snapshots, largest %d B, %d entities at end"
+			% [recorded.size(), max_bytes, last.ids.size()]
+		)
+	)
+
+	# --- client: replay ---
+	client._on_battle_start(start)
+	_check(Puppet.is_active(), "puppet mode on")
+	yield(client, "battle_entered")
+	var puppet_main: Node = client._main
+	_check(puppet_main != null and puppet_main != main, "client loaded its own battle scene")
+	var spawner = puppet_main.get("_entity_spawner")
+	var replay_start := OS.get_ticks_msec()
+	for msg in recorded:
+		var snap: Array = msg[1].duplicate()
+		snap[1] = replay_start + (snap[1] - recorded[0][1][1])  # host t -> replay timeline
+		while OS.get_ticks_msec() < snap[1]:
+			yield(get_tree(), "idle_frame")
+		client._on_snapshot(Snapshot.parse(snap))
+	yield(get_tree().create_timer(0.3), "timeout")
+	_check(spawner.enemies.empty(), "client spawner spawned nothing itself")
+	_check(
+		client._entities.size() == last.ids.size(),
+		"client mirrors all entities (%d/%d)" % [client._entities.size(), last.ids.size()]
+	)
+	var first_id: int = last.ids[0]
+	if client._entities.has(first_id):
+		var node: Node2D = client._entities[first_id]
+		_check(
+			node.global_position.distance_to(last.positions[0]) < 1.0,
+			"entity at host position after buffer drains"
+		)
+		_check(not node.is_physics_processing(), "entity puppetized")
+	var player: Node2D = puppet_main.get("_players")[0]
+	_check(player.global_position.distance_to(last.players[0][0]) < 1.0, "player follows host")
+	_check(puppet_main.get_tree().current_scene == puppet_main, "wave did not end locally")
+	client._leave_battle()
+	Puppet.set_active(false)
+	host.set_process(true)
 
 
 func _find_by_id(elements: Array, my_id: String):

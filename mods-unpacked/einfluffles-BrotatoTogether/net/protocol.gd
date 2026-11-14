@@ -7,6 +7,10 @@ enum Msg {
 	PING,  # any -> any: t
 	PONG,  # any -> any: t
 	INPUT,  # client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons: int]
+	BATTLE_START,  # host -> client: battle_id, run (RunStateCodec), types {idx: scene_path}
+	BATTLE_END,  # host -> client: battle_id
+	TYPE_DEF,  # host -> client: battle_id, idx, path
+	SNAPSHOT,  # host -> client, unreliable: see sync/snapshot.gd
 }
 
 const VERSION := 1
