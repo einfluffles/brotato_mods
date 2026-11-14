@@ -41,6 +41,7 @@ PY
       stage=$(mktemp -d)
       mkdir -p "$stage/mods-unpacked"
       cp -r "$3" "$stage/mods-unpacked/$2"
+      cp LICENSE "$stage/mods-unpacked/$2/LICENSE"  # MIT: the notice travels with every copy
       (cd "$stage" && zip -qr "/out/$5.zip" mods-unpacked -x "*/.*" "*.import")
       if [ -f "$4/preview.svg" ] && [ ! -f "$4/preview.png" ]; then
         rsvg-convert -w 1024 -h 1024 "$4/preview.svg" -o /out/preview.png

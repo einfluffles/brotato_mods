@@ -5,7 +5,7 @@ instead of Steam Remote Play's video stream.
 
 **Status:** early development; first sessions over Steam with friends work. Expect rough edges — please report them with `modloader.log`.
 
-Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogether`](src/einfluffles-BrotatoTogether)
+Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogether`](src/einfluffles-BrotatoTogether) · license: [MIT](../../LICENSE)
 
 ## How it works
 

@@ -54,3 +54,15 @@ podman run --rm --userns=keep-id -e HOME=/tmp \
   -v "$HOME/.steam/steam/steamapps/common/Brotato:/game:ro" -v "$PWD/reference:/out:Z" \
   brotato-modtools gdre_tools --headless --recover=/game/Brotato.pck --output=/out
 ```
+
+## License
+
+[MIT](LICENSE), covering everything in this repository. Packaged mods carry a copy of the license.
+
+Brotato and its code and assets belong to Blobfish. These mods contain none of the game's code or
+assets: they hook into the game at runtime through Godot Mod Loader. This project is not affiliated
+with or endorsed by Blobfish. `reference/` (your own decompiled copy of the game) is git-ignored
+and must never be committed or distributed.
+
+The Workshop preview image is original artwork. Its lettering uses the font Tomson Talks (SIL Open
+Font License 1.1); the font itself is not distributed.
