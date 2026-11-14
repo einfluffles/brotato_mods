@@ -25,6 +25,7 @@ All tooling runs in a container (podman):
 ```sh
 podman build -t brotato-modtools -f tools/Containerfile tools   # GDRE Tools + gdtoolkit 3.x
 tools/lint.sh                                                    # gdlint
+tools/check.sh                                                   # boot game headless + run tests
 tools/build.sh                                                   # -> dist/einfluffles-BrotatoTogether.zip
 WORKSHOP_ITEM_ID=<id> tools/deploy.sh                            # copy build into the subscribed item
 ```
@@ -42,6 +43,10 @@ podman run --rm --userns=keep-id -e HOME=/tmp \
 ```
 
 `docs/hooks.md` maps the game scripts and functions the mod hooks into.
+
+`tools/check.sh` boots the decompiled game headless (Godot 3.6 in the container, no Steam) with the mod and
+the dev-only test mod `tests/einfluffles-TogetherTests`. It fails on any script error in mod code or any failing
+test. It needs `reference/`.
 
 ### Dev hotkeys (debug overlay)
 

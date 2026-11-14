@@ -6,6 +6,7 @@ enum Msg {
 	WELCOME,  # host -> client: version, accepted, reason
 	PING,  # any -> any: t
 	PONG,  # any -> any: t
+	INPUT,  # client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons: int]
 }
 
 const VERSION := 1

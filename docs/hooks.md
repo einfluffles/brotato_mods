@@ -38,7 +38,10 @@ decompiled sources at the time of writing and will drift between game versions �
   `Utils.is_player_action_pressed/released(event, i, action)` → checks `"%s_%s" % [action, device]`.
   Users: `base_shop.gd`, `base_selection.gd`, `weapon_selection.gd`, `upgrades_ui_player_container.gd`,
   `item_popup.gd`, `coop_item_popup.gd`, `carousel.gd`.
-- **Injection:** `Input.parse_input_event(InputEventAction{action="ui_accept_<vdev>", pressed=…})` — the game
+- **Injection:** `Input.parse_input_event(InputEventAction{action="ui_accept_<vdev>", pressed=…, device=<vdev>})`
+  — `device` must be set: `CoopService._input` treats device 0 as the keyboard. Parsed events are buffered
+  and flushed by the platform once per frame, so `Input.is_action_pressed` updates on the next frame (the
+  headless platform never flushes — tests call `Input.flush_buffered_events()`). The game
   does the same in `InputService._emulate_action`. Do **not** synthesize raw joypad events: base actions have
   device `-1` joypad events, so a fake joypad event would also fire global `ui_cancel` etc.
 
