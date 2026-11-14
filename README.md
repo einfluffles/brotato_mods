@@ -30,8 +30,8 @@ Everything runs in a container (podman):
 podman build -t brotato-modtools -f tools/Containerfile tools   # GDRE Tools, Godot 3.6 headless, gdtoolkit 3.x
 tools/lint.sh                  # gdlint over mods/
 tools/check.sh [mods/<folder>] # boot the game headless with each mod + its test mod
-tools/package.sh [target]      # -> <target>/<mod_id>/<mod_id>.zip (+ preview.png), default: dist/
-tools/deploy.sh <mod_id> <workshop_item_id>   # copy a packaged zip into the subscribed item
+tools/package.sh [target]      # -> <target>/<name>/<name>.zip (+ preview.png), default: dist/
+tools/deploy.sh <name> <workshop_item_id>     # replace the subscribed item's zip with the package
 ```
 
 ### Publishing

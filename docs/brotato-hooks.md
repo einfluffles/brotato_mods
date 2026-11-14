@@ -68,7 +68,7 @@ decompiled sources at the time of writing and will drift between game versions �
 - `addons/mod_loader/mod_loader.gd :: _load_mod_zips()` — with workshop enabled, **only subscribed Workshop
   items** are loaded (`internal/third_party/steam.gd :: load_steam_workshop_zips`, filtered by
   `Platform.get_subscribed_mods()`). `<game>/mods` and `--mods-path` are ignored on Steam.
-  → Dev loop: private Workshop item + overwrite its local zip (`tools/deploy.sh <mod_id> <item_id>`).
+  → Dev loop: private Workshop item + overwrite its local zip (`tools/deploy.sh <name> <item_id>`).
 - `mod_main.gd` is instantiated with no `_init` args and added as a child of the `ModLoader` autoload
   (survives scene changes). Script extensions are applied after all mods' `_init`.
 - Logs: `user://logs/modloader.log` (≈ `~/.local/share/Brotato/logs/`, to verify).
