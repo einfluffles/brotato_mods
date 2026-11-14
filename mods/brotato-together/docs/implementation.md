@@ -32,9 +32,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   change and every 10th. The client fills both from earlier snapshots (`Snapshot.resolve`, which also builds
   the id → index map used for interpolation) and skips a resting entity it never saw until its refresh.
   Events are capped at 48 per snapshot (`Snapshot.select_events`: duplicate sounds go first, then enemy
-  damage numbers, sounds, player damage; animations last). Sizes incl. envelope, synthetic waves (test
-  `snapshot_tests.gd`): small ~40 entities / mid ~140 / late ~300: see the test output; mid is well under
-  the ~1200 B Steam MTU.
+  damage numbers, sounds, player damage; animations last). Sizes incl. message envelope (synthetic waves in
+  `snapshot_tests.gd`; protocol 3 → 4): small, 45 entities + 8 events 1676 → 448 B; mid, 136 entities +
+  11 events 3512 → 968 B; late, 300 entities + 44 events 8300 → 2184 B (still 2 Steam fragments). The
+  real 6 s wave-3 loopback: largest snapshot 768 → 192 B.
 - Own-player prediction replays at most the last 30 un-acked inputs (0.5 s) and none while the host paused
   or when the newest snapshot arrived more than 250 ms ago (stall): the player stays with the frozen world.
 - Client puppets of non-Entity scenes (projectiles, gold, consumables) are pooled per type like the game's
@@ -86,6 +87,33 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
   respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
 - Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
+  Puppet mode on stashes what `ProgressData.save()` persists from the run side (`saved_run_state`,
+  `last_saved_run_state`, `data`, `killed_enemies`, `killed_by_enemies`, `items_bought`); off restores it
+  (`session/puppet.gd`) — the shop resume path overwrites `saved_run_state` with the host's run. Unlocks /
+  difficulties only change in host-only paths (run won, `complete_challenge`); `active_update_data` is reset
+  by the title screen's `RunData.reset()`.
+
+## Session lifecycle
+
+- Handshake (`session/session.gd`): the client resends HELLO every second until WELCOME (the host's
+  session-request check / member list can lag behind the join, and a message from a not-yet-member is
+  dropped). The host answers every HELLO; a repeated HELLO from a ready peer means it missed WELCOME and what
+  followed, so it gets a full resync. The transport accepts a member's message session when it enters the
+  lobby and refreshes the member list for unknown senders.
+- Full resync = `peer_ready` re-emitted (every sync module resends its whole state on it), at most once per
+  second per peer. Queued when a reliable send fails (`sendMessageToUser`'s EResult != 1, logged as a
+  warning); unreliable failures are only logged at debug level.
+- Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
+  version (manifest) must match; the client must own every DLC the host owns (`available_dlc_ids`) because
+  DLC content is only registered where it's installed and a host's runs can use it anytime. Rejections carry
+  a reason that the client shows in the F9 menu.
+- Leaving is role-aware (`transport.was_host`). Client: puppet mode off (own run restored), puppet slots
+  cleared, title screen. Host mid-run: the run goes on and remote players' co-op slots stay, idle (as with a
+  local pad unplugged mid-run); their steam id -> device mapping is kept, so they get their own characters
+  back when they join the host's next lobby. Shop / level-ups wait for them (game rule). Before the run
+  (players can still join) their slots are freed.
+- F9 *Leave lobby* mid-run needs a second click; a Steam invite accepted mid-run waits for *Join invite*
+  (outside a run it is taken right away, closing the menu declines it).
 
 ## Menus
 
@@ -104,9 +132,32 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   from `ItemService` base + `deserialize_and_merge`).
 - **Cursors** (`sync/focus_sync.gd`): every `FocusEmulator` in the scene; emulator + focused control sent as
   child-index paths from the scene root (`ui/scene_paths.gd`), applied through the `focused_control` setter.
+  The latest message per scene stays pending (10 s) until every cursor resolves to a visible control
+  (scene still loading, retry prompt not shown yet) and is retried every frame.
 - **Selection screens / end of run** (`sync/menu_sync.gd` + `ui/client_view.gd`): grids depend on local
-  unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering), so the client
-  shows `ItemPanelUI` cards for the item id under each cursor + `_has_player_selected` instead.
+  unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
+  run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),
+  so they are not run on the client. Instead the host sends its grids (`BaseSelection._get_inventories()`,
+  visible ones: columns + ordered `[my_id, random/special/locked flags]`, only when they change) and each
+  cursor as `[inventory, element index]`; `ui/selection_grid.gd` draws them with ids looked up in
+  `ItemService` (unknown ids → "?") and per-player colour borders (thicker when `_has_player_selected`),
+  plus `ItemPanelUI` cards for the item under each cursor.
+- **Wave failed** (`sync/retry_sync.gd`): `main.gd :: _on_EndWaveTimer_timeout` shows `UI/RetryWave`, which
+  never runs on the puppet (timer callbacks disconnected). Host sends `RETRY_PROMPT` (visible, its
+  `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's `FocusEmulator` index 0 + name);
+  the client shows its copy with `confirm/cancel_button_pressed = true` (local clicks do nothing) and a
+  "waiting for Pn" line. FocusSync mirrors the cursor.
+- **Battle → next screen**: on `BATTLE_END` the client keeps the frozen battle (muted) until the shop / next
+  battle / menu state replaces it (fallback to the client view after 2 s); the view only says "Waiting for
+  the host" after 1.5 s.
+- **F9 panel input** (`ui/together_menu.gd`, `ui/menu_input_guard.gd`): `_input` runs in reverse tree order, so
+  while open a guard node kept as the root's last child sees key/pad events first, marks them handled (scene,
+  FocusEmulators, `CoopService`, GUI never see them) and `Input.action_release`s what they pressed (polling
+  stays neutral); after closing it also swallows the releases of keys pressed while open (the game pauses /
+  goes back on release). Mouse events pass; `InputService._input` hides the cursor on every event in co-op,
+  so the panel shows it again in `_input`/`_process`. Pad: hold `JOY_SELECT` (unbound in the game's InputMap).
+  Clients send neutral `INPUT` while it is open (`InputSync.local_input_blocked`). `ask_confirm()` = Yes/No
+  sub-state.
 - Puppet pitfalls found by tests: `Enemy.respawn()` → `update_target()` needs a spawner (use a visual revive);
   `PlayerProjectile.shoot()` needs weapon stats; enemy scenes have internal Timers (pause them).
 
@@ -133,3 +184,24 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   loads) until it leaves the tree (mirrored state and cursors would replay e.g. button focus sounds); ClientView isn't mirrored and
   stays audible. Sounds played while the host's tree is paused (pause menu) aren't recorded. UI pages that
   play their own `AudioStreamPlayer` (profile, codex, item sets) bypass SoundManager; they're host-only.
+
+## Remote input, pause, absent players
+
+- `INPUT` (unreliable, every physics frame): held mask + a 4-bit press counter per button
+  (`sync/press_counter.gd`) + aim flags. Host (`sync/remote_buttons.gd`): a press needs a counted edge (a
+  button still held after the 300 ms timeout release or at rejoin does nothing until released), a tap lost in
+  a loss burst is replayed once, `ui_pause` is never held (delivered as press+release on the client's release,
+  so timeouts/disconnects can't pause), held menu directions repeat like the game's pad echo (following
+  `set_gamepad_echo_processing`).
+- Client mode (`VirtualDevices.set_client_mode`): the client's InputService tracks pad vs. mouse like solo
+  play, shows the mouse when it moves and doesn't emulate echo actions; the left stick is sent as menu
+  directions.
+- Aim (`sync/local_aim.gd`): the client's own `manual_aim` / `manual_aim_on_mouse_press` and device decide;
+  mouse users send the direction from their predicted player to the mouse as the stick. Host: `Utils`
+  extension answers `is_manual_aim` for virtual devices from that flag.
+- Pause (`sync/pause_control.gd`): client puppet battle/shop get `PauseMenu.enabled = false` and lose the
+  `game_lost_focus` connection. Host: a remote pause hands the menu to the first local player; the pauser
+  resumes with pause (main page only). `BATTLE_PAUSE` / `SHOP_PAUSE` carry who paused ("Paused by …").
+- Absent players (`sync/absent_players.gd`): after 20 s without messages (stale or left), the host makes the
+  player's pending choice the game's way: first level-up option, crate take (recycle if it can't be taken),
+  shop Go. Listed in the F9 panel / pill; a returning player just plays on.

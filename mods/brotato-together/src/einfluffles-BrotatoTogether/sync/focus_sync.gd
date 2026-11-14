@@ -8,6 +8,8 @@ const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/p
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const CHECK_INTERVAL := 0.05
+const PENDING_TIMEOUT_MSEC := 10000
+const PATH_TYPES := [TYPE_INT_ARRAY, TYPE_ARRAY]
 
 var session: Node = null
 
@@ -15,7 +17,9 @@ var _scene: Node = null
 var _emulators := []
 var _last_sent := ""
 var _check_left := 0.0
-var _pending := {}  # latest FOCUS body, applied once the client's scene matches
+# scene path -> {body, msec}: the latest FOCUS body per scene with cursors that could not be
+# applied yet (scene not loaded, controls not built or still hidden); retried every frame.
+var _pending := {}
 
 
 func setup(netplay_session: Node) -> void:
@@ -40,7 +44,7 @@ func _process(delta: float) -> void:
 			_check_left = CHECK_INTERVAL
 			_send_if_changed(false)
 	elif session.is_client() and not _pending.empty():
-		_apply(_pending)
+		_retry_pending()
 
 
 func _cursors() -> Array:
@@ -76,27 +80,50 @@ func _on_peer_ready(_steam_id: int) -> void:
 func _on_message(steam_id: int, msg_type: int, body) -> void:
 	if msg_type != Protocol.Msg.FOCUS or not session.is_client():
 		return
-	if steam_id != session.transport.host_id or typeof(body) != TYPE_DICTIONARY:
+	if steam_id == session.transport.host_id:
+		receive(body)
+
+
+func receive(body) -> void:
+	if typeof(body) != TYPE_DICTIONARY:
 		return
 	if typeof(body.get("scene")) != TYPE_STRING or typeof(body.get("cursors")) != TYPE_ARRAY:
 		return
-	_pending = body
-	_apply(body)
+	_pending[body.scene] = {"body": body, "msec": OS.get_ticks_msec()}
+	_retry_pending()
 
 
-# Only while mirroring; keeps the latest body until the matching scene is loaded.
-func _apply(body: Dictionary) -> void:
-	if not Puppet.is_active() or _scene == null or _scene.filename != body.scene:
-		return
+func is_pending(scene_path: String) -> bool:
+	return _pending.has(scene_path)
+
+
+func _retry_pending() -> void:
+	var now := OS.get_ticks_msec()
+	for scene_path in _pending.keys():
+		if now - _pending[scene_path].msec > PENDING_TIMEOUT_MSEC:
+			_pending.erase(scene_path)
+	if is_instance_valid(_scene) and _pending.has(_scene.filename):
+		if _apply(_pending[_scene.filename].body):
+			_pending.erase(_scene.filename)
+
+
+# Only while mirroring. Returns true once every cursor is where the host has it; until then
+# the body stays pending (a cursor on a control that isn't built / visible yet is retried).
+func _apply(body: Dictionary) -> bool:
+	if not Puppet.is_active() or not is_instance_valid(_scene) or _scene.filename != body.scene:
+		return false
+	var done := true
 	for cursor in body.cursors:
 		if typeof(cursor) != TYPE_ARRAY or cursor.size() != 3:
+			continue
+		if not (typeof(cursor[0]) in PATH_TYPES) or not (typeof(cursor[2]) in PATH_TYPES):
 			continue
 		var emulator = ScenePaths.resolve(_scene, PoolIntArray(cursor[0]))
 		var control = ScenePaths.resolve(_scene, PoolIntArray(cursor[2]))
 		if not (emulator is FocusEmulator) or not (control is Control):
-			continue
-		if not control.is_visible_in_tree():
-			continue
-		if emulator.focused_control != control:
+			done = false
+		elif not control.is_visible_in_tree():
+			done = false
+		elif emulator.focused_control != control:
 			emulator.focused_control = control
-	_pending = {}
+	return done

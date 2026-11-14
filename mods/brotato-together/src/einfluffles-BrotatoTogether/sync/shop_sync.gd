@@ -19,6 +19,9 @@ const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
+const PauseControl := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
+)
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const CHECK_INTERVAL := 0.1
@@ -158,11 +161,7 @@ func _enter_shop(state: Dictionary) -> void:
 	ProgressData.saved_run_state = state
 	RunData.resumed_from_state_in_shop = true
 	RunData.shop_effects_checked = true  # anvil/destroy effects already ran on the host
-	CoopService.connected_players.clear()
-	for i in RunData.get_player_count():
-		CoopService.connected_players.push_back(
-			[VirtualDevices.FIRST + i, CoopService.PlayerType.GAMEPAD_XBOX]
-		)
+	VirtualDevices.fill_puppet_slots(RunData.get_player_count())
 	get_tree().paused = false
 	# Only while the puppet shop loads: no node_added handler for every node otherwise.
 	if not get_tree().is_connected("node_added", self, "_on_node_added"):
@@ -197,6 +196,7 @@ func _on_shop_ready(shop: Node) -> void:
 	# Leaving the shop would roll curses on locked items locally; the host decides those.
 	if shop.is_connected("tree_exited", shop, "_on_tree_exited"):
 		shop.disconnect("tree_exited", shop, "_on_tree_exited")
+	PauseControl.disable_local_pause(shop)
 	_apply_pending()
 	emit_signal("shop_entered")
 
