@@ -22,9 +22,6 @@ const PauseInputTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/pause_input_tests.gd"
 )
 const MenuUxTests := preload("res://mods-unpacked/einfluffles-TogetherTests/menu_ux_tests.gd")
-const CoopSelectionTests := preload(
-	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
-)
 const AnimMirrorTest := preload("res://mods-unpacked/einfluffles-TogetherTests/anim_mirror_test.gd")
 const RuntimePartsTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/runtime_parts_tests.gd"
@@ -35,6 +32,10 @@ const SessionLifecycleTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
 )
 const DlcBorrowTests := preload("res://mods-unpacked/einfluffles-TogetherTests/dlc_borrow_tests.gd")
+const LocalPanelTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/local_panel_tests.gd"
+)
+const LocalShopTests := preload("res://mods-unpacked/einfluffles-TogetherTests/local_shop_tests.gd")
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 170.0
 const DEVICE := VirtualDevices.FIRST
@@ -47,6 +48,8 @@ var _pause_input = null  # kept alive across its yields
 var _anim_test = AnimMirrorTest.new()  # kept alive across its yields
 var _runtime_parts = null  # kept alive across its coroutines
 var _perf = null  # kept alive across its coroutines
+var _local_panel = LocalPanelTests.new()  # kept alive across its yields
+var _local_shop = LocalShopTests.new()  # kept alive across its yields
 
 
 func _ready() -> void:
@@ -159,12 +162,12 @@ func _run() -> void:
 	var menu_ux = MenuUxTests.new()
 	yield(menu_ux.run_battle_tests(self, together), "completed")
 	yield(_test_shop_loopback(together), "completed")
+	yield(_local_shop.run(self, together), "completed")
 	_pause_input = PauseInputTests.new(self, together)
 	yield(_pause_input.run(), "completed")  # needs the run state
 	yield(_test_menu_mirror(together), "completed")
 	yield(menu_ux.run_menu_tests(self, together), "completed")
-	var coop_selection = CoopSelectionTests.new()
-	yield(coop_selection.run(self, together), "completed")
+	yield(preload("coop_selection_tests.gd").new().run(self, together), "completed")
 	_finish()
 
 
@@ -231,6 +234,7 @@ func _test_battle_loopback(together: Node):
 	for i in 2:
 		CoopService.connected_players.push_back([i, CoopService.PlayerType.GAMEPAD_XBOX])
 	RunData.current_wave = 3
+	_local_panel.give_crate_weapons(self, 1)  # player 1's crate panel gets the weapons popup
 	get_tree().change_scene("res://main.tscn")
 	yield(get_tree(), "idle_frame")
 	yield(get_tree(), "idle_frame")
@@ -255,6 +259,9 @@ func _test_battle_loopback(together: Node):
 	var upgrades_sync: Node = together.upgrades_sync
 	var host_panels: Array = upgrades_sync.capture(upgrades_ui)
 	var upgrades_msg: Dictionary = bytes2var(var2bytes(upgrades_sync.body(host_panels)), false)
+	yield(
+		_local_panel.host_part(self, together, upgrades_ui, host_panels, upgrades_msg), "completed"
+	)
 	upgrades_ui.hide()
 	host._end_battle()
 	var damage_events := 0
@@ -343,6 +350,7 @@ func _test_battle_loopback(together: Node):
 		client_panels[1][0] == "item" and client_panels[1][2] == host_panels[1][2],
 		"client shows host's crate item (%s)" % host_panels[1][2]
 	)
+	yield(_local_panel.client_part(self, together, puppet_main, upgrades_msg), "completed")
 	puppet_main.get("_coop_upgrades_ui").hide()
 	client._set_paused(true)
 	_check(client._banner != null and client._banner.visible, "pause banner shown")

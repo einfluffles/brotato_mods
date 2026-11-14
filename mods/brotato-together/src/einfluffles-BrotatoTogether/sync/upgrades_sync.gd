@@ -1,22 +1,83 @@
 extends Node
-# Mirrors the end-of-wave level-up / crate panels (main.tscn's coop UpgradesUI).
-# Host: while the panels are visible, send UPGRADES_STATE on change: run state + per player
+# The end-of-wave level-up / crate panels (main.tscn's coop UpgradesUI).
+#
+# Host: owns every decision. While the panels are visible it sends UPGRADES_STATE on change:
+#   run state + per player
 #   ["none"] | ["done"] | ["upgrades", [upgrade ids], level, reroll_price] | ["item", json, id]
-# Client: drive its own (puppet) panels with exactly those options — nothing is rolled locally.
+#   plus, per player, a panel revision (seqs) and the carousel page (pages).
+# Client: shows those options in its own copy of the panels; nothing is rolled locally.
+#   Its OWN panel runs here: its buttons drive its slot's FocusEmulator locally
+#   (InputSync.set_local_device), so cursor, pages (upgrades / gear / stats), popups and the
+#   description scroll cost no round trip. The panel's decision signals are rewired from the
+#   game's handlers to UPGRADE_INTENT messages. The host checks an intent against the sender's
+#   current panel (revision + option id) and runs the panel's own handler, so the rules stay
+#   in the game's code and nothing is decided on a client.
+#   The same goes for the crate weapon popup (characters whose crates give weapons): combine,
+#   recycle and meca upgrade leave as intents that name the weapon by slot and id.
+#   Its cursor and page also travel as UPGRADE_FOCUS: what the host and the others see.
+#   Keyboard and mouse on the own panel, and the mouse kept off the others: sync/local_panel.gd.
+# The other players' panels stay mirrored: cursors by FocusSync, pages from UPGRADES_STATE.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
+const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const VirtualDevices := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
+)
+const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
 const CHECK_INTERVAL := 0.1
+const PATH_TYPES := [TYPE_INT_ARRAY, TYPE_ARRAY]
+const ITEM_KINDS := ["take", "discard", "ban"]
+# UpgradesUI._ready: container signal -> UpgradesUI handler (bound to the player index).
+const DECISION_HANDLERS := {
+	"choose_button_pressed": "_on_choose_button_pressed",
+	"item_take_button_pressed": "_on_take_button_pressed",
+	"item_discard_button_pressed": "_on_discard_button_pressed",
+	"item_ban_button_pressed": "_on_ban_button_pressed",
+}
+# UpgradesUI._setup_weapons_inventory (crates that give weapons): popup signal -> UpgradesUI
+# handler. These change RunData directly, so no client keeps them; the own popup's presses
+# leave as WEAPON_KINDS intents instead.
+const WEAPON_POPUP_HANDLERS := {
+	"item_combine_button_pressed": "_on_weapon_combine_button_pressed",
+	"item_discard_button_pressed": "_on_weapon_discard_button_pressed",
+	"item_meca_upgrade_selected": "_on_weapon_meca_upgrade_selected",
+}
+const WEAPON_KINDS := ["weapon_combine", "weapon_discard", "weapon_meca"]
+const MECA_DLC := "primal_dread"
 
 var session: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
+var focus_sync: Node = null
+var input_sync: Node = null
+var last_intent := {}  # client: the last decision sent (also read by the tests)
 
+# host
 var _last_sent_key := ""
 var _check_left := 0.0
-var _pending := {}  # client: state that arrived while the battle scene was still loading
+var _seq_ui: Node = null
+var _seqs := []  # per player: bumped whenever the panel shows something new
+var _seq_keys := []
+
+# client
+var _pending := {}  # state that arrived while the battle scene was still loading
+var _guarded_ui: Node = null  # the puppet UpgradesUI whose decision signals are rewired
+var _applied := {}  # player index -> key of the entry last applied
+var _run_key := []
+var _own: Node = null  # this client's own container
+var _own_seq := -1
+var _own_item_id := ""
+var _local_active := false
+var _sent_focus := ""
+# The own popup's meca upgrade: the stats of the two options it offers, then the weapon and
+# the option picked (two signals, sent once both are known).
+var _meca_stats := []
+var _meca_weapon = null
+var _meca_choice := -1
+var _local_panel: Node = null  # in the guarded UI: device type and mouse for the own panel
 
 
 func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> void:
@@ -26,41 +87,82 @@ func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> voi
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
 	battle_client.connect("battle_entered", self, "_on_battle_entered")
+	battle_client.connect("battle_left", self, "stop_local")
 
 
 func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
 
 
-# --- host ---
-
-
 func _process(delta: float) -> void:
+	if is_instance_valid(_local_panel):
+		_local_panel.blocked = input_sync != null and input_sync.local_input_blocked
+	if _local_active:
+		_report_own_focus()
 	if not session.is_host() or not battle_host.is_in_battle():
 		_last_sent_key = ""
+		_block_remote_buttons(false)
+		return
+	var ui = battle_host._main.get("_coop_upgrades_ui")
+	var showing: bool = ui != null and ui.visible
+	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
+	_block_remote_buttons(showing and not get_tree().paused)
+	if not showing:
 		return
 	_check_left -= delta
 	if _check_left > 0.0:
 		return
 	_check_left = CHECK_INTERVAL
-	var ui = battle_host._main.get("_coop_upgrades_ui")
-	if ui == null or not ui.visible:
-		return
 	var players := capture(ui)
-	var key := var2str(players) + str(RunData.get_player_gold(0))
+	_update_seqs(ui, players)
+	var golds := []
+	for p in RunData.get_player_count():
+		golds.append(RunData.get_player_gold(p))
+	var key := var2str([players, _seqs, _pages(ui, players.size()), golds])
 	if key == _last_sent_key:
 		return
 	_last_sent_key = key
-	session.broadcast_reliable(Protocol.Msg.UPGRADES_STATE, body(players))
+	session.broadcast_reliable(Protocol.Msg.UPGRADES_STATE, body(players))  # encodes the run
+
+
+func _on_message(steam_id: int, msg_type: int, msg) -> void:
+	match msg_type:
+		Protocol.Msg.UPGRADES_STATE:
+			if session.is_client() and steam_id == session.transport.host_id:
+				_on_state(msg)
+		Protocol.Msg.UPGRADE_INTENT:
+			var ui = _host_ui(msg)
+			if ui != null and host_apply_intent(ui, battle_host._player_index_of(steam_id), msg):
+				_check_left = 0.0
+		Protocol.Msg.UPGRADE_FOCUS:
+			var ui = _host_ui(msg)
+			if ui != null:
+				host_apply_focus(
+					ui, battle_host._player_index_of(steam_id), msg.get("page"), msg.get("path")
+				)
+
+
+# --- host ---
 
 
 func body(players: Array) -> Dictionary:
+	var ui = battle_host._main.get("_coop_upgrades_ui")
+	_update_seqs(ui, players)
 	return {
 		"battle_id": battle_host._battle_id,
 		"visible": true,
 		"run": RunStateCodec.encode(),
 		"players": players,
+		"seqs": _seqs.duplicate(),
+		"pages": _pages(ui, players.size()),
 	}
+
+
+static func _pages(ui: Node, count: int) -> Array:
+	var pages := []
+	for p in count:
+		pages.append(ui._get_player_container(p).carousel.index)
+	return pages
 
 
 static func capture(ui: Node) -> Array:
@@ -82,6 +184,181 @@ static func capture(ui: Node) -> Array:
 	return players
 
 
+# A player's decision, sent from its own panel. Only applied to what that panel shows right
+# now: the revision catches a press that was made on options the host has since replaced, the
+# id a mismatch in content. Returns whether a handler ran.
+func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
+	if p < 0 or p >= RunData.get_player_count() or p >= _seqs.size():
+		return false
+	var kind = msg.get("kind")
+	var id = msg.get("id")
+	if typeof(kind) != TYPE_STRING or typeof(id) != TYPE_STRING:
+		return false
+	if typeof(msg.get("seq")) != TYPE_INT or msg.seq != _seqs[p]:
+		return false
+	var container = ui._get_player_container(p)
+	if container._checkmark_group.visible:
+		return false
+	if kind == "choose" or kind == "reroll":
+		if not container._upgrades_container.visible:
+			return false
+		if kind == "reroll":
+			if not container._reroll_button.visible:
+				return false
+			container._on_RerollButton_pressed()
+		else:
+			var upgrade = _find(container._old_upgrades, id)
+			if upgrade == null:
+				return false
+			container._on_choose_button_pressed(upgrade)
+	elif kind in ITEM_KINDS:
+		var item = container._item_data
+		if not container._items_container.visible or item == null or item.my_id != id:
+			return false
+		if kind == "take":
+			var meca = msg.get("meca")
+			if item.is_meca and typeof(meca) == TYPE_INT and (meca == 0 or meca == 1):
+				container._meca_effect_choice_selected = meca
+				container.update_effect_choice_buttons_visuals()
+			container._on_TakeButton_pressed()
+		elif kind == "discard":
+			container._on_DiscardButton_pressed()
+		elif container._ban_button.visible:
+			container._on_BanButton_pressed()
+		else:
+			return false
+	elif not (kind in WEAPON_KINDS) or not _host_apply_weapon(ui, p, kind, msg):
+		return false
+	# The handlers show the next options right away: a second press on the old ones is stale.
+	_update_seqs(ui, capture(ui))
+	return true
+
+
+# The crate weapon popup of a player whose crates give weapons: combine, recycle or meca
+# upgrade one of its weapons, named by its slot in the player's weapons and its id. The game's
+# handlers decide (locked weapons, no partner, too few meca parts). Returns whether the
+# weapons changed.
+func _host_apply_weapon(ui: Node, p: int, kind: String, msg: Dictionary) -> bool:
+	if not ui._weapons_inventory_enabled[p]:
+		return false
+	var weapons: Array = RunData.get_player_weapons(p)
+	var slot = msg.get("weapon")
+	if typeof(slot) != TYPE_INT or slot < 0 or slot >= weapons.size():
+		return false
+	var weapon = weapons[slot]
+	if weapon.my_id != msg.id:
+		return false
+	var before := _weapons_key(p)
+	match kind:
+		"weapon_combine":
+			ui._on_weapon_combine_button_pressed(weapon, p)
+		"weapon_discard":
+			ui._on_weapon_discard_button_pressed(weapon, p)
+		"weapon_meca":
+			_host_meca_upgrade(ui, p, weapon, msg.get("stat"))
+	return _weapons_key(p) != before
+
+
+# The popup rolls the two stats on offer where it runs, so the client names the stat it
+# picked. It is only taken if the game could offer it to this player; the amount, the cost and
+# the upgraded weapon are worked out here.
+func _host_meca_upgrade(ui: Node, p: int, weapon, stat) -> void:
+	var dlc = ItemService.get_dlc_data_by_id(MECA_DLC)
+	if dlc == null or not (MECA_DLC in ProgressData.active_update_data):
+		return
+	if typeof(stat) != TYPE_INT or not ItemService.can_weapon_be_mechanized(weapon):
+		return
+	var cost: int = dlc.get_meca_upgrade_cost(weapon)
+	if RunData.get_player_meca_parts(p) < cost:
+		return
+	var offered := false
+	for stats in dlc._get_allowed_meca_stats(p).values():
+		offered = offered or stat in stats
+	if not offered:
+		return
+	var upgraded = dlc.meca_item(weapon, p)
+	var options: Array = ui._get_player_container(p).item_popup._get_effect_options(upgraded)
+	if options.size() < 2:
+		return
+	options[0].key = Keys.hash_to_string[stat]
+	options[0].key_hash = stat
+	options[0].value = dlc.get_meca_stat_value(stat, cost)
+	upgraded = dlc.change_effect_option_to_modular_effect(upgraded, 0)
+	ui._on_weapon_meca_upgrade_selected(weapon, upgraded, p)
+
+
+static func _weapons_key(p: int) -> Array:
+	var key := []
+	for weapon in RunData.get_player_weapons(p):
+		key.append(weapon.get_instance_id())
+	return key
+
+
+# A remote player's own cursor and page, for the host's screen and (through FocusSync and
+# UPGRADES_STATE) the other clients'. Cosmetic: decisions never depend on it.
+func host_apply_focus(ui: Node, p: int, page, path) -> void:
+	if p < 0 or p >= RunData.get_player_count():
+		return
+	var container = ui._get_player_container(p)
+	var emulator = container.focus_emulator
+	if emulator == null or emulator.player_index != p:
+		return  # finished: the game parks the emulator (player_index -1)
+	var carousel = container.carousel
+	if typeof(page) == TYPE_INT and page >= 0 and page != carousel.index:
+		carousel.index = page  # the setter clamps and shows that page
+	var indices := _int_path(path)
+	if indices.empty():
+		return
+	var control = ScenePaths.resolve(container, indices)
+	if control is Control and control.is_visible_in_tree() and emulator.focused_control != control:
+		emulator.focused_control = control
+
+
+func _host_ui(msg):
+	if not session.is_host() or not battle_host.is_in_battle():
+		return null
+	if typeof(msg) != TYPE_DICTIONARY or msg.get("battle_id") != battle_host._battle_id:
+		return null
+	var ui = battle_host._main.get("_coop_upgrades_ui")
+	return ui if ui != null and ui.visible else null
+
+
+# The revision changes with what the panel shows, even when two options in a row look the same
+# (the same crate item twice): the option being processed and the reroll count are part of it.
+# So are the player's weapons: the crate weapon popup changes them under the same crate item.
+func _update_seqs(ui: Node, players: Array) -> void:
+	if ui != _seq_ui:
+		_seq_ui = ui
+		_seqs = []
+		_seq_keys = []
+	while _seqs.size() < players.size():
+		_seqs.append(0)
+		_seq_keys.append("")
+	for p in players.size():
+		var container = ui._get_player_container(p)
+		var option = ui._showing_option[p]
+		var item = container._item_data
+		var key := var2str(
+			[
+				players[p],
+				option.get_instance_id() if option != null else 0,
+				item.get_instance_id() if item != null else 0,
+				container._reroll_count,
+				_weapons_key(p),
+			]
+		)
+		if key != _seq_keys[p]:
+			_seq_keys[p] = key
+			_seqs[p] += 1
+
+
+func _block_remote_buttons(block: bool) -> void:
+	if input_sync == null:
+		return
+	var all: int = (1 << VirtualDevices.BUTTON_ACTIONS.size()) - 1
+	input_sync.blocked_buttons = all & ~(1 << VirtualDevices.PAUSE_INDEX) if block else 0
+
+
 # A (re)joining client needs the current panels too: force a resend.
 func _on_peer_ready(_steam_id: int) -> void:
 	_last_sent_key = ""
@@ -96,12 +373,8 @@ func _on_battle_entered() -> void:
 	_pending = {}
 
 
-func _on_message(steam_id: int, msg_type: int, msg) -> void:
-	if msg_type != Protocol.Msg.UPGRADES_STATE or not session.is_client():
-		return
-	if steam_id != session.transport.host_id or typeof(msg) != TYPE_DICTIONARY:
-		return
-	if msg.get("battle_id") != battle_client._battle_id:
+func _on_state(msg) -> void:
+	if typeof(msg) != TYPE_DICTIONARY or msg.get("battle_id") != battle_client._battle_id:
 		return
 	if not battle_client.is_in_battle():
 		_pending = msg  # BATTLE_START just arrived; the scene is still loading
@@ -112,29 +385,307 @@ func _on_message(steam_id: int, msg_type: int, msg) -> void:
 func apply(main: Node, msg: Dictionary) -> void:
 	if typeof(msg.get("players")) != TYPE_ARRAY:
 		return
-	var state := RunStateCodec.decode(msg.get("run"))
-	if not state.empty():
-		RunStateCodec.apply(state)
 	var ui = main.get("_coop_upgrades_ui")
 	if ui == null:
 		return
+	var you: int = battle_client._you
+	_guard(ui, you)
+	var run_changed := _apply_run(msg.get("run"))
 	ui.show()
+	var seqs = msg.get("seqs")
+	var pages = msg.get("pages")
 	for p in min(msg.players.size(), RunData.get_player_count()):
 		var entry = msg.players[p]
 		if typeof(entry) != TYPE_ARRAY or entry.empty() or typeof(entry[0]) != TYPE_STRING:
 			continue
 		var container = ui._get_player_container(p)
-		container.update_inventory()
-		container.update_stats()
-		match entry[0]:
-			"done":
-				container.finish()
-			"upgrades":
-				if entry.size() == 4:
-					_show_upgrades(container, p, entry[1], int(entry[2]), int(entry[3]))
-			"item":
-				if entry.size() == 3:
-					_show_item(container, entry[1], entry[2])
+		var slot := _weapon_slot(ui, container, p)  # before anything is rebuilt
+		var in_popup: bool = ui._popup_manager._elements_pressed[p] != null
+		if run_changed:
+			container.update_inventory()
+			container.update_stats()
+			container._update_gold_label()
+		var seq: int = _int_at(seqs, p)
+		var key := var2str([seq, entry])
+		# Only a panel that shows something new is rebuilt: the others keep their state (a
+		# rebuild of this client's own panel would fight its local cursor).
+		var rebuilt: bool = seq < 0 or _applied.get(p) != key
+		if rebuilt:
+			_applied[p] = key
+			_show_entry(container, p, entry)
+		var on_weapon := false
+		if rebuilt or run_changed:
+			on_weapon = _refresh_weapons(ui, container, p, slot, p == you)
+		if rebuilt and p == you:
+			_own_seq = seq
+			_own_item_id = entry[2] if entry[0] == "item" and entry.size() == 3 else ""
+			_on_own_panel_changed(ui, container, entry[0], on_weapon)
+		elif run_changed and p == you and _local_active and in_popup and not on_weapon:
+			# The refresh closed the popup the cursor was in (opened from the gear page).
+			container.call_deferred("focus")
+		var page: int = _int_at(pages, p)
+		if p != you and page >= 0 and container.carousel.index != page:
+			container.carousel.index = page
+
+
+func stop_local() -> void:
+	if not _local_active:
+		return
+	_local_active = false
+	_sent_focus = ""
+	if input_sync != null:
+		input_sync.set_local_device(-1)
+	if focus_sync != null:
+		focus_sync.local_emulators = []
+	if is_instance_valid(_local_panel):
+		_local_panel.set_own(null, null, -1)
+
+
+func _show_entry(container, p: int, entry: Array) -> void:
+	match entry[0]:
+		"done":
+			container.finish()
+		"upgrades":
+			if entry.size() == 4:
+				_show_upgrades(container, p, entry[1], int(entry[2]), int(entry[3]))
+		"item":
+			if entry.size() == 3:
+				_show_item(container, entry[1], entry[2])
+
+
+# UpgradesUI._show_next_player_options refreshes the crate weapons list (only there for a
+# player whose crates give weapons) on the host; a puppet never runs it. The run state brings
+# new weapon objects, so the list is rebuilt with it. A cursor that was in the list (slot)
+# keeps its place; returns whether it did.
+static func _refresh_weapons(ui: Node, container: Node, p: int, slot: int, own: bool) -> bool:
+	if not ui._weapons_inventory_enabled[p]:
+		return false
+	ui._refresh_weapons_inventory(p)
+	var list = container.crate_weapons_container
+	var count: int = list.get_element_count()
+	if slot < 0 or count == 0:
+		return false
+	var element = list.get_element(int(min(slot, count - 1)))
+	if element == null or not element.is_visible_in_tree():
+		return false
+	if own:
+		Utils.focus_player_control(element, p, container.focus_emulator)
+	else:
+		container.focus_emulator.focused_control = element  # mirrored, like FocusSync
+	return true
+
+
+# The slot in p's crate weapons list its cursor is on, or its popup was opened from; -1 when
+# the cursor is elsewhere.
+static func _weapon_slot(ui: Node, container: Node, p: int) -> int:
+	if not ui._weapons_inventory_enabled[p]:
+		return -1
+	var elements = container.crate_weapons_container._elements
+	var pressed = ui._popup_manager._elements_pressed[p]
+	for control in [pressed, container.focus_emulator.focused_control]:
+		if is_instance_valid(control) and control.get_parent() == elements:
+			return control.get_index()
+	return -1
+
+
+# The run state is only re-applied (and the inventories and stats rebuilt) when it changed.
+func _apply_run(payload) -> bool:
+	var key := []
+	if typeof(payload) == TYPE_DICTIONARY and typeof(payload.get("data")) == TYPE_RAW_ARRAY:
+		key = [payload.get("size"), hash(payload.data)]
+	if not key.empty() and key == _run_key:
+		return false
+	var state := RunStateCodec.decode(payload)
+	if state.empty():
+		return false
+	RunStateCodec.apply(state)
+	_run_key = key
+	return true
+
+
+# Once per puppet scene. On a client no panel may decide anything: the containers' decision
+# signals lose the game's handlers (which change RunData and roll options), and this client's
+# own container gets ours instead. A new button the game adds stays unconnected here, so it
+# does nothing rather than change the local copy of the run.
+func _guard(ui: Node, you: int) -> void:
+	if ui == _guarded_ui:
+		return
+	_guarded_ui = ui
+	_applied = {}
+	_run_key = []
+	_own = null
+	_own_seq = -1
+	_own_item_id = ""
+	_meca_stats = []
+	_meca_weapon = null
+	_meca_choice = -1
+	stop_local()
+	var containers := []
+	for p in RunData.get_player_count():
+		var container = ui._get_player_container(p)
+		containers.append(container)
+		for signal_name in DECISION_HANDLERS:
+			_disconnect(container, signal_name, ui, DECISION_HANDLERS[signal_name])
+		_disconnect(container._reroll_button, "pressed", container, "_on_RerollButton_pressed")
+		for signal_name in WEAPON_POPUP_HANDLERS:
+			_disconnect(container.item_popup, signal_name, ui, WEAPON_POPUP_HANDLERS[signal_name])
+		# The "still to process" icons are never filled on a puppet, and the container's press
+		# handlers would look up the option there (a crate's ConsumableData, unknown here).
+		container._things_to_process_container = null
+		if p != you:
+			continue
+		_own = container
+		container.connect("choose_button_pressed", self, "_on_own_choose")
+		for kind in ITEM_KINDS:
+			container.connect("item_%s_button_pressed" % kind, self, "_on_own_item", [kind])
+		container._reroll_button.connect("pressed", self, "_on_own_reroll")
+		var popup = container.item_popup
+		popup.connect("item_combine_button_pressed", self, "_on_own_weapon", ["weapon_combine"])
+		popup.connect("item_discard_button_pressed", self, "_on_own_weapon", ["weapon_discard"])
+		popup.connect("meca_upgrade_choice_toggled", self, "_on_own_meca_toggled")
+		popup.connect("item_meca_upgrade_selected", self, "_on_own_meca_selected")
+		for choice in 2:
+			var button = popup.get("_effect_button_%d" % choice)
+			if button != null:
+				button.connect("pressed", self, "_on_own_meca_choice", [choice])
+	if is_instance_valid(_local_panel):
+		_local_panel.free()
+	_local_panel = LocalPanel.new()
+	_local_panel.panels = containers
+	_local_panel.connect("player_type_changed", self, "_on_own_type_changed")
+	ui.add_child(_local_panel)  # after the FocusEmulators, so it gets every event before them
+
+
+static func _disconnect(source: Object, signal_name: String, target: Object, method: String):
+	if source != null and source.is_connected(signal_name, target, method):
+		source.disconnect(signal_name, target, method)
+
+
+# This client's panel shows new options: it takes local control (or gives it up when done).
+# on_weapon: the cursor kept its place in the crate weapons list (see _refresh_weapons).
+func _on_own_panel_changed(ui: Node, container: Node, kind: String, on_weapon := false) -> void:
+	if kind != "upgrades" and kind != "item":
+		stop_local()
+		return
+	if not _local_active:
+		_local_active = true
+		# main._on_EndWaveTimer_timeout does this on the host; it never runs on a puppet.
+		Utils.set_process_input_where_defined(ui, true)
+		if input_sync != null:
+			input_sync.set_local_device(
+				CoopService.get_remapped_player_device(container.player_index)
+			)
+		if focus_sync != null:
+			focus_sync.local_emulators = [container.focus_emulator]
+		if is_instance_valid(_local_panel):
+			_local_panel.set_own(container, container.focus_emulator, container.player_index)
+	if not on_weapon:
+		container.call_deferred("focus")  # the game's own starting cursor for the current page
+
+
+# The own slot is typed as another device now (keyboard <-> pad): LocalPanel has switched the
+# carousel and the glyphs; the way to the page arrows is the container's own.
+func _on_own_type_changed(_player_type: int, cursor_lost: bool) -> void:
+	if not is_instance_valid(_own):
+		return
+	_own._set_focus_neighbours()
+	if cursor_lost:
+		_own.focus()  # the cursor sat on an arrow that is a trigger glyph now
+
+
+func _report_own_focus() -> void:
+	if not battle_client.is_in_battle() or not is_instance_valid(_own):
+		stop_local()
+		return
+	var control = _own.focus_emulator.focused_control
+	var path := PoolIntArray()
+	if control != null and is_instance_valid(control):
+		path = ScenePaths.path_of(control, _own)
+	var message := {
+		"battle_id": battle_client._battle_id, "page": _own.carousel.index, "path": path
+	}
+	var key := var2str(message)
+	if key != _sent_focus:
+		_sent_focus = key
+		_send(Protocol.Msg.UPGRADE_FOCUS, message)
+
+
+func _on_own_choose(upgrade) -> void:
+	_send_intent("choose", upgrade.my_id)
+
+
+func _on_own_item(_item_data, kind: String) -> void:
+	# The id the host sent, not the local object's: taking a meca item replaces it locally.
+	_send_intent(kind, _own_item_id, _own._meca_effect_choice_selected)
+
+
+func _on_own_reroll() -> void:
+	_send_intent("reroll", "")
+
+
+# The crate weapon popup's combine / recycle (and, through _send_meca, meca upgrade). The
+# weapon goes out as its slot in the own weapons plus its id, never as an object.
+func _on_own_weapon(weapon, kind: String, stat := 0) -> void:
+	var slot: int = RunData.get_player_weapons(_own.player_index).find(weapon)
+	if slot >= 0:
+		_send_intent(kind, weapon.my_id, -1, {"weapon": slot, "stat": stat})
+	# The game's handlers close the popup once they changed the weapons. Here they change
+	# when the host answers, if it does: until then the cursor is back on the weapon.
+	_guarded_ui._on_weapon_cancel_button_pressed(weapon, _own.player_index)
+
+
+func _on_own_meca_toggled(choosing: bool) -> void:
+	if not choosing:
+		return  # also emitted right before the selection: the stats are still needed then
+	_meca_weapon = null
+	_meca_choice = -1
+	_meca_stats = []
+	var popup = _own.item_popup
+	for option in popup._get_effect_options(popup._pending_upgrade):
+		_meca_stats.append(option.key_hash)
+
+
+func _on_own_meca_selected(weapon, _upgraded) -> void:
+	_meca_weapon = weapon
+	_send_meca()
+
+
+func _on_own_meca_choice(choice: int) -> void:
+	_meca_choice = choice
+	_send_meca()
+
+
+# The popup's signal carries the weapon it upgraded locally, the option button which of the
+# two stats was picked; the host builds the upgrade itself from the stat.
+func _send_meca() -> void:
+	if _meca_weapon == null or _meca_choice < 0:
+		return
+	var weapon = _meca_weapon
+	var choice := _meca_choice
+	_meca_weapon = null
+	_meca_choice = -1
+	# The popup keeps its rolled preview per weapon and has just used up its options.
+	_own.item_popup._upgrade_preview_cache.erase(weapon.get_instance_id())
+	if choice < _meca_stats.size():
+		_on_own_weapon(weapon, "weapon_meca", _meca_stats[choice])
+
+
+func _send_intent(kind: String, id: String, meca := -1, weapon := {}) -> void:
+	last_intent = {
+		"battle_id": battle_client._battle_id,
+		"seq": _own_seq,
+		"kind": kind,
+		"id": id,
+		"meca": meca,
+	}
+	for field in weapon:
+		last_intent[field] = weapon[field]
+	_send(Protocol.Msg.UPGRADE_INTENT, last_intent)
+
+
+func _send(msg_type: int, message: Dictionary) -> void:
+	if session.is_client():
+		session.send_reliable(session.transport.host_id, msg_type, message)
 
 
 # show_upgrades_for_level() without ItemService.get_upgrades (RNG): the host's options instead.
@@ -181,3 +732,22 @@ static func _find(elements: Array, my_id: String):
 		if element.my_id == my_id:
 			return element
 	return null
+
+
+# values[index] when it is an int, else -1 (network data: seqs / pages may be missing).
+static func _int_at(values, index: int) -> int:
+	if typeof(values) != TYPE_ARRAY or index >= values.size():
+		return -1
+	return values[index] if typeof(values[index]) == TYPE_INT else -1
+
+
+# A child-index path from the network: empty unless it is a list of ints.
+static func _int_path(value) -> PoolIntArray:
+	var path := PoolIntArray()
+	if not (typeof(value) in PATH_TYPES):
+		return path
+	for index in value:
+		if typeof(index) != TYPE_INT:
+			return PoolIntArray()
+		path.append(index)
+	return path

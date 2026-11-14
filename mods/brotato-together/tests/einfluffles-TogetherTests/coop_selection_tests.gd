@@ -23,6 +23,7 @@ var t: Node = null  # the test mod: _check()
 
 func run(test_mod: Node, together: Node):
 	t = test_mod
+	t.set_meta("coop_selection_tests", self)  # kept alive across its yields
 	var scene := _tree().current_scene
 	if not CoopSelection.is_character_selection(scene):
 		t._check(false, "coop selection: character selection scene present")
@@ -30,6 +31,8 @@ func run(test_mod: Node, together: Node):
 		return
 	together.menu_sync.set_process(false)
 	CoopService.listening_for_inputs = true
+	# The loopback tests ran this process as a client too (BATTLE_START / SHOP_STATE colours).
+	CoopService.bt_clear_remote_colors()
 	yield(_frames(2), "completed")
 	_test_join_hints(scene)
 	yield(_test_color_picks(scene), "completed")
@@ -38,6 +41,7 @@ func run(test_mod: Node, together: Node):
 	CoopService.listening_for_inputs = false
 	together.menu_sync.set_process(true)
 	yield(_frames(1), "completed")
+	t.remove_meta("coop_selection_tests")
 
 
 func _tree() -> SceneTree:
