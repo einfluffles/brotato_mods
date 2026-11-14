@@ -8,8 +8,11 @@ const VirtualDevices := preload(
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
+const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const FAKE_PEER := 4242
+const WATCHDOG_SEC := 100.0
 const DEVICE := VirtualDevices.FIRST
 const BIT_ACCEPT := 1
 
@@ -29,6 +32,8 @@ func _process(_delta: float) -> void:
 
 func _run() -> void:
 	yield(get_tree().create_timer(1.0), "timeout")
+	print("TOGETHER-TESTS: START")
+	get_tree().create_timer(WATCHDOG_SEC).connect("timeout", self, "_on_watchdog")
 	var together := get_node("/root/ModLoader/einfluffles-BrotatoTogether")
 	var input_sync: Node = together.input_sync
 
@@ -85,6 +90,7 @@ func _run() -> void:
 
 	_test_run_state_round_trip()
 	yield(_test_battle_loopback(together), "completed")
+	yield(_test_shop_loopback(together), "completed")
 	_finish()
 
 
@@ -130,7 +136,6 @@ func _test_run_state_round_trip() -> void:
 func _test_battle_loopback(together: Node):
 	var host: Node = together.battle_host
 	var client: Node = together.battle_client
-	var Puppet = load("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 	host.set_process(false)  # driven by hand: no Steam session, so it would end the battle
 
 	# --- host: start a 2-player co-op battle (run from the round-trip test) ---
@@ -258,6 +263,94 @@ func _test_battle_loopback(together: Node):
 	host.set_process(true)
 
 
+# Host opens the real co-op shop (rolls items), buys slot 1; the client mirrors both states.
+func _test_shop_loopback(together: Node):
+	var shop_sync: Node = together.shop_sync
+	shop_sync.set_process(false)  # driven by hand (no Steam session)
+	CoopService.connected_players.clear()
+	for i in 2:
+		CoopService.connected_players.push_back([i, CoopService.PlayerType.GAMEPAD_XBOX])
+	RunData.current_wave = 2
+	RunData.add_gold(500, 0)
+	get_tree().change_scene(RunData.get_shop_scene_path())
+	yield(get_tree(), "idle_frame")
+	yield(get_tree(), "idle_frame")
+	var host_shop := get_tree().current_scene
+	_check(host_shop.filename == shop_sync.SHOP_SCENE, "host co-op shop loaded")
+	shop_sync._host_shop = host_shop
+	shop_sync._shop_id = 7
+	var before: Dictionary = bytes2var(var2bytes(shop_sync._shop_body()), false)
+	var host_before := _shop_slots(host_shop, 0)
+
+	var container = host_shop._get_shop_items_container(0)
+	var bought = container.get_shop_item_node(1)
+	var bought_id: String = bought.item_data.my_id
+	var gold_before: int = RunData.get_player_gold(0)
+	container.on_shop_item_buy_button_pressed(bought)
+	yield(get_tree(), "idle_frame")
+	var after: Dictionary = bytes2var(var2bytes(shop_sync._shop_body()), false)
+
+	# Host cursor for player 0 on shop slot 2 (focus mirroring).
+	var focus_sync: Node = together.focus_sync
+	var host_emulator = Utils.get_focus_emulator(0, host_shop)
+	var focus_target = container.get_shop_item_node(2)._button
+	host_emulator.focused_control = focus_target
+	focus_sync._scene = host_shop
+	focus_sync._emulators = ScenePaths.find_focus_emulators(host_shop)
+	var focus_body := {"scene": host_shop.filename, "cursors": focus_sync._cursors()}
+	var focus_path := ScenePaths.path_of(focus_target, host_shop)
+	var host_after := _shop_slots(host_shop, 0)
+	var host_gold_after: int = RunData.get_player_gold(0)
+	_check(host_gold_after < gold_before, "host bought %s" % bought_id)
+	print("  info: shop state %d B on the wire" % var2bytes(after).size())
+
+	# --- client ---
+	shop_sync._client_shop_id = 0
+	var state := RunStateCodec.decode(before.run)
+	shop_sync._pending = {"state": state, "slots": before.slots, "go": before.go}
+	shop_sync._client_shop_id = before.shop_id
+	shop_sync._enter_shop(state)
+	yield(shop_sync, "shop_entered")
+	var client_shop: Node = shop_sync._client_shop
+	_check(client_shop != host_shop, "client loaded its own shop")
+	_check(
+		_shop_slots(client_shop, 0) == host_before,
+		"client shows host's items %s" % [_shop_slots(client_shop, 0)]
+	)
+
+	shop_sync._pending = {
+		"state": RunStateCodec.decode(after.run), "slots": after.slots, "go": after.go
+	}
+	shop_sync._apply_pending()
+	_check(
+		_shop_slots(client_shop, 0) == host_after,
+		"client mirrors purchase %s == %s" % [_shop_slots(client_shop, 0), host_after]
+	)
+	_check(RunData.get_player_gold(0) == host_gold_after, "client gold matches host")
+	yield(get_tree(), "idle_frame")
+	focus_sync._apply(focus_body)
+	var client_focus = Utils.get_focus_emulator(0, client_shop).focused_control
+	_check(
+		client_focus != null and ScenePaths.path_of(client_focus, client_shop) == focus_path,
+		"client cursor mirrors host cursor"
+	)
+	var owned := false
+	for element in RunData.get_player_weapons(0) + RunData.get_player_items(0):
+		owned = owned or element.my_id == bought_id
+	_check(owned, "client inventory has %s" % bought_id)
+	Puppet.set_active(false)
+	shop_sync.set_process(true)
+
+
+func _shop_slots(shop: Node, p: int) -> Array:
+	var slots := []
+	var container = shop._get_shop_items_container(p)
+	for i in container._shop_items.size():
+		var node = container.get_shop_item_node(i)
+		slots.append(node.item_data.my_id if node.active and node.item_data else "-")
+	return slots
+
+
 func _has_projectile_type(kinds: Dictionary) -> bool:
 	for kind in kinds:
 		if "projectile" in kind or "bullet" in kind:
@@ -281,6 +374,11 @@ func _check(condition: bool, label: String) -> void:
 	print("  %s %s" % ["ok  " if condition else "FAIL", label])
 	if not condition:
 		_failures.append(label)
+
+
+func _on_watchdog() -> void:
+	_check(false, "watchdog: tests did not finish within %d s" % WATCHDOG_SEC)
+	_finish()
 
 
 func _finish() -> void:

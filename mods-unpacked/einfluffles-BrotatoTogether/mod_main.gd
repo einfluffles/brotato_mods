@@ -14,6 +14,8 @@ const BattleHost := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const BattleClient := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_client.gd"
 )
+const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const ShopSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_sync.gd")
 const DebugOverlay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/debug_overlay.gd")
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 
@@ -29,6 +31,8 @@ var session: Node = null
 var input_sync: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
+var focus_sync: Node = null
+var shop_sync: Node = null
 
 var _client_active := false
 
@@ -68,6 +72,16 @@ func _ready() -> void:
 	battle_client.name = "BattleClient"
 	add_child(battle_client)
 	battle_client.setup(session, input_sync)
+
+	focus_sync = FocusSync.new()
+	focus_sync.name = "FocusSync"
+	add_child(focus_sync)
+	focus_sync.setup(session)
+
+	shop_sync = ShopSync.new()
+	shop_sync.name = "ShopSync"
+	add_child(shop_sync)
+	shop_sync.setup(session)
 
 	var overlay := DebugOverlay.new()
 	overlay.name = "DebugOverlay"

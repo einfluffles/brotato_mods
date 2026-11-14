@@ -378,9 +378,9 @@ func _spawn(type_idx: int) -> Node:
 	if node is Entity:
 		node.pool_id = pool_id
 		if node == pooled:
-			node.respawn()
+			PuppetEntity.revive(node)
 	if node is Projectile:
-		node.shoot()  # starts its animation; hitbox is disabled again by puppetize()
+		PuppetEntity.start_projectile_animation(node)
 	var data = _type_data.get(type_idx)
 	if data != null and node is Consumable:
 		node.consumable_data = data
