@@ -5,8 +5,8 @@ dist/
 # Editor / agent tooling
 .claude/
 mods/**/.claude/
-.idea/
-.vscode/
+.idea
+.vscode
 .mcp.json
 # Placeholders the Claude Code sandbox mounts over sensitive paths (/dev/null devices)
 .bash_profile
