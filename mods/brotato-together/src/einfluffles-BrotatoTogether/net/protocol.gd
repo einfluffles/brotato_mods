@@ -40,7 +40,7 @@ enum Msg {
 	SHOP_FOCUS,
 }
 
-const VERSION := 7
+const VERSION := 8
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

@@ -151,7 +151,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `ShopItem.set_shop_item/activate/deactivate`, `_update_visual_locks`, checkmarks). Client disconnects
   `BaseShop._on_tree_exited` (rolls curses on locked items). The host checks every 0.1 s by comparing the
   run state's JSON text (+ slots, Go flags, revisions, pages); zstd only runs when something changed.
-  Since protocol 7 the state also carries per player a panel revision (`seqs`) and the carousel page
+  Since protocol 8 the state also carries per player a panel revision (`seqs`) and the carousel page
   (`pages`), and for each client its own player index (`you`, so the message is sent per peer). The client
   rebuilds per player and per part: `ShopSync.player_keys` cuts the sent run state (before it is
   deserialized) into the player's whole data, its gear (weapons / items) and its offered items, as text.
@@ -161,7 +161,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `FocusEmulator` must never keep a control that is about to be freed), shop item nodes only when the
   player's data, offered items or slot layout changed. The same run bytes again (only a Go flag, a page
   or a revision differs) skip `resume_from_state` altogether.
-- **Own shop panel runs on the client** (protocol 7; second screen of the "local view, decisions to the
+- **Own shop panel runs on the client** (protocol 8; second screen of the "local view, decisions to the
   host" model). Files: `sync/shop_local.gd` (client), `sync/shop_intents.gd` (host),
   `extensions/ui/shop_item.gd`.
   - Client, own slot: as for the level-up panels, `InputSync.set_local_device` feeds the local buttons
@@ -234,7 +234,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `show_upgrades_for_level` without `ItemService.get_upgrades` and uses `show_item` for crates (item rebuilt
   from `ItemService` base + `deserialize_and_merge`).
 - **Own level-up / crate panel runs on the client** (protocol 6; first screen of the "local view, decisions
-  to the host" model, the shop followed with protocol 7). Each `CoopUpgradesUIPlayerContainer` is a
+  to the host" model, the shop followed with protocol 8). Each `CoopUpgradesUIPlayerContainer` is a
   `Carousel` with three pages (upgrades / gear / stats, switched with the triggers) and a per-player item
   popup toggle (`CoopItemPopup._input`, `ui_info`): view state that only existed on the host, so a remote
   player who flipped the page lost its cursor on its own screen. Now:
