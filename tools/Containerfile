@@ -1,0 +1,20 @@
+# Toolchain container: GDRE Tools (decompile Brotato.pck) + gdtoolkit 3.x (gdlint/gdformat for Godot 3 GDScript)
+FROM docker.io/library/debian:bookworm-slim
+
+ARG GDRE_VERSION=v2.7.4
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl unzip zip python3 python3-pip \
+      libfontconfig1 libx11-6 libxcursor1 libxinerama1 libxrandr2 libxi6 libgl1 libasound2 libpulse0 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/gdre.zip \
+      "https://github.com/GDRETools/gdsdecomp/releases/download/${GDRE_VERSION}/GDRE_tools-${GDRE_VERSION}-linux.zip" \
+ && mkdir -p /opt/gdre && unzip -q /tmp/gdre.zip -d /opt/gdre && rm /tmp/gdre.zip \
+ && chmod +x /opt/gdre/*.x86_64 \
+ && ln -s /opt/gdre/gdre_tools.x86_64 /usr/local/bin/gdre_tools
+
+RUN pip3 install --no-cache-dir --break-system-packages "gdtoolkit==3.*"
+
+WORKDIR /work

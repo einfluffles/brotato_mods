@@ -1,0 +1,6 @@
+# Decompiled game source — copyrighted, never commit
+reference/
+# Build output
+dist/
+# Tooling artifacts inside the mod tree
+mods-unpacked/**/.claude/

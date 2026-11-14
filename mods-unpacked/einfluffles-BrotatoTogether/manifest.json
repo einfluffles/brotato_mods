@@ -1,0 +1,22 @@
+{
+	"name": "BrotatoTogether",
+	"namespace": "einfluffles",
+	"version_number": "0.1.0",
+	"description": "brotato:together — online co-op over Steam P2P (host-authoritative, built on local co-op).",
+	"website_url": "",
+	"dependencies": [],
+	"extra": {
+		"godot": {
+			"authors": ["einfluffles"],
+			"optional_dependencies": [],
+			"compatible_game_version": [],
+			"compatible_mod_loader_version": ["6.3.0"],
+			"incompatibilities": ["six666-BrotatoOnline"],
+			"load_before": [],
+			"tags": ["Utilities"],
+			"config_schema": {},
+			"description_rich": "",
+			"image": null
+		}
+	}
+}
