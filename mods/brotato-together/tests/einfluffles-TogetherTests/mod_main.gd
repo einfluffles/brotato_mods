@@ -46,6 +46,27 @@ func _run() -> void:
 	InputService.enable_gamepad_movement()
 	_check(InputMap.has_action("analog_move_left_%s" % DEVICE), "actions survive rebuild")
 
+	# F9 menu: one hotkey, bottom-centre pill, no keyboard/gamepad focus stealing.
+	var menu: CanvasLayer = together.get_node("TogetherMenu")
+	_check(not menu.is_open(), "menu starts closed")
+	yield(_tap_key(KEY_F8), "completed")
+	_check(not menu.is_open(), "F8 (game bug reporter) is not ours")
+	yield(_tap_key(KEY_F9), "completed")
+	_check(menu.is_open(), "F9 opens the menu")
+	_check(not menu._pill.visible, "pill hidden while menu open")
+	_check(menu._host_button.focus_mode == Control.FOCUS_NONE, "menu buttons take no focus")
+	_check(menu.details_text() != "", "menu shows details")
+	yield(_tap_key(KEY_F9), "completed")
+	_check(not menu.is_open(), "F9 closes the menu")
+	_check(menu._pill.visible and menu.pill_text().ends_with("F9"), "pill shows hint")
+	var view_size: Vector2 = menu._pill.get_viewport_rect().size
+	var pill_rect: Rect2 = menu._pill.get_global_rect()
+	_check(
+		abs(pill_rect.get_center().x - view_size.x / 2.0) < 2.0 and pill_rect.end.y <= view_size.y,
+		"pill sits bottom-centre (%s in %s)" % [pill_rect, view_size]
+	)
+	_check(pill_rect.position.y > view_size.y * 0.85, "pill near the bottom edge")
+
 	# Remote player joins via hold-to-join and is typed as a gamepad.
 	RunData.set_coop_run(true)
 	CoopService.clear_coop_players()
@@ -322,18 +343,36 @@ func _test_battle_loopback(together: Node):
 	# Death: a vanished unit plays its death animation, then returns to main's pool.
 	client.set_process(false)
 	var victim = null
+	var victim_id := -1
 	for id in client._entities:
 		if client._entities[id] is Enemy:
 			victim = client._entities[id]
+			victim_id = id
 			break
 	_check(victim != null, "found an enemy puppet")
 	if victim != null:
-		client._despawn(victim)
+		# The snapshot that drops the enemy carries its killing blow; the event replays after.
+		var survivors := {"ids": PoolIntArray(), "types": PoolIntArray(), "positions": []}
+		for id in client._entities:
+			if id != victim_id:
+				survivors.ids.append(id)
+				survivors.types.append(0)
+				survivors.positions.append(client._entities[id].global_position)
+		survivors.positions = PoolVector2Array(survivors.positions)
+		client._apply_entities(survivors, survivors, 1.0)
 		_check(victim.dead and victim.is_inside_tree(), "death animation playing")
+		var texts: Node = puppet_main.get_node("%FloatingTexts")
+		var texts_before := texts.get_child_count()
+		client._show_damage([Snapshot.EVENT_DAMAGE, victim_id, 12, Vector2.ZERO, 0, 0])
+		_check(texts.get_child_count() > texts_before, "killing blow shows its damage number")
 		yield(get_tree().create_timer(2.0), "timeout")
 		_check(puppet_main.is_in_pool(victim), "dead puppet returned to pool")
+		var pooled: Array = puppet_main._pool[victim.pool_id].duplicate()
 		var reused: Node = client._spawn(host._types[victim.filename])
-		_check(reused == victim and not reused.dead, "puppet reused from pool")
+		_check(
+			reused in pooled and not reused.dead and reused.is_inside_tree(),
+			"puppet reused from pool"
+		)
 	# Consumables share one scene; their look comes from data (crate vs. fruit).
 	var crate = ItemService.consumables[-1]
 	client._define_type(999, "res://items/consumables/consumable.tscn#%s" % crate.my_id)
@@ -574,6 +613,16 @@ func _find_by_id(elements: Array, my_id: String):
 func _send(input_sync: Node, move: Vector2, aim: Vector2, buttons: int) -> void:
 	_seq += 1
 	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons])
+
+
+func _tap_key(scancode: int) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.scancode = scancode
+		event.pressed = pressed
+		Input.parse_input_event(event)
+		yield(get_tree(), "idle_frame")
+	yield(get_tree(), "idle_frame")
 
 
 func _check(condition: bool, label: String) -> void:

@@ -23,7 +23,7 @@ const SPAWNER_RESPAWN_SIGNALS := [
 
 var session: Node = null
 var input_sync: Node = null
-var snapshot_bytes := 0  # size of the last snapshot, for the debug overlay
+var snapshot_bytes := 0  # size of the last snapshot, for the F9 menu
 
 var _main: Node = null
 var _battle_id := 0

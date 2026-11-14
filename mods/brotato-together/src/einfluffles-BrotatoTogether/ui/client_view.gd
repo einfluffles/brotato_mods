@@ -53,7 +53,7 @@ func _process(_delta: float) -> void:
 		host_name = session.peers[host_id].name
 		if session.peers[host_id].rtt_ms >= 0:
 			rtt = "%d ms" % session.peers[host_id].rtt_ms
-	_status.text = "brotato:together — connected to %s (rtt %s) — F8: leave" % [host_name, rtt]
+	_status.text = "brotato:together — connected to %s (rtt %s) — F9: menu" % [host_name, rtt]
 	if _panels.empty():
 		_title.text = "Waiting for the host…"
 

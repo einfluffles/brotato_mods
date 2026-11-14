@@ -28,12 +28,10 @@ Details: [`docs/implementation.md`](docs/implementation.md).
 
 Everyone subscribes to the Workshop item (and unsubscribes from other online/co-op mods). Then:
 
-| Key | |
-|---|---|
-| F6 | host a lobby |
-| F7 | open the Steam invite dialog |
-| F8 | leave the lobby |
-| F9 | toggle the status overlay |
+Press **F9** to open the brotato:together menu: *Host lobby*, *Invite friends* (Steam overlay),
+*Leave lobby*, plus connection details. A small status pill at the bottom of the screen shows the
+role, player count and ping. F9 is the only key the mod uses, so it can't collide with the
+game's keys (F8 is the game's bug reporter).
 
 The host opens co-op character selection; remote players hold *accept* to join like local players.
 

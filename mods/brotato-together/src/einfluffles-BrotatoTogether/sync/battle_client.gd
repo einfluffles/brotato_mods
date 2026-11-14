@@ -34,10 +34,13 @@ const CURSED_TAG := "cursed"  # see BattleHost._type_key
 const SOUND_EXTENSIONS := ["wav", "ogg", "mp3"]
 const CLOCK_CREEP_MSEC := 0.5  # per snapshot: lets the offset follow rising latency / drift
 const WAVE_TIMER_TOLERANCE := 0.3
+# A killing blow's damage event arrives with the snapshot that drops the enemy, which the client
+# despawns a frame or two before replaying the event: keep the target findable for a moment.
+const DESPAWN_GRACE_MSEC := 1000
 
 var session: Node = null
 var input_sync: Node = null
-var interp_lag_msec := 0  # render time vs newest snapshot, for the debug overlay
+var interp_lag_msec := 0  # render time vs newest snapshot, for the F9 menu
 
 var _battle_id := 0
 var _types := {}  # idx -> PackedScene (null if rejected)
@@ -48,6 +51,7 @@ var _has_clock := false
 var _main: Node = null
 var _entities := {}  # net id -> node
 var _last_positions := {}  # net id / "p<i>" -> Vector2
+var _despawned := {}  # net id -> [node, expires msec], for late damage events
 var _you := -1  # player slot this client controls (-1: spectator)
 var _own_base_t := -1
 var _own_error := Vector2.ZERO
@@ -139,6 +143,7 @@ func _reset_battle_state() -> void:
 	_buffer.clear()
 	_entities.clear()
 	_last_positions.clear()
+	_despawned.clear()
 	_has_clock = false
 	_you = -1
 	_paused = false
@@ -381,17 +386,29 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 			if node == null:
 				continue
 			_entities[id] = node
+			_forget_despawned(node)  # reused from the pool: no longer the old id's target
 		alive[id] = true
 		var position: Vector2 = to.positions[i]
 		var j := Snapshot.index_of(from, id)
 		if j >= 0:
 			position = from.positions[j].linear_interpolate(position, alpha)
 		_move(node, id, position)
+	var now := OS.get_ticks_msec()
 	for id in _entities.keys():
 		if not alive.has(id):
 			_despawn(_entities[id])
+			_despawned[id] = [_entities[id], now + DESPAWN_GRACE_MSEC]
 			_entities.erase(id)
 			_last_positions.erase(id)
+	for id in _despawned.keys():
+		if now > _despawned[id][1]:
+			_despawned.erase(id)
+
+
+func _forget_despawned(node: Node) -> void:
+	for id in _despawned.keys():
+		if _despawned[id][0] == node:
+			_despawned.erase(id)
 
 
 func _move(node: Node, key, position: Vector2) -> void:
@@ -521,6 +538,8 @@ func _damage_target(id):
 		var index: int = -id - 1
 		return players[index] if index < players.size() else null
 	var node = _entities.get(id)
+	if node == null and _despawned.has(id):
+		node = _despawned[id][0]
 	return node if node != null and is_instance_valid(node) else null
 
 

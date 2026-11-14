@@ -20,7 +20,7 @@ const UpgradesSync := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_sync.gd"
 )
 const MenuSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/menu_sync.gd")
-const DebugOverlay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/debug_overlay.gd")
+const TogetherMenu := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/together_menu.gd")
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 
 const EXTENSIONS := [
@@ -102,10 +102,10 @@ func _ready() -> void:
 	menu_sync.setup(session, battle_host)
 	menu_sync.connect("menu_state", self, "_on_menu_state")
 
-	var overlay := DebugOverlay.new()
-	overlay.name = "DebugOverlay"
-	overlay.setup(transport, session, battle_host, battle_client)
-	add_child(overlay)
+	var menu := TogetherMenu.new()
+	menu.name = "TogetherMenu"
+	menu.setup(transport, session, battle_host, battle_client)
+	add_child(menu)
 
 	session.connect("peer_ready", self, "_on_peer_ready")
 	battle_client.connect("battle_left", self, "_on_client_battle_left")
