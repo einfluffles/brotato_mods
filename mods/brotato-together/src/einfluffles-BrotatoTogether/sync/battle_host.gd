@@ -248,8 +248,10 @@ func _on_took_damage(
 
 
 # Called by SoundRelay for every sound the host plays during the battle.
+# Not while paused: the pause menu isn't shown on clients, and its sounds would arrive as a
+# burst with the first snapshot after unpausing.
 func record_sound(sound: Resource, position, volume_mod: float, pitch_rand: float) -> void:
-	if not is_in_battle() or sound == null or sound.resource_path == "":
+	if not is_in_battle() or get_tree().paused or sound == null or sound.resource_path == "":
 		return
 	_events.append(
 		[Snapshot.EVENT_SOUND, _type_idx(sound.resource_path), position, volume_mod, pitch_rand]

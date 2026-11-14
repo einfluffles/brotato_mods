@@ -18,6 +18,8 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   own save/resume path) and mirror every player's cursor.
 - **Selection screens / end of run:** per-player cards of what each cursor is on (grids depend on each
   machine's unlocks, so they aren't mirrored 1:1).
+- **Sounds:** clients hear the host's sounds — battle sounds with the snapshots, menu/shop sounds as
+  they happen — instead of their own mirrored screens' sounds.
 - **Transport:** Steam lobbies (friends-only, overlay invites) + Steam Networking Messages via the GodotSteam
   module that ships inside Brotato. No port forwarding.
 - A client never writes the host's run into its own save file and never unlocks challenges from it.
@@ -39,4 +41,4 @@ The host opens co-op character selection; remote players hold *accept* to join l
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
 run-state round trip, a recorded host battle replayed on a client, shop purchase mirroring, level-up/crate
-panels, cursor mirroring, character-selection cards.
+panels, cursor mirroring, character-selection cards, shop UI sounds.

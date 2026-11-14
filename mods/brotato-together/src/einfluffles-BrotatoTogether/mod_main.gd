@@ -20,6 +20,7 @@ const UpgradesSync := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_sync.gd"
 )
 const MenuSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/menu_sync.gd")
+const UiSounds := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/ui_sounds.gd")
 const TogetherMenu := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/together_menu.gd")
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 
@@ -41,6 +42,7 @@ var focus_sync: Node = null
 var shop_sync: Node = null
 var upgrades_sync: Node = null
 var menu_sync: Node = null
+var ui_sounds: Node = null
 
 var _client_active := false
 
@@ -101,6 +103,11 @@ func _ready() -> void:
 	add_child(menu_sync)
 	menu_sync.setup(session, battle_host)
 	menu_sync.connect("menu_state", self, "_on_menu_state")
+
+	ui_sounds = UiSounds.new()
+	ui_sounds.name = "UiSounds"
+	add_child(ui_sounds)
+	ui_sounds.setup(session)
 
 	var menu := TogetherMenu.new()
 	menu.name = "TogetherMenu"

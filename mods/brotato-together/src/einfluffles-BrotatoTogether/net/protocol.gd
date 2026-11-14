@@ -16,9 +16,10 @@ enum Msg {
 	UPGRADES_STATE,  # host -> client: battle_id, visible, run, players (see upgrades_sync.gd)
 	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, is_random, ready]]
 	BATTLE_PAUSE,  # host -> client: battle_id, paused
+	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
 }
 
-const VERSION := 1
+const VERSION := 2
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

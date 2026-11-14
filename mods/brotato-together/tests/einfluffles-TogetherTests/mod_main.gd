@@ -485,8 +485,7 @@ func _test_shop_loopback(together: Node):
 	var bought = container.get_shop_item_node(1)
 	var bought_id: String = bought.item_data.my_id
 	var gold_before: int = RunData.get_player_gold(0)
-	container.on_shop_item_buy_button_pressed(bought)
-	yield(get_tree(), "idle_frame")
+	var host_sounds: Dictionary = yield(_ui_sounds_host_buy(together, bought), "completed")
 	var after: Dictionary = bytes2var(var2bytes(shop_sync._shop_body()), false)
 
 	# Host cursor for player 0 on shop slot 2 (focus mirroring).
@@ -517,6 +516,7 @@ func _test_shop_loopback(together: Node):
 		"client shows host's items %s" % [_shop_slots(client_shop, 0)]
 	)
 
+	var dropped_before := _hold_sounds(true)
 	shop_sync._pending = {
 		"state": RunStateCodec.decode(after.run), "slots": after.slots, "go": after.go
 	}
@@ -533,12 +533,106 @@ func _test_shop_loopback(together: Node):
 		client_focus != null and ScenePaths.path_of(client_focus, client_shop) == focus_path,
 		"client cursor mirrors host cursor"
 	)
+	_test_ui_sounds_client(together, host_sounds, dropped_before)
 	var owned := false
 	for element in RunData.get_player_weapons(0) + RunData.get_player_items(0):
 		owned = owned or element.my_id == bought_id
 	_check(owned, "client inventory has %s" % bought_id)
 	Puppet.set_active(false)
 	shop_sync.set_process(true)
+
+
+# Host presses the shop item's real Buy button: its press sound plays through SoundManager, and
+# everything the host plays outside battle is recorded for clients (UiSounds).
+func _ui_sounds_host_buy(together: Node, shop_item: Node):
+	var ui_sounds: Node = together.ui_sounds
+	ui_sounds.set_process(false)  # driven by hand (no Steam session)
+	SoundRelay.set_ui_sink(ui_sounds)
+	_hold_sounds(true)
+	shop_item._button.emit_signal("pressed")  # the buy itself is a deferred connection
+	yield(get_tree(), "idle_frame")
+	yield(get_tree(), "idle_frame")
+	var played := _queued_sound_paths()
+	var body: Dictionary = bytes2var(var2bytes(ui_sounds.take_batch()), false)
+	SoundRelay.set_ui_sink(null)
+	_hold_sounds(false)
+	ui_sounds.set_process(true)
+	var sent := _batch_paths(body)
+	print("  info: host played %s, sent %s (%d B)" % [played, sent, var2bytes(body).size()])
+	_check("res://ui/sounds/button_press.wav" in sent, "host sends the purchase sound")
+	_check(sent == played, "host sends every sound it played in the shop")
+	return body
+
+
+# Client: mirroring the purchase and the cursor in the puppet shop plays nothing locally; the
+# host's batch plays exactly once.
+func _test_ui_sounds_client(together: Node, host_sounds: Dictionary, dropped_before: int) -> void:
+	var local := _queued_sound_paths()
+	var dropped: int = SoundRelay.dropped_count() - dropped_before
+	print("  info: client mirroring muted %d local sounds" % dropped)
+	_check(local.empty() and dropped > 0, "mirrored shop plays no local sounds %s" % [local])
+	var played: int = together.ui_sounds.play_batch(host_sounds)
+	var heard := _queued_sound_paths()
+	_check(
+		played > 0 and heard == _batch_paths(host_sounds),
+		"client plays exactly the host's sounds %s" % [heard]
+	)
+	_hold_sounds(false)
+	_test_ui_sound_validation(together.ui_sounds)
+
+
+# Sound paths come from the network: only existing res:// sound files are played.
+func _test_ui_sound_validation(ui_sounds: Node) -> void:
+	_check(SoundRelay.is_sound_path("res://ui/sounds/buy.wav"), "UI sound path accepted")
+	var rejected := true
+	for path in ["user://a.wav", "res://../a.wav", "res://main.tscn", "res://a.wav::1", 42, null]:
+		rejected = rejected and not SoundRelay.is_sound_path(path)
+	_check(rejected, "non-sound paths rejected")
+	_hold_sounds(true)
+	var bad := {
+		"sounds":
+		[
+			["res://ui/menus/shop/coop_shop.tscn", 0.0, 0.0, null],
+			["res://../ui/sounds/buy.wav", 0.0, 0.0, null],
+			["user://buy.wav", 0.0, 0.0, null],
+			["res://ui/sounds/does_not_exist.wav", 0.0, 0.0, null],
+			["res://ui/sounds/buy.wav", "loud", 0.0, null],
+			["res://ui/sounds/buy.wav", 0.0, 0.0, "here"],
+			["res://ui/sounds/buy.wav"],
+			"res://ui/sounds/buy.wav",
+		]
+	}
+	var played: int = ui_sounds.play_batch(bad)
+	played += ui_sounds.play_batch("res://ui/sounds/buy.wav")
+	played += ui_sounds.play_batch({"sounds": 3})
+	_check(played == 0 and _queued_sound_paths().empty(), "malformed UI sounds rejected")
+	_hold_sounds(false)
+
+
+# Stops the sound managers so their queues show what was played; returns the muted count so far.
+func _hold_sounds(hold: bool) -> int:
+	for manager in [SoundManager, SoundManager2D]:
+		manager.clear_queue()
+		manager.set_process(not hold)
+	return SoundRelay.dropped_count()
+
+
+func _queued_sound_paths() -> Array:
+	var paths := []
+	for manager in [SoundManager, SoundManager2D]:
+		for entry in manager.sounds_to_play:
+			paths.append(entry[0].resource_path if entry[0] != null else "")
+	paths.sort()
+	return paths
+
+
+func _batch_paths(body: Dictionary) -> Array:
+	var paths := []
+	if typeof(body.get("sounds")) == TYPE_ARRAY:
+		for entry in body.sounds:
+			paths.append(entry[0])
+	paths.sort()
+	return paths
 
 
 # Character selection: the client card shows what the host cursor is on (by id, not grid index).

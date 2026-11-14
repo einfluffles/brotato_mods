@@ -53,3 +53,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `session/sound_relay.gd`. The host records every sound (stream path via the per-battle type table); a client
   in a battle drops locally triggered sounds (e.g. step sounds from puppet walk animations, which are method
   tracks) and plays only replays.
+- Outside battle (shop, selection screens, end of run) `sync/ui_sounds.gd` is the host's sink instead: sounds
+  are batched per frame and sent as `UI_SOUNDS` (reliable; `res://` path, volume, pitch, position). The
+  level-up/crate panels live in `main.tscn`, so their sounds already travel with the battle snapshots. The
+  client checks paths like `BattleClient._define_type` (`SoundRelay.is_sound_path` + `ResourceLoader.exists`
+  + `AudioStream`) and clamps volume/pitch. The puppet shop is muted from `node_added` until it leaves the
+  tree (mirrored state and cursors would replay e.g. button focus sounds); ClientView isn't mirrored and
+  stays audible. Sounds played while the host's tree is paused (pause menu) aren't recorded. UI pages that
+  play their own `AudioStreamPlayer` (profile, codex, item sets) bypass SoundManager; they're host-only.
