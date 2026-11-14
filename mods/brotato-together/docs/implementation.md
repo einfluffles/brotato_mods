@@ -17,16 +17,31 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Puppet = `propagate_call("set_physics_process", [false])`, body `MODE_STATIC`, no collision layers,
   all Area2D monitoring off; idle processing (AnimationPlayers) stays on. `update_animation(motion)` is called
   with the interpolated motion for walk animation; facing comes from the host afterwards.
-- Per-entity flags (2 bits each, packed): `sprite.scale.x < 0` (facing; behaviors turn units toward their
-  target and knockback would otherwise flip puppets) and `!visible` (stampede dinos hide before charging).
+- Per-entity flags (3 bits each, packed): `sprite.scale.x < 0` (facing; behaviors turn units toward their
+  target and knockback would otherwise flip puppets), `!visible` (stampede dinos hide before charging) and
+  `sprite.flip_h` (`JumpAttackBehavior` turns the sprite toward its landing spot and never resets it).
 - Poses (`sync/pose.gd`): parts that physics code turns, sent sparsely only for scenes that have them,
   interpolated with `lerp_angle`. Turrets don't rotate in this game (`Turret.shoot` only aims projectiles).
   Found: `GoTowardsBorderOppositeMovementBehavior` rotates the whole unit (oviraptor, iguanodon); `Pivot`
   children (predator, giant, jellyfish) spin rings of `EnemyProjectileRotating`, whose `position.x` grows
   outwards first; `CatlingGun._orient_gun` sets `rotation` + `scale.y` of `%Gun_pivot_l/r` and their draw
-  order. Layout = per-scene list of (node path, kind), derived identically on host and client.
-- Not mirrored yet: boss pivots added at runtime (eel, tyrannosaurus, brachiosaurus `pivots_scene`),
-  `sprite.flip_h` of jump attacks.
+  order; `EnemyLaser(Follow)` never moves, so its `rotation` (aim) and the beam/aura sprites' `visible`
+  (one bitmask value) are sent; `BrachiosaurusFoot`: shadow/foot/release sprite `visible` + foot `flip_h`.
+  Layout = per-scene list of (node path, kind), derived from a pristine `instance()` of the scene (never from
+  a live one: a puppet's `die()` frees its `Pivot` via `Pivot._on_Enemy_died`), cached per scene path.
+- Pose groups: at most one per scene, appended to the base values only while active; the value count tells
+  the client. `PIVOTS`: `Eel`/`Tyranosaurus`/`Brachiosaurus.on_state_changed(1)` add a `pivots_scene`
+  instance (16 `Pivot`s + 16 bullets, 32 values); the host checks `entity.pivots`, the client instances the
+  same scene with the same name on its puppet (puppetized, `entity.pivots` set so its `die()` frees the
+  bullets). The ring bullets are children of the boss, not of `_enemy_projectiles`, so they aren't also
+  tracked as projectiles. `JUMP`: while `%Land_shadow_warning` is visible, its local position + `%Shadow`
+  height/scale (the body flies, the shadow stays on the ground). `WARNING_LINE`: while
+  `WarningChargingAttackBehavior._warning_line` is visible, its angle (client parents the behavior's own
+  `Line2D`, which `init()` would have done, and rebuilds the points like `show_warning`).
+- No values for a scene with base parts = the host's are gone (pooled entity without its `Pivot`): the client
+  hides its pivots; with values it re-creates missing `Pivot` children from a pristine instance (reused
+  puppets) and shows them. Stampede dinos: the client shakes its grass (`main._shake_zone_sprites`) when one
+  spawns, like `get_movement` does on the host (no bytes).
 - Animations (`sync/anim_mirror.gd`): physics code / behaviors start most non-idle animations (turret
   "shoot", enemy "shoot" wind-ups and charges, jump attacks, brachiosaurus foot stomps, pet states like
   the catling gun's "enter_in_mad_mode"/"idle_attack"). Host: `EVENT_ANIM` [net id, name, position, speed]
@@ -38,6 +53,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   tracks removed (`Animation.duplicate` + `remove_track`; the shared original stays intact). Every entity
   puppet loses the game's own `animation_finished` handlers at spawn (turret cooldown needs stats; attack
   behaviors have no `_parent` on puppets — a dying puppet spitter errored).
+- Not mirrored yet: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
+  game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
+  respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
 - Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
 
 ## Menus

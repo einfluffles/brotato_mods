@@ -240,10 +240,12 @@ func _build_snapshot() -> Array:
 
 # Facing is host state: behaviors turn units toward their target, and knockback would flip a
 # puppet that faced its interpolated motion. Hidden: e.g. stampede dinos before their charge.
+# flip_h: JumpAttackBehavior turns the sprite toward its landing spot (and leaves it so).
 func _flags_of(node: Node) -> int:
 	var flags := 0
-	if node is Unit and node.sprite != null and node.sprite.scale.x < 0:
-		flags |= Snapshot.FLAG_FACING_LEFT
+	if node is Unit and node.sprite != null:
+		flags |= Snapshot.FLAG_FACING_LEFT if node.sprite.scale.x < 0 else 0
+		flags |= Snapshot.FLAG_FLIP_H if node.sprite.flip_h else 0
 	if not node.visible:
 		flags |= Snapshot.FLAG_HIDDEN
 	return flags

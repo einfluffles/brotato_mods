@@ -16,6 +16,9 @@ const SoundRelay := preload(
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const AnimMirrorTest := preload("res://mods-unpacked/einfluffles-TogetherTests/anim_mirror_test.gd")
+const RuntimePartsTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/runtime_parts_tests.gd"
+)
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 170.0
 const DEVICE := VirtualDevices.FIRST
@@ -24,10 +27,12 @@ const BIT_ACCEPT := 1
 var _failures := []
 var _seq := 0
 var _anim_test = AnimMirrorTest.new()  # kept alive across its yields
+var _runtime_parts = null  # kept alive across its coroutines
 
 
 func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
+	_runtime_parts = RuntimePartsTests.new(self)
 	call_deferred("_run")
 
 
@@ -120,6 +125,7 @@ func _run() -> void:
 	yield(_test_battle_loopback(together), "completed")
 	yield(_test_pose_mirror(together), "completed")
 	yield(_anim_test.run(self, together), "completed")
+	yield(_runtime_parts.test_runtime_parts(together), "completed")
 	# Variants the game actually uses (ZoneService.bullets_hell); BulletHell_0..3 are unused
 	# leftovers (2 and 3 are even broken in the game: bullet groups in a single-bullet variable).
 	for variant in ["BulletHell_Left", "BulletHell_Top_2", "BulletHell_Bottom_3"]:
@@ -539,6 +545,8 @@ func _test_pose_mirror(together: Node):
 	_check(not (null in puppets.values()), "client mirrors the test entities")
 	if not (null in puppets.values()):
 		_check_puppet_poses(client, puppets, host_values, last)
+		var host_pose: PoolRealArray = last.poses.get(index.tree, PoolRealArray([0.0, 0.0]))
+		yield(_runtime_parts.test_pivot_restore(client, puppets.tree, host_pose), "completed")
 	client.set_process(true)
 	client._leave_battle()
 	Puppet.set_active(false)
@@ -597,6 +605,7 @@ func _test_malformed_poses(body: Array) -> void:
 		"truncated run": [0, 3, 0.5],
 		"fractional index": [0.5, 1, 0.5],
 		"NaN value": [0, 1, NAN],
+		"over the value limit": [0, 49] + range(49),
 	}
 	for label in bad_poses:
 		var snap := body.duplicate()
