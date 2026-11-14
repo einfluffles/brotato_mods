@@ -42,6 +42,7 @@ var members := []  # steam ids in the lobby, excluding local
 var was_host := false  # role of the lobby left last (valid from lobby_left on)
 var pending_join_id := 0  # invite waiting for confirmation (joining leaves the current lobby)
 
+var join_presence := ""  # the "connect" rich presence we advertise ("" = no Join button)
 var _lobby_tag := ""
 var _next_send_warning_msec := 0
 
@@ -67,6 +68,7 @@ func setup(lobby_tag: String) -> bool:
 	_connect_steam("network_messages_session_request", "_on_session_request")
 	_connect_steam("network_messages_session_failed", "_on_session_failed")
 	steam.initRelayNetworkAccess()
+	_clear_join_presence()  # never inherit a Join button from an earlier (crashed) session
 	_check_launch_args()
 	return true
 
@@ -112,10 +114,10 @@ func leave_lobby() -> void:
 	for peer in members:
 		steam.closeSessionWithUser(peer)
 	steam.leaveLobby(lobby_id)
-	steam.setRichPresence("connect", "")
 	lobby_id = 0
 	host_id = 0
 	members.clear()
+	_clear_join_presence()
 	emit_signal("lobby_left")
 
 
@@ -199,7 +201,7 @@ func _on_lobby_created(result: int, new_lobby_id: int) -> void:
 	members.clear()
 	steam.setLobbyData(lobby_id, LOBBY_KEY_MOD, _lobby_tag)
 	steam.setLobbyJoinable(lobby_id, true)
-	steam.setRichPresence("connect", "+connect_lobby %s" % lobby_id)
+	_update_join_presence()
 	ModLoaderLog.info("Hosting lobby %s" % lobby_id, LOG_NAME)
 	emit_signal("lobby_ready", lobby_id, true)
 
@@ -221,7 +223,7 @@ func _on_lobby_joined(
 	lobby_id = joined_lobby_id
 	host_id = int(steam.getLobbyOwner(lobby_id))
 	_refresh_members()
-	steam.setRichPresence("connect", "+connect_lobby %s" % lobby_id)
+	_update_join_presence()
 	ModLoaderLog.info("Joined lobby %s (host %s)" % [lobby_id, host_id], LOG_NAME)
 	emit_signal("lobby_ready", lobby_id, false)
 	if members.has(host_id):
@@ -252,6 +254,7 @@ func _on_lobby_chat_update(
 		return
 	var was_member := members.has(changed_id)
 	_refresh_members()
+	_update_join_presence()
 	if chat_state & CHAT_MEMBER_ENTERED:
 		# Its session request may have come (and been rejected) before it was a member.
 		steam.acceptSessionWithUser(changed_id)
@@ -264,6 +267,33 @@ func _on_lobby_chat_update(
 			ModLoaderLog.warning("Host left the lobby", LOG_NAME)
 			emit_signal("lobby_failed", "The host left the lobby")
 			leave_lobby()
+
+
+# Steam shows friends a "Join game" button exactly while rich presence "connect" is set: only
+# while we're in a lobby that still has a free slot.
+func _update_join_presence() -> void:
+	if not is_active() or members.size() + 1 >= MAX_LOBBY_MEMBERS:
+		_clear_join_presence()
+		return
+	var value := "+connect_lobby %s" % lobby_id
+	if value == join_presence:
+		return
+	steam.setRichPresence("connect", value)
+	join_presence = value
+	ModLoaderLog.info("Steam Join button on (lobby %s)" % lobby_id, LOG_NAME)
+
+
+func _clear_join_presence() -> void:
+	if steam == null:
+		return
+	# clearRichPresence drops every key; setting "" only removes "connect" (older GodotSteam).
+	if steam.has_method("clearRichPresence"):
+		steam.clearRichPresence()
+	else:
+		steam.setRichPresence("connect", "")
+	if join_presence != "":
+		ModLoaderLog.info("Steam Join button off", LOG_NAME)
+	join_presence = ""
 
 
 func _on_session_request(remote_id: int) -> void:
