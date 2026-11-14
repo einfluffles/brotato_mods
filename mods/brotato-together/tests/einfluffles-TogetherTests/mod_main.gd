@@ -16,7 +16,7 @@ const SoundRelay := preload(
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const FAKE_PEER := 4242
-const WATCHDOG_SEC := 100.0
+const WATCHDOG_SEC := 170.0
 const DEVICE := VirtualDevices.FIRST
 const BIT_ACCEPT := 1
 
@@ -95,6 +95,10 @@ func _run() -> void:
 	_test_host_timeout(together)
 	_test_run_state_round_trip()
 	yield(_test_battle_loopback(together), "completed")
+	# Variants the game actually uses (ZoneService.bullets_hell); BulletHell_0..3 are unused
+	# leftovers (2 and 3 are even broken in the game: bullet groups in a single-bullet variable).
+	for variant in ["BulletHell_Left", "BulletHell_Top_2", "BulletHell_Bottom_3"]:
+		yield(_test_bullet_hell(together, variant), "completed")
 	yield(_test_shop_loopback(together), "completed")
 	yield(_test_menu_mirror(together), "completed")
 	_finish()
@@ -223,17 +227,21 @@ func _test_battle_loopback(together: Node):
 	var puppet_main: Node = client._main
 	_check(puppet_main != null and puppet_main != main, "client loaded its own battle scene")
 	var spawner = puppet_main.get("_entity_spawner")
+	var max_floating_texts := 0  # damage numbers only live ~1 s: sample during the replay
 	var replay_start := OS.get_ticks_msec()
 	for msg in recorded:
 		var snap: Array = msg[1].duplicate()
 		snap[1] = replay_start + (snap[1] - recorded[0][1][1])  # host t -> replay timeline
 		while OS.get_ticks_msec() < snap[1]:
 			yield(get_tree(), "idle_frame")
+			max_floating_texts = max(
+				max_floating_texts, puppet_main.get_node("%FloatingTexts").get_child_count()
+			)
 		client._on_snapshot(Snapshot.parse(snap))
 	yield(get_tree().create_timer(0.3), "timeout")
 	_check(spawner.enemies.empty(), "client spawner spawned nothing itself")
-	var floating_texts = puppet_main.get_node("%FloatingTexts")
-	_check(floating_texts.get_child_count() > 0, "damage numbers replayed on the client")
+	if damage_events > 0:  # hits are random in a 6 s battle
+		_check(max_floating_texts > 0, "damage numbers replayed on the client")
 	# Local sounds are muted while mirroring; the host's replayed sounds play.
 	var stream: AudioStream = load("res://entities/units/player/step_sounds/Step 1.mp3")
 	var queued: int = SoundManager2D.sounds_to_play.size()
@@ -334,10 +342,85 @@ func _test_battle_loopback(together: Node):
 		consumable != null and consumable.consumable_data == crate,
 		"consumable gets its data (%s)" % crate.my_id
 	)
+	# Cursed structures carry curse particles; a pooled puppet reused as a normal one loses them.
+	var turret_scene := "res://entities/structures/turret/turret.tscn"
+	client._define_type(997, turret_scene + "#cursed")
+	client._define_type(998, turret_scene)
+	var cursed_turret: Node = client._spawn(997)
+	_check(is_instance_valid(cursed_turret.curse_particle_instance), "cursed turret has particles")
+	client._despawn(cursed_turret)
+	yield(get_tree().create_timer(2.0), "timeout")
+	var normal_turret: Node = client._spawn(998)
+	_check(
+		not is_instance_valid(normal_turret.curse_particle_instance),
+		"reused turret lost curse particles (reused: %s)" % (normal_turret == cursed_turret)
+	)
 	client.set_process(true)
 	client._leave_battle()
 	Puppet.set_active(false)
 	host.set_process(true)
+
+
+# Bullet-hell wave: every visible enemy bullet on the host must be in the snapshot and mirrored.
+func _test_bullet_hell(together: Node, variant: String):
+	var host: Node = together.battle_host
+	var client: Node = together.battle_client
+	host.set_process(false)
+	RunData.constant_projectile = 2
+	RunData.players_data[0].effects[Keys.bullet_hell_event_hash] = 1
+	var saved_variants: Array = ZoneService.bullets_hell
+	ZoneService.bullets_hell = [load("res://projectiles/bullet_hells/%s.tscn" % variant)]
+	get_tree().change_scene("res://main.tscn")
+	yield(get_tree(), "idle_frame")
+	yield(get_tree(), "idle_frame")
+	var main := get_tree().current_scene
+	host._start_battle(main)
+	yield(get_tree().create_timer(5.0), "timeout")
+	var visible := 0
+	for node in _descendants(main.get("_enemy_projectiles")):
+		if node is Projectile and node.is_visible_in_tree():
+			visible += 1
+	var msg: Array = bytes2var(var2bytes(host._build_snapshot()), false)
+	var snap := Snapshot.parse(msg[1])
+	var mirrored := 0
+	for i in snap.ids.size():
+		var path: String = host._types.keys()[host._types.values().find(snap.types[i])]
+		mirrored += 1 if "bullet" in path or "projectile" in path else 0
+	ZoneService.bullets_hell = saved_variants
+	print("  info: %s: %d visible enemy bullets, %d in snapshot" % [variant, visible, mirrored])
+	_check(visible > 0, "%s spawned bullets" % variant)
+	_check(mirrored >= visible, "%s: all visible bullets in the snapshot" % variant)
+	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
+	host._end_battle()
+
+	client._on_battle_start(start)
+	yield(client, "battle_entered")
+	var snap2: Array = msg[1].duplicate(true)
+	snap2[1] = OS.get_ticks_msec() - 1000
+	client._on_snapshot(Snapshot.parse(snap2))
+	yield(get_tree(), "idle_frame")
+	yield(get_tree(), "idle_frame")
+	var client_visible := 0
+	for node in _descendants(client._main.get("_enemy_projectiles")):
+		if node is Projectile and node.is_visible_in_tree():
+			client_visible += 1
+	_check(
+		client_visible == visible,
+		"%s: client shows the same bullets (%d/%d)" % [variant, client_visible, visible]
+	)
+	client._leave_battle()
+	Puppet.set_active(false)
+	RunData.constant_projectile = 0
+	RunData.players_data[0].effects[Keys.bullet_hell_event_hash] = 0
+	host.set_process(true)
+
+
+func _descendants(node: Node) -> Array:
+	var found := []
+	for child in node.get_children():
+		found.append(child)
+		found += _descendants(child)
+	return found
 
 
 # Host opens the real co-op shop (rolls items), buys slot 1; the client mirrors both states.

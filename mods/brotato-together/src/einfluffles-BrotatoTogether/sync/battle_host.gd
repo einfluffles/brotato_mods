@@ -16,6 +16,7 @@ const LOG_NAME := "einfluffles-BrotatoTogether:BattleHost"
 const BATTLE_SCENE := "res://main.tscn"
 const SNAPSHOT_HZ := 30
 const NET_ID_META := "brotato_together_net_id"
+const CURSED_TAG := "cursed"
 const SPAWNER_RESPAWN_SIGNALS := [
 	"enemy_respawned", "neutral_respawned", "structure_respawned", "pet_respawned"
 ]
@@ -277,11 +278,13 @@ func _tracked_nodes() -> Array:
 	return nodes
 
 
-# Scene path, plus "#<data id>" where the look comes from data assigned at spawn (consumables:
-# fruit vs. crate vs. legendary crate share one scene).
+# Scene path, plus "#<tag>" where the look comes from data assigned at spawn: consumables (fruit
+# vs. crate vs. legendary crate share one scene) and cursed structures (curse particles).
 func _type_key(node: Node) -> String:
 	if node is Consumable and node.consumable_data != null:
 		return "%s#%s" % [node.filename, node.consumable_data.my_id]
+	if node is Structure and node.is_cursed:
+		return "%s#%s" % [node.filename, CURSED_TAG]
 	return node.filename
 
 

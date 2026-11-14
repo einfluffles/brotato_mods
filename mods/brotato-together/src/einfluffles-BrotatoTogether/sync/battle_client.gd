@@ -30,6 +30,7 @@ const INTERP_DELAY_MSEC := 100
 const PREDICTION_ERROR_DECAY := 12.0  # 1/s: how fast prediction corrections are smoothed out
 const MAX_BUFFERED := 32
 const MAX_QUEUED_EVENTS := 512
+const CURSED_TAG := "cursed"  # see BattleHost._type_key
 const SOUND_EXTENSIONS := ["wav", "ogg", "mp3"]
 const CLOCK_CREEP_MSEC := 0.5  # per snapshot: lets the offset follow rising latency / drift
 const WAVE_TIMER_TOLERANCE := 0.3
@@ -231,7 +232,9 @@ func _define_type(idx, key) -> void:
 		_types[idx] = null
 		return
 	_types[idx] = load(path)
-	_type_data[idx] = _find_consumable(parts[1]) if parts.size() > 1 else null
+	_type_data[idx] = null
+	if parts.size() > 1:
+		_type_data[idx] = parts[1] if parts[1] == CURSED_TAG else _find_consumable(parts[1])
 
 
 func _find_consumable(my_id: String):
@@ -431,6 +434,15 @@ func _spawn(type_idx: int) -> Node:
 	if data != null and node is Consumable:
 		node.consumable_data = data
 		node.set_texture(data.icon)
+	if node is Structure:
+		# Pooled puppets are shared between cursed and normal variants of a scene.
+		var cursed: bool = data is String and data == CURSED_TAG
+		var particles = node.curse_particle_instance
+		if cursed and not is_instance_valid(particles):
+			node.add_curse_particles()
+		elif not cursed and is_instance_valid(particles):
+			particles.queue_free()
+			node.curse_particle_instance = null
 	PuppetEntity.puppetize(node)
 	return node
 

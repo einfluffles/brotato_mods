@@ -28,7 +28,7 @@ for folder in "${folders[@]}"; do
   done
   LOG="$(mktemp "${TMPDIR:-/tmp}/mod-check.XXXXXX")"
   podman run --rm --userns=keep-id -e HOME=/tmp -v "$ROOT/reference:/proj:Z" "${mounts[@]}" \
-    brotato-modtools timeout 180 godot3 --path /proj --no-window > "$LOG" 2>&1
+    brotato-modtools timeout 240 godot3 --path /proj --no-window > "$LOG" 2>&1
   own_errors=$(grep -A2 "SCRIPT ERROR" "$LOG" | grep -v -F "$KNOWN_ARTIFACTS" | grep -B1 "mods-unpacked" \
     | grep -v -F "apply_settings (res://mods-unpacked" || true)
   runtime_errors=$(awk '/MOD-TESTS: START/{f=1} f' "$LOG" | grep -A1 "SCRIPT ERROR" \
