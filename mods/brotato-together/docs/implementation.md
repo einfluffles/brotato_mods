@@ -16,7 +16,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   snapshot ⇒ new id" for gold/consumables. Type = node `filename`, sent once per battle (TYPE_DEF).
 - Puppet = `propagate_call("set_physics_process", [false])`, body `MODE_STATIC`, no collision layers,
   all Area2D monitoring off; idle processing (AnimationPlayers) stays on. `update_animation(motion)` is called
-  with the interpolated motion for facing/walk animation.
+  with the interpolated motion for walk animation; facing comes from the host afterwards.
+- Per-entity flags (2 bits each, packed): `sprite.scale.x < 0` (facing; behaviors turn units toward their
+  target and knockback would otherwise flip puppets) and `!visible` (stampede dinos hide before charging).
+- Poses (`sync/pose.gd`): parts that physics code turns, sent sparsely only for scenes that have them,
+  interpolated with `lerp_angle`. Turrets don't rotate in this game (`Turret.shoot` only aims projectiles).
+  Found: `GoTowardsBorderOppositeMovementBehavior` rotates the whole unit (oviraptor, iguanodon); `Pivot`
+  children (predator, giant, jellyfish) spin rings of `EnemyProjectileRotating`, whose `position.x` grows
+  outwards first; `CatlingGun._orient_gun` sets `rotation` + `scale.y` of `%Gun_pivot_l/r` and their draw
+  order. Layout = per-scene list of (node path, kind), derived identically on host and client.
+- Not mirrored yet: the turret "shoot" pump animation (`Animation` position/scale, played from
+  `_physics_process`; its method track calls `shoot()`, so the client can't simply play it), boss pivots
+  added at runtime (eel, tyrannosaurus, brachiosaurus `pivots_scene`), `sprite.flip_h` of jump attacks,
+  catling "mad mode" animations.
 - Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
 
 ## Menus

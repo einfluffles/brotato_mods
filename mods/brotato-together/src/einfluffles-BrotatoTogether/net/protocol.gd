@@ -18,7 +18,7 @@ enum Msg {
 	BATTLE_PAUSE,  # host -> client: battle_id, paused
 }
 
-const VERSION := 1
+const VERSION := 2
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

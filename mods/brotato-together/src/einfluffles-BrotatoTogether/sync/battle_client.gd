@@ -23,6 +23,7 @@ const SoundRelay := preload(
 const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
+const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -55,6 +56,7 @@ var _own_display := Vector2.ZERO
 var _paused := false
 var _banner: CanvasLayer = null
 var _events := []  # [host t, event] waiting for render time
+var _pose = Pose.new()
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -387,11 +389,25 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 		if j >= 0:
 			position = from.positions[j].linear_interpolate(position, alpha)
 		_move(node, id, position)
+		_apply_flags(node, Snapshot.get_flags(to.flags, i))
+		if to.poses.has(i):
+			var from_pose: PoolRealArray = from.poses.get(j, PoolRealArray())
+			_pose.apply(node, from_pose, to.poses[i], alpha)
 	for id in _entities.keys():
 		if not alive.has(id):
 			_despawn(_entities[id])
 			_entities.erase(id)
 			_last_positions.erase(id)
+
+
+# After _move: the host's facing wins over the one derived from interpolated motion.
+func _apply_flags(node: Node, flags: int) -> void:
+	if node is Unit and node.sprite != null:
+		var x: float = abs(node.sprite.scale.x)
+		node.sprite.scale.x = -x if flags & Snapshot.FLAG_FACING_LEFT else x
+	var hidden := bool(flags & Snapshot.FLAG_HIDDEN)
+	if node.visible == hidden:
+		node.visible = not hidden
 
 
 func _move(node: Node, key, position: Vector2) -> void:
