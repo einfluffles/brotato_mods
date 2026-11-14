@@ -155,6 +155,40 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `_level`, `_reroll_price`, `_item_data`, `_checkmark_group`; client re-implements
   `show_upgrades_for_level` without `ItemService.get_upgrades` and uses `show_item` for crates (item rebuilt
   from `ItemService` base + `deserialize_and_merge`).
+- **Own level-up / crate panel runs on the client** (protocol 6; first screen of the "local view, decisions
+  to the host" model, the shop still mirrors everything). Each `CoopUpgradesUIPlayerContainer` is a
+  `Carousel` with three pages (upgrades / gear / stats, switched with the triggers) and a per-player item
+  popup toggle (`CoopItemPopup._input`, `ui_info`): view state that only existed on the host, so a remote
+  player who flipped the page lost its cursor on its own screen. Now:
+  - Client, own slot: `InputSync.set_local_device` feeds the local buttons into the own slot's device
+    through a `RemoteButtons` (the host's code path: counted edges, echo; pause excluded), and
+    `Utils.set_process_input_where_defined(ui, true)` turns the panel's `_input` on
+    (`main._on_EndWaveTimer_timeout` does that on the host and never runs on a puppet). The own
+    `FocusEmulator`, carousel, popup and description scroll then work as in local co-op, with no round trip.
+    `FocusSync.local_emulators` keeps the host's cursor off that emulator.
+  - Guard, every client and every container: the four decision signals lose `UpgradesUI`'s handlers
+    (`choose_button_pressed`, `item_take/discard/ban_button_pressed`), the reroll button loses
+    `_on_RerollButton_pressed` (removes gold, rolls), the crate weapon popup loses combine / discard / meca
+    upgrade (those call `RunData` directly; not sent yet, so they do nothing on a client). The own
+    container's signals go to `UPGRADE_INTENT` instead. The container-local part still runs (press delay,
+    meca choice, the hold-to-ban loop with its progress bar). Mouse clicks on a panel take the same path.
+  - Host: `UPGRADES_STATE` carries a revision per player (`seqs`: bumped when the panel shows something
+    new, keyed on the entry, the option being processed, the item instance and the reroll count, so the same
+    crate item twice still counts) and the carousel page (`pages`). `host_apply_intent` drops an intent whose
+    revision or option id doesn't match the sender's panel, then calls the container's own handler
+    (`_on_choose_button_pressed`, `_on_RerollButton_pressed`, `_on_TakeButton_pressed` after setting
+    `_meca_effect_choice_selected`, `_on_DiscardButton_pressed`, `_on_BanButton_pressed`). While the panels
+    are visible (and the game isn't paused: the pause menu is the host's) `InputSync.blocked_buttons` keeps
+    every remote button but pause off the virtual devices, so a remote accept can't also press the host's
+    copy.
+  - Presence: the client reports its page and cursor (`UPGRADE_FOCUS`, child-index path inside its own
+    container, on change); the host applies them to its copy, from where `FocusSync` and `pages` carry them
+    to the other clients. Cosmetic: decisions never depend on it.
+  - The client rebuilds a panel only when its revision or entry changed, and re-applies the run state only
+    when its bytes changed (a rebuild of the own panel would fight the local cursor).
+  - Open: a keyboard client is still typed as a gamepad (trigger glyphs, no arrow buttons), the client's
+    hold-to-ban depends on its own `chal_banned_items` unlock, crate weapon popup actions, and none of this
+    has run between two real machines yet (headless tests only).
 - **Cursors** (`sync/focus_sync.gd`): every `FocusEmulator` in the scene; emulator + focused control sent as
   child-index paths from the scene root (`ui/scene_paths.gd`), applied through the `focused_control` setter.
   The latest message per scene stays pending (10 s) until every cursor resolves to a visible control

@@ -30,10 +30,16 @@ var devices := {}
 var history := []
 # client: the F9 panel is open and owns the keyboard/pad; the host gets neutral input
 var local_input_blocked := false
+# host: BUTTON_ACTIONS bits not delivered to remote players' virtual devices. Set while a
+# screen runs on the clients themselves and sends its decisions as messages (level-up panels,
+# sync/upgrades_sync.gd): a remote accept must not also press the host's copy of the panel.
+var blocked_buttons := 0
 
 # client
 var _seq := 0
 var _presses = PressCounter.new()
+# client: this player's own slot device while a screen runs locally (see set_local_device)
+var _local_buttons = null
 
 # host: steam_id -> {seq, last_msec, released, buttons: RemoteButtons}
 var _remote := {}
@@ -64,6 +70,8 @@ func _physics_process(_delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	if _local_buttons != null:
+		_local_buttons.process_echo(delta, true)
 	if not session.is_host():
 		return
 	var echo: bool = InputService.is_virtual_echo_enabled()
@@ -79,6 +87,20 @@ func _input(event: InputEvent) -> void:
 # --- client ---
 
 
+# A screen that runs on this client itself (its own cursor, pages, popups): the local buttons
+# also drive this player's slot device here, exactly as the host applies a remote player's
+# (RemoteButtons: counted edges, menu echo). -1 turns it off. Pause always goes to the host.
+func set_local_device(device: int) -> void:
+	if _local_buttons != null:
+		if _local_buttons.device == device:
+			return
+		_local_buttons.release_held()
+		_local_buttons = null
+	if device >= 0:
+		_local_buttons = RemoteButtons.new(device)
+		_local_buttons.blocked = 1 << VirtualDevices.PAUSE_INDEX
+
+
 func _send_local_input() -> void:
 	var host_id: int = session.transport.host_id
 	if not session.peers.has(host_id) or not session.peers[host_id].ready:
@@ -92,6 +114,8 @@ func _send_local_input() -> void:
 		move = _local_movement()
 		aim = LocalAim.sample(LocalAim.own_player(battle_client), InputService.using_gamepad)
 	var counts: int = _presses.sample(buttons)
+	if _local_buttons != null:
+		_local_buttons.apply(buttons, counts)
 	session.send_unreliable(
 		host_id, Protocol.Msg.INPUT, [_seq, move, aim[1], buttons, counts, aim[0]]
 	)
@@ -177,6 +201,8 @@ func _on_peer_removed(steam_id: int) -> void:
 func _on_lobby_left() -> void:
 	history.clear()
 	_remote.clear()
+	set_local_device(-1)
+	blocked_buttons = 0
 	var was_host: bool = session.transport.was_host
 	for steam_id in devices.keys():
 		var device: int = devices[steam_id]
@@ -236,6 +262,7 @@ func _apply_input(steam_id: int, body) -> void:
 		VirtualDevices.action("rjoy_up", device), VirtualDevices.action("rjoy_down", device), aim.y
 	)
 	VirtualDevices.set_manual_aim(device, bool(body[5] & LocalAim.FLAG_MANUAL))
+	state.buttons.blocked = blocked_buttons
 	state.buttons.apply(body[3], body[4])
 	state.seq = body[0]
 	state.last_msec = OS.get_ticks_msec()
