@@ -1,6 +1,6 @@
 extends Node
 # Headless integration tests, run by tools/check.sh inside the decompiled game (no Steam).
-# Prints "TOGETHER-TESTS: PASS" or "TOGETHER-TESTS: FAIL" and quits.
+# Prints "MOD-TESTS: PASS" or "MOD-TESTS: FAIL" and quits.
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -33,7 +33,7 @@ func _process(_delta: float) -> void:
 
 func _run() -> void:
 	yield(get_tree().create_timer(1.0), "timeout")
-	print("TOGETHER-TESTS: START")
+	print("MOD-TESTS: START")
 	get_tree().create_timer(WATCHDOG_SEC).connect("timeout", self, "_on_watchdog")
 	var together := get_node("/root/ModLoader/einfluffles-BrotatoTogether")
 	var input_sync: Node = together.input_sync
@@ -456,5 +456,5 @@ func _on_watchdog() -> void:
 
 
 func _finish() -> void:
-	print("TOGETHER-TESTS: %s" % ("PASS" if _failures.empty() else "FAIL %s" % [_failures]))
+	print("MOD-TESTS: %s" % ("PASS" if _failures.empty() else "FAIL %s" % [_failures]))
 	get_tree().quit(0 if _failures.empty() else 1)

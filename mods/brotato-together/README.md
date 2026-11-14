@@ -1,0 +1,44 @@
+# brotato:together
+
+Online co-op for [Brotato](https://store.steampowered.com/app/1942280/Brotato/) over Steam P2P —
+instead of Steam Remote Play's video stream.
+
+**Status:** early development, not yet tested over Steam with real players.
+
+Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogether`](src/einfluffles-BrotatoTogether)
+
+## How it works
+
+- **Host-authoritative, built on Brotato's local co-op.** The host runs the real game in local co-op mode;
+  each remote player is a *virtual gamepad* whose inputs arrive over the network. All game logic
+  (stats, shop, waves) runs unchanged on the host.
+- **Battles:** clients load the real battle scene with its simulation frozen and render the host's 30 Hz
+  snapshots with interpolation (~100 ms behind); your own character is predicted locally and reconciled.
+- **Shop, level-ups, crates:** clients load the real screens with the host's rolled options (via the game's
+  own save/resume path) and mirror every player's cursor.
+- **Selection screens / end of run:** per-player cards of what each cursor is on (grids depend on each
+  machine's unlocks, so they aren't mirrored 1:1).
+- **Transport:** Steam lobbies (friends-only, overlay invites) + Steam Networking Messages via the GodotSteam
+  module that ships inside Brotato. No port forwarding.
+- A client never writes the host's run into its own save file and never unlocks challenges from it.
+
+Details: [`docs/implementation.md`](docs/implementation.md).
+
+## Playing
+
+Everyone subscribes to the Workshop item (and unsubscribes from other online/co-op mods). Then:
+
+| Key | |
+|---|---|
+| F6 | host a lobby |
+| F7 | open the Steam invite dialog |
+| F8 | leave the lobby |
+| F9 | toggle the status overlay |
+
+The host opens co-op character selection; remote players hold *accept* to join like local players.
+
+## Tests
+
+`tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
+run-state round trip, a recorded host battle replayed on a client, shop purchase mirroring, level-up/crate
+panels, cursor mirroring, character-selection cards.
