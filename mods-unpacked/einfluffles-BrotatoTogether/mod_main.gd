@@ -16,6 +16,8 @@ const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/
 const EXTENSIONS := [
 	"extensions/singletons/input_service.gd",
 	"extensions/singletons/coop_service.gd",
+	"extensions/singletons/progress_data.gd",
+	"extensions/singletons/challenge_service.gd",
 ]
 
 var transport: Node = null

@@ -5,6 +5,9 @@ extends Node
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
+const RunStateCodec := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
+)
 const FAKE_PEER := 4242
 const DEVICE := VirtualDevices.FIRST
 const BIT_ACCEPT := 1
@@ -79,7 +82,53 @@ func _run() -> void:
 		Input.get_action_strength("analog_move_right_%s" % DEVICE) == 0.0, "timeout releases move"
 	)
 
+	_test_run_state_round_trip()
 	_finish()
+
+
+# Host run state survives encode -> var2bytes -> bytes2var(no objects) -> apply.
+func _test_run_state_round_trip() -> void:
+	RunData.reset()
+	RunData.set_coop_run(true)
+	RunData.set_player_count(2)
+	for i in 2:
+		RunData.add_character(ItemService.characters[i], i)
+	RunData.add_weapon(ItemService.weapons[0], 0)
+	# +1 weapon slot (the item from the BrotatoOnline bug report); DLC items may be absent here.
+	var arm = _find_by_id(ItemService.items, "item_cybernetic_arm")
+	if arm == null:
+		arm = load("res://items/all/04_primal_dread/cybernetic_arm/cybernetic_arm.tres")
+	RunData.add_item(arm, 1)
+	RunData.add_gold(37, 1)
+	var expected := {
+		"chars": [RunData.get_player_character(0).my_id, RunData.get_player_character(1).my_id],
+		"weapons0": RunData.get_player_weapons(0).size(),
+		"gold1": RunData.get_player_gold(1),
+		"slots1": RunData.get_player_effect(Keys.weapon_slot_hash, 1),
+	}
+
+	var bytes := var2bytes(RunStateCodec.encode())
+	var state := RunStateCodec.decode(bytes2var(bytes, false))
+	_check(not state.empty(), "run state decodes (%d bytes on the wire)" % bytes.size())
+	if state.empty():
+		return
+
+	RunData.reset()
+	RunStateCodec.apply(state)
+	var actual := {
+		"chars": [RunData.get_player_character(0).my_id, RunData.get_player_character(1).my_id],
+		"weapons0": RunData.get_player_weapons(0).size(),
+		"gold1": RunData.get_player_gold(1),
+		"slots1": RunData.get_player_effect(Keys.weapon_slot_hash, 1),
+	}
+	_check(str(actual) == str(expected), "run state round trip %s == %s" % [actual, expected])
+
+
+func _find_by_id(elements: Array, my_id: String):
+	for element in elements:
+		if element.my_id == my_id:
+			return element
+	return null
 
 
 func _send(input_sync: Node, move: Vector2, aim: Vector2, buttons: int) -> void:
