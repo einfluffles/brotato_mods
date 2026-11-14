@@ -19,7 +19,7 @@ enum Msg {
 	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
 }
 
-const VERSION := 2
+const VERSION := 3
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:
