@@ -141,11 +141,7 @@ func _enter_shop(state: Dictionary) -> void:
 	ProgressData.saved_run_state = state
 	RunData.resumed_from_state_in_shop = true
 	RunData.shop_effects_checked = true  # anvil/destroy effects already ran on the host
-	CoopService.connected_players.clear()
-	for i in RunData.get_player_count():
-		CoopService.connected_players.push_back(
-			[VirtualDevices.FIRST + i, CoopService.PlayerType.GAMEPAD_XBOX]
-		)
+	VirtualDevices.fill_puppet_slots(RunData.get_player_count())
 	get_tree().paused = false
 	if get_tree().change_scene(SHOP_SCENE) != OK:
 		ModLoaderLog.error("Could not load the shop scene", LOG_NAME)

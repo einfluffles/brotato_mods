@@ -57,6 +57,33 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
   respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
 - Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
+  Puppet mode on stashes what `ProgressData.save()` persists from the run side (`saved_run_state`,
+  `last_saved_run_state`, `data`, `killed_enemies`, `killed_by_enemies`, `items_bought`); off restores it
+  (`session/puppet.gd`) — the shop resume path overwrites `saved_run_state` with the host's run. Unlocks /
+  difficulties only change in host-only paths (run won, `complete_challenge`); `active_update_data` is reset
+  by the title screen's `RunData.reset()`.
+
+## Session lifecycle
+
+- Handshake (`session/session.gd`): the client resends HELLO every second until WELCOME (the host's
+  session-request check / member list can lag behind the join, and a message from a not-yet-member is
+  dropped). The host answers every HELLO; a repeated HELLO from a ready peer means it missed WELCOME and what
+  followed, so it gets a full resync. The transport accepts a member's message session when it enters the
+  lobby and refreshes the member list for unknown senders.
+- Full resync = `peer_ready` re-emitted (every sync module resends its whole state on it), at most once per
+  second per peer. Queued when a reliable send fails (`sendMessageToUser`'s EResult != 1, logged as a
+  warning); unreliable failures are only logged at debug level.
+- Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
+  version (manifest) must match; the client must own every DLC the host owns (`available_dlc_ids`) because
+  DLC content is only registered where it's installed and a host's runs can use it anytime. Rejections carry
+  a reason that the client shows in the F9 menu.
+- Leaving is role-aware (`transport.was_host`). Client: puppet mode off (own run restored), puppet slots
+  cleared, title screen. Host mid-run: the run goes on and remote players' co-op slots stay, idle (as with a
+  local pad unplugged mid-run); their steam id -> device mapping is kept, so they get their own characters
+  back when they join the host's next lobby. Shop / level-ups wait for them (game rule). Before the run
+  (players can still join) their slots are freed.
+- F9 *Leave lobby* mid-run needs a second click; a Steam invite accepted mid-run waits for *Join invite*
+  (outside a run it is taken right away, closing the menu declines it).
 
 ## Menus
 

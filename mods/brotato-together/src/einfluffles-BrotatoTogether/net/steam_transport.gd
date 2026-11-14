@@ -7,10 +7,12 @@ extends Node
 
 signal lobby_ready(lobby_id, is_host)
 signal lobby_failed(reason)
-signal lobby_left
+signal lobby_left  # was_host tells the handlers which role was left
 signal peer_joined(steam_id)
 signal peer_left(steam_id)
 signal message_received(steam_id, channel, data)
+signal send_failed(steam_id, channel, result)
+signal join_invite(lobby_id)  # Steam invite accepted while in a lobby: see accept_pending_join
 
 const CHANNEL_RELIABLE := 0
 const CHANNEL_UNRELIABLE := 1
@@ -37,6 +39,8 @@ var local_id := 0
 var lobby_id := 0
 var host_id := 0
 var members := []  # steam ids in the lobby, excluding local
+var was_host := false  # role of the lobby left last (valid from lobby_left on)
+var pending_join_id := 0  # invite waiting for confirmation (joining leaves the current lobby)
 
 var _lobby_tag := ""
 
@@ -89,6 +93,7 @@ func host_lobby() -> void:
 
 
 func join_lobby(id: int) -> void:
+	pending_join_id = 0
 	if is_active():
 		leave_lobby()
 	steam.joinLobby(id)
@@ -102,6 +107,7 @@ func open_invite_dialog() -> void:
 func leave_lobby() -> void:
 	if not is_active():
 		return
+	was_host = is_host()
 	for peer in members:
 		steam.closeSessionWithUser(peer)
 	steam.leaveLobby(lobby_id)
@@ -120,9 +126,11 @@ func send(steam_id: int, channel: int, data: PoolByteArray) -> void:
 		flags |= SEND_RELIABLE
 	else:
 		flags |= SEND_UNRELIABLE | SEND_NO_NAGLE
+	# ISteamNetworkingMessages::SendMessageToUser's EResult (k_EResultOK = 1; e.g. NoConnection 3,
+	# InvalidParam 8, LimitExceeded 25 when too much is queued). Session decides what to do.
 	var result = steam.sendMessageToUser(steam_id, data, flags, channel)
-	if result != RESULT_OK:
-		ModLoaderLog.debug("send to %s failed: %s" % [steam_id, result], LOG_NAME)
+	if typeof(result) != TYPE_INT or result != RESULT_OK:
+		emit_signal("send_failed", steam_id, channel, result)
 
 
 func broadcast(channel: int, data: PoolByteArray) -> void:
@@ -137,7 +145,8 @@ func _process(_delta: float) -> void:
 		var messages: Array = steam.receiveMessagesOnChannel(channel, MAX_MESSAGES_PER_POLL)
 		for msg in messages:
 			var sender := _message_sender(msg)
-			if sender == 0 or not _is_known_peer(sender):
+			# A joiner's first messages can arrive before lobby_chat_update: refresh on a miss.
+			if sender == 0 or not _is_lobby_member(sender):
 				continue
 			emit_signal("message_received", sender, channel, msg.get("payload", PoolByteArray()))
 
@@ -147,10 +156,6 @@ func _message_sender(msg: Dictionary) -> int:
 		if msg.has(key):
 			return int(msg[key])
 	return 0
-
-
-func _is_known_peer(steam_id: int) -> bool:
-	return members.has(steam_id)
 
 
 func _connect_steam(signal_name: String, method: String) -> void:
@@ -216,8 +221,21 @@ func _on_lobby_joined(
 		emit_signal("peer_joined", host_id)
 
 
+# Accepting a Steam invite while in a lobby would silently leave it (and a hosted run with it):
+# the F9 menu asks first (or accepts right away outside a run).
 func _on_join_requested(requested_lobby_id: int, _friend_id: int) -> void:
-	join_lobby(requested_lobby_id)
+	if requested_lobby_id == lobby_id:
+		return  # already there
+	if not is_active():
+		join_lobby(requested_lobby_id)
+		return
+	pending_join_id = requested_lobby_id
+	emit_signal("join_invite", requested_lobby_id)
+
+
+func accept_pending_join() -> void:
+	if pending_join_id != 0:
+		join_lobby(pending_join_id)
 
 
 func _on_lobby_chat_update(
@@ -228,6 +246,8 @@ func _on_lobby_chat_update(
 	var was_member := members.has(changed_id)
 	_refresh_members()
 	if chat_state & CHAT_MEMBER_ENTERED:
+		# Its session request may have come (and been rejected) before it was a member.
+		steam.acceptSessionWithUser(changed_id)
 		if not was_member:
 			emit_signal("peer_joined", changed_id)
 	elif was_member:

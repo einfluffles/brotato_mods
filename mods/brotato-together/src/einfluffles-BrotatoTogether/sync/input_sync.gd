@@ -90,6 +90,7 @@ func last_applied_seq(steam_id: int) -> int:
 func _on_peer_ready(steam_id: int) -> void:
 	if not session.is_host() or devices.has(steam_id):
 		return
+	_forget_unassigned_devices()
 	var device := _free_device()
 	if device < 0:
 		ModLoaderLog.warning("No free virtual device for %s" % steam_id, LOG_NAME)
@@ -109,15 +110,23 @@ func _on_peer_removed(steam_id: int) -> void:
 		CoopService._remove_player(device)
 
 
+# Host leaving mid-run keeps the run: remote players' slots stay (idle, like a local pad
+# unplugged mid-run in the base game) and so does their steam id -> device mapping, so the same
+# friends get their own characters back if the host opens a new lobby. Before the run starts
+# (players can still join) their slots go away.
 func _on_lobby_left() -> void:
 	history.clear()
-	for steam_id in devices:
+	_remote.clear()
+	var was_host: bool = session.transport.was_host
+	for steam_id in devices.keys():
 		var device: int = devices[steam_id]
 		VirtualDevices.release_all(device)
-		if CoopService.is_device_assigned(device):
+		if was_host and not CoopService.listening_for_inputs:
+			if CoopService.is_device_assigned(device):
+				continue
+		elif CoopService.is_device_assigned(device):
 			CoopService._remove_player(device)
-	devices.clear()
-	_remote.clear()
+		devices.erase(steam_id)
 
 
 func _on_message(steam_id: int, msg_type: int, body) -> void:
@@ -181,6 +190,13 @@ func _release_timed_out() -> void:
 			VirtualDevices.release_all(devices[steam_id])
 			state.buttons = 0
 			state.released = true
+
+
+# Mappings kept from an earlier lobby (see _on_lobby_left) only matter while their slot exists.
+func _forget_unassigned_devices() -> void:
+	for steam_id in devices.keys():
+		if not session.peers.has(steam_id) and not CoopService.is_device_assigned(devices[steam_id]):
+			devices.erase(steam_id)
 
 
 func _free_device() -> int:
