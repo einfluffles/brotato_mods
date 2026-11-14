@@ -171,7 +171,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `_on_RerollButton_pressed` (removes gold, rolls), the crate weapon popup loses combine / discard / meca
     upgrade (`UpgradesUI._on_weapon_*`, which call `RunData` directly). The own container's signals, and
     its popup's, go to `UPGRADE_INTENT` instead. The container-local part still runs (press delay,
-    meca choice, the hold-to-ban loop with its progress bar). Mouse clicks on a panel take the same path.
+    meca choice, the hold-to-ban loop with its progress bar). Mouse clicks on the own panel end in the
+    same signals (see keyboard and mouse below).
   - Crate weapon popup (protocol 7; characters whose crates give weapons, `effect_crate_give_weapon`):
     `UpgradesUI._setup_weapons_inventory` runs in the puppet's `_ready` too (the run state is applied
     before the scene loads), but only the host's `_show_next_player_options` fills the list, so the client
@@ -204,11 +205,63 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     to the other clients. Cosmetic: decisions never depend on it.
   - The client rebuilds a panel only when its revision or entry changed, and re-applies the run state only
     when its bytes changed (a rebuild of the own panel would fight the local cursor).
-  - Open: a keyboard client is still typed as a gamepad (trigger glyphs, no arrow buttons), the client's
-    hold-to-ban depends on its own `chal_banned_items` unlock, after a combine the client's cursor keeps
-    its slot where the host's copy jumps to the new weapon (until the next `UPGRADE_FOCUS`), and none of
-    this has run between two real machines yet (headless tests only; the crate weapon popup was never
-    driven through its real buttons, only through its signals).
+  - Keyboard and mouse (`sync/local_panel.gd`, a node `UpgradesSync` adds as the puppet `UpgradesUI`'s
+    last child; written against "the own panel + its emulator", so another client-run screen can use
+    it). Why a node there: a `FocusEmulator` with a cursor marks every event that is not a co-op action
+    as handled, so on a co-op screen the mouse never reaches the GUI and `InputService` (an autoload,
+    last in `_input` order) never sees which device is in use. `_input` runs in reverse tree order, so
+    a node after the emulators sees every event first.
+    - Device: puppet slots are typed `GAMEPAD_XBOX` (`VirtualDevices.fill_puppet_slots`). A keyboard has
+      no `ltrigger` / `rtrigger` binding and `Carousel` disables its arrows for a gamepad, so a keyboard
+      player could not change page. The client's own slot now takes the `PlayerType` of what its player
+      used last (`VirtualDevices.set_slot_type`): from `InputService.using_gamepad` when the panel
+      starts, then from the events (key, mouse button, mouse motion faster than 1000 px/s as in
+      `UIService._check_input`, pad button, stick past the deadzone; the pad's brand from its name).
+      The game fixes the type when a co-op player joins and has no switch for it, so
+      `LocalPanel.refresh_player_type` redoes what `_ready` did: the carousel's arrows (textures from
+      the scene it was instanced from, since `Carousel` overwrites them with trigger glyphs and keeps
+      no copy; then its `index` setter), `InputIcon`s (also given the panel's player: the game leaves
+      them on player 0) and `CoopShopHint`s. `UpgradesSync` then calls the container's
+      `_set_focus_neighbours` and `focus()` if the cursor sat on an arrow that became a glyph. The slot's
+      device id does not change, so `RemoteButtons` feeds it as before. Other slots stay gamepads.
+    - What reads the type on a puppet: `Carousel`, the key glyphs, and aim (`Utils.is_player_using_gamepad`
+      in `weapon.gd` / `main.gd`, both behind `Utils.is_manual_aim`, which our extension answers for
+      virtual devices and which is never set on a client). So the type only matters on panels; the next
+      `fill_puppet_slots` (battle start, shop) resets it.
+    - Host: unchanged, a remote player stays a gamepad there (stick aim and `Utils.is_manual_aim` depend
+      on it) and its type is not sent. The host and the other clients therefore draw a keyboard
+      player's page arrows as trigger glyphs, and show its cursor on one when it is there
+      (`UPGRADE_FOCUS` paths are child indices, the same in both layouts). Cosmetic only.
+    - Mouse: motion over a focusable control of the own panel sets the own emulator's
+      `focused_control` (once per frame; the setter emits the focus signals as that player, so popups
+      follow); a left click runs the emulator's own accept on it (`_handle_input` with an
+      `ui_accept_<device>` action event), so the press carries the player index. A native GUI press
+      could not: `PopupManager` books a press without `FocusEmulatorSignal` on player 0, and
+      `CoopUpgradesUIPlayerContainer` holds a plain `Control` (the popup's parent, mouse filter stop)
+      over all of its content, so the GUI never hits a button there anyway. The hit test therefore asks
+      what the emulator could focus, not what the GUI would hit: of the visible, enabled `FOCUS_ALL`
+      controls under the pointer the last in tree order (drawn on top), with clipping parents cutting
+      their children; a popup's non-focusable background does not cover a button behind it. Every
+      mouse event over any player's panel is marked handled, also when no panel is local, so another
+      player's panel never reacts. While the F9 panel is open (`InputSync.local_input_blocked`) the
+      node does nothing. A popup that took the cursor (`ItemPopup._focused`, the crate weapon popup after
+      a press on a weapon) keeps the mouse too: while it is open only its own buttons are hit, as its
+      focus neighbours do for the keys. A mouse press stands for an accept that is held until the
+      button comes up: `LocalPanel` then sends the release of `ui_accept_<device>`, which is what
+      ends the popup's hold-to-recycle (`handle_recycle_hold_release`); without it one click would
+      count as a full hold.
+  - Open: no mouse wheel on the own panel (`ItemDescription._input` scrolls on the wheel, but it comes
+    after the emulators and `LocalPanel` in `_input` order; a keyboard player has no right stick
+    either, as in local co-op), a click outside an open popup does not close it (its Cancel button
+    does), a mouse click on Ban counts as a full hold, like accept on that button in local co-op (only
+    the ban key can be let go; `button_up` is never emitted through an emulator), the client's
+    hold-to-ban depends on its own `chal_banned_items` unlock, after a combine the client's cursor
+    keeps its slot where the host's copy jumps to the new weapon (until the next `UPGRADE_FOCUS`), a
+    key tap shorter than a physics frame is lost while a panel is up (the emulators handle the event
+    before `InputSync._input` can count it; held state is polled), and none of this has run between
+    two real machines yet (headless tests only: no real mouse, keyboard or pad; the crate weapon
+    popup's combine, recycle hold and cancel are driven through its real buttons by synthetic clicks,
+    its meca upgrade only through its signals).
 - **Cursors** (`sync/focus_sync.gd`): every `FocusEmulator` in the scene; emulator + focused control sent as
   child-index paths from the scene root (`ui/scene_paths.gd`), applied through the `focused_control` setter.
   The latest message per scene stays pending (10 s) until every cursor resolves to a visible control

@@ -48,6 +48,11 @@ const UNUSED_ACTIONS := [
 	"button_move_down",
 ]
 
+# Words in a pad's name -> CoopService.PlayerType (2: PlayStation, 3: Switch; else Xbox).
+const PAD_BRANDS := {
+	"ps4": 2, "ps5": 2, "playstation": 2, "dualsense": 2, "nintendo": 3, "switch": 3
+}
+
 
 static func is_virtual(device: int) -> bool:
 	return device >= FIRST and device < FIRST + COUNT
@@ -96,6 +101,37 @@ static func fill_puppet_slots(count: int) -> void:
 	CoopService.connected_players.clear()
 	for i in count:
 		CoopService.connected_players.push_back([FIRST + i, CoopService.PlayerType.GAMEPAD_XBOX])
+
+
+# Client: the PlayerType of one puppet slot. Every slot starts as a gamepad; this client's own
+# slot follows the device its player really uses while a screen runs locally
+# (sync/local_panel.gd). Returns whether it changed.
+static func set_slot_type(player_index: int, player_type: int) -> bool:
+	var players: Array = CoopService.connected_players
+	if player_index < 0 or player_index >= players.size():
+		return false
+	if players[player_index][1] == player_type:
+		return false
+	players[player_index][1] = player_type
+	return true
+
+
+# The PlayerType of a real pad, from its name: the brands the game has glyphs for.
+static func pad_type(joy_device: int) -> int:
+	var name := Input.get_joy_name(joy_device).to_lower()
+	for brand in PAD_BRANDS:
+		if brand in name:
+			return PAD_BRANDS[brand]
+	return CoopService.PlayerType.GAMEPAD_XBOX
+
+
+# Client: the PlayerType of what its one local player used last (InputService tracks pad vs.
+# keyboard / mouse in client mode).
+static func local_player_type() -> int:
+	if not InputService.using_gamepad:
+		return CoopService.PlayerType.KEYBOARD_AND_MOUSE
+	var pads := Input.get_connected_joypads()
+	return pad_type(pads[0] if not pads.empty() else 0)
 
 
 static func release_all(device: int) -> void:

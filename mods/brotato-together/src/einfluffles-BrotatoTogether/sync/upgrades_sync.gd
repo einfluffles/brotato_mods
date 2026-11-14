@@ -15,6 +15,7 @@ extends Node
 #   The same goes for the crate weapon popup (characters whose crates give weapons): combine,
 #   recycle and meca upgrade leave as intents that name the weapon by slot and id.
 #   Its cursor and page also travel as UPGRADE_FOCUS: what the host and the others see.
+#   Keyboard and mouse on the own panel, and the mouse kept off the others: sync/local_panel.gd.
 # The other players' panels stay mirrored: cursors by FocusSync, pages from UPGRADES_STATE.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
@@ -25,6 +26,7 @@ const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
+const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
 const CHECK_INTERVAL := 0.1
 const PATH_TYPES := [TYPE_INT_ARRAY, TYPE_ARRAY]
 const ITEM_KINDS := ["take", "discard", "ban"]
@@ -75,6 +77,7 @@ var _sent_focus := ""
 var _meca_stats := []
 var _meca_weapon = null
 var _meca_choice := -1
+var _local_panel: Node = null  # in the guarded UI: device type and mouse for the own panel
 
 
 func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> void:
@@ -92,6 +95,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if is_instance_valid(_local_panel):
+		_local_panel.blocked = input_sync != null and input_sync.local_input_blocked
 	if _local_active:
 		_report_own_focus()
 	if not session.is_host() or not battle_host.is_in_battle():
@@ -432,6 +437,8 @@ func stop_local() -> void:
 		input_sync.set_local_device(-1)
 	if focus_sync != null:
 		focus_sync.local_emulators = []
+	if is_instance_valid(_local_panel):
+		_local_panel.set_own(null, null, -1)
 
 
 func _show_entry(container, p: int, entry: Array) -> void:
@@ -513,8 +520,10 @@ func _guard(ui: Node, you: int) -> void:
 	_meca_weapon = null
 	_meca_choice = -1
 	stop_local()
+	var containers := []
 	for p in RunData.get_player_count():
 		var container = ui._get_player_container(p)
+		containers.append(container)
 		for signal_name in DECISION_HANDLERS:
 			_disconnect(container, signal_name, ui, DECISION_HANDLERS[signal_name])
 		_disconnect(container._reroll_button, "pressed", container, "_on_RerollButton_pressed")
@@ -539,6 +548,12 @@ func _guard(ui: Node, you: int) -> void:
 			var button = popup.get("_effect_button_%d" % choice)
 			if button != null:
 				button.connect("pressed", self, "_on_own_meca_choice", [choice])
+	if is_instance_valid(_local_panel):
+		_local_panel.free()
+	_local_panel = LocalPanel.new()
+	_local_panel.panels = containers
+	_local_panel.connect("player_type_changed", self, "_on_own_type_changed")
+	ui.add_child(_local_panel)  # after the FocusEmulators, so it gets every event before them
 
 
 static func _disconnect(source: Object, signal_name: String, target: Object, method: String):
@@ -562,8 +577,20 @@ func _on_own_panel_changed(ui: Node, container: Node, kind: String, on_weapon :=
 			)
 		if focus_sync != null:
 			focus_sync.local_emulators = [container.focus_emulator]
+		if is_instance_valid(_local_panel):
+			_local_panel.set_own(container, container.focus_emulator, container.player_index)
 	if not on_weapon:
 		container.call_deferred("focus")  # the game's own starting cursor for the current page
+
+
+# The own slot is typed as another device now (keyboard <-> pad): LocalPanel has switched the
+# carousel and the glyphs; the way to the page arrows is the container's own.
+func _on_own_type_changed(_player_type: int, cursor_lost: bool) -> void:
+	if not is_instance_valid(_own):
+		return
+	_own._set_focus_neighbours()
+	if cursor_lost:
+		_own.focus()  # the cursor sat on an arrow that is a trigger glyph now
 
 
 func _report_own_focus() -> void:
