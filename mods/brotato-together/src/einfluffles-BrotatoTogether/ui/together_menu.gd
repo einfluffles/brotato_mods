@@ -28,6 +28,7 @@ const REFRESH_SEC := 0.25
 const THEME_PATH := "res://resources/themes/base_theme.tres"
 const PILL_FONT_PATH := "res://resources/fonts/actual/base/font_22.tres"
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/dlc_borrow.gd")
 const RUN_SCENE_PREFIXES := ["res://main.tscn", "res://ui/menus/shop/"]
 
 var transport: Node = null
@@ -404,6 +405,8 @@ func details_text() -> String:
 	else:
 		var role := "Hosting" if transport.is_host() else "Connected as client"
 		lines.append("%s · lobby %s" % [role, transport.lobby_id])
+		if DlcBorrow.is_active():
+			lines.append(DlcBorrow.note())
 		for steam_id in session.peers:
 			var peer: Dictionary = session.peers[steam_id]
 			var state := "ready" if peer.ready else "connecting"

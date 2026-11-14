@@ -166,3 +166,24 @@ RNG is unseeded (`Utils._rng.randomize()`), so shops/upgrades **must** be rolled
   stop `_structure_timer`; pause `_wave_timer` / `HalfWaveTimer` / `EndWaveTimer` and drive them from host;
   per unit `set_physics_process(false)` + mode static, positions from snapshots; `Hurtbox.disable()`;
   `Utils.disable_node(weapons_container)`; `Player.disable_gold_pickup()`.
+
+## 13. DLC ownership vs. content
+
+- All DLC content (`dlcs/dlc_1` = `abyssal_terrors`, `dlcs/dlc_2` = `primal_dread`, and the DLC items /
+  characters / weapons / enemies under `items/`, `entities/`, `zones/`) ships in the base `Brotato.pck`.
+  Ownership only gates **registration**: `ProgressData.check_for_available_dlcs()` fills
+  `available_dlc_ids` from `Platform.is_dlc_owned()` (headless/no Steam: none), then
+  `ItemService.init_dlc_content()` runs `update.dlc_data.add_resources()` (backgrounds, title screen
+  backgrounds, `entities` (codex enemy data), `effects` (effect scripts)); `DLCData.remove_resources()`
+  undoes it.
+- `ItemService.items/characters/weapons` are setget caches rebuilt from `update_data_list` filtered by
+  `available_dlc_ids` (`invalidate_*_cache()`); `_item_id_lookup` / `_weapon_id_lookup` /
+  `_base_weapon_lookup` are lazy and never cleared by the game. `ItemService.init_unlocked_pool()` builds
+  `_tiers_data` from `ProgressData.active_update_data` (= `refresh_active_update_data()`: available DLCs
+  minus `deactivated_update_data`; a resumed run applies its own `active_update_data_ids`).
+- Not gated: `ZoneService.zones` (every zone; `zone.dlc_id` is checked by the zone selection UI),
+  `ItemService.get_dlc_data_by_id()`, scenes by path. `ChallengeService.load_update_challenges()` skips
+  unowned DLC challenges once at startup. DLC drop consumables (poisoned / meca / mutant / mutation fruit,
+  meca parts) are `DLCData` properties, not in `ItemService.consumables`.
+- `available_dlc_ids` / `active_update_data` aren't saved; `save()` writes the unlock lists,
+  `difficulties_unlocked`, stats, the run, `deactivated_update_data` (`ProgressData._set_loader_properties`).

@@ -7,7 +7,7 @@ extends Reference
 #    Steam invite while mid-run waits for confirmation
 #  - HELLO resend until WELCOME, duplicate HELLO -> WELCOME again + resync, failed reliable
 #    send -> resync, member join accepts the session
-#  - join compatibility (game / mod version, DLC) with the reason shown on the client
+#  - join compatibility (game / mod version; DLC never rejects) with the reason shown on the client
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
@@ -35,6 +35,7 @@ class FakeSteam:
 	var accepted := []
 	var joined := []
 	var lobby_members := []
+	var created := 0
 
 	func sendMessageToUser(steam_id: int, data: PoolByteArray, _flags: int, channel: int) -> int:
 		sent.append([steam_id, channel, data])
@@ -64,6 +65,15 @@ class FakeSteam:
 
 	func joinLobby(lobby_id: int) -> void:
 		joined.append(lobby_id)
+
+	func createLobby(_lobby_type: int, _max_members: int) -> void:
+		created += 1
+
+	func setLobbyData(_lobby_id: int, _key: String, _value: String) -> bool:
+		return true
+
+	func setLobbyJoinable(_lobby_id: int, _joinable: bool) -> bool:
+		return true
 
 	func getNumLobbyMembers(_lobby_id: int) -> int:
 		return lobby_members.size()
@@ -327,7 +337,17 @@ func _test_compat() -> void:
 	client.dlcs = ["abyssal_terrors", "primal_dread"]
 	_t._check(Compat.incompatibility(host, client) == "", "extra client DLC is fine")
 	client.dlcs = []
-	_t._check("DLC" in Compat.incompatibility(host, client), "missing host DLC rejected")
+	_t._check(Compat.incompatibility(host, client) == "", "client without the host's DLC joins")
+	_t._check(Compat.missing_dlcs(host.dlcs, client.dlcs) == host.dlcs, "its missing DLC listed")
+	client.dlcs = "abyssal_terrors"
+	_t._check("DLC" in Compat.incompatibility(host, client), "malformed DLC list rejected")
+	client = host.duplicate()
+	client.dlcs = []
+	client.game_version = "0.0.0"
+	_t._check(
+		"game version" in Compat.incompatibility(host, client),
+		"other game version rejected, DLC or not"
+	)
 	client = host.duplicate()
 	client.mod_version = "0.0.1"
 	_t._check("0.0.1" in Compat.incompatibility(host, client), "other mod version rejected")

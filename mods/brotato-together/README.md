@@ -25,6 +25,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
 - **Transport:** Steam lobbies (friends-only, overlay invites) + Steam Networking Messages via the GodotSteam
   module that ships inside Brotato. No port forwarding.
 - A client never writes the host's run into its own save file and never unlocks challenges from it.
+- **DLC:** a friend without one of the host's DLCs can still join: like Steam Remote Play Together, the
+  host's DLC content is usable in the host's session only (the F9 menu says so) and is gone again as
+  soon as they leave; nothing of it is saved and it never becomes their own.
 
 Details: [`docs/implementation.md`](docs/implementation.md).
 
@@ -51,6 +54,6 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 ## Tests
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
-run-state round trip, a recorded host battle replayed on a client, shop purchase mirroring, level-up/crate
+run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, level-up/crate
 panels, cursor mirroring, character-selection cards and grid, shop UI sounds, F9 panel
 keyboard/pad input, the wave-failed prompt and the battle -> shop transition on clients.

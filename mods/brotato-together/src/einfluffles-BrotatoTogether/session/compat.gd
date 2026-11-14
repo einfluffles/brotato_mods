@@ -2,12 +2,11 @@ extends Reference
 # Join compatibility, checked by the host on HELLO (the lobby tag only carries Protocol.VERSION).
 #  - game version (ProgressData.VERSION) and mod version (manifest version_number) must match:
 #    the client loads the host's scenes/resources by path and runs the same mirror code
-#  - the client must own every DLC the host owns: DLC characters/items/enemies are only
-#    registered where the DLC is installed (ItemService.init_dlc_content), and a host's runs can
-#    use them at any time (character selection, shop pools, zones). Extra DLCs on the client
-#    are fine.
+#  - DLC doesn't matter: a client lacking one of the host's DLCs borrows it for the session
+#    (session/dlc_borrow.gd, from the host's list in WELCOME), like Steam Remote Play Together.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
+const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/dlc_borrow.gd")
 const MOD_ID := "einfluffles-BrotatoTogether"
 
 
@@ -18,7 +17,7 @@ static func local_info(persona: String) -> Dictionary:
 		"name": persona,
 		"game_version": str(ProgressData.VERSION),
 		"mod_version": mod_version(),
-		"dlcs": ProgressData.available_dlc_ids.duplicate(),
+		"dlcs": DlcBorrow.owned_ids(),  # never borrowed ones
 	}
 
 
@@ -46,16 +45,15 @@ static func incompatibility(host: Dictionary, client) -> String:
 			"brotato:together %s, host has %s (update via the Workshop)"
 			% [mod_version, host.mod_version]
 		)
-	var dlcs = client.get("dlcs")
-	if typeof(dlcs) != TYPE_ARRAY:
+	if typeof(client.get("dlcs")) != TYPE_ARRAY:
 		return "malformed DLC list"
-	var missing := []
-	for dlc_id in host.dlcs:
-		if not dlc_id in dlcs:
-			missing.append(dlc_id)
-	if not missing.empty():
-		return (
-			"the host has DLC you don't (%s); its characters, items and enemies can't be shown"
-			% PoolStringArray(missing).join(", ")
-		)
 	return ""
+
+
+# The host's DLCs a client lacks (it borrows them; logged by the host).
+static func missing_dlcs(host_dlcs: Array, client_dlcs) -> Array:
+	var missing := []
+	for dlc_id in host_dlcs:
+		if typeof(client_dlcs) != TYPE_ARRAY or not dlc_id in client_dlcs:
+			missing.append(dlc_id)
+	return missing

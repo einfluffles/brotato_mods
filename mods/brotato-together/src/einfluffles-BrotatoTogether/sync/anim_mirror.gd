@@ -131,6 +131,16 @@ static func detach_game_handlers(node: Node) -> void:
 			player.disconnect("animation_finished", node, connection.method)
 
 
+# Client, for every projectile puppet: its own animation without method tracks (an enemy pillar's
+# autoplay "shoot" ends in stop(), which returns it to the game's pool: no pool id on clients).
+# Returns the animation it will play, or null.
+func strip_projectile(projectile: Node) -> Animation:
+	var player = projectile.get("_animation_player")
+	if not player is AnimationPlayer or player.assigned_animation == "":
+		return null
+	return _without_method_tracks(player, player.assigned_animation)
+
+
 func _without_method_tracks(player: AnimationPlayer, name: String) -> Animation:
 	var animation: Animation = player.get_animation(name)
 	if _is_copy.has(animation) or not _has_method_tracks(animation):

@@ -10,6 +10,9 @@ extends Reference
 
 const META_KEY := "brotato_together_puppet"
 const STASH_KEY := "brotato_together_puppet_stash"
+# Set while the client uses the host's DLC (= session/dlc_borrow.gd META_KEY; not preloaded:
+# the ProgressData / ChallengeService extensions preload this file at mod init).
+const DLC_BORROW_META_KEY := "brotato_together_dlc_borrow"
 # ProgressData fields written by runs (save() serializes all of them).
 const STASHED_FIELDS := [
 	"saved_run_state",
@@ -23,6 +26,11 @@ const STASHED_FIELDS := [
 
 static func is_active() -> bool:
 	return Engine.has_meta(META_KEY) and Engine.get_meta(META_KEY)
+
+
+# Saves / challenges are off while mirroring the host's run or using its DLC.
+static func blocks_progress() -> bool:
+	return is_active() or Engine.has_meta(DLC_BORROW_META_KEY)
 
 
 static func set_active(active: bool) -> void:

@@ -4,6 +4,8 @@ extends Node
 # until WELCOME: the first one can be lost while Steam's member list / session acceptance on the
 # host lags behind the join. The host answers every HELLO; a repeated HELLO from a ready peer
 # means it missed WELCOME (and everything after it), so it gets a full resync.
+# WELCOME carries the host's DLCs: the client borrows the ones it lacks while it is that host's
+# client (session/dlc_borrow.gd); every way out (lobby_left, a new lobby) reverts them.
 
 # Became ready, or needs a full resync (every sync module resends its whole state on this).
 signal peer_ready(steam_id)
@@ -12,6 +14,7 @@ signal message(steam_id, msg_type, body)
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
+const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/dlc_borrow.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:Session"
 const PING_INTERVAL_MSEC := 1000
 const PEER_STALE_MSEC := 5000
@@ -45,6 +48,12 @@ func is_client() -> bool:
 	return transport.is_active() and not transport.is_host()
 
 
+# A client the host has welcomed (borrowed DLC may only exist in this state).
+func is_ready_client() -> bool:
+	var host_id: int = transport.host_id
+	return is_client() and peers.has(host_id) and peers[host_id].ready
+
+
 func send_reliable(steam_id: int, msg_type: int, body = null) -> void:
 	transport.send(steam_id, transport.CHANNEL_RELIABLE, Protocol.encode(msg_type, body))
 
@@ -70,6 +79,8 @@ func is_peer_stale(steam_id: int) -> bool:
 
 
 func _process(_delta: float) -> void:
+	if DlcBorrow.is_active() and not is_ready_client():
+		DlcBorrow.revert()  # safety net: borrowed DLC never outlives client mode
 	if not transport.is_active():
 		return
 	var now := OS.get_ticks_msec()
@@ -142,11 +153,13 @@ func _add_peer(steam_id: int) -> Dictionary:
 
 
 func _on_lobby_ready(_lobby_id: int, _is_host: bool) -> void:
+	DlcBorrow.revert()  # a new lobby (either role) starts with this machine's own DLC only
 	peers.clear()
 	_next_hello_msec = -1
 
 
 func _on_lobby_left() -> void:
+	DlcBorrow.revert()  # every way out of a lobby; the title screen loads after (deferred)
 	_next_hello_msec = -1
 	for steam_id in peers.keys():
 		emit_signal("peer_removed", steam_id)
@@ -219,11 +232,15 @@ func _handle_hello(steam_id: int, body) -> void:
 	send_reliable(
 		steam_id,
 		Protocol.Msg.WELCOME,
-		{"version": Protocol.VERSION, "accepted": accepted, "reason": reason}
+		{"version": Protocol.VERSION, "accepted": accepted, "reason": reason, "dlcs": local.dlcs}
 	)
 	if not accepted:
 		ModLoaderLog.warning("Rejected %s: %s" % [steam_id, reason], LOG_NAME)
-	elif peers[steam_id].ready:
+		return
+	var lent := Compat.missing_dlcs(local.dlcs, body.get("dlcs"))
+	if not lent.empty() and not peers[steam_id].ready:
+		ModLoaderLog.info("%s plays with the host's DLC: %s" % [steam_id, lent], LOG_NAME)
+	if peers[steam_id].ready:
 		request_resync(steam_id)  # it missed WELCOME, so it dropped what followed too
 	else:
 		_mark_ready(steam_id)
@@ -235,6 +252,10 @@ func _handle_welcome(steam_id: int, body) -> void:
 	_next_hello_msec = -1
 	if body.get("accepted", false):
 		if not peers[steam_id].ready:
+			# Before peer_ready: the client view and every sync module see the host's DLC.
+			var borrowed := DlcBorrow.borrow(body.get("dlcs"))
+			if not borrowed.empty():
+				ModLoaderLog.info("Using the host's DLC: %s" % [borrowed], LOG_NAME)
 			_mark_ready(steam_id)
 	else:
 		var reason := "The host rejected the join: %s" % str(body.get("reason", "?"))

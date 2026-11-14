@@ -3,7 +3,7 @@ extends Reference
 
 enum Msg {
 	HELLO,  # client -> host, resent until WELCOME: see session/compat.gd local_info
-	WELCOME,  # host -> client: version, accepted, reason
+	WELCOME,  # host -> client: version, accepted, reason, dlcs (session/dlc_borrow.gd)
 	PING,  # any -> any: t
 	PONG,  # any -> any: t
 	# client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons (held mask),
@@ -24,7 +24,7 @@ enum Msg {
 	SHOP_PAUSE,  # host -> client: paused, by, by_id (like BATTLE_PAUSE, while in the shop)
 }
 
-const VERSION := 4
+const VERSION := 5
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

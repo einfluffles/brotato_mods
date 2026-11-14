@@ -278,6 +278,17 @@ func _find_consumable(my_id: String):
 	for data in ItemService.consumables:
 		if data.my_id == my_id:
 			return data
+	# DLC drops (poisoned / meca / mutant / mutation fruit, meca parts) aren't in that list (not
+	# even for owners): they are DLCData properties, which every copy of the game has.
+	for update in ItemService.update_data_list:
+		var dlc_data = update.dlc_data if update != null else null
+		if dlc_data == null:
+			continue
+		for property in dlc_data.get_property_list():
+			if property.usage & PROPERTY_USAGE_SCRIPT_VARIABLE:
+				var value = dlc_data.get(property.name)
+				if value is ConsumableData and value.my_id == my_id:
+					return value
 	return null
 
 
@@ -520,6 +531,7 @@ func _spawn(type_idx: int) -> Node:
 		if node == pooled:
 			PuppetEntity.revive(node)
 	if node is Projectile:
+		_anim_mirror.strip_projectile(node)  # its own pool logic must not run here
 		PuppetEntity.start_projectile_animation(node)
 	var data = _type_data.get(type_idx)
 	if data != null and node is Consumable:

@@ -20,7 +20,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   6000 px/s, and respawn when an id comes back with another type. Type = node `filename`, sent once per
   battle (TYPE_DEF); the wave's unit scenes, the players' projectile scenes and gold are announced with
   BATTLE_START so clients `load()` them while the scene loads, not mid-wave.
-- Snapshot wire format (`sync/snapshot.gd`, protocol 4): hand-packed bytes, little endian. u32 battle id,
+- Snapshot wire format (`sync/snapshot.gd`, since protocol 4): hand-packed bytes, little endian. u32 battle id,
   u32 host msec, u16 wave time (1/100 s); per player u8 flags, i16 x/y (0.5 px), varint input ack,
   [zigzag varints health/max health/gold, varint level, f32 xp], u8 weapon count + "sprite moved" bitmask,
   i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle); u16 entity count, types as runs
@@ -83,6 +83,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   tracks removed (`Animation.duplicate` + `remove_track`; the shared original stays intact). Every entity
   puppet loses the game's own `animation_finished` handlers at spawn (turret cooldown needs stats; attack
   behaviors have no `_parent` on puppets — a dying puppet spitter errored).
+  Projectile puppets play their autoplay animation without method tracks too (`AnimMirror.strip_projectile`):
+  the enemy pillar's (abyss enemies, colossus) "shoot" ends in `stop()`, which pooled it by a `pool_id` meta
+  clients don't have (script errors).
 - Not mirrored yet: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
   game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
   respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
@@ -104,9 +107,31 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   second per peer. Queued when a reliable send fails (`sendMessageToUser`'s EResult != 1, logged as a
   warning); unreliable failures are only logged at debug level.
 - Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
-  version (manifest) must match; the client must own every DLC the host owns (`available_dlc_ids`) because
-  DLC content is only registered where it's installed and a host's runs can use it anytime. Rejections carry
-  a reason that the client shows in the F9 menu.
+  version (manifest) must match. Rejections carry a reason that the client shows in the F9 menu. DLC never
+  rejects (protocol 5 / 0.2.1).
+- Host DLC on clients (`session/dlc_borrow.gd`), like Steam Remote Play Together: all DLC content ships in
+  the base `Brotato.pck`; ownership only decides registration (`ProgressData.available_dlc_ids`, from which
+  `ItemService.items/characters/weapons` are rebuilt, and `DLCData.add_resources()`: backgrounds, title
+  backgrounds, enemy data, effect scripts). Found without the host's DLC: `deserialize_run_state` /
+  `PlayerRunData.deserialize` drop DLC characters, items, weapons, shop/locked items (`get_element_safe` ->
+  null), item/player effects with DLC effect scripts, and the DLC background (falls back to the first);
+  selection grids / item cards ("?"), level-up/crate panels and the shop can't find DLC ids. Not
+  ownership-related: zones (`ZoneService.zones` lists all), enemy/boss scenes (loaded by path),
+  `get_dlc_data_by_id`, the run's `enabled_dlcs` / `active_update_data_ids` (from the host's run state).
+  DLC drops (poisoned / meca / mutant / mutation fruit, meca parts) were never in `ItemService.consumables`,
+  even for owners: `BattleClient._find_consumable` also reads them from every `DLCData`.
+- WELCOME carries the host's own DLCs; on the first accepted WELCOME (before `peer_ready`) the client
+  borrows the ones it lacks (only ids in `ProgressData.dlc_ids`): stashes `available_dlc_ids`,
+  `active_update_data`, the unlock lists `save()` writes, `ItemService._tiers_data` and its id lookups;
+  appends the ids, `add_resources()` in `update_data_list` order, invalidates the item lists. Revert
+  (`remove_resources()` in reverse, stash restored in place, borrowed music tracks dropped from
+  `MusicManager.shuffled_tracks`) runs on `lobby_left` (every way out of client mode: Leave, host left /
+  timed out, rejection, joining another lobby, F9 *Host lobby*, which leaves first) and `lobby_ready`, before
+  the title screen loads; `Session._process` reverts if borrowed DLC exists without a welcomed client
+  role. While borrowed, saves and challenges are blocked like puppet mode (`Puppet.blocks_progress()`);
+  HELLO / WELCOME report only owned DLC. The F9 details show "Using the host's DLC for this session: …".
+  Challenges of a borrowed DLC aren't loaded (the client never completes challenges; the end-of-run view
+  is the host's).
 - Leaving is role-aware (`transport.was_host`). Client: puppet mode off (own run restored), puppet slots
   cleared, title screen. Host mid-run: the run goes on and remote players' co-op slots stay, idle (as with a
   local pad unplugged mid-run); their steam id -> device mapping is kept, so they get their own characters
