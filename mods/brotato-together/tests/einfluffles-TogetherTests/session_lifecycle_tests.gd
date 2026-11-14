@@ -36,6 +36,7 @@ class FakeSteam:
 	var joined := []
 	var lobby_members := []
 	var created := 0
+	var presence := {}
 
 	func sendMessageToUser(steam_id: int, data: PoolByteArray, _flags: int, channel: int) -> int:
 		sent.append([steam_id, channel, data])
@@ -56,8 +57,15 @@ class FakeSteam:
 	func leaveLobby(_lobby_id: int) -> void:
 		pass
 
-	func setRichPresence(_key: String, _value: String) -> bool:
+	func setRichPresence(key: String, value: String) -> bool:
+		if value == "":
+			presence.erase(key)
+		else:
+			presence[key] = value
 		return true
+
+	func clearRichPresence() -> void:
+		presence.clear()
 
 	func acceptSessionWithUser(steam_id: int) -> bool:
 		accepted.append(steam_id)
@@ -112,6 +120,7 @@ func run(t: Node, together: Node) -> void:
 	_test_client_handshake(transport, session)
 	_test_host_handshake(transport, session, input_sync)
 	_test_compat()
+	_test_join_presence(transport)
 
 	session.disconnect("peer_ready", self, "_on_peer_ready")
 	transport.leave_lobby()
@@ -377,3 +386,22 @@ func _last_body(msg_type: int):
 		if decoded != null and decoded[0] == msg_type:
 			return decoded[1]
 	return {}
+
+
+# The overlay's "Join game" button follows rich presence "connect": only in a lobby with room.
+func _test_join_presence(transport: Node) -> void:
+	transport.leave_lobby()
+	_steam.presence["connect"] = "+connect_lobby 1"  # stale, e.g. from an earlier crash
+	transport._clear_join_presence()
+	_t._check(not _steam.presence.has("connect"), "no Join button outside a lobby")
+	_steam.lobby_members = [LOCAL]
+	transport._on_lobby_created(transport.RESULT_OK, LOBBY)
+	_t._check(_steam.presence.get("connect", "") == "+connect_lobby %s" % LOBBY, "host: Join on")
+	_steam.lobby_members = [LOCAL, 6, 7, 8]
+	transport._on_lobby_chat_update(LOBBY, 8, 8, transport.CHAT_MEMBER_ENTERED)
+	_t._check(not _steam.presence.has("connect"), "full lobby: Join off")
+	_steam.lobby_members = [LOCAL, 6, 7]
+	transport._on_lobby_chat_update(LOBBY, 8, 8, 2)  # 2 = left
+	_t._check(_steam.presence.has("connect"), "slot free again: Join on")
+	transport.leave_lobby()
+	_t._check(not _steam.presence.has("connect") and transport.join_presence == "", "left: Join off")
