@@ -2,5 +2,18 @@
 reference/
 # Packaged mods
 dist/
-# Tooling artifacts inside the mod tree
+# Editor / agent tooling
+.claude/
 mods/**/.claude/
+.idea/
+.vscode/
+.mcp.json
+# Placeholders the Claude Code sandbox mounts over sensitive paths (/dev/null devices)
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+.gitconfig
+.gitmodules
+.ripgreprc
