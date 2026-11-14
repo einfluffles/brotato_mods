@@ -55,7 +55,13 @@ Esc / B to go back or close (F9 / Select close it too). While it is open the gam
 your keyboard/gamepad input (a client sends neutral input to the host) and the mouse cursor
 stays visible.
 
-The host opens co-op character selection; remote players hold *accept* to join like local players.
+The host opens co-op character selection; remote players hold *accept* (Space / Enter / A) to join
+like local players. Every free slot shows "Player N" and the game's hold-to-join hint, on the host and
+on clients. In character selection each player can change their colour with **F** (keyboard) /
+**Y** (gamepad; Triangle on PlayStation pads), cycling through 8 colours and skipping colours other
+players already have. The colour is used everywhere the game uses player colours (cursor, panels,
+HUD, player highlight) and clients see the same colours. Nothing is saved; players who don't pick keep
+the game's colours. A locked character under a cursor shows how to unlock it (also on clients' cards).
 
 Anyone can pause; the host operates the pause menu, and whoever paused can resume with pause again.
 Aiming follows each player's own manual-aim setting (mouse or right stick). If a player drops and
@@ -66,5 +72,6 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
 run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
-panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring, character-selection cards and grid, shop UI sounds, F9 panel
+panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring, character-selection cards and grid, join hints / colour picking / locked
+characters in co-op character selection, shop UI sounds, F9 panel
 keyboard/pad input, the wave-failed prompt and the battle -> shop transition on clients.

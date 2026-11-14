@@ -167,6 +167,7 @@ func _run() -> void:
 	yield(_pause_input.run(), "completed")  # needs the run state
 	yield(_test_menu_mirror(together), "completed")
 	yield(menu_ux.run_menu_tests(self, together), "completed")
+	yield(preload("coop_selection_tests.gd").new().run(self, together), "completed")
 	_finish()
 
 

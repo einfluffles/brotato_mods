@@ -352,6 +352,30 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   cursor as `[inventory, element index]`; `ui/selection_grid.gd` draws them with ids looked up in
   `ItemService` (unknown ids → "?") and per-player colour borders (thicker when `_has_player_selected`),
   plus `ItemPanelUI` cards for the item under each cursor.
+- **Co-op character selection UX** (`ui/coop_selection.gd`, `extensions/singletons/coop_service.gd`,
+  protocol 9). Found in the game: `CoopJoinPanel1..4` (`coop_join_panel.gd :: update_indicators`) show
+  the `COOP_HOLD_TO_JOIN` hint ("Hold {0} or {1} to join", A / Space glyphs) only in the *next* free slot
+  and not at all before the first player joined (then only the big `%CoopJoinInstructions`).
+  `CoopSelection._process` sets `instructions_visible` on every free, non-connecting slot while
+  `CoopService.listening_for_inputs`, and adds a "Player N" label (`COOP_PLAYER`) in the slot colour.
+- **Player colours**: every colour use in the game goes through `CoopService.player_colors[slot]` /
+  `get_player_color` (focus emulator borders, `ItemPanelUI` / `LockedPanel` / `CharacterPanelUI`, shop /
+  upgrade / end-run containers, `coop_player_label`, HUD `player_ui_elements`, `Player.update_highlight`,
+  pets / turrets / poacher zone, `ui_dim_screen`). The extension keeps a palette (the game's 4 colours,
+  read at startup, + 4 extra pastels), picks per remapped device, and rewrites `player_colors` on
+  `connected_players_updated` and on every pick: picks first in slot order, then each slot its default
+  colour if free, else the first free one (never two equal). `ui_info` (F / Y, unused on this screen;
+  remote players send it as a button) cycles to the next free colour; `CoopSelection` restyles what is on
+  screen (focus styles, panels, locked panels, join progress). A hint row ("[F] / [Y] Change
+  colour", the game's glyphs) is added under the title. Colours travel as palette indices (`colors`) in
+  MENU_STATE, BATTLE_START and SHOP_STATE; the client validates them (one distinct palette index per slot)
+  and mirrors them until it leaves the lobby (`bt_clear_remote_colors`). Nothing is saved.
+- **Locked characters**: the host's screen already shows the game's `LockedPanel` (challenge text via
+  `ChallengeService.find_challenge_from_reward`, or the item-set requirement) instead of the panel; only
+  the client cards showed the description. MENU_STATE player entries now carry the host LockedPanel text
+  and "locked by a challenge"; the client card shows a `LockedPanel` with its own (localised) challenge
+  text, else the host's text. Free slots appear as client cards with the same join hint and the hold
+  progress (`join`), the colour hint shows once the client has a slot.
 - **Wave failed** (`sync/retry_sync.gd`): `main.gd :: _on_EndWaveTimer_timeout` shows `UI/RetryWave`, which
   never runs on the puppet (timer callbacks disconnected). Host sends `RETRY_PROMPT` (visible, its
   `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's `FocusEmulator` index 0 + name);

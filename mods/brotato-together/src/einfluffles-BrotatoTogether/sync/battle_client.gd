@@ -146,6 +146,7 @@ func _on_battle_start(body) -> void:
 		for idx in types:
 			_define_type(idx, types[idx])
 
+	CoopService.bt_apply_remote_colors(body.get("colors"))
 	Puppet.set_active(true)
 	RunStateCodec.apply(state)
 	VirtualDevices.fill_puppet_slots(RunData.get_player_count())

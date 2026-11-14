@@ -147,6 +147,7 @@ func _body_from(parts: Dictionary) -> Dictionary:
 		"go": parts.go,
 		"seqs": parts.seqs,
 		"pages": parts.pages,
+		"colors": CoopService.bt_slot_colors.duplicate(),
 	}
 
 
@@ -293,6 +294,7 @@ func _on_state(body) -> void:
 		return
 	if typeof(body.get("go")) != TYPE_ARRAY:
 		return
+	CoopService.bt_apply_remote_colors(body.get("colors"))
 	var entering: bool = body.shop_id != _client_shop_id or not is_in_shop()
 	var run = body.get("run")
 	var bytes := PoolByteArray()
