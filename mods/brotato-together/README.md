@@ -21,6 +21,11 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   which checks it against what your panel shows and applies it. It follows the device you use: with a
   pad the triggers switch pages, on the keyboard the page arrows take the cursor, and the mouse moves
   and clicks your own cursor (other players' panels ignore it).
+- **Your own shop panel runs on your machine too:** cursor, pages, item popups, inventory browsing, the
+  hold-to-ban bar and a meca item's effect choice are local. Buy, reroll, lock / unlock, steal, ban,
+  dismantle, Go, combine and recycle go to the host, which applies them with the game's own rules when
+  they still match your panel. Not yet possible for a remote player: the inventory popup's meca upgrade.
+  The shop does not follow the keyboard and mouse yet the way the level-up panel does.
 - **Selection screens / end of run:** the host's selection grid (built from the host's element list,
   so local unlocks/DLC don't matter) with every player's cursor and ready state, plus per-player
   cards of what each cursor is on.
@@ -59,6 +64,7 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 ## Tests
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
-run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, level-up/crate
+run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the own shop
+panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
 panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring, character-selection cards and grid, shop UI sounds, F9 panel
 keyboard/pad input, the wave-failed prompt and the battle -> shop transition on clients.

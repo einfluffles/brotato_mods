@@ -19,6 +19,7 @@ const EXTENSIONS := [
 	"extensions/singletons/utils.gd",
 	"extensions/entities/brachiosaurus_foot.gd",
 	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
+	"extensions/ui/shop_item.gd",
 ]
 
 var transport: Node = null
@@ -80,6 +81,8 @@ func _ready() -> void:
 
 	shop_sync = _add("sync/shop_sync.gd", "ShopSync")
 	shop_sync.setup(session)
+	shop_sync.input_sync = input_sync
+	shop_sync.focus_sync = focus_sync
 
 	upgrades_sync = _add("sync/upgrades_sync.gd", "UpgradesSync")
 	upgrades_sync.setup(session, battle_host, battle_client)

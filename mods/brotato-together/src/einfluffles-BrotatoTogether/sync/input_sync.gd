@@ -34,6 +34,9 @@ var local_input_blocked := false
 # screen runs on the clients themselves and sends its decisions as messages (level-up panels,
 # sync/upgrades_sync.gd): a remote accept must not also press the host's copy of the panel.
 var blocked_buttons := 0
+# host: more masks of that kind, one per screen (key: its name), so that two screens never
+# overwrite each other's block (the shop, sync/shop_sync.gd). OR-ed with blocked_buttons.
+var blocked_by := {}
 
 # client
 var _seq := 0
@@ -158,6 +161,13 @@ static func local_buttons() -> int:
 # --- host ---
 
 
+func blocked_mask() -> int:
+	var mask := blocked_buttons
+	for screen in blocked_by:
+		mask |= int(blocked_by[screen])
+	return mask
+
+
 func last_applied_seq(steam_id: int) -> int:
 	return _remote[steam_id].seq if _remote.has(steam_id) else 0
 
@@ -203,6 +213,7 @@ func _on_lobby_left() -> void:
 	_remote.clear()
 	set_local_device(-1)
 	blocked_buttons = 0
+	blocked_by.clear()
 	var was_host: bool = session.transport.was_host
 	for steam_id in devices.keys():
 		var device: int = devices[steam_id]
@@ -262,7 +273,7 @@ func _apply_input(steam_id: int, body) -> void:
 		VirtualDevices.action("rjoy_up", device), VirtualDevices.action("rjoy_down", device), aim.y
 	)
 	VirtualDevices.set_manual_aim(device, bool(body[5] & LocalAim.FLAG_MANUAL))
-	state.buttons.blocked = blocked_buttons
+	state.buttons.blocked = blocked_mask()
 	state.buttons.apply(body[3], body[4])
 	state.seq = body[0]
 	state.last_msec = OS.get_ticks_msec()

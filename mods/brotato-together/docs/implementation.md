@@ -150,13 +150,91 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (`set_weapons_data/items_data`, `_update_stats`, gold label, reroll price via `ItemService.get_reroll_price`,
   `ShopItem.set_shop_item/activate/deactivate`, `_update_visual_locks`, checkmarks). Client disconnects
   `BaseShop._on_tree_exited` (rolls curses on locked items). The host checks every 0.1 s by comparing the
-  run state's JSON text (+ slots, Go flags); zstd only runs when something changed.
+  run state's JSON text (+ slots, Go flags, revisions, pages); zstd only runs when something changed.
+  Since protocol 8 the state also carries per player a panel revision (`seqs`) and the carousel page
+  (`pages`), and for each client its own player index (`you`, so the message is sent per peer). The client
+  rebuilds per player and per part: `ShopSync.player_keys` cuts the sent run state (before it is
+  deserialized) into the player's whole data, its gear (weapons / items) and its offered items, as text.
+  A player whose data did not change keeps its `PlayerRunData` object across `resume_from_state` (the
+  panel's gear elements and popup hold those objects), gear elements are only replaced when the gear
+  changed (the cursor is taken off them first and put back on the element at the same index: a
+  `FocusEmulator` must never keep a control that is about to be freed), shop item nodes only when the
+  player's data, offered items or slot layout changed. The same run bytes again (only a Go flag, a page
+  or a revision differs) skip `resume_from_state` altogether.
+- **Own shop panel runs on the client** (protocol 8; second screen of the "local view, decisions to the
+  host" model). Files: `sync/shop_local.gd` (client), `sync/shop_intents.gd` (host),
+  `extensions/ui/shop_item.gd`.
+  - Client, own slot: as for the level-up panels, `InputSync.set_local_device` feeds the local buttons
+    into the own slot's device and `FocusSync.local_emulators` keeps the host's cursor off the own
+    emulator. The shop scene processes input by itself, so cursor, carousel pages, item popup, inventory
+    browsing, the hold-to-ban bar (`ShopItem._on_BanButton_button_down`), the hold-to-recycle bar and a
+    meca item's effect choice (`effect_choice_selected`) run locally.
+  - Guard, every client and every player's panel (`ShopLocal.guard`). The cuts sit where the mutation is,
+    which is below `BaseShop` in places:
+
+    | Action | Cut on the client | Host applies |
+    |---|---|---|
+    | buy | `ShopItem.buy_button_pressed` loses `ShopItemsContainer.on_shop_item_buy_button_pressed` (gold check, `deactivate`, buy delay, `shop_item_bought`) | sets `effect_choice_selected` for a meca item, then presses the item's buy button (`FocusEmulatorSignal.emit(button, "pressed", p)`, what a FocusEmulator does) |
+    | steal | `steal_button_pressed` loses the container's handler; `BaseShop._input` calls `ShopItem.steal_item()`, which ends in that signal | `ShopItem.steal_item()` when `_item_steals[p] > 0` |
+    | lock / unlock | `ShopItem.change_lock_status` writes `RunData` and is called directly by `BaseShop._input`: a script extension emits `lock_requested` instead while puppeting | `change_lock_status(wanted)` when the item `is_lockable` and is not already in that state |
+    | ban | `ban_item_pressed` loses the container's handler (`ShopItem.ban_item` spends the token); the hold loop, `_release_BanButton` and the ban animation stay local and end in that signal | emits the item's `ban_item_pressed` when its ban button is enabled (the container checks the token) |
+    | dismantle | `dismantle_button_pressed` loses the container's handler; `BaseShop._on_ban_shortcut_released` ends in it | `ShopItem._on_DismantleButton_pressed()` when `BaseShop._can_dismantle_with_shortcut` |
+    | reroll | reroll button `pressed` loses `BaseShop._on_RerollButton_pressed` | presses the reroll button |
+    | Go | Go button `pressed` loses `BaseShop._on_GoButton_pressed` (starts the next wave when all are ready) | presses the Go button, or `_clear_go_button_pressed` |
+    | combine / recycle | item popup `item_combine_button_pressed` / `item_discard_button_pressed` lose `BaseShop`'s handlers | emits the popup's signal with the host's weapon object |
+    | meca upgrade (popup) | `item_meca_upgrade_selected` loses `BaseShop`'s handler and the upgrade button is taken out (`_upgrade_button = null`, which the popup treats as "no meca upgrade") | not sent: `DLC2Data.meca_item` rolls the two options when the button is pressed, so the client's options would not be the host's |
+    | endless (player 1, wave 20) | `EndlessButton.toggled` loses the panel's handler | sets `pressed` on the host's button (its `toggled` sets `RunData.is_endless_run`); mirrored back with `set_pressed_no_signal` |
+
+    The own panel's signals go to `SHOP_INTENT`; on the other panels nothing listens, so a mouse click
+    there is dead. A control this list does not know (another mod's button, e.g. Damage Meter's summary
+    button next to reroll) keeps its own handler and can show things, but every way into the run is cut.
+    The view half of a cut handler is called where the panel needs it: `give_focus_to_mecha_choice` before
+    a meca buy without a choice, `BaseShop._on_item_cancel_button_pressed` (close the popup, cursor back on
+    the weapon) after combine / recycle.
+  - `SHOP_INTENT` = `shop_id, seq, kind, slot, id, arg`. `slot` + `id` name the target by place and by
+    identity (shop item node index + `my_id`, or index in the weapons list + `my_id`); the host takes the
+    node at the slot when it holds that id, else any node that does, else drops the intent. `seq` is the
+    sender's panel revision: the host bumps it when the panel offers something new (offered item
+    instances per node, reroll count, weapon instances; locks and gold are not part of it) and at once
+    when it applies a press, because buy and steal run deferred in the game. "go", "endless" and "lock"
+    carry the wanted state and are applied at most once; "go" and "endless" ignore the revision. Nothing
+    is applied while the host's tree is paused. After an applied intent the state goes out in the next
+    frame (once the deferred handlers ran), not at the next 0.1 s check. `ShopItemsContainer` ignores
+    presses for 0.05 s after a buy, steal or dismantle, for an intent as for a local press.
+    `_settle_host_cursor` runs deferred after every applied intent: the game's combine handler moves the
+    cursor with deferred `grab_focus` calls, one of them onto an element it already queued for deletion
+    (it relies on a later call that a visible mouse skips), and a `FocusEmulator` that keeps a freed
+    control errors on its next move.
+  - Go: the client keeps no flag of its own. Its press sends "go"; the checkmark appears when the host's
+    state has it. The game clears the flag itself when the cursor leaves the button, on cancel and on the
+    triggers (`_on_GoButton_focus_exited`, `BaseShop._input`): `ShopLocal.process` sends "go 0" when the
+    local flag is gone while the host still has it, and clears a ready flag that arrives while the cursor
+    is not on Go (the press reached the host after the cursor had left; also an absent player's automatic
+    Go when that player comes back).
+  - Host: `InputSync.blocked_by["shop"]` keeps every remote button but pause off the virtual devices while
+    the shop runs and the tree is not paused (`blocked_by` is OR-ed with `blocked_buttons`, which
+    `UpgradesSync` resets every frame outside a battle). `SHOP_FOCUS` (`shop_id, page, path` inside the
+    sender's `CoopShopPlayerContainer`) puts the remote cursor and page on the host's copy, from where
+    `FocusSync` and `pages` carry them to the other clients. Cosmetic: a path that does not resolve (a mod
+    added a control on one side only) or is not visible is ignored. Absent players and the pause hand-over
+    work as before; while the host is paused (`SHOP_PAUSE`) the client's local buttons are off.
+  - Differences from local co-op: with a steal left, the select shortcut steals and locks in one press;
+    the host applies the steal, which makes the lock stale (the game itself would lock the stolen item).
+    A second press made before the host's answer arrived (two quick buys) is dropped as stale.
+  - Open: the inventory popup's meca upgrade (needs the host's rolled options on the client); the host and
+    the other clients do not see the own panel's focused inventory popup (cursor on its buttons is not
+    visible on the host's copy); the client's hold-to-ban depends on its own `chal_banned_items` unlock
+    and the ban animation / press sounds of the own panel are not heard (the puppet shop is muted; the
+    host's sounds for the applied decision are); no feedback on the client for a refused buy (the host's
+    gold label shakes); a keyboard client is still typed as a gamepad; dismantle and the meca effect choice
+    are only tested against stand-ins (no meca weapons without the DLC in the headless suite); none of
+    this has run between two real machines yet.
 - **Level-up / crate panels** (`sync/upgrades_sync.gd`): per player container state from `_old_upgrades`,
   `_level`, `_reroll_price`, `_item_data`, `_checkmark_group`; client re-implements
   `show_upgrades_for_level` without `ItemService.get_upgrades` and uses `show_item` for crates (item rebuilt
   from `ItemService` base + `deserialize_and_merge`).
 - **Own level-up / crate panel runs on the client** (protocol 6; first screen of the "local view, decisions
-  to the host" model, the shop still mirrors everything). Each `CoopUpgradesUIPlayerContainer` is a
+  to the host" model, the shop followed with protocol 8). Each `CoopUpgradesUIPlayerContainer` is a
   `Carousel` with three pages (upgrades / gear / stats, switched with the triggers) and a per-player item
   popup toggle (`CoopItemPopup._input`, `ui_info`): view state that only existed on the host, so a remote
   player who flipped the page lost its cursor on its own screen. Now:

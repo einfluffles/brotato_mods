@@ -14,7 +14,9 @@ enum Msg {
 	TYPE_DEF,  # host -> client: battle_id, idx, path
 	SNAPSHOT,  # host -> client, unreliable: see sync/snapshot.gd
 	FOCUS,  # host -> client: scene, cursors [[emulator path, player, control path]]
-	SHOP_STATE,  # host -> client: shop_id, run (RunStateCodec incl. shop), slots, go
+	# host -> client: shop_id, run (RunStateCodec incl. shop), slots, go, seqs, pages, you
+	# (see sync/shop_sync.gd)
+	SHOP_STATE,
 	# host -> client: battle_id, visible, run, players, seqs, pages (see upgrades_sync.gd)
 	UPGRADES_STATE,
 	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, random, ready, inv, idx]],
@@ -31,9 +33,14 @@ enum Msg {
 	# client -> host: battle_id, page (the sender's carousel page), path (its cursor as a
 	# child-index path inside its own panel, empty: none). Cosmetic: what the others see.
 	UPGRADE_FOCUS,
+	# client -> host: shop_id, seq (of the sender's panel), kind, slot, id, arg (the kinds are
+	# listed in sync/shop_intents.gd)
+	SHOP_INTENT,
+	# client -> host: shop_id, page, path (like UPGRADE_FOCUS, inside the sender's shop panel)
+	SHOP_FOCUS,
 }
 
-const VERSION := 7
+const VERSION := 8
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:
