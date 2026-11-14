@@ -12,6 +12,9 @@ const PENDING_TIMEOUT_MSEC := 10000
 const PATH_TYPES := [TYPE_INT_ARRAY, TYPE_ARRAY]
 
 var session: Node = null
+# client: FocusEmulators this client drives itself (its own level-up panel, see
+# sync/upgrades_sync.gd). The host's cursor for them is never applied here.
+var local_emulators := []
 
 var _scene: Node = null
 var _emulators := []
@@ -119,6 +122,8 @@ func _apply(body: Dictionary) -> bool:
 		if not (typeof(cursor[0]) in PATH_TYPES) or not (typeof(cursor[2]) in PATH_TYPES):
 			continue
 		var emulator = ScenePaths.resolve(_scene, PoolIntArray(cursor[0]))
+		if emulator in local_emulators:
+			continue
 		var control = ScenePaths.resolve(_scene, PoolIntArray(cursor[2]))
 		if not (emulator is FocusEmulator) or not (control is Control):
 			done = false

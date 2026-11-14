@@ -21,6 +21,9 @@ const ECHO_INTERVAL := 0.09
 
 var device := -1
 var last_pause_msec := -1  # when ui_pause was last delivered (tells PauseControl who paused)
+# Mask of BUTTON_ACTIONS bits that are not delivered (released if down). Counters are still
+# tracked, so a press made while blocked is not replayed later.
+var blocked := 0
 
 var _counts := -1  # last counters seen; -1 until the first packet
 var _down := 0  # pressed on the virtual device
@@ -42,6 +45,14 @@ func apply(held: int, counts: int) -> void:
 		var bit: int = 1 << i
 		var is_held := bool(held & bit)
 		var presses: int = PressCounter.presses_between(_counts, counts, i)
+		if blocked & bit:
+			if _down & bit:
+				_send(i, false)
+			if i == VirtualDevices.PAUSE_INDEX:
+				_pause_held = false
+			elif is_held:
+				_blocked |= bit  # still held when the block ends: needs a new press
+			continue
 		if i == VirtualDevices.PAUSE_INDEX:
 			_apply_pause(is_held, presses)
 		elif presses > 0:

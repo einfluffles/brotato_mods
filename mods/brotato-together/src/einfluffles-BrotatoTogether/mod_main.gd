@@ -83,6 +83,8 @@ func _ready() -> void:
 
 	upgrades_sync = _add("sync/upgrades_sync.gd", "UpgradesSync")
 	upgrades_sync.setup(session, battle_host, battle_client)
+	upgrades_sync.focus_sync = focus_sync
+	upgrades_sync.input_sync = input_sync
 
 	menu_sync = _add("sync/menu_sync.gd", "MenuSync")
 	menu_sync.setup(session, battle_host)

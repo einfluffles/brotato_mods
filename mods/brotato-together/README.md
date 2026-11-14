@@ -16,6 +16,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   snapshots with interpolation (~100 ms behind); your own character is predicted locally and reconciled.
 - **Shop, level-ups, crates:** clients load the real screens with the host's rolled options (via the game's
   own save/resume path) and mirror every player's cursor.
+- **Your own level-up / crate panel runs on your machine:** cursor, pages (upgrades / gear / stats) and
+  item popups react at once; only the decision (choose, reroll, take, recycle, ban) goes to the host,
+  which checks it against what your panel shows and applies it.
 - **Selection screens / end of run:** the host's selection grid (built from the host's element list,
   so local unlocks/DLC don't matter) with every player's cursor and ready state, plus per-player
   cards of what each cursor is on.
@@ -55,5 +58,5 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
 run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, level-up/crate
-panels, cursor mirroring, character-selection cards and grid, shop UI sounds, F9 panel
+panels (mirrored options, the own panel running locally, decisions as checked intents), cursor mirroring, character-selection cards and grid, shop UI sounds, F9 panel
 keyboard/pad input, the wave-failed prompt and the battle -> shop transition on clients.

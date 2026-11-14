@@ -15,16 +15,23 @@ enum Msg {
 	SNAPSHOT,  # host -> client, unreliable: see sync/snapshot.gd
 	FOCUS,  # host -> client: scene, cursors [[emulator path, player, control path]]
 	SHOP_STATE,  # host -> client: shop_id, run (RunStateCodec incl. shop), slots, go
-	UPGRADES_STATE,  # host -> client: battle_id, visible, run, players (see upgrades_sync.gd)
+	# host -> client: battle_id, visible, run, players, seqs, pages (see upgrades_sync.gd)
+	UPGRADES_STATE,
 	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, random, ready, inv, idx]],
 	#   grids (on change; see menu_sync.gd)
 	BATTLE_PAUSE,  # host -> client: battle_id, paused, by (name), by_id (steam id, 0: host)
 	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
 	RETRY_PROMPT,  # host -> client: battle_id, visible, retry, retries, player, name
 	SHOP_PAUSE,  # host -> client: paused, by, by_id (like BATTLE_PAUSE, while in the shop)
+	# client -> host: battle_id, seq (of the sender's panel), kind ("choose" | "reroll" |
+	# "take" | "discard" | "ban"), id (upgrade / item my_id, "" for reroll), meca (-1: none)
+	UPGRADE_INTENT,
+	# client -> host: battle_id, page (the sender's carousel page), path (its cursor as a
+	# child-index path inside its own panel, empty: none). Cosmetic: what the others see.
+	UPGRADE_FOCUS,
 }
 
-const VERSION := 5
+const VERSION := 6
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:
