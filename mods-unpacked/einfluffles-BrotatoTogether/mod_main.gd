@@ -19,6 +19,7 @@ const ShopSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/
 const UpgradesSync := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_sync.gd"
 )
+const MenuSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/menu_sync.gd")
 const DebugOverlay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/debug_overlay.gd")
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 
@@ -37,6 +38,7 @@ var battle_client: Node = null
 var focus_sync: Node = null
 var shop_sync: Node = null
 var upgrades_sync: Node = null
+var menu_sync: Node = null
 
 var _client_active := false
 
@@ -92,6 +94,12 @@ func _ready() -> void:
 	add_child(upgrades_sync)
 	upgrades_sync.setup(session, battle_host, battle_client)
 
+	menu_sync = MenuSync.new()
+	menu_sync.name = "MenuSync"
+	add_child(menu_sync)
+	menu_sync.setup(session, battle_host)
+	menu_sync.connect("menu_state", self, "_on_menu_state")
+
 	var overlay := DebugOverlay.new()
 	overlay.name = "DebugOverlay"
 	overlay.setup(transport, session, battle_host, battle_client)
@@ -113,6 +121,18 @@ func _on_peer_ready(steam_id: int) -> void:
 func _on_client_battle_left() -> void:
 	if _client_active:
 		_enter_client_view()
+
+
+# Host is in a menu (selection screens, end of run, title): show it in the client view. Also
+# covers leaving the shop/battle for a menu without a dedicated end message.
+func _on_menu_state(state: Dictionary) -> void:
+	if not _client_active:
+		return
+	var current := get_tree().current_scene
+	if current == null or current.get_script() != ClientView:
+		_enter_client_view()
+		current = get_tree().current_scene
+	current.show_menu(state)
 
 
 func _on_lobby_left() -> void:

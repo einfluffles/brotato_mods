@@ -14,6 +14,7 @@ enum Msg {
 	FOCUS,  # host -> client: scene, cursors [[emulator path, player, control path]]
 	SHOP_STATE,  # host -> client: shop_id, run (RunStateCodec incl. shop), slots, go
 	UPGRADES_STATE,  # host -> client: battle_id, visible, run, players (see upgrades_sync.gd)
+	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, is_random, ready]]
 }
 
 const VERSION := 1

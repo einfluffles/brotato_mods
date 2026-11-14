@@ -9,6 +9,7 @@ const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const FAKE_PEER := 4242
@@ -91,6 +92,7 @@ func _run() -> void:
 	_test_run_state_round_trip()
 	yield(_test_battle_loopback(together), "completed")
 	yield(_test_shop_loopback(together), "completed")
+	yield(_test_menu_mirror(together), "completed")
 	_finish()
 
 
@@ -366,6 +368,52 @@ func _test_shop_loopback(together: Node):
 	_check(owned, "client inventory has %s" % bought_id)
 	Puppet.set_active(false)
 	shop_sync.set_process(true)
+
+
+# Character selection: the client card shows what the host cursor is on (by id, not grid index).
+func _test_menu_mirror(together: Node):
+	var menu_sync: Node = together.menu_sync
+	menu_sync.set_process(false)
+	get_tree().change_scene(MenuData.character_selection_scene)
+	yield(get_tree(), "idle_frame")
+	yield(get_tree(), "idle_frame")
+	var scene := get_tree().current_scene
+	# Two players join like remote players do (virtual devices), then the grid appears.
+	RunData.set_coop_run(true)
+	CoopService.clear_coop_players()
+	CoopService._add_player(VirtualDevices.FIRST, CoopService.PlayerType.GAMEPAD_XBOX)
+	CoopService._add_player(VirtualDevices.FIRST + 1, CoopService.PlayerType.GAMEPAD_XBOX)
+	yield(get_tree(), "idle_frame")
+	var grid = scene.get_node("%Inventory1")
+	var element: InventoryElement = null
+	for child in grid.get_children():
+		if child is InventoryElement and not child.is_random and child.item != null:
+			element = child
+			break
+	_check(element != null, "character grid built")
+	if element == null:
+		return
+	menu_sync._scene = scene
+	menu_sync._emulators = ScenePaths.find_focus_emulators(scene)
+	Utils.get_focus_emulator(0, scene).focused_control = element
+	var state: Dictionary = menu_sync._state()
+	state["you"] = 1
+	state = bytes2var(var2bytes(state), false)
+	_check(state.kind == "character_selection", "menu kind %s" % state.kind)
+	_check(state.players[0][0] == element.item.my_id, "host cursor item %s" % element.item.my_id)
+
+	var view = ClientView.new()
+	get_tree().root.add_child(view)
+	view.show_menu(state)
+	_check(view._panels.size() == state.count, "one card per player (%d)" % state.count)
+	var card_item = view._panels[0].panel.item_data
+	_check(
+		card_item != null and card_item.my_id == element.item.my_id,
+		"card shows the host's character"
+	)
+	_check("(you)" in view._panels[1].label.text, "own card marked")
+	view.queue_free()
+	menu_sync.set_process(true)
 
 
 func _shop_slots(shop: Node, p: int) -> Array:
