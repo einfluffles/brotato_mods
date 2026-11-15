@@ -33,6 +33,7 @@ const FeedbackMirror := preload(
 )
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
+const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -105,6 +106,7 @@ var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
 var _feedback = FeedbackMirror.new()  # explosions, texts, shake, wave end (protocol 11)
 var _looks = Looks.new()
+var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppets
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -177,6 +179,7 @@ func _on_battle_start(body) -> void:
 		_reset_battle_state()
 	_battle_id = body.battle_id
 	_adopt_start(body)
+	_battle_scene.client_start(body)  # for the scene this start loads, not for a resync
 
 	CoopService.bt_apply_remote_colors(body.get("colors"))
 	Puppet.set_active(true)
@@ -255,6 +258,7 @@ func _reset_battle_state() -> void:
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
+	_battle_scene = BattleScene.new()
 
 
 func _on_node_added(node: Node) -> void:
@@ -274,6 +278,7 @@ func _on_battle_scene_ready(main: Node) -> void:
 	_freeze(main)
 	# No battle: it ended while its scene loaded. Frozen until the next screen replaces it.
 	if _battle_id != 0:
+		_battle_scene.client_scene_ready(main)
 		_main = main
 		_main_id = main.get_instance_id()
 		# The next screen can replace the scene without a BATTLE_END (the shop was faster).
@@ -434,6 +439,8 @@ func _apply_players(
 	var players: Array = _main.get("_players")
 	for i in min(players.size(), to.players.size()):
 		var player = players[i]
+		BattleScene.apply_speed(player, newest.players[i])  # before the prediction reads it
+		_battle_scene.follow_weapons(player, i, to.players[i])  # before weapons apply by index
 		if player.dead:
 			_move(player, "p%s" % i, to.players[i][PF.POSITION])
 		elif i == _you and i < newest.players.size():

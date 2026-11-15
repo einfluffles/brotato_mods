@@ -26,6 +26,7 @@ const FeedbackMirror := preload(
 )
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
+const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleHost"
 const BATTLE_SCENE := "res://main.tscn"
 const SNAPSHOT_HZ := 30
@@ -73,6 +74,7 @@ var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
 var _feedback = FeedbackMirror.new()  # explosions, bonus gold, wave end (protocol 11)
 var _looks = Looks.new()
+var _battle_scene = BattleScene.new()  # weapons at wave start, sent speeds
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -164,6 +166,8 @@ func _start_battle(main: Node) -> void:
 	_fresh_ids.clear()
 	_stats.clear()
 	_sim_msec = float(OS.get_ticks_msec())
+	_battle_scene = BattleScene.new()
+	_battle_scene.host_start(main)
 	_preregister_types(main)
 	var spawner = main.get("_entity_spawner")
 	for signal_name in SPAWNER_RESPAWN_SIGNALS:
@@ -195,6 +199,7 @@ func _end_battle() -> void:
 	_anim_mirror = AnimMirror.new()
 	_feedback = FeedbackMirror.new()
 	_looks = Looks.new()
+	_battle_scene = BattleScene.new()
 	SoundRelay.set_sink(null)
 	if session.is_host():
 		session.broadcast_reliable(Protocol.Msg.BATTLE_END, {"battle_id": _battle_id})
@@ -210,6 +215,8 @@ func _battle_start_body() -> Dictionary:
 		"types": types_by_idx,
 		"paused": _paused,
 		"colors": CoopService.bt_slot_colors.duplicate(),
+		"holes": BattleScene.hole_layout(_main),
+		"weapon_slots": _battle_scene.start_slots(_main),
 	}
 
 
@@ -446,6 +453,8 @@ func _capture_players() -> Array:
 		]
 		var entry := [player.global_position, null, null, _input_ack_of(i), null, null, null]
 		entry.append(Snapshot.pack_weapons(player.current_weapons))
+		entry.append(_battle_scene.weapon_slots(i, player))
+		entry.append(_battle_scene.speed(i, player, _snapshot_count))
 		var last = _stats.get(i)
 		if last == null or last[0] != stats:
 			last = [stats, _snapshot_count]
