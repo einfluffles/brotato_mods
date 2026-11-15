@@ -53,6 +53,7 @@ const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
+const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -74,6 +75,7 @@ const SUITES := [
 	"cleanup_client",
 	"cleanup_misc",
 	"feedback",
+	"looks",
 	"selection",
 ]
 const FAKE_PEER := 4242
@@ -297,6 +299,12 @@ func _suite_cleanup_misc(together: Node):
 func _suite_feedback(together: Node):
 	coop_run(8)
 	_suite = FeedbackTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_looks(together: Node):
+	coop_run(8)
+	_suite = LooksTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
