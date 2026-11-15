@@ -4,9 +4,9 @@ extends Node
 #   frame and sent as UI_SOUNDS (reliable: discrete events, a few res:// paths per batch).
 #   In battle BattleHost records instead (snapshot events) — that includes the level-up/crate
 #   panels, which live in main.tscn.
-# Client: replays them. Local sounds are muted while the puppet shop runs (ShopSync): its mirrored
-#   state and cursors would play the same sounds a second time. ClientView isn't mirrored: it stays
-#   audible.
+# Client: replays them. Local sounds are muted while the puppet shop (ShopSync) or a copy of the
+#   host's menus (MenuPuppet) runs: its mirrored state and cursors would play the same sounds a
+#   second time. ClientView isn't mirrored: it stays audible.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const SoundRelay := preload(

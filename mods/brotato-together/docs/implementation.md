@@ -691,18 +691,55 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     has) is ignored, as before: `apply_state` (only while mirroring and on the scene the body names;
     `local_emulators` are skipped) returns false until every cursor resolves to a visible control (scene
     still loading, retry prompt not shown yet), and the stream retries it every frame for up to 10 s. `ui/scene_paths.gd` only finds the emulators now (FocusSync, MenuSync, CoopSelection).
-- **Selection screens / end of run** (`sync/menu_sync.gd` + `ui/client_view.gd`): grids depend on local
-  unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
-  run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),
-  so they are not run on the client. Instead the host sends its grids (`BaseSelection._get_inventories()`,
-  visible ones: columns + ordered `[my_id, random/special/locked flags]`) and each
-  cursor as `[inventory, element index]`; `ui/selection_grid.gd` draws them with ids looked up in
-  `ItemService` (unknown ids → "?") and per-player colour borders (thicker when `_has_player_selected`),
-  plus `ItemPanelUI` cards for the item under each cursor. State stream sections menu (cursors, screen,
-  colours, `you` as the per-peer patch) and menu_grids (only when the grids change), both inactive in
-  battle / shop (null: the client forgets them, the next screen's own message takes over). Both carry
-  `screen` (host scene instance id): the client shows a state only with the grids of its screen, so a new
-  screen never shows with the previous one's grids (its grids follow in the same step).
+- **Selection screens / end of run** (`sync/menu_sync.gd`, `sync/menu_puppet.gd`, protocol 15): the
+  client runs the game's own scenes (`character_selection.tscn`, `weapon_selection.tscn`,
+  `difficulty_selection.tscn`, `coop_end_run.tscn`) as copies that decide nothing. Until protocol
+  14 it drew its own view of them (a grid of icons with coloured borders and an item card per
+  player), because the game's grids depend on local unlocks / DLC and the scenes run the join and
+  selection logic. Now:
+  - Host, state stream sections menu (kind, `screen` = host scene instance id, count, `coop`, who
+    selected, colours, `you` as the per-peer patch; character selection: zone `[id, random]`,
+    endless, `join` = hold progress while joining is open; weapon selection: `picks`; end of run:
+    `pages`) and menu_grids (per visible grid every element `[my_id, flags, tier]` in the host's
+    order; for weapon / difficulty selection and the end of run also the run state, packed once
+    per screen, and `won`). Both inactive in battle / shop. The cursors are FocusSync's, as on
+    every screen with FocusEmulators.
+  - Grids: `session/puppet_menu.gd` keeps the host's lists as this machine's items (duplicates
+    with the host's tier and lock); script extensions of the three selection scenes return them
+    from `_get_all_possible_elements` / `_get_unlocked_elements` while puppeting, so the scene's
+    own code builds the host's grid whenever it builds one (also for a player joining later). A
+    grid that still differs after a grids change is rebuilt the way
+    `_set_base_ui_player_count` does, the cursors on it put back by index. Ids this machine
+    does not know are left out (logged). Character cells are coloured by the host's tiers
+    (`MenuPuppet._apply_tiers`; `CharacterSelectionInventory.update_elements_color` reads this
+    machine's progress).
+  - Cut in the extensions while puppeting, where the decision is: `_on_element_pressed`,
+    `_on_selections_completed`, `_go_back`; character selection also `_on_BackButton_pressed`,
+    `_on_coop_initialized` and `_on_ZoneSelectionButton_item_selected` (writes
+    `ProgressData.settings`, and `_ready` calls it), and `CoopService.listening_for_inputs` is
+    switched off again after `_play_mode_init` / `_on_element_focused` (nobody joins on a
+    client; `MenuPuppet._process` keeps it off). End of run: `BaseEndRun._button_pressed = true`
+    spends its three buttons. A full-rect control on top of the copy takes the mouse, and a
+    control of the copy that gets the keyboard focus loses it in the same frame.
+  - Entering (`MenuPuppet._enter`, when a state names another `screen`): puppet mode, one puppet
+    slot per host player, `RunData.reset()` for the character selection or the host's run for
+    the others, co-op play mode, `RunData.menu_selection_back` for the character selection
+    (`init_coop_service` keeps the slots only on that path), then `change_scene`; the copy is
+    muted like the puppet shop (the host's UI sounds arrive as `UI_SOUNDS`).
+  - Applied from every state: player count (`connected_players_updated`, the scene adds and
+    removes its panels itself), who selected (`_has_player_selected` + the panel's `selected`,
+    never `_set_selected_element`, which ends the screen; a selected character keeps its panel
+    via `_player_characters` like on the host; re-applied every frame, the scene's own focus
+    handlers clear it), zone / background / endless without the scene's handlers, the join
+    progress through the CoopService extension (`bt_remote_progress`, so `CoopJoinPanel`s and
+    `ui/coop_selection.gd`'s hints follow), pick counts, end-of-run carousel pages.
+  - A screen without a copy (title screen and its pages, a host choosing for a solo run) shows
+    `ui/client_view.gd`, now only a waiting screen (key art, connection line, where the host is).
+  - Open: the cursor on these screens still makes the round trip through the host (no local
+    panel as in the shop); `CoopShowCharacterHint` (hold to see the character in weapon
+    selection) is not mirrored; item-set requirements are evaluated with this machine's sets; the
+    end of run shows the host's unlocked rewards; none of this has run between two real machines
+    yet (headless: `menu_puppet_tests.gd`).
 - **Co-op character selection UX** (`ui/coop_selection.gd`, `extensions/singletons/coop_service.gd`,
   protocol 9). Found in the game: `CoopJoinPanel1..4` (`coop_join_panel.gd :: update_indicators`) show
   the `COOP_HOLD_TO_JOIN` hint ("Hold {0} or {1} to join", A / Space glyphs) only in the *next* free slot
@@ -721,12 +758,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   colour", the game's glyphs) is added under the title. Colours travel as palette indices (`colors`) in
   the menu section, BATTLE_START and the shop state; the client validates them (one distinct palette index per slot)
   and mirrors them until it leaves the lobby (`bt_clear_remote_colors`). Nothing is saved.
-- **Locked characters**: the host's screen already shows the game's `LockedPanel` (challenge text via
-  `ChallengeService.find_challenge_from_reward`, or the item-set requirement) instead of the panel; only
-  the client cards showed the description. Menu state player entries now carry the host LockedPanel text
-  and "locked by a challenge"; the client card shows a `LockedPanel` with its own (localised) challenge
-  text, else the host's text. Free slots appear as client cards with the same join hint and the hold
-  progress (`join`), the colour hint shows once the client has a slot.
+- **Locked characters**: the game's `LockedPanel` (challenge text via
+  `ChallengeService.find_challenge_from_reward`, or the item-set requirement) shows instead of the
+  panel, on the host and, through the same code, on a client's copy (locked where the host has it
+  locked; the text is this machine's, so localised). Free slots, the join hint and the hold
+  progress are the scene's own `CoopJoinPanel`s there too.
 - **Wave failed** (`sync/retry_sync.gd`): `main.gd :: _on_EndWaveTimer_timeout` shows `UI/RetryWave`, which
   never runs on the puppet (timer callbacks disconnected). Host: state stream section retry, active while
   the prompt is visible (its `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's

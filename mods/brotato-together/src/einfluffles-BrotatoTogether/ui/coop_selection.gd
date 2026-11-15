@@ -42,7 +42,9 @@ func _process(_delta: float) -> void:
 		return
 	var count: int = CoopService.connected_players.size()
 	var connecting: int = CoopService.connection_progress.size()
-	var open: bool = RunData.is_coop_run and CoopService.listening_for_inputs
+	# On a client's copy the host listens: its join progress says so (sync/menu_puppet.gd).
+	var listening: bool = CoopService.listening_for_inputs or CoopService.bt_remote_progress != null
+	var open: bool = RunData.is_coop_run and listening
 	var panels: Array = scene._get_coop_join_panels()
 	for i in panels.size():
 		var panel = panels[i]

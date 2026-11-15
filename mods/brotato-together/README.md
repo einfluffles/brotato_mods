@@ -37,9 +37,10 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   they still match your panel. The inventory popup's meca upgrade shows the two options the host rolled
   and sends the one you pick.
   The shop does not follow the keyboard and mouse yet the way the level-up panel does.
-- **Selection screens / end of run:** the host's selection grid (built from the host's element list,
-  so local unlocks/DLC don't matter) with every player's cursor and ready state, plus per-player
-  cards of what each cursor is on.
+- **Selection screens / end of run:** clients see the game's own character, weapon and difficulty
+  selection and end-of-run screens, showing what the host's show: the host's grid (so local
+  unlocks/DLC don't matter), every player's cursor, panel and ready state, the zone, the join
+  slots. They decide nothing there; input goes to the host.
 - **Wave failed:** the retry / end-run prompt appears on clients too, with who gets to choose.
 - **Sounds:** clients hear the host's sounds — battle sounds with the snapshots, menu/shop sounds as
   they happen — instead of their own mirrored screens' sounds.
@@ -72,7 +73,7 @@ on clients. In character selection each player can change their colour with **F*
 **Y** (gamepad; Triangle on PlayStation pads), cycling through 8 colours and skipping colours other
 players already have. The colour is used everywhere the game uses player colours (cursor, panels,
 HUD, player highlight) and clients see the same colours. Nothing is saved; players who don't pick keep
-the game's colours. A locked character under a cursor shows how to unlock it (also on clients' cards).
+the game's colours. A locked character under a cursor shows how to unlock it (on clients too).
 
 A wave never pauses while friends are connected (Esc opens the menu over the running game, see
 above; losing window focus pauses nothing either). In the shop anyone can pause: the host operates
@@ -86,7 +87,7 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
 run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
-panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring (also with another mod's extra controls on one machine only), character-selection cards and grid, shop UI sounds, F9 panel
+panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress; nothing decided or saved there), shop UI sounds, F9 panel
 keyboard/pad input, the wave-failed prompt and the battle -> shop transition on clients, the Esc menu
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave

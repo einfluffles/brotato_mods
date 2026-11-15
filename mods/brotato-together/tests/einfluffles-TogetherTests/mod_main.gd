@@ -11,7 +11,9 @@ const VirtualDevices := preload(
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const MenuPuppetTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/menu_puppet_tests.gd"
+)
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
@@ -370,6 +372,8 @@ func _suite_selection(together: Node):
 	yield(_suite.run_menu_tests(self, together), "completed")
 	_suite = CoopSelectionTests.new()
 	yield(_suite.run(self, together), "completed")
+	_suite = MenuPuppetTests.new()
+	yield(_suite.run(self, together), "completed")
 
 
 # Input sync, the F9 menu, session lifecycle, DLC borrowing, the run state round trip. First in
@@ -524,7 +528,8 @@ func _hold_sounds(hold: bool) -> int:
 	return SoundRelay.dropped_count()
 
 
-# Character selection: the client card shows what the host cursor is on (by id, not grid index).
+# Character selection with two co-op players: the menu state names the screen and who selected,
+# the grids every element. The waiting screen (no copy of the host's screen) shows the key art.
 func _test_menu_mirror(together: Node):
 	var menu_sync: Node = together.menu_sync
 	menu_sync.set_process(false)
@@ -548,24 +553,21 @@ func _test_menu_mirror(together: Node):
 	if element == null:
 		return
 	menu_sync._scene = scene
-	menu_sync._emulators = ScenePaths.find_focus_emulators(scene)
 	Utils.get_focus_emulator(0, scene).focused_control = element
 	var state: Dictionary = menu_sync._state()
 	state["you"] = 1
 	state = bytes2var(var2bytes(state), false)
 	_check(state.kind == "character_selection", "menu kind %s" % state.kind)
-	_check(state.players[0][0] == element.item.my_id, "host cursor item %s" % element.item.my_id)
+	_check(state.count == 2 and state.selected == [false, false], "menu: players %s" % [state])
+	var ids := []
+	for entry in menu_sync.grids_state().inventories[0]:
+		ids.append(entry[0])
+	_check(element.item.my_id in ids, "menu grids name the host's elements")
 
 	var view = ClientView.new()
 	get_tree().root.add_child(view)
-	view.show_menu(state)
-	_check(view._panels.size() == state.count, "one card per player (%d)" % state.count)
-	var card_item = view._panels[0].panel.item_data
-	_check(
-		card_item != null and card_item.my_id == element.item.my_id,
-		"card shows the host's character"
-	)
-	_check("(you)" in view._panels[1].label.text, "own card marked")
+	view.show_menu({"kind": "title_screen"})
+	_check(view._title.text != "", "waiting screen says where the host is")
 	var backdrop: Node = view.get_child(0)
 	var art: Node = backdrop.get_child(0) if backdrop.get_child_count() > 1 else null
 	_check(art != null and not art is ColorRect, "waiting screen shows the title key art")

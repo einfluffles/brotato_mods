@@ -22,8 +22,8 @@ const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
-const SelectionGrid := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/selection_grid.gd"
+const MenuPuppet := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/menu_puppet.gd"
 )
 const SessionLifecycleTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
@@ -227,10 +227,10 @@ func _test_borrowed_session(
 			print("  info: no item or weapon with a DLC-only effect script found")
 		else:
 			print("  info: DLC-only effect script on %s" % host_run.effect_item)
-	var grid = SelectionGrid.new()
+	var menus = MenuPuppet.new()
 	var char_id: String = _update.item_set.characters[0].my_id
-	_t._check(grid.find_item(char_id) != null, "selection grid knows the DLC character (no '?')")
-	grid.free()
+	_t._check(menus._find_item(char_id) != null, "the selection screens know the DLC character")
+	menus.free()
 	_test_dlc_types()
 	MusicManager.shuffled_tracks.append(_update.dlc_data.music_tracks[0])  # queue refilled
 

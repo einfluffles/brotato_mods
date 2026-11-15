@@ -23,6 +23,9 @@ const BT_EXTRA_COLORS := [
 
 var bt_palette := []  # game defaults + BT_EXTRA_COLORS
 var bt_slot_colors := []  # slot -> palette index currently in player_colors
+# Client's copy of the host's character selection: the host's hold-to-join progress (null:
+# this machine's own). sync/menu_puppet.gd.
+var bt_remote_progress = null
 var _bt_picks := {}  # remapped device -> picked palette index
 var _bt_remote := []  # client of a lobby: the host's slot colours (palette indices)
 
@@ -35,6 +38,14 @@ func _add_player(device: int, player_type: int) -> void:
 	if VirtualDevices.is_virtual(device):
 		player_type = PlayerType.GAMEPAD_XBOX
 	._add_player(device, player_type)
+
+
+func _update_connection_progress() -> void:
+	if bt_remote_progress == null:
+		._update_connection_progress()
+		return
+	connection_progress = bt_remote_progress.duplicate()
+	emit_signal("connection_progress_updated", connection_progress)
 
 
 func _bt_init_colors() -> void:

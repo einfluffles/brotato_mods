@@ -1,16 +1,15 @@
 extends Node
-# Menus outside battle and shop (character/weapon/difficulty selection, end of run, title...).
-# Their grids depend on each machine's own unlocks/DLC, so instead of running them on the client
-# we mirror *what* each player has under their cursor (by item id) and whether they're ready;
-# the client shows the game's own item cards for that (ui/client_view.gd).
-# Two sections of the state stream (sync/state_stream.gd), both inactive while the host is in a
-# battle or the shop (their own messages take over there):
-#  - menu: the cursors and the screen, see _state(); `you` (the peer's player slot, -1:
-#    spectator) is the per-peer patch.
-#  - menu_grids: the host's grids themselves (ordered element ids + flags per visible Inventory,
-#    see grids_state()), sent only when they change. Cursors are [inventory, index] into them, so
-#    the client draws the host's grid with every cursor (ui/selection_grid.gd) whatever it has
-#    unlocked itself.
+# Menus outside battle and shop (character / weapon / difficulty selection, end of run, title...).
+# The host runs them; a client runs a copy of the same game scene that decides nothing
+# (sync/menu_puppet.gd) and is told here what the host's shows. Two sections of the state stream
+# (sync/state_stream.gd), both inactive while the host is in a battle or the shop (their own
+# messages take over there):
+#  - menu: what changes while the screen is up, see _state(); `you` (the peer's player slot,
+#    -1: spectator) is the per-peer patch. The cursors travel with FocusSync.
+#  - menu_grids: what the screen is built from, see grids_state(): the elements of every visible
+#    grid (id, flags, tier) in the host's order, since they depend on each machine's own unlocks
+#    / DLC, and the run state for the screens that show it (packed once per screen). Sent only
+#    when it changes.
 # Both carry `screen` (the host scene's instance id): the client shows a state only with the grids
 # of the same screen, so a new screen never shows with the previous screen's grids. Its grids
 # come right after it (menu is ordered before menu_grids).
@@ -18,10 +17,14 @@ extends Node
 signal menu_state(state)
 
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
-const SelectionGrid := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/selection_grid.gd"
+const RunStateCodec := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
+const FLAG_RANDOM := 1
+const FLAG_SPECIAL := 2  # shown greyed out / with a lock (locked, needs an item set)
+const FLAG_LOCKED := 4
+# Screens built from the run (the players' characters, weapons, items): it travels with the grids.
+const RUN_KINDS := ["weapon_selection", "difficulty_selection", "coop_end_run"]
 const MIRRORED_ELSEWHERE := ["res://main.tscn", "res://ui/menus/shop/coop_shop.tscn"]
 
 var session: Node = null
@@ -29,7 +32,8 @@ var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var battle_host: Node = null  # for the SteamID -> player slot mapping
 
 var _scene: Node = null
-var _emulators := []
+var _run_screen := 0  # the screen _run was packed for
+var _run = null
 var _client_state := {}  # client: latest menu body (without grids)
 var _client_grids := {}  # client: latest menu_grids body
 
@@ -52,9 +56,7 @@ func _track_scene() -> bool:
 	if scene == null or scene.filename in MIRRORED_ELSEWHERE:
 		_scene = null
 		return false
-	if scene != _scene:
-		_scene = scene
-		_emulators = ScenePaths.find_focus_emulators(scene)
+	_scene = scene
 	return true
 
 
@@ -64,7 +66,7 @@ func state_key(section: int) -> String:
 	if not _track_scene():
 		return ""
 	if section == StateStream.MENU_GRIDS:
-		return var2str(grids_state())
+		return var2str(_grids())
 	var slots := []
 	for steam_id in session.peers:
 		if session.peers[steam_id].ready:
@@ -82,97 +84,99 @@ func state_patch(section: int, steam_id: int) -> Dictionary:
 	return {"you": battle_host._player_index_of(steam_id)}
 
 
-# kind, screen, count, players [[id, label, random, ready, inv, idx, locked text, locked by
-# challenge]], colors (palette index per slot), max, reward, join (only while joining is open:
-# hold progress of joining players); `you` comes with the per-peer patch.
+# kind, screen, count, coop, selected (per player), colors (palette index per slot), max; character
+# selection: zone [id, random], endless, and while joining is open join (hold progress of the
+# joining players); weapon selection: picks (per player the indices of its picked elements);
+# end of run: pages (per player its carousel page). `you` comes with the per-peer patch.
 func _state() -> Dictionary:
 	var count: int = CoopService.connected_players.size()
-	var players := []
-	var selected = _scene.get("_has_player_selected")
-	var inventories := _inventories()
-	var locked_panels: Array = (
-		_scene._get_locked_panels() if _scene.has_method("_get_locked_panels") else []
-	)
+	var chosen = _scene.get("_has_player_selected")
+	var selected := []
 	for p in count:
-		var control = _focused_control(p)
-		var id := ""
-		var label := ""
-		var is_random := false
-		var position := [-1, -1]  # [inventory, index] in grids_state()
-		var lock_text := ""  # what the host's LockedPanel shows instead of the item
-		var locked := false  # locked by a challenge: the client localises the text itself
-		if control is InventoryElement:
-			is_random = control.is_random
-			if control.item != null:
-				id = control.item.my_id
-				locked = (
-					control.is_special
-					and not is_random
-					and control.item.get("is_locked") == true
-				)
-			if control.is_special and not is_random and p < locked_panels.size():
-				lock_text = _locked_text(locked_panels[p])
-			var inventory: int = inventories.find(control.get_parent())
-			if inventory >= 0:
-				position = [inventory, _elements_of(inventories[inventory]).find(control)]
-		elif control is Button:
-			label = control.text
-		var ready: bool = selected is Array and p < selected.size() and selected[p]
-		players.append(
-			[id, label, is_random, ready, position[0], position[1], lock_text, locked]
-		)
+		selected.append(chosen is Array and p < chosen.size() and bool(chosen[p]))
 	var state := {
-		"kind": _scene.filename.get_file().get_basename(),
+		"kind": kind_of(_scene),
 		"screen": _scene.get_instance_id(),
 		"count": count,
-		"players": players,
+		"coop": RunData.is_coop_run,
+		"selected": selected,
 		"colors": CoopService.bt_slot_colors.duplicate(),
 		"max": CoopService.get_max_players(),
-		"reward": _scene._get_reward_type() if _scene.has_method("_get_reward_type") else -1,
 	}
-	# Character selection while players can join: hold progress of those joining right now.
-	if (
-		_scene.has_method("_get_coop_join_panels")
-		and RunData.is_coop_run
-		and CoopService.listening_for_inputs
-	):
-		var joining := []
-		for progress in CoopService.connection_progress:
-			joining.append(stepify(progress, 0.1))
-		state["join"] = joining
+	if _scene.has_method("_get_coop_join_panels"):
+		state["zone"] = [RunData.current_zone, bool(ProgressData.settings.zone_is_random)]
+		state["endless"] = RunData.is_endless_run
+		# While players can join: hold progress of those joining right now.
+		if RunData.is_coop_run and CoopService.listening_for_inputs:
+			var joining := []
+			for progress in CoopService.connection_progress:
+				joining.append(stepify(progress, 0.1))
+			state["join"] = joining
+	var picked = _scene.get("_picked_elements")
+	if picked is Array:
+		state["picks"] = _picks(picked)
+	var containers = _scene.get("player_containers")
+	if containers is Array:
+		var pages := []
+		for p in min(count, containers.size()):
+			pages.append(containers[p].carousel.index)
+		state["pages"] = pages
 	return state
 
 
-static func _locked_text(panel) -> String:
-	if panel == null or not panel.visible:
-		return ""
-	var description = panel.get("_description")
-	return description.text if description is Label else ""
+static func kind_of(scene: Node) -> String:
+	return scene.filename.get_file().get_basename()
 
 
-# Visible selection grids in tree order: {screen, random_icon, inventories: [[columns, [[id,
-# flags]]]]}.
+# WeaponSelection._picked_elements as indices into each player's grid.
+func _picks(picked: Array) -> Array:
+	var inventories: Array = _scene._get_inventories()
+	var picks := []
+	for p in picked.size():
+		var indices := []
+		if picked[p] is Array and p < inventories.size():
+			var elements := _elements_of(inventories[p])
+			for element in picked[p]:
+				indices.append(elements.find(element))
+		picks.append(indices)
+	return picks
+
+
+# What the screen is built from: screen, inventories [[[id, flags, tier]]] (the visible
+# selection grids in tree order), and for RUN_KINDS run (RunStateCodec) + won.
 func grids_state() -> Dictionary:
+	var state := _grids()
+	if _scene == null or not (kind_of(_scene) in RUN_KINDS):
+		return state
+	# The run does not change while one of these screens is up: packed when it appears.
+	if _run_screen != _scene.get_instance_id():
+		_run_screen = _scene.get_instance_id()
+		_run = RunStateCodec.encode()
+	state["run"] = _run
+	state["won"] = RunData.run_won
+	return state
+
+
+# The grids alone (also the section's key: no run in it).
+func _grids() -> Dictionary:
 	var inventories := []
 	for inventory in _inventories():
 		var elements := []
 		for element in _elements_of(inventory):
 			var flags := 0
 			if element.is_random:
-				flags |= SelectionGrid.FLAG_RANDOM
+				flags |= FLAG_RANDOM
 			if element.is_special:
-				flags |= SelectionGrid.FLAG_SPECIAL
-			var locked = element.item.get("is_locked") if element.item != null else null
-			if locked is bool and locked:
-				flags |= SelectionGrid.FLAG_LOCKED
-			elements.append([element.item.my_id if element.item != null else "", flags])
-		inventories.append([inventory.columns, elements])
-	var random_icon = _scene.get("random_icon") if _scene != null else null
-	return {
-		"screen": _scene.get_instance_id() if _scene != null else 0,
-		"random_icon": random_icon.resource_path if random_icon is Texture else "",
-		"inventories": inventories,
-	}
+				flags |= FLAG_SPECIAL
+			var item = element.item
+			if item != null and item.get("is_locked") == true:
+				flags |= FLAG_LOCKED
+			var tier = item.get("tier") if item != null else null
+			elements.append(
+				[item.my_id if item != null else "", flags, tier if tier is int else 0]
+			)
+		inventories.append(elements)
+	return {"screen": _scene.get_instance_id() if _scene != null else 0, "inventories": inventories}
 
 
 # The selection screens' own grids (BaseSelection._get_inventories), visible ones only.
@@ -194,15 +198,6 @@ static func _elements_of(inventory: Node) -> Array:
 	return elements
 
 
-func _focused_control(player_index: int):
-	for emulator in _emulators:
-		if is_instance_valid(emulator) and emulator.player_index == player_index:
-			var control = emulator.focused_control
-			if control != null and is_instance_valid(control) and control.is_visible_in_tree():
-				return control
-	return null
-
-
 # --- client ---
 
 
@@ -215,7 +210,9 @@ func apply_state(section: int, body, _revision: int) -> bool:
 	if section == StateStream.MENU_GRIDS:
 		_client_grids = body
 	else:
-		if typeof(body.get("kind")) != TYPE_STRING or typeof(body.get("players")) != TYPE_ARRAY:
+		if typeof(body.get("kind")) != TYPE_STRING or typeof(body.get("selected")) != TYPE_ARRAY:
+			return true
+		if typeof(body.get("screen")) != TYPE_INT or typeof(body.get("count")) != TYPE_INT:
 			return true
 		CoopService.bt_apply_remote_colors(body.get("colors"))
 		_client_state = body
