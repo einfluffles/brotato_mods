@@ -35,6 +35,7 @@ const ShopLocal := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const CHECK_INTERVAL := 0.1
+const LOADING_TIMEOUT_MSEC := 10000  # a shop that never got ready must not block the next
 const BLOCK_KEY := "shop"  # InputSync.blocked_by
 
 var session: Node = null
@@ -49,12 +50,13 @@ var _shop_id := 0
 var _last_sent_key := ""
 var _check_left := 0.0
 var _flush_frame := -1  # send in this idle frame (an intent was applied the frame before)
-var _seq_shop: Node = null
+var _seq_shop_id := 0  # instance id of the shop the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel offers something new
 var _seq_keys := []
 
 # client
 var _client_shop: Node = null
+var _loading_msec := -LOADING_TIMEOUT_MSEC  # when the puppet shop began to load (far back: not)
 var _client_shop_id := 0
 var _pending := {}  # latest decoded state, applied once the shop scene is ready
 var _state := {}  # the run state last received, with the bytes it came from
@@ -248,8 +250,8 @@ func _host_shop_for(msg):
 
 
 func _update_seqs(shop: Node) -> void:
-	if shop != _seq_shop:
-		_seq_shop = shop
+	if shop.get_instance_id() != _seq_shop_id:
+		_seq_shop_id = shop.get_instance_id()
 		_seqs = []
 		_seq_keys = []
 	for p in RunData.get_player_count():
@@ -294,8 +296,13 @@ func _on_state(body) -> void:
 		return
 	if typeof(body.get("go")) != TYPE_ARRAY:
 		return
-	CoopService.bt_apply_remote_colors(body.get("colors"))
-	var entering: bool = body.shop_id != _client_shop_id or not is_in_shop()
+	# A second state for the shop that is still loading (both arrived in one frame after a
+	# hitch) must not enter it again: the second scene would have no hook and roll its own items.
+	var loading: bool = (
+		body.shop_id == _client_shop_id
+		and OS.get_ticks_msec() - _loading_msec < LOADING_TIMEOUT_MSEC
+	)
+	var entering: bool = (body.shop_id != _client_shop_id or not is_in_shop()) and not loading
 	var run = body.get("run")
 	var bytes := PoolByteArray()
 	if typeof(run) == TYPE_DICTIONARY and typeof(run.get("data")) == TYPE_RAW_ARRAY:
@@ -326,7 +333,7 @@ func _on_state(body) -> void:
 		_client_shop_id = body.shop_id
 		_enter_shop(_state)
 	else:
-		_apply_pending()
+		_apply_pending()  # waits for the shop when it is still loading
 
 
 # Per player, the parts of the sent run state that its panel is built from, as text: a panel
@@ -350,7 +357,7 @@ func _enter_shop(state: Dictionary) -> void:
 	Puppet.set_active(true)
 	_client_shop = null
 	_applied = {}
-	RunData.resume_from_state(state)
+	RunStateCodec.apply(state)
 	# The game's "continue run in shop" path: BaseShop._ready takes items/rerolls from here.
 	ProgressData.saved_run_state = state
 	RunData.resumed_from_state_in_shop = true
@@ -360,7 +367,9 @@ func _enter_shop(state: Dictionary) -> void:
 	# Only while the puppet shop loads: no node_added handler for every node otherwise.
 	if not get_tree().is_connected("node_added", self, "_on_node_added"):
 		get_tree().connect("node_added", self, "_on_node_added")
+	_loading_msec = OS.get_ticks_msec()
 	if get_tree().change_scene(SHOP_SCENE) != OK:
+		_loading_msec = -LOADING_TIMEOUT_MSEC
 		ModLoaderLog.error("Could not load the shop scene", LOG_NAME)
 
 
@@ -378,6 +387,8 @@ func _on_node_added(node: Node) -> void:
 func _on_puppet_shop_exited(shop: Node) -> void:
 	SoundRelay.set_muted(false)
 	local.leave(shop)
+	if shop == _client_shop:
+		_client_shop = null
 
 
 func _stop_watching_scenes() -> void:
@@ -387,6 +398,7 @@ func _stop_watching_scenes() -> void:
 
 func _on_shop_ready(shop: Node) -> void:
 	_stop_watching_scenes()
+	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_client_shop = shop
 	_applied = {}
 	# Leaving the shop would roll curses on locked items locally; the host decides those.
@@ -406,7 +418,7 @@ func _apply_pending() -> void:
 	var run_changed: bool = _pending.get("run_changed", true)
 	var shown: Array = RunData.players_data
 	if run_changed:
-		RunData.resume_from_state(state)
+		RunStateCodec.apply(state)
 	local.guard(shop, _client_shop_id)
 	for p in RunData.get_player_count():
 		# No keys (a state that did not come through _on_state): everything counts as new.
@@ -545,6 +557,7 @@ func _mirror_view(shop: Node, you: int, pages) -> void:
 
 func _on_lobby_left() -> void:
 	_stop_watching_scenes()
+	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_block_remote_buttons(false)
 	local.stop()
 	local.set_paused(false)

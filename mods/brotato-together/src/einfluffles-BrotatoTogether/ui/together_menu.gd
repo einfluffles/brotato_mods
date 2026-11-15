@@ -480,6 +480,12 @@ func _on_invite_pressed() -> void:
 	transport.open_invite_dialog()
 
 
+# From outside the panel (a client's Quit in its own Esc menu).
+func ask_leave() -> void:
+	if transport.is_active():
+		_on_leave_pressed()
+
+
 func _on_leave_pressed() -> void:
 	if is_mid_run():
 		ask_confirm(_confirm_text(), "_leave_now")

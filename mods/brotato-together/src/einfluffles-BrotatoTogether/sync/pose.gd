@@ -8,6 +8,8 @@ extends Reference
 # - catling gun pet: both gun pivots aim at targets (rotation + scale.y mirror)
 # - enemy lasers: aim (they don't move, so motion can't give it) and beam/aura visibility
 # - brachiosaurus foot: visibility of its shadow / foot / release sprites, foot flip_h
+# - bosses and elites (Boss): their health as a fraction, for the life bar over them (the
+#   brachiosaurus' across the screen). Damage numbers are capped events; this is state.
 #
 # Optional group, sent after the base values only while active (the value count tells the client):
 # - PIVOTS: boss pivots added at runtime (eel, tyrannosaurus, brachiosaurus instance `pivots_scene`
@@ -19,7 +21,7 @@ extends Reference
 # pristine instance of it (not from a live, possibly damaged one) identically on host and client,
 # and cached per scene path.
 
-enum Kind { ROTATION, POSITION_X, SCALE_Y, POSITION_Y, SCALE, BITS, LINE_ANGLE }
+enum Kind { ROTATION, POSITION_X, SCALE_Y, POSITION_Y, SCALE, BITS, LINE_ANGLE, HEALTH }
 enum Group { NONE, PIVOTS, JUMP, WARNING_LINE }
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -30,6 +32,8 @@ const PuppetEntity := preload(
 # Largest in the game: eel/tyrannosaurus/brachiosaurus runtime pivots, 16 pivots + 16 bullets.
 const MAX_VALUES: int = Snapshot.MAX_POSE_VALUES
 const STAMPEDE_SHAKE_SEC := 1.2  # GoTowardsBorderOppositeMovementBehavior.get_movement
+const HEALTH_STEPS := 1000  # a puppet's life bar is told "value of HEALTH_STEPS"
+const HEALTH_META := "brotato_together_health"
 const LASER_SPRITES := ["Sprite", "aura_0", "aura_1", "aura_2"]
 const FOOT_BITS := [
 	["Animation/Sprite", "visible"],
@@ -99,6 +103,24 @@ func spawned(entity: Node, main: Node) -> void:
 		main._shake_zone_sprites(entity.global_position, STAMPEDE_SHAKE_SEC)
 
 
+# Client: the boss' own handler moves its bar (and hides it when this client's "life bars on
+# bosses" option is off). Boss.init makes the brachiosaurus' bar across the screen; puppets never
+# run it. Boss.die frees it.
+static func _show_health(boss: Node, fraction: float) -> void:
+	var value := int(round(clamp(fraction, 0.0, 1.0) * HEALTH_STEPS))
+	if boss.has_meta(HEALTH_META) and boss.get_meta(HEALTH_META) == value:
+		return
+	boss.set_meta(HEALTH_META, value)
+	if boss.use_fullscreen_lifebar and not is_instance_valid(boss._fullscreen_lifebar_canvas):
+		boss.life_bar.hide()
+		var canvas: Node = boss.FULLSCREEN_BOSS_LIFEBAR.instance()
+		boss.get_tree().current_scene.add_child(canvas)
+		canvas.get_node("BossName").text = boss.tr(boss.fullscreen_boss_name)
+		boss._fullscreen_lifebar_canvas = canvas
+		boss._fullscreen_lifebar = canvas.get_node("UIProgressBar")
+	boss.on_health_updated(boss, value, HEALTH_STEPS)
+
+
 # --- layout ---
 
 
@@ -146,6 +168,8 @@ static func _derive(scene_path: String) -> Dictionary:
 		for bit in FOOT_BITS:
 			bits.append([NodePath(bit[0]), bit[1]])
 		parts.append([NodePath("."), Kind.BITS, bits])
+	if pristine is Boss:
+		parts.append([NodePath("."), Kind.HEALTH])
 	_derive_group(pristine, lay)
 	pristine.free()
 	if parts.size() > MAX_VALUES:
@@ -267,6 +291,9 @@ static func _read(entity: Node, parts: Array, values: Array) -> bool:
 					if target != null and target.get(part[2][k][1]):
 						bits |= 1 << k
 				values.append(bits)
+			Kind.HEALTH:
+				var most: float = max(1.0, node.max_stats.health)
+				values.append(clamp(node.current_stats.health / most, 0.0, 1.0))
 			Kind.LINE_ANGLE:
 				var line = node.get("_warning_line")
 				if not is_instance_valid(line) or line.points.size() < 1:
@@ -300,6 +327,8 @@ static func _write(
 			Kind.SCALE:
 				var s: float = lerp(from, to, t)
 				node.scale = Vector2(s, s)
+			Kind.HEALTH:
+				_show_health(node, to)
 			Kind.BITS:
 				var bits := int(to)
 				for k in part[2].size():

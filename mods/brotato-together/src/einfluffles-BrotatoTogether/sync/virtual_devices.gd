@@ -6,6 +6,8 @@ extends Reference
 
 const FIRST := 12
 const COUNT := 4
+# Nobody presses this one: a player whose movement reads it stands still (sync/pause_control.gd).
+const IDLE := FIRST + COUNT
 const CLIENT_MODE_META := "brotato_together_client"
 const MANUAL_AIM_META := "brotato_together_manual_aim"
 
@@ -70,6 +72,9 @@ static func register_actions() -> void:
 			if not InputMap.has_action(name):
 				# Deadzone 0: the client already applied its own deadzone.
 				InputMap.add_action(name, 0.0)
+	for base in ANALOG_ACTIONS + UNUSED_ACTIONS:
+		if not InputMap.has_action(action(base, IDLE)):
+			InputMap.add_action(action(base, IDLE), 0.0)
 
 
 # Host: the remote player's own aim preference (Utils.is_manual_aim for virtual devices).

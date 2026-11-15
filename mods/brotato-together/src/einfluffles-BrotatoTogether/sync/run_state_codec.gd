@@ -57,5 +57,9 @@ static func deserialize(raw: Dictionary) -> Dictionary:
 	return ProgressDataLoaderV3.new().deserialize_run_state(raw)
 
 
+# The game only refreshes its item-count caches when an item is added or removed there, and
+# resume_from_state reads them (LinkedStats): without the reset a client's stats that count
+# items would stay at what the first state gave.
 static func apply(state: Dictionary) -> void:
+	RunData.reset_run_caches()
 	RunData.resume_from_state(state)

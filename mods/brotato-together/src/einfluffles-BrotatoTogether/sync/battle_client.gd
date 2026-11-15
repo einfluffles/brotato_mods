@@ -55,6 +55,14 @@ const BRACHIOSAURUS_FOOT := (
 )
 const BOSS_PARTS := {BRACHIOSAURUS_FOOT: "Brachiosaurus"}  # scene -> boss node its _ready finds
 const PUPPET_TYPE_META := "brotato_together_puppet_type"
+# After a stall the queued sounds and damage numbers of that time would all fire in one frame.
+const STALE_EVENT_MSEC := 250
+const KIND_UNIT := 1  # its sprite's facing and flip_h come with the flags
+const KIND_PROJECTILE := 2  # faces its motion
+const KIND_BIRTH := 4  # a spawn marker: started when it appears
+const KIND_ANIMATED := 8  # has an update_animation of its own (pets)
+const KIND_POSE := 16  # its scene has parts sync/pose.gd moves
+const LOADING_TIMEOUT_MSEC := 10000  # a scene that never got ready must not block the next
 
 var session: Node = null
 var input_sync: Node = null
@@ -67,8 +75,15 @@ var _buffer := []  # parsed snapshots, ascending t
 var _clock_offset := 0.0  # local_msec - host_msec (min-filtered)
 var _has_clock := false
 var _main: Node = null
+var _main_id := 0  # its instance id: tells this battle's scene from a later one when it exits
+var _loading := false  # change_scene called, the scene not ready yet
+var _loading_msec := 0
+var _queued_start := {}  # BATTLE_START of another battle that arrived while loading
 var _entities := {}  # net id -> node
 var _entity_types := {}  # net id -> type idx of its node
+var _entity_kinds := {}  # net id -> KIND_* bits of its node
+var _applied_to := {}  # the snapshot _apply_entities ran for last
+var _no_pose := PoolRealArray()
 var _resolve_cache := {}  # see Snapshot.resolve
 var _newest_rx_msec := 0  # local time the newest snapshot (by host time) arrived
 var _puppet_pool := {}  # type idx -> pooled non-Entity puppets (out of the tree)
@@ -80,7 +95,6 @@ var _own_error := Vector2.ZERO
 var _own_display := Vector2.ZERO
 var _paused := false
 var _pause_text := ""
-var _banner: CanvasLayer = null
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
@@ -108,8 +122,12 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 		Protocol.Msg.BATTLE_START:
 			_on_battle_start(body)
 		Protocol.Msg.BATTLE_END:
-			if typeof(body) == TYPE_DICTIONARY and body.get("battle_id") == _battle_id:
+			if typeof(body) != TYPE_DICTIONARY:
+				return
+			if body.get("battle_id") == _battle_id:
 				_leave_battle()
+			elif body.get("battle_id") == _queued_start.get("battle_id"):
+				_queued_start = {}  # over before its scene could load
 		Protocol.Msg.TYPE_DEF:
 			if typeof(body) == TYPE_DICTIONARY and body.get("battle_id") == _battle_id:
 				_define_type(body.get("idx"), body.get("path"))
@@ -133,18 +151,25 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 func _on_battle_start(body) -> void:
 	if typeof(body) != TYPE_DICTIONARY or typeof(body.get("battle_id")) != TYPE_INT:
 		return
+	# A resync of the battle this client is in or is loading: keep the scene.
+	var loading := _loading and OS.get_ticks_msec() - _loading_msec < LOADING_TIMEOUT_MSEC
+	if body.battle_id == _battle_id and (loading or is_in_battle()):
+		_adopt_start(body)
+		return
+	# Two scene changes in one frame would leave the second one unhooked (a real local battle).
+	if loading:
+		_queued_start = body
+		return
 	var state := RunStateCodec.decode(body.get("run"))
 	if state.empty():
 		ModLoaderLog.error("Invalid run state in BATTLE_START", LOG_NAME)
 		return
-	_reset_battle_state()
+	if _main_id != 0:
+		_leave_battle()  # replaced without a BATTLE_END: the others drop its scene's nodes too
+	else:
+		_reset_battle_state()
 	_battle_id = body.battle_id
-	_you = int(body.get("you", -1)) if typeof(body.get("you")) == TYPE_INT else -1
-	_paused = bool(body.get("paused", false))
-	var types = body.get("types")
-	if typeof(types) == TYPE_DICTIONARY:
-		for idx in types:
-			_define_type(idx, types[idx])
+	_adopt_start(body)
 
 	CoopService.bt_apply_remote_colors(body.get("colors"))
 	Puppet.set_active(true)
@@ -154,13 +179,35 @@ func _on_battle_start(body) -> void:
 	# Only until the battle scene is ready: no node_added handler for every node otherwise.
 	if not get_tree().is_connected("node_added", self, "_on_node_added"):
 		get_tree().connect("node_added", self, "_on_node_added")
+	_loading = true
+	_loading_msec = OS.get_ticks_msec()
 	if get_tree().change_scene(BATTLE_SCENE) != OK:
+		_loading = false
+		_stop_watching_scenes()
 		ModLoaderLog.error("Could not load the battle scene", LOG_NAME)
 	ModLoaderLog.info("Entering battle %s (wave %s)" % [_battle_id, RunData.current_wave], LOG_NAME)
 
 
+# What a BATTLE_START says besides the run: this client's slot, the pause, the type table.
+func _adopt_start(body: Dictionary) -> void:
+	_you = int(body.get("you", -1)) if typeof(body.get("you")) == TYPE_INT else -1
+	_paused = bool(body.get("paused", false))
+	var types = body.get("types")
+	if typeof(types) == TYPE_DICTIONARY:
+		for idx in types:
+			if not _types.has(idx):
+				_define_type(idx, types[idx])
+	if is_in_battle():
+		_set_paused(_paused)
+
+
+# The wave is over here too: its puppets, buffers and tables go, whatever screen comes next.
 func _leave_battle() -> void:
 	_reset_battle_state()
+	# main.on_wave_start set these; only the host's flow would clear them (the shop's stats
+	# read the flag, the timer is freed with the scene).
+	RunData.wave_in_progress = false
+	RunData.wave_timer = null
 	emit_signal("battle_left")
 
 
@@ -174,23 +221,27 @@ func _on_lobby_left() -> void:
 
 func _reset_battle_state() -> void:
 	_main = null
+	_main_id = 0
+	_queued_start = {}
 	_battle_id = 0
 	_types.clear()
 	_type_data.clear()
 	_buffer.clear()
 	_entities.clear()
 	_entity_types.clear()
+	_entity_kinds.clear()
+	_applied_to = {}
 	_resolve_cache = {}
 	_newest_rx_msec = 0
 	_free_puppet_pool()
-	_stop_watching_scenes()
+	if not _loading:  # a scene still loading must be frozen when it is ready, battle or not
+		_stop_watching_scenes()
 	_last_positions.clear()
 	_despawned.clear()
 	_has_clock = false
 	_you = -1
 	_paused = false
 	_pause_text = ""
-	_banner = null
 	_events.clear()
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
@@ -198,7 +249,7 @@ func _reset_battle_state() -> void:
 
 
 func _on_node_added(node: Node) -> void:
-	if Puppet.is_active() and _battle_id != 0 and node.filename == BATTLE_SCENE:
+	if node.filename == BATTLE_SCENE:
 		node.connect("ready", self, "_on_battle_scene_ready", [node], CONNECT_ONESHOT)
 
 
@@ -210,9 +261,32 @@ func _stop_watching_scenes() -> void:
 # Runs right after main._ready(), before the first physics frame.
 func _on_battle_scene_ready(main: Node) -> void:
 	_stop_watching_scenes()
-	_main = main
-	# Local pause/aim handling off; pause goes to the host via input. main._physics_process stays
-	# on: it only recolors life bars. Focus loss / pad disconnect would open the local pause menu.
+	_loading = false
+	_freeze(main)
+	# No battle: it ended while its scene loaded. Frozen until the next screen replaces it.
+	if _battle_id != 0:
+		_main = main
+		_main_id = main.get_instance_id()
+		# The next screen can replace the scene without a BATTLE_END (the shop was faster).
+		main.connect("tree_exited", self, "_on_battle_scene_exited", [_main_id], CONNECT_ONESHOT)
+		_set_paused(_paused)
+		SoundRelay.set_muted(true)  # only the host's sounds from now on
+		emit_signal("battle_entered")
+	if not _queued_start.empty():
+		var next := _queued_start
+		_queued_start = {}
+		call_deferred("_on_battle_start", next)
+
+
+func _on_battle_scene_exited(main_id: int) -> void:
+	if main_id == _main_id:
+		_leave_battle()
+
+
+func _freeze(main: Node) -> void:
+	# Local pause/aim handling off (PauseControl opens the menu for this client's own pause).
+	# main._physics_process stays on: it only recolors life bars. Focus loss / pad disconnect
+	# would open the local pause menu.
 	main.set_process(false)
 	PauseControl.disable_local_pause(main)
 	for node_name in ["_wave_manager", "_entity_spawner", "_effect_behaviors", "_stats_manager"]:
@@ -231,9 +305,13 @@ func _on_battle_scene_ready(main: Node) -> void:
 				timer.stop()
 	for player in main.get("_players"):
 		PuppetEntity.puppetize(player)
-	_set_paused(_paused)
-	SoundRelay.set_muted(true)  # only the host's sounds from now on
-	emit_signal("battle_entered")
+	# On a bullet-hell wave main._ready adds its own generator (a random pattern); the host's
+	# bullets arrive as puppets.
+	var enemy_projectiles = main.get("_enemy_projectiles")
+	if enemy_projectiles != null:
+		for child in enemy_projectiles.get_children():
+			if child is BulletHell:
+				child.free()
 
 
 # Host paused: snapshots stop, so say why the world froze.
@@ -241,10 +319,8 @@ func _set_paused(paused: bool) -> void:
 	_paused = paused
 	if not is_in_battle():
 		return
-	if _banner == null or not is_instance_valid(_banner):
-		_banner = PauseControl.make_banner(_main)
-	_banner.get_node("Label").text = _pause_text if _pause_text != "" else "Paused by the host"
-	_banner.visible = paused
+	var text := _pause_text if _pause_text != "" else "Paused by the host"
+	PauseControl.show_banner(_main, paused, text)
 
 
 # Wave end, half-wave events, harvesting, ... are host decisions. Timers keep counting (the wave
@@ -272,7 +348,9 @@ func _define_type(idx, key) -> void:
 	_types[idx] = load(path)
 	_type_data[idx] = null
 	if parts.size() > 1:
-		_type_data[idx] = parts[1] if parts[1] == CURSED_TAG else _find_consumable(parts[1])
+		var tag: String = parts[1]
+		var plain: bool = tag == CURSED_TAG or PuppetEntity.BIRTH_TAGS.has(tag)
+		_type_data[idx] = tag if plain else _find_consumable(tag)
 
 
 func _find_consumable(my_id: String):
@@ -433,40 +511,88 @@ func _show_level_up(i: int) -> void:
 		)
 
 
+# Every rendered frame, for every mirrored entity: nothing here asks a node what it is (see
+# _kind_of), and a node that did not move is not moved.
 func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
-	var alive := {}
+	var new_to: bool = not to == _applied_to  # the set of entities only changes with it
+	_applied_to = to
 	var ids: PoolIntArray = to.ids
+	var types: PoolIntArray = to.types
+	var positions: PoolVector2Array = to.positions
+	var flags: PoolByteArray = to.flags
+	var poses: Dictionary = to.poses
+	var from_positions: PoolVector2Array = from.positions
+	var from_poses: Dictionary = from.poses
+	Snapshot.index_of(from, 0)  # builds the index
+	var from_index: Dictionary = from.index
 	var max_jump: float = MAX_INTERP_SPEED * max(to.t - from.t, 1) / 1000.0
 	for i in ids.size():
 		var id := ids[i]
 		var node = _entities.get(id)
+		var placed := true
 		var fresh := false
-		if node != null and _entity_types.get(id) != to.types[i]:
+		if new_to and node != null and _entity_types.get(id) != types[i]:
 			_despawn(node)  # the host reused the id for another kind of entity
 			node = null
 		if node == null or not is_instance_valid(node):
-			node = _spawn(to.types[i])
+			node = _spawn(types[i])
 			if node == null:
 				continue
 			_entities[id] = node
-			_entity_types[id] = to.types[i]
+			_entity_types[id] = types[i]
+			_entity_kinds[id] = _kind_of(node)
+			_last_positions.erase(id)
 			_forget_despawned(node)  # reused from the pool: no longer the old id's target
+			placed = false
 			fresh = true
-		alive[id] = true
-		var position: Vector2 = to.positions[i]
-		var j := Snapshot.index_of(from, id)
+		var kind: int = _entity_kinds[id]
+		var position := positions[i]
+		var j: int = from_index.get(id, -1)
 		if j >= 0:
-			var start: Vector2 = from.positions[j]
-			if start.distance_to(position) <= max_jump:
-				position = start.linear_interpolate(position, alpha)
-			else:
-				_last_positions[id] = position  # teleport: no motion, no lerp across the map
-		_move(node, id, position)
-		if fresh:
-			_pose.spawned(node, _main)
-		_apply_flags(node, Snapshot.get_flags(to.flags, i))
-		var from_pose: PoolRealArray = from.poses.get(j, PoolRealArray())
-		_pose.apply(node, from_pose, to.poses.get(i, PoolRealArray()), alpha)  # also without a pose
+			var start := from_positions[j]
+			if start != position:
+				if start.distance_to(position) <= max_jump:
+					if kind & KIND_PROJECTILE:  # faces where it flies
+						var angle: float = (position - start).angle()
+						if node.rotation != angle:
+							node.rotation = angle
+					position = start.linear_interpolate(position, alpha)
+				else:
+					# Teleport: no motion, no lerp across the map. A spawn marker the host
+					# moved counts down again.
+					_last_positions.erase(id)
+					placed = false
+		var last: Vector2 = _last_positions.get(id, position)
+		if not placed or position != last:
+			node.global_position = position
+			_last_positions[id] = position
+			if not placed and kind & KIND_BIRTH:
+				PuppetEntity.start_birth(node, str(_type_data.get(types[i])))
+			if fresh:
+				_pose.spawned(node, _main)
+		if kind & KIND_ANIMATED and not node.dead:
+			node.update_animation(position - last)
+		# The host's facing: behaviors turn units toward their target, not their motion.
+		var bit: int = i * Snapshot.FLAG_BITS
+		var node_flags: int = flags[bit >> 3] >> (bit & 7)
+		if kind & KIND_UNIT:
+			var sprite = node.sprite
+			if (sprite.scale.x < 0) != bool(node_flags & Snapshot.FLAG_FACING_LEFT):
+				sprite.scale.x = -sprite.scale.x
+			if sprite.flip_h != bool(node_flags & Snapshot.FLAG_FLIP_H):
+				sprite.flip_h = not sprite.flip_h
+		# A projectile seen once has no direction yet: it would sit there for a snapshot with
+		# the rotation of the pooled puppet's last flight.
+		var hidden: bool = node_flags & Snapshot.FLAG_HIDDEN or (kind & KIND_PROJECTILE and j < 0)
+		if node.visible == hidden:
+			node.visible = not hidden
+		if kind & KIND_POSE:  # also without values: the host's parts are gone then
+			_pose.apply(node, from_poses.get(j, _no_pose), poses.get(i, _no_pose), alpha)
+	if not new_to:
+		return
+	var alive := {}
+	for id in ids:
+		alive[id] = true
 	var now := OS.get_ticks_msec()
 	for id in _entities.keys():
 		if not alive.has(id):
@@ -474,27 +600,37 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 			_despawned[id] = [_entities[id], now + DESPAWN_GRACE_MSEC]
 			_entities.erase(id)
 			_entity_types.erase(id)
+			_entity_kinds.erase(id)
 			_last_positions.erase(id)
 	for id in _despawned.keys():
 		if now > _despawned[id][1]:
 			_despawned.erase(id)
 
 
+# What a puppet needs every frame, decided once when it spawns.
+func _kind_of(node: Node) -> int:
+	var kind := 0
+	if node is Unit and node.sprite != null:
+		kind |= KIND_UNIT
+	if node is Projectile:
+		kind |= KIND_PROJECTILE
+	elif node is EntityBirth:
+		kind |= KIND_BIRTH
+	elif node.has_method("update_animation"):
+		# Unit.update_animation only faces the motion, which the host's flags decide; pets
+		# switch their animations in it.
+		if not (node is Enemy or node is Neutral or node is Structure):
+			kind |= KIND_ANIMATED
+	var layout: Dictionary = _pose.layout(node)
+	if not layout.parts.empty() or not layout.group_parts.empty():
+		kind |= KIND_POSE
+	return kind
+
+
 func _forget_despawned(node: Node) -> void:
 	for id in _despawned.keys():
 		if _despawned[id][0] == node:
 			_despawned.erase(id)
-
-
-# After _move: the host's facing wins over the one derived from interpolated motion.
-func _apply_flags(node: Node, flags: int) -> void:
-	if node is Unit and node.sprite != null:
-		var x: float = abs(node.sprite.scale.x)
-		node.sprite.scale.x = -x if flags & Snapshot.FLAG_FACING_LEFT else x
-		node.sprite.flip_h = bool(flags & Snapshot.FLAG_FLIP_H)
-	var hidden := bool(flags & Snapshot.FLAG_HIDDEN)
-	if node.visible == hidden:
-		node.visible = not hidden
 
 
 func _move(node: Node, key, position: Vector2) -> void:
@@ -572,6 +708,8 @@ func _container_for(node: Node) -> Node:
 		return _main.get("_player_projectiles")
 	if node is Projectile:
 		return _main.get("_enemy_projectiles")
+	if node is EntityBirth:
+		return _main.get("_births_container")
 	if node.get_script() != null and node.get_script().resource_path.begins_with("res://items/"):
 		return _main.get("_materials_container")
 	return _main.get("_entities_container")
@@ -612,8 +750,12 @@ func _free_puppet_pool() -> void:
 # together with the hit it belongs to.
 func _fire_events(render_t: float) -> void:
 	while not _events.empty() and _events[0][0] <= render_t:
-		var event = _events.pop_front()[1]
+		var entry: Array = _events.pop_front()
+		var event = entry[1]
 		if typeof(event) != TYPE_ARRAY or event.empty() or typeof(event[0]) != TYPE_INT:
+			continue
+		# Animations are state and still count.
+		if entry[0] < render_t - STALE_EVENT_MSEC and event[0] != Snapshot.EVENT_ANIM:
 			continue
 		if event[0] == Snapshot.EVENT_DAMAGE and event.size() == 6:
 			_show_damage(event)

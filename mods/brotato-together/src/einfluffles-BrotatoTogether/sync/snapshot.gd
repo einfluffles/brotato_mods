@@ -106,15 +106,25 @@ static func encode(view: Dictionary) -> PoolByteArray:
 	for run in runs:
 		_put_varint(buf, run[0])
 		_put_varint(buf, run[1])
+	# Per entity, so without calls (several hundred entities, 30 times a second).
 	var previous := 0
 	for i in count:  # zigzag deltas: 1 byte for ids close to the previous one (host sorts runs)
-		_put_varint(buf, _zigzag(ids[i] - previous))
-		previous = ids[i]
+		var id := ids[i]
+		var delta := id - previous
+		previous = id
+		delta = delta * 2 if delta >= 0 else -delta * 2 - 1
+		while delta >= 128:
+			buf.put_u8((delta & 127) | 128)
+			delta >>= 7
+		buf.put_u8(delta)
 	if not flags.empty():
 		buf.put_data(flags)
 	for i in count:
-		if not get_flags(flags, i) & FLAG_REST:
-			_put_position(buf, positions[i])
+		var bit: int = i * FLAG_BITS
+		if not (flags[bit >> 3] >> (bit & 7)) & FLAG_REST:
+			var position := positions[i]
+			buf.put_16(int(clamp(round(position.x * POS_SCALE), -32768, 32767)))
+			buf.put_16(int(clamp(round(position.y * POS_SCALE), -32768, 32767)))
 	var pose_indices: Array = view.poses.keys()
 	pose_indices.sort()
 	_put_varint(buf, pose_indices.size())

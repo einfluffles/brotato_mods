@@ -20,6 +20,7 @@ const EXTENSIONS := [
 	"extensions/entities/brachiosaurus_foot.gd",
 	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
 	"extensions/ui/shop_item.gd",
+	"extensions/ui/pause_menu.gd",
 ]
 
 var transport: Node = null
@@ -109,6 +110,7 @@ func _ready() -> void:
 	menu.setup(transport, session, battle_host, battle_client)
 	menu.absent_players = absent_players
 	add_child(menu)
+	pause_control.together_menu = menu
 	menu.connect("open_changed", self, "_on_menu_open_changed")
 
 	session.connect("peer_ready", self, "_on_peer_ready")
@@ -133,6 +135,7 @@ func _add_player_control() -> void:
 	input_sync.battle_client = battle_client
 	pause_control = _add("sync/pause_control.gd", "PauseControl")
 	pause_control.setup(session, input_sync)
+	pause_control.battle_client = battle_client
 	battle_host.pause_control = pause_control
 	absent_players = _add("sync/absent_players.gd", "AbsentPlayers")
 	absent_players.setup(session, input_sync, battle_host)
@@ -155,9 +158,11 @@ func _on_menu_open_changed(is_open: bool) -> void:
 func _on_client_battle_left() -> void:
 	if not _client_active:
 		return
-	_sound_relay.set_muted(true)
 	var stale := get_tree().current_scene
-	var stale_id := stale.get_instance_id() if stale != null else 0
+	if stale == null or not stale.is_inside_tree():
+		return  # the next screen is replacing the battle right now
+	_sound_relay.set_muted(true)
+	var stale_id := stale.get_instance_id()
 	get_tree().create_timer(TRANSITION_GRACE_SEC, true).connect(
 		"timeout", self, "_on_transition_grace_over", [stale_id]
 	)
@@ -200,7 +205,10 @@ func _enter_client_view() -> void:
 	var view: Node = _client_view.new()
 	view.name = "BrotatoTogetherClientView"
 	view.session = session
+	# Out of the tree first, like change_scene does: what is left of a battle (a death animation
+	# returning its puppet to the pool) must not run with the view as the current scene.
+	if previous != null:
+		previous.get_parent().remove_child(previous)
+		previous.queue_free()
 	tree.root.add_child(view)
 	tree.current_scene = view
-	if previous != null:
-		previous.queue_free()

@@ -3,6 +3,17 @@ extends Reference
 # areas. Idle processing (AnimationPlayers, particles) keeps running so it still looks alive.
 
 
+const FLASH_TIMER := "FlashTimer"
+# Type tag of a spawn marker -> the entity type that decides its colour and sprite.
+const BIRTH_CHARMED := "birth_charmed"
+const BIRTH_TAGS := {
+	"birth_enemy": EntityType.ENEMY,
+	"birth_neutral": EntityType.NEUTRAL,
+	"birth_structure": EntityType.STRUCTURE,
+	"birth_charmed": EntityType.ENEMY,
+}
+
+
 static func puppetize(node: Node) -> void:
 	node.propagate_call("set_physics_process", [false])
 	_pause_timers(node)  # e.g. enemy retargeting timers would run AI code without a spawner
@@ -43,17 +54,40 @@ static func player_died(player: Node) -> void:
 			appearance.hide()
 
 
+# Not the hit flash's, nor a life bar's: they are started by what the client shows and their
+# timeout only puts a material / a tint back (a paused Timer never fires: the unit, the bar
+# would stay white).
 static func _pause_timers(node: Node) -> void:
 	for child in node.get_children():
 		if child is Timer:
-			child.paused = true
+			child.paused = not (child.name == FLASH_TIMER or node is UIProgressBar)
 		_pause_timers(child)
+
+
+# A spawn marker (EntityBirth) runs its own flicker and hides itself after the same time as the
+# host's; with no collision layers it never finds a player on it (the host moves it then, see
+# BattleClient._apply_entities). tag: BIRTH_TAGS key from the type.
+static func start_birth(birth: Node, tag: String) -> void:
+	var request := SpawnRequest.new(BIRTH_TAGS.get(tag, EntityType.ENEMY), null, birth.global_position)
+	request.charmed_by = 0 if tag == BIRTH_CHARMED else -1
+	birth.start(request)
+
+
+static func birth_tag(birth: Node) -> String:
+	var request = birth.request
+	if request != null and request.charmed_by != -1 and not birth is EntityGroupBirth:
+		return BIRTH_CHARMED
+	for tag in BIRTH_TAGS:
+		if BIRTH_TAGS[tag] == birth.type:
+			return tag
+	return "birth_structure" if birth.type == EntityType.PET else "birth_enemy"
 
 
 # Start the visual animation without PlayerProjectile.shoot() (needs real weapon stats).
 static func start_projectile_animation(projectile: Node) -> void:
 	var player = projectile.get("_animation_player")
 	if player != null and player.assigned_animation != "":
+		player.stop(true)  # a pooled puppet starts over, like the game's when it is shot
 		player.play()
 
 
