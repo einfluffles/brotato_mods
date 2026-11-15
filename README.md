@@ -6,6 +6,7 @@ Mods for [Brotato](https://store.steampowered.com/app/1942280/Brotato/), built o
 | Mod | Id | |
 |---|---|---|
 | [brotato:together](mods/brotato-together) | `einfluffles-BrotatoTogether` | online co-op over Steam P2P |
+| [brotato:trade](mods/brotato-trade) | `einfluffles-BrotatoTrade` | give items and weapons to other players in the co-op shop |
 
 ## Layout
 
