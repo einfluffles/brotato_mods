@@ -18,9 +18,13 @@ const UpgradesStreamTests := preload(
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
+const CursorKeyTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/cursor_key_tests.gd"
+)
 
 var t: Node  # the test mod: _check, helpers, scene tree
 var _local_panel = LocalPanelTests.new()  # kept alive across its yields
+var _cursor_key = null  # kept alive across its yields
 var _perf = null
 var _upgrades_stream = UpgradesStreamTests.new()
 
@@ -75,6 +79,8 @@ func run(together: Node):
 	yield(
 		_local_panel.host_part(t, together, upgrades_ui, host_panels, upgrades_msg), "completed"
 	)
+	_cursor_key = CursorKeyTests.new(t, together)
+	yield(_cursor_key.run_upgrades(upgrades_ui, 3), "completed")
 	upgrades_ui.hide()
 	var host_types: Dictionary = host._types.duplicate()  # the wave's tables go with it
 	host._end_battle()

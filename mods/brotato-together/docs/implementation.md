@@ -628,9 +628,22 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `clear_state` (the cursors go with the client's scene). The key is not the description: describing
   builds `FocusTargets`' anchor table twice per cursor (about 380 us in a two-player shop, 20 checks a
   second), so the key is each cursor's control and emulator by instance id and child indices up to the
-  scene, plus the player count and the scene instance (about 15 us); the anchors are fixed nodes, so a
-  description changes only with those. One pending body: one for the next scene replaces one still
-  waiting for the previous scene, which only drops cursors on a screen the host has left.
+  scene, plus the player count and the scene instance (about 16 us). `cursor_key_tests.gd` checks
+  "description changed implies key changed" on the shop (cursor moves, emulator gains / loses a cursor,
+  buy, reroll, popup open / close, combine, player count, like elements added / removed / queued before
+  the cursor's, emulator freed, control detached, shop reloaded), the level-up panels (options rolled,
+  option taken) and the retry prompt: every change the game makes there moves the key in the same check,
+  except a sibling queued for deletion (`BaseShop._combine_weapon`): the description skips it at once,
+  the key's child index moves when it is freed at the end of the frame, so it goes out one check (0.05 s)
+  late. A node of another kind added before the control moves the key only (a harmless extra send). Not
+  seen by the key (never done by the game on these screens, possible for another mod): a rename, an owner
+  or script change on the path or on a sibling before it, a sibling replaced by another kind at the same
+  index (also a queued one, once freed), the control moved under another node at the same indices,
+  accessors or anchor lists handing out other nodes. A safety net catches those within 1 s: while the
+  key stays the same, the cursors are described once a second (about 380 us) and compared with the last
+  body (also on a resend under the same key); a difference bumps a counter in the key and is logged as a
+  warning. One pending body: one for the next scene replaces one still waiting for the previous scene,
+  which only drops cursors on a screen the host has left.
   Until protocol 9 emulator and control were child-index paths from the scene root, which broke as soon as
   the trees differed: Damage Meter adds a summary button next to the shop's reroll button, and with it on
   one machine only every later index was off by one. Now nothing visible travels as a tree position:
