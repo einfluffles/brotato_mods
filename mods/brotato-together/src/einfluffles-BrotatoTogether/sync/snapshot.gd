@@ -14,6 +14,11 @@ extends Reference
 #     [EVENT_SOUND, type idx of the stream, position: Vector2 or null, volume, pitch_rand,
 #      always_play: bool, single cooldown (s, 0: SoundManager.play)]
 #     [EVENT_ANIM, net id, animation name, position (s), speed] (see sync/anim_mirror.gd)
+#     protocol 10 (see sync/feedback_mirror.gd):
+#     [EVENT_EXPLOSION, type idx of the scene, position: Vector2, scale, smoke amount]
+#     [EVENT_BONUS_GOLD, value, label visible: bool] (state, repeated)
+#     [EVENT_WAVE_END, WAVE_* flags] (state, repeated)
+#     [EVENT_GOLD_BOOST, position: Vector2, boost]
 #
 # Wire layout:
 #   u32 battle_id, u32 t, u16 wave time left (1/100 s)
@@ -42,6 +47,10 @@ enum PlayerField { POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEA
 const EVENT_DAMAGE := 0
 const EVENT_SOUND := 1
 const EVENT_ANIM := 2
+const EVENT_EXPLOSION := 3
+const EVENT_BONUS_GOLD := 4
+const EVENT_WAVE_END := 5
+const EVENT_GOLD_BOOST := 6
 const DAMAGE_CRIT := 1
 const DAMAGE_DODGE := 2
 const DAMAGE_PROTECTED := 4
@@ -53,6 +62,13 @@ const SOUND_POSITION := 1  # wire only
 const SOUND_ALWAYS := 2
 const SOUND_SINGLE := 4
 const PLAYER_STATS := 1  # wire only
+const BONUS_VISIBLE := 1  # wire only
+const WAVE_FAILED := 1
+const WAVE_LOST := 2
+const WAVE_WON := 4
+const WAVE_LABEL := 8  # the "wave completed" label is showing
+const WAVE_FLAGS := 15
+const EXPLOSION_SCALE := 100.0
 const STAT_FIELDS := [
 	PlayerField.HEALTH, PlayerField.MAX_HEALTH, PlayerField.GOLD, PlayerField.LEVEL, PlayerField.XP
 ]
@@ -217,6 +233,30 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 				buf.put_data(name)
 			buf.put_u16(int(clamp(round(event[3] * ANIM_TIME_SCALE), 0, 65535)))
 			buf.put_u16(int(clamp(round(event[4] * ANIM_TIME_SCALE), 0, 65535)))
+		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
+			_put_feedback_event(buf, event)
+
+
+# Protocol 10 kinds, after the kind byte:
+#   EXPLOSION: varint type idx, i16 x, i16 y, u16 scale (1/100, >= 1), u8 smoke amount
+#   BONUS_GOLD: u8 BONUS_VISIBLE bit, varint value
+#   WAVE_END: u8 WAVE_* flags
+#   GOLD_BOOST: i16 x, i16 y, u8 boost
+static func _put_feedback_event(buf: StreamPeerBuffer, event: Array) -> void:
+	match event[0]:
+		EVENT_EXPLOSION:
+			_put_varint(buf, event[1])
+			_put_position(buf, event[2])
+			buf.put_u16(int(clamp(round(event[3] * EXPLOSION_SCALE), 1, 65535)))
+			buf.put_u8(int(clamp(event[4], 0, 255)))
+		EVENT_BONUS_GOLD:
+			buf.put_u8(BONUS_VISIBLE if event[2] else 0)
+			_put_varint(buf, event[1])
+		EVENT_WAVE_END:
+			buf.put_u8(event[1] & WAVE_FLAGS)
+		EVENT_GOLD_BOOST:
+			_put_position(buf, event[1])
+			buf.put_u8(int(clamp(event[2], 0, 255)))
 
 
 # Printable ASCII, else empty (the client ignores nameless animations; parse rejects the rest).
@@ -473,6 +513,40 @@ static func _get_event(buf: StreamPeerBuffer):
 				name = bytes.get_string_from_ascii()
 			var position := buf.get_u16() / ANIM_TIME_SCALE
 			return [EVENT_ANIM, id, name, position, buf.get_u16() / ANIM_TIME_SCALE]
+		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
+			return _get_feedback_event(buf, kind)
+	return null
+
+
+static func _get_feedback_event(buf: StreamPeerBuffer, kind: int):
+	match kind:
+		EVENT_EXPLOSION:
+			var type_idx := _get_varint(buf)
+			if type_idx < 0 or buf.get_available_bytes() < 7:
+				return null
+			var position := _get_position(buf)
+			var scale := buf.get_u16()
+			if scale == 0:
+				return null
+			return [EVENT_EXPLOSION, type_idx, position, scale / EXPLOSION_SCALE, buf.get_u8()]
+		EVENT_BONUS_GOLD:
+			if buf.get_available_bytes() < 2:
+				return null
+			var flags := buf.get_u8()
+			var value := _get_varint(buf)
+			if flags & ~BONUS_VISIBLE or value < 0:
+				return null
+			return [EVENT_BONUS_GOLD, value, bool(flags & BONUS_VISIBLE)]
+		EVENT_WAVE_END:
+			if buf.get_available_bytes() < 1:
+				return null
+			var flags := buf.get_u8()
+			return null if flags & ~WAVE_FLAGS else [EVENT_WAVE_END, flags]
+		EVENT_GOLD_BOOST:
+			if buf.get_available_bytes() < 5:
+				return null
+			var position := _get_position(buf)
+			return [EVENT_GOLD_BOOST, position, buf.get_u8()]
 	return null
 
 
@@ -630,8 +704,8 @@ static func get_flags(flags: PoolByteArray, i: int) -> int:
 
 
 # At most `limit` events, the least valuable dropped first: duplicate sounds (same stream already
-# in this snapshot), then damage numbers on enemies, sounds, damage on players; animations last
-# (they are state). Kept events stay in their order.
+# in this snapshot), then damage numbers on enemies, sounds, damage on players and explosions;
+# animations, bonus gold and the wave's end last (they are state). Kept events stay in order.
 static func select_events(events: Array, limit: int) -> Array:
 	if events.size() <= limit:
 		return events
@@ -641,7 +715,7 @@ static func select_events(events: Array, limit: int) -> Array:
 		var event: Array = events[i]
 		var rank := 1
 		match event[0]:
-			EVENT_ANIM:
+			EVENT_ANIM, EVENT_BONUS_GOLD, EVENT_WAVE_END:
 				rank = 0
 			EVENT_DAMAGE:
 				rank = 1 if event[1] < 0 else 3
@@ -658,6 +732,11 @@ static func select_events(events: Array, limit: int) -> Array:
 		if keep.has(i):
 			selected.append(events[i])
 	return selected
+
+
+# State rather than a moment: still applied when it arrives late, never dropped first.
+static func is_state_event(kind: int) -> bool:
+	return kind == EVENT_ANIM or kind == EVENT_BONUS_GOLD or kind == EVENT_WAVE_END
 
 
 # --- weapons ---
