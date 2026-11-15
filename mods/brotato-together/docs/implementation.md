@@ -291,8 +291,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the other sections go on. Only from the host; `lobby_left` drops everything.
   - Tests step it by hand (`step`) and pass `message_for(section, steam_id)` to `receive`
     (`state_stream_tests.gd`). Idle cost, 8 sections checked per frame: about 13 us.
-  - SHOP_STATE, UPGRADES_STATE, MENU_STATE (and its grids), RETRY_PROMPT, BATTLE_PAUSE, SHOP_PAUSE and FOCUS
-    move onto it in follow-up changes; until then they still travel as their own messages.
+  - On it: `upgrades` (was UPGRADES_STATE). SHOP_STATE, MENU_STATE (and its grids), RETRY_PROMPT,
+    BATTLE_PAUSE, SHOP_PAUSE and FOCUS move onto it in follow-up changes; until then they still travel as
+    their own messages.
 - Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
   version (manifest) must match. Rejections carry a reason that the client shows in the F9 menu. DLC never
   rejects (protocol 5 / 0.2.1).
@@ -440,6 +441,14 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `_level`, `_reroll_price`, `_item_data`, `_checkmark_group`; client re-implements
   `show_upgrades_for_level` without `ItemService.get_upgrades` and uses `show_item` for crates (item rebuilt
   from `ItemService` base + `deserialize_and_merge`).
+  - Transport: state stream section `upgrades` (protocol 14; was `UPGRADES_STATE`). Host provider:
+    inactive unless the host's battle shows the panels; the key is the text of the panels (`capture`,
+    seqs, pages, golds, meca rolls, battle id) and runs `_update_seqs` every check; the body (`body()`,
+    encodes the run) only on send. An applied intent `flush`es. Client handler: false (pending in the
+    stream, 30 s) until the state's battle is the puppet's and its scene is ready (a rejoin's resync
+    comes before `BATTLE_START`); `battle_entered` calls `retry()`. Null (panels closed, battle over):
+    the own panel stops taking input and every panel is rebuilt by the next state; the puppet's panels
+    stay shown until its scene goes, as before.
 - **Own level-up / crate panel runs on the client** (protocol 6; first screen of the "local view, decisions
   to the host" model, the shop followed with protocol 8). Each `CoopUpgradesUIPlayerContainer` is a
   `Carousel` with three pages (upgrades / gear / stats, switched with the triggers) and a per-player item
@@ -501,7 +510,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
       `UpgradesUI._on_weapon_meca_upgrade_selected`; shop: the popup's `item_meca_upgrade_selected` ->
       `BaseShop._on_item_meca_upgrade_selected`), which spends the parts. Anything else is dropped, so a
       client can only get one of the two options the host rolled and showed it.
-  - Host: `UPGRADES_STATE` carries a revision per player (`seqs`: bumped when the panel shows something
+  - Host: the state carries a revision per player (`seqs`: bumped when the panel shows something
     new, keyed on the entry, the option being processed, the item instance and the reroll count, so the same
     crate item twice still counts) and the carousel page (`pages`). `host_apply_intent` drops an intent whose
     revision or option id doesn't match the sender's panel, then calls the container's own handler

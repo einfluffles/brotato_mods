@@ -24,9 +24,6 @@ enum Msg {
 	# hash, value, stat key hash, value]], sync/meca_choice.gd), you, colors (see
 	# sync/shop_sync.gd)
 	SHOP_STATE,
-	# host -> client: battle_id, visible, run, players, seqs, pages, mecas (as in SHOP_STATE,
-	# for the crate weapon popup; see upgrades_sync.gd)
-	UPGRADES_STATE,
 	# host -> client: kind, count, you, colors, max, reward, join (only while joining is open:
 	# hold progress of joining players), players [[id, label, random, ready, inv, idx,
 	# locked text, locked by challenge]], grids (on change; see menu_sync.gd)
@@ -38,7 +35,7 @@ enum Msg {
 	# client -> host: battle_id, seq (of the sender's panel), kind ("choose" | "reroll" |
 	# "take" | "discard" | "ban"), id (upgrade / item my_id, "" for reroll), meca (-1: none).
 	# Crate weapon popup: kind "weapon_combine" | "weapon_discard" | "weapon_meca_roll" (the
-	# host rolls the two meca options, sent in UPGRADES_STATE.mecas) | "weapon_meca" (meca: the
+	# host rolls the two meca options, sent in the upgrades state) | "weapon_meca" (meca: the
 	# index of the option picked), id (the weapon's my_id), weapon (its slot in the sender's
 	# weapons)
 	UPGRADE_INTENT,
