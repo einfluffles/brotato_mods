@@ -50,6 +50,7 @@ func run(t: Node, together: Node):
 	_input.devices = saved_devices
 	CoopService.connected_players = saved_players
 	Puppet.set_active(false)
+	_sync._host_shop = null  # set by hand in _host_part: the host shop is gone
 	_sync.set_process(true)
 
 

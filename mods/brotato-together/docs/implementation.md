@@ -23,10 +23,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Snapshot wire format (`sync/snapshot.gd`, since protocol 4): hand-packed bytes, little endian. u32 battle id,
   u32 host msec, u16 wave time (1/100 s); per player u8 flags, i16 x/y (0.5 px), varint input ack,
   [zigzag varints health/max health/gold, varint level, f32 xp], u8 weapon count + "sprite moved" bitmask,
-  i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle); u16 entity count, types as runs
+  i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle) [+ weapon slots, speed: see Scene
+  state]; u16 entity count, types as runs
   [varint type, varint length], u16 net ids, 4-bit flags, i16 x/y per entity not resting; poses as
   [varint index, u8 count, f32 values]; u8 event count + events (damage 7-8 B, sound 5-10 B, anim
-  8 B + name). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
+  8 B + name; protocol 11: explosion 9 B, bonus gold 3-5 B, wave end 2 B, gold boost 6 B). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
   Sparse data: `FLAG_REST` entities (unmoved for 4 snapshots: gold, structures, idle units) leave out their
   position except every 15th snapshot (staggered by id); player HUD stats only for 4 snapshots after a
   change and every 10th. The client fills both from earlier snapshots (`Snapshot.resolve`, which also builds
@@ -124,16 +125,91 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   long with the rotation of its last flight) and restart their animation when reused.
 - Bullet-hell waves: `main._ready` adds its own generator (a random pattern) on the client too;
   `BattleClient._freeze` frees it. The host's bullets arrive as puppets.
+- Scene state (protocol 13, `sync/battle_scene.gd`, one instance per battle on each side):
+  - Hole layouts: `main._ready` calls `GPESpawner.spawn_holes_full_scene` when the wave's
+    `spawn_holes` is set (jungle waves 4 / 10 / 16), which instances one of five layout scenes
+    (`holes_scene`; `holes_old_scene` / `holes_explorer_scene` with a map size effect) picked at random
+    at `Vector2.ONE` in `_gpe_container`. `BATTLE_START` carries the host's scene path (`holes`, ""
+    for none); right after the client's `_ready` its own layout is freed and the host's instanced, if
+    the path is in its spawner's three lists. `ZoneService.forbidden_circles` is cleared before:
+    `Hole._ready` is the only thing that adds circles and only the layout exists at that point. A
+    mid-wave resync keeps the layout of the scene it has.
+  - Weapons during a wave: the only way the game changes a player's weapon nodes is
+    `Player.on_weapon_wanted_to_break` (the brick's `break_on_hit`, `Weapon.on_weapon_hit_something`;
+    abyssal_terrors), which erases the weapon from `current_weapons` and `RunData`. Crate weapons
+    and the shop add to `RunData` only, after the wave. The host remembers the instance ids of each
+    player's weapons at wave start; once a player has fewer, every snapshot carries its weapons'
+    wave-start slots (`PLAYER_WEAPON_SLOTS`: u8 bit count + bitmask after the weapons, popcount must
+    equal the weapon count). At render time the client drops the puppet weapons whose slot is gone
+    (`current_weapons`, `weapon_pos` and the client's `RunData` weapon list like the game; stats and
+    effects stay the host's) before the per-weapon data is applied by index. `BATTLE_START` carries
+    every player's current slots (`weapon_slots`), so a client that joins after a break, whose
+    puppet is built from the shorter run, maps the same way.
+  - Speed: `Player.get_move_speed()` (stats incl. temporary ones, `bonus_speed`, the decaying slow
+    after hits, petrol halves it) in whole px/s as a varint after the weapons (`PLAYER_SPEED`), sent
+    for 4 snapshots after it changes and every 10th otherwise, filled from the newest one by
+    `Snapshot.resolve`. The client sets it as the puppet's `current_stats.speed` (bonus, slow and
+    petrol zeroed), so own-player prediction and the walk animation's playback speed follow it.
+  - Wire cost: nothing while no weapon broke and no speed is due (both flags live in the player
+    byte); 2 B per player and speed sent (speeds below 16384 px/s), 2 B per player after a break
+    (up to 8 weapons). The synthetic waves of `snapshot_tests.gd` / `looks_tests.gd` do not grow.
+  - The layout shares `_gpe_container` with puddle puppets (`sync/puddles.gd`): the swap only takes
+    a child whose scene is one of the spawner's layouts, and it runs before any puddle puppet
+    exists; the host's puddle scan takes only `AcidPuddle` / `PetrolPuddle` / `FirePuddle`.
 - One-shot events older than 250 ms when their turn comes (a stall, a scene load) are dropped, except
   animations (state).
-- Not mirrored yet (found by the audit for protocol 9, most visible first): player explosions
-  (`WeaponService.explode` -> `main._explosions`: rockets, grenades, mines; needs an event), burning /
-  cursed / charmed / boosted looks of enemies and the acid / petrol / fire puddles (`gpe_spawner.gd`;
-  charmed enemies look hostile, puddles are invisible), screen shake and the texts the client could
-  derive itself (level up, heals, gold pickup, wave cleared / dim / bonus gold bag), weapon breaks
-  mid-wave (weapons shift by index), hole layouts of jungle waves 4 / 10 / 16 (picked at random on each
-  machine), own-player prediction with the speed from wave start (petrol, speed changes: ~10-30 px
-  correction). Also: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
+- Lasting looks (`sync/looks.gd`, protocol 12): states the game shows for seconds or for an entity's
+  life, from game logic puppets never run. One byte of bits per entity: `BURNING` (+ `BURN_RED` /
+  `BURN_BLUE`, the gradient `BurningParticles._update_color` picked), `CHARMED`, `CURSED`, `BOOSTED`.
+  The host reads them off what the game shows: the outline colours in `Entity._outline_colors`
+  (`Utils.CHARM_COLOR` from `CharmEnemyEffectBehavior.charm`, `CURSE_COLOR` from
+  `CurseEnemyEffectBehavior.init` and cursed structures / pets, `BOOST_COLOR` from `Entity.boost`
+  with `show_outline`; the curse's own boost has none), `Unit._is_burning`, and for enemy shots the
+  hue shift material a charmed enemy's `ShootingAttackBehavior` hands them (the game uses that shader
+  for nothing else; its `hue` is not read: `get_shader_param` asks the VisualServer, null when
+  headless). Plain entities cost two property reads per snapshot on the host (600 of them: 0.5 ms,
+  headless). Wire: a section after
+  the events, `varint count` + per entry `varint gap to the previous index + 1, u8 bits`; sent for 4
+  snapshots after a change (also to plain) and, while not plain, every 10th snapshot (staggered by
+  id), so a plain wave costs 1 B and a lasting look ~0.2 B per entity and snapshot. Measured
+  (`looks_tests.gd`, envelope included): the synthetic waves above 448 / 968 / 2184 B -> 452 / 968 /
+  2184 B (the count byte crossed `var2bytes`' 4 B padding once); a late wave with 105 burning or
+  charmed enemies 2168 B plain, 2380 B in the snapshot they all change, 2189 B on average after it;
+  the loopback with 5 looked entities 1.8 B per snapshot. The client keeps the last look per net id
+  (`Looks.resolve`, before `Snapshot.resolve` drops entities and shifts the indices); one not
+  confirmed for 45 received snapshots is plain again. Applied once per new
+  snapshot through the puppet's own visual code: `Entity._set_outlines` with the charm's alpha 0.4 /
+  desaturation 0.75 (a hit flash keeps its material and gets the outline back when it ends), the
+  sprite's white `self_modulate`, the unit's `BurningParticles.start_emitting / stop_emitting` (no
+  `burning_data`, so nothing spreads; no burning timer), the `CurseParticles` of
+  `curse_enemy_effect_behavior.tscn` instanced without its script next to (not among) the effect
+  behaviors, a pet's `curse_particles`, the charm material on a shot. A puppet that leaves the
+  snapshots (death, pool reuse) loses its look. Not mirrored: the meca / mutant evolution looks
+  (outline plus a texture swap, `MecaEnemyEffectBehavior.init`), percent-damage-taken outlines (lute,
+  diver), the one-shot boost particles (`stats_boosted` -> `EffectsManager`).
+- Puddles (`sync/puddles.gd`, protocol 12): acid / petrol / fire puddles (`GPESpawner`, children of
+  `main._gpe_container` / `_fire_puddles_container`) are tracked like gold: static, so mostly
+  `FLAG_REST`. A puddle's sprite (index into `puddle_sprites`) and target scale (`GPESpawner`'s size,
+  for fire also the `fire_puddle_size` stat) are set once in `init()` and travel in the type key,
+  `<scene>#puddle:<sprite>:<scale x>:<scale y>` (1/100), one type per source. The sprite's random
+  rotation is the client's own (exact would cost a type per puddle or bytes per snapshot). The host
+  drops a puddle from the snapshots when it starts to fade (`is_active()`: timeout, eviction); the
+  client runs the puddle's own spawn tween when it appears and its `despawn()` fade before pooling
+  the puppet (its despawn timer is paused, so a scene timer pools it). Puppets have no collision
+  layers, monitoring off and no lifetime timer: damage, slow and ignition stay with the host's.
+  Holes, dig sites and poacher zones in the same container are not puddles and are left alone.
+  The puddle a fire explosion leaves (arsonist: `PlayerExplosion.start_explosion` ->
+  `_spawn_fire_puddle`) is one of these on the host; the client's explosion puppet
+  (`FeedbackMirror.explode`) never runs `start_explosion`, so it puts down none of its own.
+  Not mirrored: the tint of a player standing in acid / petrol (`Player._set_color_modulation`).
+- Not mirrored yet (found by the audit for protocol 9, most visible first): stat texts
+  (`RunData.stat_added`: stats on level up, harvesting at the wave's end, turret stats), the
+  bigger sprite of a bonus-boosted gold, the music dip and the won-run animation at the wave's end
+  (protocol 11 mirrors explosions, screen shake, level-up / heal / gold texts, dim screen, label
+  and bonus gold bag: see "One-shot feedback"), the holes the brachiosaurus foot stomps into the
+  ground (`BrachiosaurusFoot._stomp` -> `GPESpawner.spawn_single_hole_at_position`, from physics
+  code puppets never run; protocol 13 mirrors weapon breaks, hole layouts and the speed: see "Scene
+  state"). Also: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
   game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
   respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
 - Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
@@ -567,6 +643,38 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `_last_played` only when it passes). Clients replay `playSingle` sounds as `playSingle` (cooldown minus
   0.1 s for snapshot timing) and pass `always_play` on. A client in a battle drops locally triggered sounds
   (e.g. step sounds from puppet walk animations, which are method tracks) and plays only replays.
+- Protocol 11 (`sync/feedback_mirror.gd`, one instance per battle on each side, no node references):
+  - Explosions (`WeaponService.explode`: rockets, grenades, landmines, exploding melee hits, bonk
+    dog; two scenes, `explosion.tscn` is announced with BATTLE_START): the host finds new ones among
+    the children of `main._explosions` at each snapshot (the pool takes finished ones out; a node
+    whose "explode" restarted was pooled and reused in between) and sends `EVENT_EXPLOSION` [scene
+    type, position, scale (incl. the explosion size stat), smoke amount]. The client takes a node
+    from main's pool like the game, puppetizes it (no physics: its first physics frame would play
+    the sound; hitbox areas off and disabled: the hits arrive as damage events), sets this player's
+    `explosion_opacity` and plays "explode" from the start (the flash lasts 0.05 s, so not from the
+    host's position); its method tracks (smoke, hitbox off) are harmless, and `end_explosion` pools
+    it when the animation ends. Fog waves get their light (`FogViewport._on_spawn_explosion`).
+  - State, sent on change, repeated for 4 snapshots and every 15th, ranked like animations and kept
+    after a stall; an older copy arriving late is ignored: `EVENT_BONUS_GOLD` [`RunData.bonus_gold`,
+    label visible] (it shrinks during the wave as bonus-boosted gold drops, grows at the end) and,
+    once `main._cleaning_up`, `EVENT_WAVE_END` [failed / lost / won, label showing]. The client dims
+    (`UIDimScreen.dim`), stops the floating texts' and effects' gold feedback (their own
+    `clean_up_room`), fades the ambient sound, and starts / hides `WaveClearedLabel` with the host's
+    (it starts late on a won run and is hidden before the level-up panels). Its typing sounds are
+    the host's.
+  - `EVENT_GOLD_BOOST` [position, boost]: the "x2" `FloatingTextManager.on_gold_picked_up` shows for
+    gold dropped while bonus gold is left or doubled by the metal detector. The host hooks
+    `picked_up` of mirrored gold and reads `boosted` in its handler: Godot 3 calls a signal's
+    targets in order of instance id and the per-battle helper is made after main, so main's
+    handler has doubled it already, and `Gold.pickup` resets it right after the signal.
+  - Derived on the client, no bytes: screen shake (`Screenshaker._on_player_took_damage` for
+    players, `_on_unit_took_damage` for enemies and neutrals, called with each damage event, which
+    already leaves out `hide_feedback` hits; this client's screenshake option applies); level-up
+    and heal texts from the host's player stats compared with its previous ones (a heal and a hit
+    within one snapshot show as their sum, a heal that also raised max health shows nothing; they
+    follow the newest snapshot, ~100 ms before the interpolated world); the gold pickup sparkle where
+    a gold puppet vanished from the snapshots (`main.on_gold_picked_up` is the only way out of
+    `_active_golds`), not after the wave's end.
 - Outside battle (shop, selection screens, end of run) `sync/ui_sounds.gd` is the host's sink instead: sounds
   are batched per frame and sent as `UI_SOUNDS` (reliable; `res://` path, volume, pitch, position). The
   level-up/crate panels live in `main.tscn`, so their sounds already travel with the battle snapshots. The

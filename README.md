@@ -30,9 +30,17 @@ Everything runs in a container (podman):
 podman build -t brotato-modtools -f tools/Containerfile tools   # GDRE Tools, Godot 3.6 headless, gdtoolkit 3.x
 tools/lint.sh                  # gdlint over mods/
 tools/check.sh [mods/<folder>] # boot the game headless with each mod + its test mod
+tools/check.sh -s <suite>      # only these suites of the test mod (comma-separated), -q: failures only
 tools/package.sh [target]      # -> <target>/<name>/<name>.zip (+ preview.png), default: dist/
 tools/deploy.sh <name> <workshop_item_id>     # replace the subscribed item's zip with the package
 ```
+
+`tools/check.sh` uses podman, or docker when podman is missing (`CONTAINER=...` picks one). A test mod
+names its suites in `tests/<test_mod_id>/shards.txt`, one group per line, and every group runs in its own
+game process at the same time. On a slow mount (a Windows drive under WSL) the game runs from a copy of
+`reference/` in `~/.cache/brotato-modtools`, refreshed when `reference/project.godot` changes
+(`MOD_CHECK_RESYNC=1` forces it): booting from the Windows drive takes close to a minute, from the copy
+a few seconds.
 
 ### Publishing
 

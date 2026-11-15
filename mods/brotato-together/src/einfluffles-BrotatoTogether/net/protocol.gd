@@ -11,6 +11,7 @@ enum Msg {
 	INPUT,
 	# host -> client: battle_id, run (RunStateCodec), types {idx: scene_path}, colors (palette
 	# index per slot, CoopService extension; also in SHOP_STATE and MENU_STATE)
+	# + holes (hole layout scene, "" none), weapon_slots (per player; sync/battle_scene.gd)
 	BATTLE_START,
 	BATTLE_END,  # host -> client: battle_id
 	TYPE_DEF,  # host -> client: battle_id, idx, path
@@ -51,7 +52,7 @@ enum Msg {
 	SHOP_FOCUS,
 }
 
-const VERSION := 10
+const VERSION := 13
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

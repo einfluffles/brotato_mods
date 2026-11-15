@@ -28,6 +28,12 @@ const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const PauseControl := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
 )
+const FeedbackMirror := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
+)
+const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
+const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
+const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -98,6 +104,9 @@ var _pause_text := ""
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
+var _feedback = FeedbackMirror.new()  # explosions, texts, shake, wave end (protocol 11)
+var _looks = Looks.new()
+var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppets
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -170,6 +179,7 @@ func _on_battle_start(body) -> void:
 		_reset_battle_state()
 	_battle_id = body.battle_id
 	_adopt_start(body)
+	_battle_scene.client_start(body)  # for the scene this start loads, not for a resync
 
 	CoopService.bt_apply_remote_colors(body.get("colors"))
 	Puppet.set_active(true)
@@ -232,6 +242,7 @@ func _reset_battle_state() -> void:
 	_entity_kinds.clear()
 	_applied_to = {}
 	_resolve_cache = {}
+	_looks = Looks.new()
 	_newest_rx_msec = 0
 	_free_puppet_pool()
 	if not _loading:  # a scene still loading must be frozen when it is ready, battle or not
@@ -243,9 +254,11 @@ func _reset_battle_state() -> void:
 	_paused = false
 	_pause_text = ""
 	_events.clear()
+	_feedback = FeedbackMirror.new()
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
+	_battle_scene = BattleScene.new()
 
 
 func _on_node_added(node: Node) -> void:
@@ -265,6 +278,7 @@ func _on_battle_scene_ready(main: Node) -> void:
 	_freeze(main)
 	# No battle: it ended while its scene loaded. Frozen until the next screen replaces it.
 	if _battle_id != 0:
+		_battle_scene.client_scene_ready(main)
 		_main = main
 		_main_id = main.get_instance_id()
 		# The next screen can replace the scene without a BATTLE_END (the shop was faster).
@@ -347,7 +361,9 @@ func _define_type(idx, key) -> void:
 		return
 	_types[idx] = load(path)
 	_type_data[idx] = null
-	if parts.size() > 1:
+	if parts.size() > 1 and Puddles.is_tag(parts[1]):
+		_type_data[idx] = Puddles.parse_tag(parts[1])
+	elif parts.size() > 1:
 		var tag: String = parts[1]
 		var plain: bool = tag == CURSED_TAG or PuppetEntity.BIRTH_TAGS.has(tag)
 		_type_data[idx] = tag if plain else _find_consumable(tag)
@@ -388,6 +404,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		return
 	if i == _buffer.size():
 		_newest_rx_msec = OS.get_ticks_msec()
+	Looks.resolve(snapshot, _resolve_cache)  # first: it reads the entity indices as parsed
 	Snapshot.resolve(snapshot, _resolve_cache)
 	_buffer.insert(i, snapshot)
 	for event in snapshot.events:
@@ -422,6 +439,8 @@ func _apply_players(
 	var players: Array = _main.get("_players")
 	for i in min(players.size(), to.players.size()):
 		var player = players[i]
+		BattleScene.apply_speed(player, newest.players[i])  # before the prediction reads it
+		_battle_scene.follow_weapons(player, i, to.players[i])  # before weapons apply by index
 		if player.dead:
 			_move(player, "p%s" % i, to.players[i][PF.POSITION])
 		elif i == _you and i < newest.players.size():
@@ -480,6 +499,7 @@ func _own_target(player: Node2D, entry: Array) -> Vector2:
 func _apply_player_stats(player: Node, i: int, entry: Array) -> void:
 	if entry[PF.HEALTH] <= 0 and not player.dead:
 		PuppetEntity.player_died(player)
+	_feedback.player_stats(_main, i, entry)  # heal and level-up texts
 	if (
 		player.current_stats.health != entry[PF.HEALTH]
 		or player.max_stats.health != entry[PF.MAX_HEALTH]
@@ -596,6 +616,7 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 	var now := OS.get_ticks_msec()
 	for id in _entities.keys():
 		if not alive.has(id):
+			FeedbackMirror.gold_gone(_main, _entities[id])  # picked up: its sparkle
 			_despawn(_entities[id])
 			_despawned[id] = [_entities[id], now + DESPAWN_GRACE_MSEC]
 			_entities.erase(id)
@@ -605,6 +626,7 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 	for id in _despawned.keys():
 		if now > _despawned[id][1]:
 			_despawned.erase(id)
+	_looks.apply(_entities, to.get("looks_by_id", {}))
 
 
 # What a puppet needs every frame, decided once when it spawns.
@@ -683,6 +705,8 @@ func _spawn(type_idx: int) -> Node:
 		elif not cursed and is_instance_valid(particles):
 			particles.queue_free()
 			node.curse_particle_instance = null
+	if Puddles.is_puddle(node):
+		Puddles.start(node, data)
 	PuppetEntity.puppetize(node)
 	AnimMirror.detach_game_handlers(node)
 	return node
@@ -710,6 +734,8 @@ func _container_for(node: Node) -> Node:
 		return _main.get("_enemy_projectiles")
 	if node is EntityBirth:
 		return _main.get("_births_container")
+	if Puddles.is_puddle(node):
+		return Puddles.container(_main, node)
 	if node.get_script() != null and node.get_script().resource_path.begins_with("res://items/"):
 		return _main.get("_materials_container")
 	return _main.get("_entities_container")
@@ -727,6 +753,26 @@ func _despawn(node) -> void:
 			args.enemy_killed_by_player = false
 			node.die(args)
 		return
+	if Puddles.is_puddle(node) and not node._is_dying:
+		var fade := Puddles.fade_out(node)
+		var timer := get_tree().create_timer(fade, false)
+		timer.connect("timeout", self, "_on_puddle_faded", [node, _battle_id])
+		return
+	_pool_puppet(node)
+
+
+# The fade ran on (the puddle's own despawn timer is paused on a puppet); a puppet of a battle
+# that is over goes with its scene, never into the next battle's pool.
+func _on_puddle_faded(node, battle_id: int) -> void:
+	if not is_instance_valid(node):
+		return
+	if battle_id != _battle_id:
+		node.queue_free()
+		return
+	_pool_puppet(node)
+
+
+func _pool_puppet(node: Node) -> void:
 	var type_idx = node.get_meta(PUPPET_TYPE_META) if node.has_meta(PUPPET_TYPE_META) else null
 	var pool: Array = _puppet_pool.get(type_idx, [])
 	if type_idx == null or pool.size() >= MAX_POOLED_PER_TYPE or node.get_parent() == null:
@@ -754,8 +800,8 @@ func _fire_events(render_t: float) -> void:
 		var event = entry[1]
 		if typeof(event) != TYPE_ARRAY or event.empty() or typeof(event[0]) != TYPE_INT:
 			continue
-		# Animations are state and still count.
-		if entry[0] < render_t - STALE_EVENT_MSEC and event[0] != Snapshot.EVENT_ANIM:
+		# Animations, bonus gold and the wave's end are state and still count.
+		if entry[0] < render_t - STALE_EVENT_MSEC and not Snapshot.is_state_event(event[0]):
 			continue
 		if event[0] == Snapshot.EVENT_DAMAGE and event.size() == 6:
 			_show_damage(event)
@@ -765,6 +811,8 @@ func _fire_events(render_t: float) -> void:
 				SoundRelay.replay(sound, event[2], event[3], event[4], event[5], event[6])
 		elif event[0] == Snapshot.EVENT_ANIM:
 			_anim_mirror.replay(_entities, event)
+		else:
+			_feedback.fire(_main, _types, entry[0], event)
 
 
 # Same handlers main.gd connects to Unit.took_damage (numbers, particles) + the hit flash.
@@ -789,6 +837,7 @@ func _show_damage(event: Array) -> void:
 		var manager = _main.get(manager_name)
 		if manager != null:
 			manager.callv("_on_unit_took_damage", args)
+	FeedbackMirror.shake(_main, target, args)
 	if int(event[2]) > 0 and target.has_method("flash") and not target.dead:
 		target.flash()
 

@@ -4,7 +4,9 @@ extends Reference
 #   battle_id, t (host msec), wave_time_left,
 #   players: Array of [position: Vector2, health, max_health, input_ack, gold, level, xp: float,
 #            weapons: PoolRealArray, per weapon [rotation, sprite_x, sprite_y, sprite_rotation]]
-#            health/max_health/gold/level/xp are null when not sent (see below)
+#            health/max_health/gold/level/xp are null when not sent (see below),
+#            weapon_slots: PoolIntArray (wave-start slot of each weapon) or null (all still held),
+#            speed: px/s or null when not sent (see sync/battle_scene.gd)]
 #   ids, types: PoolIntArray; positions: PoolVector2Array (Vector2.ZERO for FLAG_REST entities)
 #   flags: PoolByteArray, FLAG_BITS per entity (entity i at bit i * FLAG_BITS)
 #   poses: {entity index: PoolRealArray} (see sync/pose.gd)
@@ -14,18 +16,27 @@ extends Reference
 #     [EVENT_SOUND, type idx of the stream, position: Vector2 or null, volume, pitch_rand,
 #      always_play: bool, single cooldown (s, 0: SoundManager.play)]
 #     [EVENT_ANIM, net id, animation name, position (s), speed] (see sync/anim_mirror.gd)
+#     protocol 11 (see sync/feedback_mirror.gd):
+#     [EVENT_EXPLOSION, type idx of the scene, position: Vector2, scale, smoke amount]
+#     [EVENT_BONUS_GOLD, value, label visible: bool] (state, repeated)
+#     [EVENT_WAVE_END, WAVE_* flags] (state, repeated)
+#     [EVENT_GOLD_BOOST, position: Vector2, boost]
+#   looks: {entity index: look bits} (since protocol 12, see sync/looks.gd; indices of the parsed
+#     entity order: Looks.resolve reads them before resolve() may drop entities)
 #
 # Wire layout:
 #   u32 battle_id, u32 t, u16 wave time left (1/100 s)
 #   u8 player count; per player: u8 PLAYER_STATS bit, i16 x, i16 y (1/POS_SCALE px),
 #     varint input_ack, [stats: zigzag health, zigzag max_health, zigzag gold, varint level,
 #     f32 xp], u8 weapon count, bitmask (1 bit per weapon: sprite moved), per weapon i16 angle
-#     [+ i16 sprite x, i16 sprite y (1/8 px), i16 sprite angle]
+#     [+ i16 sprite x, i16 sprite y (1/8 px), i16 sprite angle],
+#     [PLAYER_WEAPON_SLOTS: u8 bit count, slot bitmask], [PLAYER_SPEED: varint px/s]
 #   u16 entity count; varint run count, runs of [varint type idx, varint length] (types in
 #     entity order); net ids as zigzag varint deltas to the previous one (the host sorts each run
 #     by id: mostly 1 byte); flags; i16 x, i16 y per entity without FLAG_REST
 #   varint pose count; per pose: varint entity index (ascending), u8 value count, f32 values
 #   u8 event count; per event: u8 kind + payload (see _put_event)
+#   varint look count; per look: varint gap to the previous entity index + 1 (ascending), u8 bits
 # Nothing may follow. Angles are i16 over [-PI, PI].
 #
 # Rarely changing data is sparse; the client fills the gaps from earlier snapshots (resolve()):
@@ -37,11 +48,17 @@ extends Reference
 # per-battle table of scene paths sent reliably (BATTLE_START / TYPE_DEF). input_ack is the last
 # INPUT seq the host applied for that player (0 for host-local players).
 
-enum PlayerField { POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEAPONS }
+enum PlayerField {
+	POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEAPONS, WEAPON_SLOTS, SPEED
+}
 
 const EVENT_DAMAGE := 0
 const EVENT_SOUND := 1
 const EVENT_ANIM := 2
+const EVENT_EXPLOSION := 3
+const EVENT_BONUS_GOLD := 4
+const EVENT_WAVE_END := 5
+const EVENT_GOLD_BOOST := 6
 const DAMAGE_CRIT := 1
 const DAMAGE_DODGE := 2
 const DAMAGE_PROTECTED := 4
@@ -53,6 +70,16 @@ const SOUND_POSITION := 1  # wire only
 const SOUND_ALWAYS := 2
 const SOUND_SINGLE := 4
 const PLAYER_STATS := 1  # wire only
+const BONUS_VISIBLE := 1  # wire only
+const WAVE_FAILED := 1
+const WAVE_LOST := 2
+const WAVE_WON := 4
+const WAVE_LABEL := 8  # the "wave completed" label is showing
+const WAVE_FLAGS := 15
+const EXPLOSION_SCALE := 100.0
+const PLAYER_WEAPON_SLOTS := 2  # wire only (protocol 13, sync/battle_scene.gd)
+const PLAYER_SPEED := 4  # wire only (protocol 13)
+const MAX_SPEED := 1 << 20  # px/s; parse rejects more
 const STAT_FIELDS := [
 	PlayerField.HEALTH, PlayerField.MAX_HEALTH, PlayerField.GOLD, PlayerField.LEVEL, PlayerField.XP
 ]
@@ -63,6 +90,7 @@ const FLAG_FLIP_H := 4  # jump attacks turn the sprite with flip_h, not scale.x
 const FLAG_REST := 8  # position not sent: unchanged (see resolve)
 const FLAG_BITS := 4
 const MAX_POSE_VALUES := 48  # see sync/pose.gd
+const LOOK_BITS := 63  # every bit sync/looks.gd defines; parse rejects others
 const MAX_PLAYERS := 8
 const MAX_WEAPONS := 32
 const MAX_ENTITIES := 8192
@@ -137,12 +165,25 @@ static func encode(view: Dictionary) -> PoolByteArray:
 	buf.put_u8(view.events.size())
 	for event in view.events:
 		_put_event(buf, event)
+	_put_looks(buf, view.get("looks", {}))
 	return buf.data_array
+
+
+# Sparse: only entities whose look the host sends this time (sync/looks.gd).
+static func _put_looks(buf: StreamPeerBuffer, looks: Dictionary) -> void:
+	var indices: Array = looks.keys()
+	indices.sort()
+	_put_varint(buf, indices.size())
+	var next := 0
+	for index in indices:
+		_put_varint(buf, index - next)
+		buf.put_u8(looks[index] & LOOK_BITS)
+		next = index + 1
 
 
 static func _put_player(buf: StreamPeerBuffer, entry: Array) -> void:
 	var has_stats: bool = entry[PlayerField.HEALTH] != null
-	buf.put_u8(PLAYER_STATS if has_stats else 0)
+	buf.put_u8((PLAYER_STATS if has_stats else 0) | _scene_flags(entry))
 	_put_position(buf, entry[PlayerField.POSITION])
 	_put_varint(buf, entry[PlayerField.INPUT_ACK])
 	if has_stats:
@@ -170,6 +211,66 @@ static func _put_player(buf: StreamPeerBuffer, entry: Array) -> void:
 			buf.put_16(_quantize(weapons[k + 1], OFFSET_SCALE))
 			buf.put_16(_quantize(weapons[k + 2], OFFSET_SCALE))
 			buf.put_16(_angle(weapons[k + 3]))
+	_put_scene_fields(buf, entry)
+
+
+# Protocol 13: [weapon slots: u8 bit count, mask (1 bit per wave-start weapon still held)],
+# [speed: varint px/s], after the weapons and only when their flag bit is set.
+static func _scene_flags(entry: Array) -> int:
+	var flags := 0
+	if entry.size() > PlayerField.WEAPON_SLOTS and entry[PlayerField.WEAPON_SLOTS] != null:
+		flags |= PLAYER_WEAPON_SLOTS
+	if entry.size() > PlayerField.SPEED and entry[PlayerField.SPEED] != null:
+		flags |= PLAYER_SPEED
+	return flags
+
+
+static func _put_scene_fields(buf: StreamPeerBuffer, entry: Array) -> void:
+	var flags := _scene_flags(entry)
+	if flags & PLAYER_WEAPON_SLOTS:
+		var slots: PoolIntArray = entry[PlayerField.WEAPON_SLOTS]
+		var bits := 0
+		for slot in slots:
+			bits = int(max(bits, slot + 1))
+		var mask := PoolByteArray()
+		mask.resize((bits + 7) / 8)
+		for i in mask.size():
+			mask[i] = 0
+		for slot in slots:
+			mask[slot / 8] |= 1 << (slot % 8)
+		buf.put_u8(bits)
+		if not mask.empty():
+			buf.put_data(mask)
+	if flags & PLAYER_SPEED:
+		_put_varint(buf, int(clamp(entry[PlayerField.SPEED], 0, MAX_SPEED)))
+
+
+# false if malformed: more bits than weapons can have, bits set past the count, or a mask that
+# does not hold exactly as many weapons as the snapshot lists.
+static func _get_scene_fields(buf: StreamPeerBuffer, entry: Array, flags: int) -> bool:
+	if flags & PLAYER_WEAPON_SLOTS:
+		if buf.get_available_bytes() < 1:
+			return false
+		var bits := buf.get_u8()
+		var size := (bits + 7) / 8
+		if bits > MAX_WEAPONS or buf.get_available_bytes() < size:
+			return false
+		var mask: PoolByteArray = buf.get_data(size)[1] if size > 0 else PoolByteArray()
+		var slots := PoolIntArray()
+		for i in size * 8:
+			if mask[i / 8] & (1 << (i % 8)):
+				if i >= bits:
+					return false
+				slots.append(i)
+		if slots.size() != entry[PlayerField.WEAPONS].size() / WEAPON_STRIDE:
+			return false
+		entry[PlayerField.WEAPON_SLOTS] = slots
+	if flags & PLAYER_SPEED:
+		var value := _get_varint(buf)
+		if value < 0 or value > MAX_SPEED:
+			return false
+		entry[PlayerField.SPEED] = value
+	return true
 
 
 static func _sprite_moved(weapons: PoolRealArray, k: int) -> bool:
@@ -217,6 +318,30 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 				buf.put_data(name)
 			buf.put_u16(int(clamp(round(event[3] * ANIM_TIME_SCALE), 0, 65535)))
 			buf.put_u16(int(clamp(round(event[4] * ANIM_TIME_SCALE), 0, 65535)))
+		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
+			_put_feedback_event(buf, event)
+
+
+# Protocol 11 kinds, after the kind byte:
+#   EXPLOSION: varint type idx, i16 x, i16 y, u16 scale (1/100, >= 1), u8 smoke amount
+#   BONUS_GOLD: u8 BONUS_VISIBLE bit, varint value
+#   WAVE_END: u8 WAVE_* flags
+#   GOLD_BOOST: i16 x, i16 y, u8 boost
+static func _put_feedback_event(buf: StreamPeerBuffer, event: Array) -> void:
+	match event[0]:
+		EVENT_EXPLOSION:
+			_put_varint(buf, event[1])
+			_put_position(buf, event[2])
+			buf.put_u16(int(clamp(round(event[3] * EXPLOSION_SCALE), 1, 65535)))
+			buf.put_u8(int(clamp(event[4], 0, 255)))
+		EVENT_BONUS_GOLD:
+			buf.put_u8(BONUS_VISIBLE if event[2] else 0)
+			_put_varint(buf, event[1])
+		EVENT_WAVE_END:
+			buf.put_u8(event[1] & WAVE_FLAGS)
+		EVENT_GOLD_BOOST:
+			_put_position(buf, event[1])
+			buf.put_u8(int(clamp(event[2], 0, 255)))
 
 
 # Printable ASCII, else empty (the client ignores nameless animations; parse rejects the rest).
@@ -294,16 +419,36 @@ static func parse(body) -> Dictionary:
 		if event == null:
 			return {}
 		view.events.append(event)
-	if buf.get_available_bytes() != 0:
+	if not _get_looks(buf, view) or buf.get_available_bytes() != 0:
 		return {}
 	return view
+
+
+static func _get_looks(buf: StreamPeerBuffer, view: Dictionary) -> bool:
+	var count := _get_varint(buf)
+	var entity_count: int = view.ids.size()
+	if count < 0 or count > entity_count:
+		return false
+	var looks := {}
+	var next := 0
+	for _i in count:
+		var gap := _get_varint(buf)
+		if gap < 0 or next + gap >= entity_count or buf.get_available_bytes() < 1:
+			return false
+		var look := buf.get_u8()
+		if look & ~LOOK_BITS:
+			return false
+		looks[next + gap] = look
+		next += gap + 1
+	view["looks"] = looks
+	return true
 
 
 static func _get_player(buf: StreamPeerBuffer):
 	if buf.get_available_bytes() < 5:
 		return null
 	var stats_flag := buf.get_u8()
-	if stats_flag & ~PLAYER_STATS:
+	if stats_flag & ~(PLAYER_STATS | PLAYER_WEAPON_SLOTS | PLAYER_SPEED):
 		return null
 	var entry := []
 	entry.resize(PlayerField.size())
@@ -311,7 +456,7 @@ static func _get_player(buf: StreamPeerBuffer):
 	entry[PlayerField.INPUT_ACK] = _get_varint(buf)
 	if entry[PlayerField.INPUT_ACK] < 0:
 		return null
-	if stats_flag:
+	if stats_flag & PLAYER_STATS:
 		entry[PlayerField.HEALTH] = _unzigzag(_get_varint(buf))
 		entry[PlayerField.MAX_HEALTH] = _unzigzag(_get_varint(buf))
 		entry[PlayerField.GOLD] = _unzigzag(_get_varint(buf))
@@ -344,6 +489,8 @@ static func _get_player(buf: StreamPeerBuffer):
 		else:
 			weapons.append_array(PoolRealArray([0.0, 0.0, 0.0]))
 	entry[PlayerField.WEAPONS] = weapons
+	if not _get_scene_fields(buf, entry, stats_flag):
+		return null
 	return entry
 
 
@@ -473,6 +620,40 @@ static func _get_event(buf: StreamPeerBuffer):
 				name = bytes.get_string_from_ascii()
 			var position := buf.get_u16() / ANIM_TIME_SCALE
 			return [EVENT_ANIM, id, name, position, buf.get_u16() / ANIM_TIME_SCALE]
+		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
+			return _get_feedback_event(buf, kind)
+	return null
+
+
+static func _get_feedback_event(buf: StreamPeerBuffer, kind: int):
+	match kind:
+		EVENT_EXPLOSION:
+			var type_idx := _get_varint(buf)
+			if type_idx < 0 or buf.get_available_bytes() < 7:
+				return null
+			var position := _get_position(buf)
+			var scale := buf.get_u16()
+			if scale == 0:
+				return null
+			return [EVENT_EXPLOSION, type_idx, position, scale / EXPLOSION_SCALE, buf.get_u8()]
+		EVENT_BONUS_GOLD:
+			if buf.get_available_bytes() < 2:
+				return null
+			var flags := buf.get_u8()
+			var value := _get_varint(buf)
+			if flags & ~BONUS_VISIBLE or value < 0:
+				return null
+			return [EVENT_BONUS_GOLD, value, bool(flags & BONUS_VISIBLE)]
+		EVENT_WAVE_END:
+			if buf.get_available_bytes() < 1:
+				return null
+			var flags := buf.get_u8()
+			return null if flags & ~WAVE_FLAGS else [EVENT_WAVE_END, flags]
+		EVENT_GOLD_BOOST:
+			if buf.get_available_bytes() < 5:
+				return null
+			var position := _get_position(buf)
+			return [EVENT_GOLD_BOOST, position, buf.get_u8()]
 	return null
 
 
@@ -515,6 +696,7 @@ static func resolve(view: Dictionary, cache: Dictionary) -> Dictionary:
 		cache["stats"] = {}
 	var newest: bool = view.t >= cache.t
 	_resolve_stats(view, cache.stats)
+	_resolve_speeds(view, cache)
 	var known: Dictionary = cache.positions
 	var positions: PoolVector2Array = view.positions
 	var ids: PoolIntArray = view.ids
@@ -554,6 +736,22 @@ static func _resolve_stats(view: Dictionary, known: Dictionary) -> void:
 			for k in STAT_FIELDS.size():
 				if entry[STAT_FIELDS[k]] == null:
 					entry[STAT_FIELDS[k]] = known[i][1][k]
+
+
+# Player speeds are sparse like the stats (sync/battle_scene.gd): the newest one sent stands.
+static func _resolve_speeds(view: Dictionary, cache: Dictionary) -> void:
+	if not cache.has("speeds"):
+		cache["speeds"] = {}
+	var known: Dictionary = cache.speeds
+	for i in view.players.size():
+		var entry: Array = view.players[i]
+		if entry.size() <= PlayerField.SPEED:
+			continue
+		if entry[PlayerField.SPEED] != null:
+			if not known.has(i) or view.t >= known[i][0]:
+				known[i] = [view.t, entry[PlayerField.SPEED]]
+		elif known.has(i):
+			entry[PlayerField.SPEED] = known[i][1]
 
 
 static func has_stats(entry: Array) -> bool:
@@ -630,8 +828,8 @@ static func get_flags(flags: PoolByteArray, i: int) -> int:
 
 
 # At most `limit` events, the least valuable dropped first: duplicate sounds (same stream already
-# in this snapshot), then damage numbers on enemies, sounds, damage on players; animations last
-# (they are state). Kept events stay in their order.
+# in this snapshot), then damage numbers on enemies, sounds, damage on players and explosions;
+# animations, bonus gold and the wave's end last (they are state). Kept events stay in order.
 static func select_events(events: Array, limit: int) -> Array:
 	if events.size() <= limit:
 		return events
@@ -641,7 +839,7 @@ static func select_events(events: Array, limit: int) -> Array:
 		var event: Array = events[i]
 		var rank := 1
 		match event[0]:
-			EVENT_ANIM:
+			EVENT_ANIM, EVENT_BONUS_GOLD, EVENT_WAVE_END:
 				rank = 0
 			EVENT_DAMAGE:
 				rank = 1 if event[1] < 0 else 3
@@ -658,6 +856,11 @@ static func select_events(events: Array, limit: int) -> Array:
 		if keep.has(i):
 			selected.append(events[i])
 	return selected
+
+
+# State rather than a moment: still applied when it arrives late, never dropped first.
+static func is_state_event(kind: int) -> bool:
+	return kind == EVENT_ANIM or kind == EVENT_BONUS_GOLD or kind == EVENT_WAVE_END
 
 
 # --- weapons ---
