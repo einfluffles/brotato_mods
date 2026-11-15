@@ -38,7 +38,7 @@ enum Msg {
 	STATE,
 }
 
-const VERSION := 14
+const VERSION := 15
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

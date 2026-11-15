@@ -5,7 +5,8 @@ extends Node
 #   Host: opened by a local player's pause as always; that player's character stands still
 #   meanwhile. Remote pause presses never arrive during a battle scene.
 #   Client: its own pause opens the puppet scene's menu for its own slot; its buttons stay
-#   here, the host gets neutral input. Restart / end run are the host's, Quit asks to leave.
+#   here, the host gets neutral input. Restart / end run are the host's, Quit asks to leave
+#   (on the menu's lobby page, ui/lobby_menu.gd).
 #   The menu closes when the wave ends: the level-up panels need the same buttons.
 # Everything else is a real pause. Level-up panels: the host's local players only. Shop: any
 #   player; when that is a remote player, the menu goes to the host's first local player (the
@@ -34,7 +35,7 @@ var session: Node = null
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
 var battle_client: Node = null
-var together_menu: Node = null  # client: Quit asks there
+var lobby_menu: Node = null  # ui/lobby_menu.gd; client: Quit asks there
 
 # host
 var _menu: Node = null  # PauseMenu that is open
@@ -306,8 +307,8 @@ func client_update(main: Node, you: int) -> void:
 	menu.live = wave_on
 	if menu.live_open and not wave_on:
 		menu.unpause()
-	# Released like the game's own check, but only after a press that was the game's: the F9
-	# panel releases the actions of the keys it takes.
+	# Released like the game's own check, but only after a press that was the game's: the lobby
+	# popup releases the actions of the keys it takes.
 	var blocked: bool = input_sync.local_input_blocked
 	if Input.is_action_just_pressed("ui_pause"):
 		_pause_armed = not blocked
@@ -341,8 +342,22 @@ func _prepare_client_menu(menu: Node) -> void:
 	main_menu.connect("quit_button_pressed", self, "_on_client_quit", [menu])
 
 
-func _on_client_quit(menu: Node) -> void:
-	menu.unpause()
-	if together_menu != null:
-		together_menu.open()
-		together_menu.ask_leave()
+# The lobby page of this menu, with its question.
+func _on_client_quit(_menu: Node) -> void:
+	if lobby_menu != null:
+		lobby_menu.ask_leave()
+
+
+# The current scene's pause menu, opened for this machine's player if it is closed (live during
+# an online wave, a pause otherwise); null if there is none or it does not open.
+func open_menu() -> Node:
+	var scene := get_tree().current_scene
+	var menu = scene.get("_pause_menu") if scene != null else null
+	if not (menu is PauseMenu):
+		return null
+	if not menu.visible:
+		if not session.is_client():
+			menu.pause(int(max(local_player_index(), 0)))
+		elif menu.live and is_client_battle(scene) and battle_client._you >= 0:
+			menu.open_live(battle_client._you)
+	return menu if menu.visible else null

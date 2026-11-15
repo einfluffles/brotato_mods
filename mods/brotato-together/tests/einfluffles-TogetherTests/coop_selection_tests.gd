@@ -1,19 +1,17 @@
 extends Reference
 # Co-op character selection UX (ui/coop_selection.gd, CoopService extension, client view):
-#  - every empty slot shows "Player N" + the game's hold-to-join hint (host screen), and the
-#    client view shows the free slots with the same hint and the join progress;
+#  - every empty slot shows "Player N" + the game's hold-to-join hint;
 #  - players cycle their colour with ui_info (virtual device = remote player, keyboard F), never
 #    onto another player's colour; the colours travel in the menu state, BATTLE_START and the
 #    shop state
 #    and the game's own colour code (cursors, labels, highlight) reads them;
-#  - a locked character under a cursor shows how to unlock it, on the host and on client cards.
+#  - a locked character under a cursor shows how to unlock it (the client's copy of the screen:
+#    menu_puppet_tests.gd).
 # Needs the character selection scene with two virtual co-op players (after the menu tests).
 
-const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 const CoopSelection := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_selection.gd"
 )
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
@@ -41,7 +39,7 @@ func run(test_mod: Node, together: Node):
 	_test_join_hints(scene)
 	yield(_test_color_picks(scene), "completed")
 	_test_color_mirror(together, scene)
-	yield(_test_locked(together, scene), "completed")
+	yield(_test_locked(scene), "completed")
 	CoopService.listening_for_inputs = false
 	together.menu_sync.set_process(true)
 	yield(_frames(1), "completed")
@@ -144,7 +142,6 @@ func _test_color_mirror(together: Node, scene: Node) -> void:
 	var host: Array = CoopService.bt_slot_colors.duplicate()
 	var menu_sync: Node = together.menu_sync
 	menu_sync._scene = scene
-	menu_sync._emulators = ScenePaths.find_focus_emulators(scene)
 	var state: Dictionary = bytes2var(var2bytes(menu_sync._state()), false)
 	t._check(state.get("colors") == host, "colours: in the menu state (%s)" % [state.get("colors")])
 	t._check(
@@ -174,34 +171,11 @@ func _test_color_mirror(together: Node, scene: Node) -> void:
 		"colours: the game's own colour code (CoopPlayerLabel) uses them"
 	)
 	label.free()
-	state["grids"] = bytes2var(var2bytes(menu_sync.grids_state()), false)  # menu_grids section
-	var view = ClientView.new()
-	_tree().root.add_child(view)
-	view.show_menu(state)
-	var open: int = view._open_slots.size()
-	t._check(open == 2, "client: two free slots shown (%d)" % open)
-	var icons := 0
-	for child in view._open_slots[0].hint.get_children():
-		if child is TextureRect and child.texture != null:
-			icons += 1
-	t._check(icons == 2, "client: free slot shows hold-to-join with pad + keyboard glyphs")
-	t._check(view._open_slots[0].progress.text == "50%", "client: join progress shown")
-	t._check(view._color_hint.visible, "client: colour hint shown")
-	var cursor = state.players[1]
-	var cell = view._grid.cell_at(int(cursor[4]), int(cursor[5]))
-	t._check(
-		cell != null and cell.style.border_color == CoopService.get_player_color(1),
-		"client: P2 cursor drawn in the host's colour for P2"
-	)
-	state.erase("join")
-	view.show_menu(state)
-	t._check(view._open_slots.empty(), "client: no free slots once joining is closed")
-	view.queue_free()
 	CoopService.bt_clear_remote_colors()
 	t._check(CoopService.bt_slot_colors == host, "colours: own colours back after leaving")
 
 
-func _test_locked(together: Node, scene: Node):
+func _test_locked(scene: Node):
 	var locked: InventoryElement = null
 	var free: InventoryElement = null
 	for child in scene.get_node("%Inventory1").get_children():
@@ -229,37 +203,5 @@ func _test_locked(together: Node, scene: Node):
 		host_locked._description.text == expected,
 		"locked: host panel text is the unlock condition (%s)" % expected
 	)
-	var menu_sync: Node = together.menu_sync
-	var state: Dictionary = bytes2var(var2bytes(menu_sync._state()), false)
-	state["you"] = 0
-	t._check(
-		state.players[1][6] == expected and state.players[1][7] == true,
-		"locked: the menu state carries the unlock text"
-	)
-	var view = ClientView.new()
-	_tree().root.add_child(view)
-	view.show_menu(state)
-	var card: Dictionary = view._panels[1]
-	t._check(
-		not card.panel.visible
-		and card.locked != null
-		and card.locked.visible
-		and card.locked._description.text == expected,
-		"locked: client card shows how to unlock, not the description"
-	)
-	t._check(
-		view._panels[0].panel.visible
-		and (view._panels[0].locked == null or not view._panels[0].locked.visible),
-		"locked: unlocked character still shows its card"
-	)
-	# Host text only (e.g. an item set requirement): shown as is.
-	state.players[1][7] = false
-	state.players[1][6] = "needs an item set"
-	view.show_menu(state)
-	t._check(
-		card.locked.visible and card.locked._description.text == "needs an item set",
-		"locked: host-provided reason shown"
-	)
-	view.queue_free()
 	Utils.get_focus_emulator(1, scene).focused_control = free
 	yield(_frames(1), "completed")

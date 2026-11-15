@@ -6,7 +6,8 @@ extends Reference
 # missing, so the game owns no DLC; the harness's real state is put back at the end.
 # Synchronous (no frame passes while the fake lobby is up), like session_lifecycle_tests.gd.
 #  - without borrowing, the host's DLC character / items / weapons / effects / background are lost
-#  - WELCOME's DLC list -> borrowed (validated), F9 note, run state round-trips, client lookups,
+#  - WELCOME's DLC list -> borrowed (validated), the lobby page's note, run state round-trips,
+#    client lookups,
 #    DLC consumable / enemy types render, enemy pillar puppets
 #  - leaving / hosting / leaving client mode by any path: everything is exactly as before, and
 #    nothing save() writes changed
@@ -22,8 +23,8 @@ const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
-const SelectionGrid := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/selection_grid.gd"
+const MenuPuppet := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/menu_puppet.gd"
 )
 const SessionLifecycleTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
@@ -96,7 +97,7 @@ func run(t: Node, together: Node) -> void:
 	together._client_active = saved.client_active
 	ProgressData.saved_run_state = saved.run_state
 	ProgressData.last_saved_run_state = saved.last_run_state
-	together.get_node("TogetherMenu").close()
+	SessionLifecycleTests.close_page(together.get_node("LobbyMenu"))
 	RunData.reset()
 	RunData.current_zone = saved.zone  # reset() keeps the zone; later battle tests use it
 
@@ -187,7 +188,7 @@ func _test_borrowed_session(
 	transport: Node, host_run: Dictionary, before: Dictionary, save_before: String
 ) -> void:
 	var session: Node = _together.session
-	var menu: Node = _together.get_node("TogetherMenu")
+	var lobby: Node = _together.get_node("LobbyMenu")
 	var lent := DlcBorrow.missing([OTHER_DLC, DLC])  # in update_data_list order
 	_join(transport, [DLC, OTHER_DLC, "bogus_dlc"])
 	_t._check(
@@ -197,15 +198,14 @@ func _test_borrowed_session(
 	_t._check(session.peers[HOST].ready, "client ready with the borrowed DLC")
 	_t._check(ProgressData.is_dlc_available(DLC), "borrowed DLC registered")
 	_t._check(not DLC in Compat.local_info("x").dlcs, "borrowed DLC never reported as owned")
-	menu.open()
+	var page: Control = lobby.open()
 	_t._check(
-		"Using the host's DLC for this session: " in menu.details_text()
-		and "Primal Dread" in menu.details_text(),
-		"F9 details note the borrowed DLC"
+		"Using the host's DLC for this session: " in page._details.text
+		and "Primal Dread" in page._details.text,
+		"the lobby page's details note the borrowed DLC"
 	)
-	menu._refresh()
-	_t._check(menu._host_button.disabled, "Host lobby disabled while a client")
-	menu.close()
+	_t._check(not page._host_button.visible, "no Host lobby while a client")
+	SessionLifecycleTests.close_page(lobby)
 	_t._check(Puppet.blocks_progress(), "saves / challenges blocked while borrowed")
 	_t._check(save_fingerprint() == save_before, "borrowing changes nothing save() writes")
 
@@ -227,10 +227,10 @@ func _test_borrowed_session(
 			print("  info: no item or weapon with a DLC-only effect script found")
 		else:
 			print("  info: DLC-only effect script on %s" % host_run.effect_item)
-	var grid = SelectionGrid.new()
+	var menus = MenuPuppet.new()
 	var char_id: String = _update.item_set.characters[0].my_id
-	_t._check(grid.find_item(char_id) != null, "selection grid knows the DLC character (no '?')")
-	grid.free()
+	_t._check(menus._find_item(char_id) != null, "the selection screens know the DLC character")
+	menus.free()
 	_test_dlc_types()
 	MusicManager.shuffled_tracks.append(_update.dlc_data.music_tracks[0])  # queue refilled
 
@@ -282,13 +282,13 @@ func _test_dlc_types() -> void:
 	pillar.queue_free()
 
 
-# F9 "Host lobby" while still a client (its button is disabled, but if it got pressed): leaves
-# first, so the borrowed DLC is gone before the lobby exists.
+# "Host lobby" while still a client (the page has no such button then, but if it were asked):
+# leaves first, so the borrowed DLC is gone before the lobby exists.
 func _test_host_while_borrowed(transport: Node, before: Dictionary) -> void:
 	_join(transport, [DLC])
 	_t._check(DlcBorrow.is_active(), "borrowed again on the next join")
 	_steam.created = 0
-	_together.get_node("TogetherMenu")._on_host_pressed()  # as if clicked anyway
+	_together.get_node("LobbyMenu").host()  # as if asked anyway
 	_t._check(_steam.created == 1 and not DlcBorrow.is_active(), "hosting reverts the borrow first")
 	_expect_reverted(before, "before hosting")
 	transport._on_lobby_created(1, LOBBY)

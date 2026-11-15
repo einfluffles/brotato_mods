@@ -1,8 +1,7 @@
 extends Reference
-# F9 panel input (keyboard/pad navigation, input kept away from the game), the wave-failed retry
-# prompt and its cursor on clients (incl. cursors that arrive before their controls are
-# visible, and the cursors' key on the prompt), the battle -> next screen transition, and the
-# client's copy of the selection grid.
+# The wave-failed retry prompt and its cursor on clients (incl. cursors that arrive before their
+# controls are visible, and the cursors' key on the prompt), the battle -> next screen
+# transition, and the client's copy of the selection grid.
 
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
@@ -27,26 +26,12 @@ const PauseControl := preload(
 const CursorKeyTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursor_key_tests.gd"
 )
-const GUARD_NAME := "BrotatoTogetherMenuInputGuard"
 const HOST := 2  # fake steam ids of the streams of its own
 const P1 := 11
 const P2 := 12
 
 
 var t: Node = null  # the test mod: _check()
-
-
-class Probe:
-	extends Node
-	# Stands in for the game: records every key/pad event that reaches a normal node.
-	var events := []
-
-	func _ready() -> void:
-		pause_mode = PAUSE_MODE_PROCESS
-
-	func _input(event: InputEvent) -> void:
-		if not (event is InputEventMouse):
-			events.append(event)
 
 
 # Calls BattleHost's peer_ready handler from a newer object (see _test_join_order).
@@ -61,7 +46,6 @@ class PeerReadyRelay:
 # In a battle-capable state (run from the battle tests); leaves no scene of its own behind.
 func run_battle_tests(test_mod: Node, together: Node):
 	t = test_mod
-	yield(_test_panel_input(together), "completed")
 	yield(_test_retry_prompt(together), "completed")
 
 
@@ -115,109 +99,6 @@ static func _sections(messages: Array) -> Array:
 func _frames(count: int):
 	for _i in count:
 		yield(_tree(), "idle_frame")
-
-
-func _key(scancode: int, pressed: bool) -> void:
-	var event := InputEventKey.new()
-	event.scancode = scancode
-	event.physical_scancode = scancode  # the game binds arrows/WASD by physical key
-	event.pressed = pressed
-	Input.parse_input_event(event)
-
-
-func _pad(button: int, pressed: bool) -> void:
-	var event := InputEventJoypadButton.new()
-	event.device = 0
-	event.button_index = button
-	event.pressed = pressed
-	Input.parse_input_event(event)
-
-
-func _tap_key(scancode: int):
-	_key(scancode, true)
-	yield(_frames(1), "completed")
-	_key(scancode, false)
-	yield(_frames(2), "completed")
-
-
-func _tap_pad(button: int):
-	_pad(button, true)
-	yield(_frames(1), "completed")
-	_pad(button, false)
-	yield(_frames(2), "completed")
-
-
-func _test_panel_input(together: Node):
-	var menu: CanvasLayer = together.get_node("TogetherMenu")
-	var root := _tree().root
-	var probe := Probe.new()
-	root.add_child(probe)
-	yield(_tap_key(KEY_F9), "completed")
-	t._check(menu.is_open(), "panel: F9 opens")
-	var guard := root.get_node_or_null(GUARD_NAME)
-	t._check(guard != null and guard.get_index() == root.get_child_count() - 1, "panel: guard last")
-	t._check(together.input_sync.local_input_blocked, "panel: client input to host neutral")
-	t._check(menu.selected_button() != null, "panel: a button is selected")
-	probe.events.clear()
-
-	# Held arrow: the game neither gets the event nor sees the action pressed when polling.
-	_key(KEY_RIGHT, true)
-	yield(_frames(1), "completed")
-	t._check(probe.events.empty(), "panel: game gets no key events")
-	t._check(not Input.is_action_pressed("ui_right"), "panel: polled action released")
-	_key(KEY_RIGHT, false)
-	yield(_frames(1), "completed")
-
-	# Confirm sub-state: keyboard to No, accept -> back to the main row.
-	menu.ask_confirm("Really?", "close")
-	t._check(_texts(menu.nav_buttons()) == ["Yes", "No"], "confirm: Yes / No")
-	yield(_tap_key(KEY_RIGHT), "completed")
-	t._check(menu.selected_button().text == "No", "confirm: arrow moves the selection")
-	yield(_tap_key(KEY_ENTER), "completed")
-	t._check(menu.is_open() and not menu._confirm_box.visible, "confirm: No returns")
-	t._check("Close" in _texts(menu.nav_buttons()), "confirm: main row back")
-	# Gamepad: B leaves the sub-state, A on Yes runs the action (here: close).
-	menu.ask_confirm("Really?", "close")
-	yield(_tap_pad(JOY_BUTTON_1), "completed")
-	t._check(menu.is_open() and not menu._confirm_box.visible, "confirm: B backs out")
-	menu.ask_confirm("Really?", "close")
-	yield(_tap_pad(JOY_BUTTON_0), "completed")
-	t._check(not menu.is_open(), "confirm: A on Yes runs it")
-	t._check(probe.events.empty(), "panel: game got none of it (incl. A release)")
-	t._check(not together.input_sync.local_input_blocked, "panel: client input back")
-
-	# Esc closes; its release (the game pauses / goes back on release) is swallowed too.
-	yield(_tap_key(KEY_F9), "completed")
-	probe.events.clear()  # the F9 press itself is seen: the panel was closed
-	_key(KEY_ESCAPE, true)
-	yield(_frames(1), "completed")
-	t._check(not menu.is_open(), "panel: Esc closes")
-	_key(KEY_ESCAPE, false)
-	yield(_frames(2), "completed")
-	t._check(probe.events.empty(), "panel: Esc release swallowed %s" % [probe.events])
-	t._check(root.get_node_or_null(GUARD_NAME) == null, "panel: guard gone after close")
-	yield(_tap_key(KEY_RIGHT), "completed")
-	t._check(probe.events.size() == 2, "panel: game gets keys again (%d)" % probe.events.size())
-
-	# Gamepad: hold Select to open (a short press does nothing), B closes.
-	_pad(JOY_SELECT, true)
-	yield(_tree().create_timer(0.25), "timeout")
-	t._check(not menu.is_open(), "pad: short Select press does nothing")
-	yield(_tree().create_timer(0.4), "timeout")
-	t._check(menu.is_open(), "pad: holding Select opens")
-	_pad(JOY_SELECT, false)
-	yield(_frames(2), "completed")
-	t._check(menu.is_open(), "pad: releasing Select keeps it open")
-	yield(_tap_pad(JOY_BUTTON_1), "completed")
-	t._check(not menu.is_open(), "pad: B closes")
-	probe.queue_free()
-
-
-static func _texts(buttons: Array) -> Array:
-	var texts := []
-	for button in buttons:
-		texts.append(button.text)
-	return texts
 
 
 # Host fails a wave: the retry prompt and its cursor reach the client's puppet battle; clicking
@@ -429,13 +310,13 @@ func _test_pause_host(together: Node) -> Array:
 	return message
 
 
-# The host's grid (order + flags) and both cursors, drawn on the client from ids alone.
+# The host's grids (every element in order, with flags and tier) and who selected; the client
+# pairs a state with the grids of its screen.
 func _test_selection_grid(together: Node):
 	var menu_sync: Node = together.menu_sync
 	menu_sync.set_process(false)
 	var scene := _tree().current_scene
 	menu_sync._scene = scene
-	menu_sync._emulators = ScenePaths.find_focus_emulators(scene)
 	var grids: Dictionary = menu_sync.grids_state()
 	var inventory = scene.get_node("%Inventory1")
 	t._check(
@@ -449,24 +330,29 @@ func _test_selection_grid(together: Node):
 		menu_sync.set_process(true)
 		yield(_frames(1), "completed")
 		return
-	t._check(grids.inventories[0][0] == inventory.columns, "grid: host columns")
 	var elements := []
-	var picks := []
 	for child in inventory.get_children():
 		if child is InventoryElement:
 			elements.append(child)
-			if not child.is_random and child.item != null:
-				picks.append(child)
-	t._check(grids.inventories[0][1].size() == elements.size(), "grid: every host element")
-	var first: InventoryElement = picks[0]
-	var second: InventoryElement = picks[min(3, picks.size() - 1)]
-	Utils.get_focus_emulator(0, scene).focused_control = first
-	Utils.get_focus_emulator(1, scene).focused_control = second
+	var entries: Array = grids.inventories[0]
+	t._check(entries.size() == elements.size(), "grid: every host element")
+	var same := true
+	for i in min(entries.size(), elements.size()):
+		var element: InventoryElement = elements[i]
+		var id: String = element.item.my_id if element.item != null else ""
+		var random: bool = entries[i][1] & menu_sync.FLAG_RANDOM != 0
+		same = same and entries[i][0] == id and random == element.is_random
+		if element.item != null:
+			same = same and entries[i][2] == element.item.tier
+	t._check(same, "grid: ids, random flag and tier in the host's order")
+	t._check(not grids.has("run"), "grid: no run state for the character selection")
 	scene._has_player_selected[1] = true
 	var state: Dictionary = menu_sync._state()
+	t._check(state.selected == [false, true], "state: who selected %s" % [state.selected])
 	t._check(
-		state.players[0][4] == 0 and state.players[0][5] == elements.find(first),
-		"grid: host cursor position %s" % [state.players[0].slice(4, 5)]
+		state.zone == [RunData.current_zone, ProgressData.settings.zone_is_random]
+		and state.endless == RunData.is_endless_run,
+		"state: zone and endless of the run options"
 	)
 	state["you"] = 1
 	# Client side (the handler of both sections): grids come once, later states reuse them.
@@ -477,42 +363,19 @@ func _test_selection_grid(together: Node):
 	menu_sync.apply_state(StateStream.MENU, bytes2var(var2bytes(state), false), 1)
 	menu_sync.apply_state(StateStream.MENU_GRIDS, bytes2var(var2bytes(grids), false), 1)
 	menu_sync.apply_state(StateStream.MENU, bytes2var(var2bytes(state), false), 2)
+	menu_sync.apply_state(StateStream.MENU, {"kind": "x", "screen": "junk"}, 3)
 	menu_sync.disconnect("menu_state", self, "_on_received")
 	t._check(
 		received.size() == 2 and received[1].grids.inventories.size() == 1,
-		"grid: client keeps the last grids"
+		"grid: client keeps the last grids, junk is ignored"
 	)
-	var view = ClientView.new()
-	_tree().root.add_child(view)
-	view.show_menu(received[1])
-	var grid = view._grid
-	t._check(grid.visible and grid.cell_count(0) == elements.size(), "grid: drawn")
-	var item = grid.cell_item(0, elements.find(first))
-	t._check(item != null and item.my_id == first.item.my_id, "grid: same element at same index")
-	var cell0: Dictionary = grid.cell_at(0, elements.find(first))
-	var cell1: Dictionary = grid.cell_at(0, elements.find(second))
-	t._check(
-		cell0.style.border_width_top > 0
-		and cell0.style.border_color == CoopService.get_player_color(0),
-		"grid: P1 cursor in P1 colour"
-	)
-	t._check(
-		cell1.style.border_width_top > cell0.style.border_width_top and "P2" in cell1.label.text,
-		"grid: P2 cursor, marked ready"
-	)
-	# A host-only id (DLC this machine lacks) and junk don't break the view.
-	var odd := {"random_icon": "res://../x", "inventories": [[4, [["not_a_real_id", 0]]], "junk"]}
-	view.show_menu({"kind": "weapon_selection", "count": 0, "players": [], "grids": odd})
-	t._check(grid.cell_count(0) == 1 and grid.cell_item(0, 0) == null, "grid: unknown id shown")
-	t._check(grid.inventory_count() == 2 and grid.cell_count(1) == 0, "grid: junk ignored")
-	view.queue_free()
 	scene._has_player_selected[1] = false
 	menu_sync.set_process(true)
 	yield(_frames(1), "completed")
 
 
 # Sections menu and menu_grids from a host stream to client streams (MenuSync on both ends):
-# the state, then its grids; a cursor move sends no grids; a peer joining mid-menu gets both;
+# the state, then its grids; a selection sends no grids; a peer joining mid-menu gets both;
 # a state of another screen waits for that screen's grids; null forgets them.
 func _test_menu_sections(together: Node) -> void:
 	var menu_sync: Node = together.menu_sync
@@ -540,18 +403,11 @@ func _test_menu_sections(together: Node) -> void:
 		and shown.get("grids", {}).get("screen") == scene.get_instance_id(),
 		"menu: the client shows the state with its grids once both arrived"
 	)
-	# A cursor moves: the state goes out again, the grids do not.
-	var emulator = Utils.get_focus_emulator(0, scene)
-	var focused = emulator.focused_control
-	var other: Control = null
-	for child in scene.get_node("%Inventory1").get_children():
-		if child is InventoryElement and child != focused and not child.is_random:
-			other = child
-			break
-	emulator.focused_control = other
+	# A player selects: the state goes out again, the grids do not. (The cursors are FocusSync's.)
+	scene._has_player_selected[0] = true
 	host.step(0.1)
 	sent = _take(host)
-	t._check(_sections(sent) == [[P1, StateStream.MENU]], "menu: a cursor move sends no grids")
+	t._check(_sections(sent) == [[P1, StateStream.MENU]], "menu: a selection sends no grids")
 	_deliver(one, sent)
 	t._check(
 		received.size() == 2 and received[1].grids.get("screen") == scene.get_instance_id(),
@@ -587,7 +443,7 @@ func _test_menu_sections(together: Node) -> void:
 	one.receive([StateStream.MENU_GRIDS, 12, {"screen": -1, "inventories": []}])
 	t._check(received.size() == 1, "menu: inactive (battle, shop) forgets the state")
 	menu_sync.disconnect("menu_state", self, "_on_received")
-	emulator.focused_control = focused
+	scene._has_player_selected[0] = false
 	for stream in [host, one, two]:
 		_free_stream(stream)
 

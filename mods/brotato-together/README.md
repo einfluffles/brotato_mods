@@ -37,9 +37,10 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   they still match your panel. The inventory popup's meca upgrade shows the two options the host rolled
   and sends the one you pick.
   The shop does not follow the keyboard and mouse yet the way the level-up panel does.
-- **Selection screens / end of run:** the host's selection grid (built from the host's element list,
-  so local unlocks/DLC don't matter) with every player's cursor and ready state, plus per-player
-  cards of what each cursor is on.
+- **Selection screens / end of run:** clients see the game's own character, weapon and difficulty
+  selection and end-of-run screens, showing what the host's show: the host's grid (so local
+  unlocks/DLC don't matter), every player's cursor, panel and ready state, the zone, the join
+  slots. They decide nothing there; input goes to the host.
 - **Wave failed:** the retry / end-run prompt appears on clients too, with who gets to choose.
 - **Sounds:** clients hear the host's sounds — battle sounds with the snapshots, menu/shop sounds as
   they happen — instead of their own mirrored screens' sounds.
@@ -47,7 +48,7 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   module that ships inside Brotato. No port forwarding.
 - A client never writes the host's run into its own save file and never unlocks challenges from it.
 - **DLC:** a friend without one of the host's DLCs can still join: like Steam Remote Play Together, the
-  host's DLC content is usable in the host's session only (the F9 menu says so) and is gone again as
+  host's DLC content is usable in the host's session only (the *Online co-op* page says so) and is gone again as
   soon as they leave; nothing of it is saved and it never becomes their own.
 
 Details: [`docs/implementation.md`](docs/implementation.md).
@@ -56,15 +57,23 @@ Details: [`docs/implementation.md`](docs/implementation.md).
 
 Everyone subscribes to the Workshop item (and unsubscribes from other online/co-op mods). Then:
 
-Press **F9** (gamepad: **hold Select/View** for half a second) to open the brotato:together menu:
-*Host lobby*, *Invite friends* (Steam overlay), *Leave lobby* (asks Yes / No mid-run), plus connection details. A small
-status pill at the bottom of the screen shows the role, player count and ping. F9 and Select are
-the only inputs the mod uses — the game binds neither (F8 is the game's bug reporter).
+The mod has no menu, hotkey or overlay of its own: online play sits in the game's menus and is used
+like them (mouse, keyboard, gamepad).
 
-In the menu: mouse, or arrows / d-pad / stick to pick a button, Enter / Space / A to press it,
-Esc / B to go back or close (F9 / Select close it too). While it is open the game gets none of
-your keyboard/gamepad input (a client sends neutral input to the host) and the mouse cursor
-stays visible.
+- **Character selection:** the run options box has an **Online** toggle under the game's *Co-op*
+  toggle. Switching it on hosts a lobby (and switches co-op on); *Invite friends* (Steam overlay)
+  appears below it, with the number of players in the lobby. Switching it off leaves the lobby.
+- **Main menu → Online co-op**, and **pause menu → Online co-op** during a run (host and client):
+  a page with *Host lobby*, *Invite friends*, *Leave lobby* and the connection details (role, every
+  player with state and ping, players who are away, the last error). Leaving in the middle of a run
+  asks first.
+- **As a client outside a wave** (waiting for the host, selection screens) there is no pause menu:
+  **Esc / Start** opens the same page as a popup. While it is open the game gets none of your
+  keyboard/gamepad input (the host sees you letting go of everything).
+- Friends join through the Steam invite or *Join game* in the friends list. An invite you accept in
+  the middle of a run opens the page with *Join invite* instead of dropping your run.
+- If a lobby fails (not created, join refused, host gone), the reason shows in the main menu's
+  error line and on the page.
 
 The host opens co-op character selection; remote players hold *accept* (Space / Enter / A) to join
 like local players. Every free slot shows "Player N" and the game's hold-to-join hint, on the host and
@@ -72,7 +81,7 @@ on clients. In character selection each player can change their colour with **F*
 **Y** (gamepad; Triangle on PlayStation pads), cycling through 8 colours and skipping colours other
 players already have. The colour is used everywhere the game uses player colours (cursor, panels,
 HUD, player highlight) and clients see the same colours. Nothing is saved; players who don't pick keep
-the game's colours. A locked character under a cursor shows how to unlock it (also on clients' cards).
+the game's colours. A locked character under a cursor shows how to unlock it (on clients too).
 
 A wave never pauses while friends are connected (Esc opens the menu over the running game, see
 above; losing window focus pauses nothing either). In the shop anyone can pause: the host operates
@@ -84,10 +93,11 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 ## Tests
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
-run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the own shop
+run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
-panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring (also with another mod's extra controls on one machine only), character-selection cards and grid, shop UI sounds, F9 panel
-keyboard/pad input, the wave-failed prompt and the battle -> shop transition on clients, the Esc menu
+panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress; nothing decided or saved there), shop UI sounds, the lobby
+in the game's menus (title screen and pause menu page, the Online toggle of character selection, the
+client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam), the wave-failed prompt and the battle -> shop transition on clients, the Esc menu
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave
 costs per snapshot and per frame; a weapon breaking mid-wave, the hole layout and the host's speed in

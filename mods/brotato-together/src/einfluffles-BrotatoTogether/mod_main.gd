@@ -21,6 +21,9 @@ const EXTENSIONS := [
 	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
 	"extensions/ui/shop_item.gd",
 	"extensions/ui/pause_menu.gd",
+	"extensions/ui/character_selection.gd",
+	"extensions/ui/weapon_selection.gd",
+	"extensions/ui/difficulty_selection.gd",
 ]
 
 var transport: Node = null
@@ -33,6 +36,7 @@ var focus_sync: Node = null
 var shop_sync: Node = null
 var upgrades_sync: Node = null
 var menu_sync: Node = null
+var menu_puppet: Node = null  # client: the host's menus as the game's own scenes
 var ui_sounds: Node = null
 var pause_control: Node = null
 var absent_players: Node = null
@@ -107,6 +111,9 @@ func _ready() -> void:
 	menu_sync.state_stream = state_stream
 	menu_sync.setup(session, battle_host)
 	menu_sync.connect("menu_state", self, "_on_menu_state")
+	menu_puppet = _add("sync/menu_puppet.gd", "MenuPuppet")
+	menu_puppet.state_stream = state_stream
+	menu_puppet.setup(session)
 
 	ui_sounds = _add("sync/ui_sounds.gd", "UiSounds")
 	ui_sounds.setup(session)
@@ -119,12 +126,13 @@ func _ready() -> void:
 
 	_add_player_control()
 
-	var menu: Node = _load_script("ui/together_menu.gd").new()
-	menu.name = "TogetherMenu"
+	var menu: Node = _load_script("ui/lobby_menu.gd").new()
+	menu.name = "LobbyMenu"
 	menu.setup(transport, session, battle_host, battle_client)
 	menu.absent_players = absent_players
+	menu.pause_control = pause_control
 	add_child(menu)
-	pause_control.together_menu = menu
+	pause_control.lobby_menu = menu
 	menu.connect("open_changed", self, "_on_menu_open_changed")
 
 	session.connect("peer_ready", self, "_on_peer_ready")
@@ -162,7 +170,7 @@ func _on_peer_ready(steam_id: int) -> void:
 		_enter_client_view()
 
 
-# While the F9 panel owns the keyboard/pad, the host gets neutral input from us.
+# While the lobby popup owns the keyboard/pad, the host gets neutral input from us.
 func _on_menu_open_changed(is_open: bool) -> void:
 	input_sync.local_input_blocked = is_open
 
@@ -189,10 +197,11 @@ func _on_transition_grace_over(stale_id: int) -> void:
 		_enter_client_view()
 
 
-# Host is in a menu (selection screens, end of run, title): show it in the client view. Also
-# covers leaving the shop/battle for a menu without a dedicated end message.
+# Host is in a menu: its selection screens and the end of run are the game's own scenes here
+# too (sync/menu_puppet.gd); anything else (title screen, its pages) is the waiting screen.
+# Also covers leaving the shop/battle for a menu without a dedicated end message.
 func _on_menu_state(state: Dictionary) -> void:
-	if not _client_active:
+	if not _client_active or menu_puppet.show(state):
 		return
 	var current := get_tree().current_scene
 	if current == null or current.get_script() != _client_view:

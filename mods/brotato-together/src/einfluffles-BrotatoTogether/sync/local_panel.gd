@@ -36,7 +36,7 @@ const ARROW_TEXTURES := [
 ]
 
 var panels := []  # every player's panel (Controls): where the mouse is ours to handle
-var blocked := false  # the F9 panel is open and owns keyboard, pad and mouse
+var blocked := false  # the lobby popup is open and owns keyboard, pad and mouse
 var hold_cursor := false  # hover leaves the own cursor where it is (a click still moves it)
 
 var _own: Control = null

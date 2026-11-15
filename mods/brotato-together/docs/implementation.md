@@ -278,7 +278,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Full resync = `peer_ready` re-emitted (every sync module, and the state stream for its sections right after
   them, resends its whole state on it), at most once per second per peer. Queued when a reliable send fails
   (`sendMessageToUser`'s EResult != 1, logged as a warning); unreliable failures are only logged at debug level.
-- Ping (`rtt_ms`, pill and F9 panel): PING once a second from `Session._process`, unreliable, answered with
+- Ping (`rtt_ms`, the Online co-op page's details): PING once a second from `Session._process`, unreliable, answered with
   PONG where the transport reads it. Messages are only read once a frame (`Transport._process`), so the time
   until the PONG is handled holds up to a frame of each game and all of a stalled one: with no network delay
   at all, two 60 ms stalls read as 120 ms (`session_lifecycle_tests.gd`). Stalls measured headless: battle
@@ -286,7 +286,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   client 6 / 100 / 200 ms (now 4 / 60 / 115 ms, see Shop). `rtt_ms` therefore leaves out what both messages waited for their frame:
   GodotSteam's `time_received` against `getLocalTimestamp()` when the message is handled
   (`Transport.held_msec`); the PONG carries the PING's wait (`held`). What is left is the network and Steam's
-  send queue. The whole time stays in `answer_ms` (F9 panel: "with frame time"). Without a receive time
+  send queue. The whole time stays in `answer_ms` (the page: "with frame time"). Without a receive time
   (0 or implausible) nothing is taken off, as before. An answer later than 150 ms is logged ("Slow answer
   from ...": network, the other game's frame, this one's, the time since this game's last frame, the scene,
   and Steam's own numbers from `getSessionConnectionInfo`: its ping, send queue time, pending and unacked
@@ -336,8 +336,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `ShopSync` handles it (own panel off, banner; waits while the shop loads). No `clear_state`: the next
     screen replaces the shop.
 - Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
-  version (manifest) must match. Rejections carry a reason that the client shows in the F9 menu. DLC never
-  rejects (protocol 5 / 0.2.1).
+  version (manifest) must match. Rejections carry a reason that the client shows like every lobby error
+  (main menu error label, lobby page; see Lobby in the game's menus). DLC never rejects (protocol 5 / 0.2.1).
 - Host DLC on clients (`session/dlc_borrow.gd`), like Steam Remote Play Together: all DLC content ships in
   the base `Brotato.pck`; ownership only decides registration (`ProgressData.available_dlc_ids`, from which
   `ItemService.items/characters/weapons` are rebuilt, and `DLCData.add_resources()`: backgrounds, title
@@ -355,10 +355,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   appends the ids, `add_resources()` in `update_data_list` order, invalidates the item lists. Revert
   (`remove_resources()` in reverse, stash restored in place, borrowed music tracks dropped from
   `MusicManager.shuffled_tracks`) runs on `lobby_left` (every way out of client mode: Leave, host left /
-  timed out, rejection, joining another lobby, F9 *Host lobby*, which leaves first) and `lobby_ready`, before
+  timed out, rejection, joining another lobby, *Host lobby*, which leaves first) and `lobby_ready`, before
   the title screen loads; `Session._process` reverts if borrowed DLC exists without a welcomed client
   role. While borrowed, saves and challenges are blocked like puppet mode (`Puppet.blocks_progress()`);
-  HELLO / WELCOME report only owned DLC. The F9 details show "Using the host's DLC for this session: …".
+  HELLO / WELCOME report only owned DLC. The lobby page's details show "Using the host's DLC for this
+  session: …".
   Challenges of a borrowed DLC aren't loaded (the client never completes challenges; the end-of-run view
   is the host's).
 - Leaving is role-aware (`transport.was_host`). Client: puppet mode off (own run restored), puppet slots
@@ -366,8 +367,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   local pad unplugged mid-run); their steam id -> device mapping is kept, so they get their own characters
   back when they join the host's next lobby. Shop / level-ups wait for them (game rule). Before the run
   (players can still join) their slots are freed.
-- F9 *Leave lobby* mid-run needs a second click; a Steam invite accepted mid-run waits for *Join invite*
-  (outside a run it is taken right away, closing the menu declines it).
+- *Leave lobby* mid-run asks first (the game's confirm page); a Steam invite accepted mid-run opens the
+  lobby page and waits for *Join invite* (outside a run it is taken right away; closing the page declines
+  it). See Lobby in the game's menus.
 
 ## Menus
 
@@ -377,7 +379,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (`ProgressData.saved_run_state`, `RunData.resumed_from_state_in_shop = true`, `shop_effects_checked = true`)
   so `BaseShop._ready` rolls nothing; updates re-run the per-player part of `BaseShop._ready`
   (`set_weapons_data/items_data`, `_update_stats`, gold label, reroll price via `ItemService.get_reroll_price`,
-  `ShopItem.set_shop_item/activate/deactivate`, `_update_visual_locks`, checkmarks). Client disconnects
+  `ShopItem.set_shop_item/activate/deactivate`, the lock per slot, checkmarks). Client disconnects
   `BaseShop._on_tree_exited` (rolls curses on locked items). State stream section `shop`: the host checks
   every 0.1 s (slots, Go flags, revisions, pages, meca rolls, colours + the run state's revision).
   Change detection of the run state (`sync/run_cache.gd`, shared with the level-up / crate panels: one
@@ -423,7 +425,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - Keyboard and mouse: `ShopLocal.guard` adds a `LocalPanel` (see the level-up panels) as the puppet
     shop's last child (after `FocusEmulator1..4`), with every `CoopShopPlayerContainer` as `panels`.
     The own panel is set while the local buttons drive it (`take_over`; unset on stop, leaving, a
-    host pause, and moved on another slot); `blocked` follows the F9 panel in `ShopLocal.process`.
+    host pause, and moved on another slot); `blocked` follows the lobby popup in `ShopLocal.process`.
     After a type change `ShopLocal` calls the container's `_set_focus_neighbours` (the game runs it
     in `_ready` and on a page change only) and, if the cursor sat on an arrow that became a glyph,
     puts it where `_set_focus_after_carousel_index_change` would: `_get_default_focus_control` on
@@ -444,7 +446,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     |---|---|---|
     | buy | `ShopItem.buy_button_pressed` loses `ShopItemsContainer.on_shop_item_buy_button_pressed` (gold check, `deactivate`, buy delay, `shop_item_bought`) | sets `effect_choice_selected` for a meca item, then presses the item's buy button (`FocusEmulatorSignal.emit(button, "pressed", p)`, what a FocusEmulator does) |
     | steal | `steal_button_pressed` loses the container's handler; `BaseShop._input` calls `ShopItem.steal_item()`, which ends in that signal | `ShopItem.steal_item()` when `_item_steals[p] > 0` |
-    | lock / unlock | `ShopItem.change_lock_status` writes `RunData` and is called directly by `BaseShop._input`: a script extension emits `lock_requested` instead while puppeting | `change_lock_status(wanted)` when the item `is_lockable` and is not already in that state |
+    | lock / unlock | `ShopItem.change_lock_status` writes `RunData` and is called directly by `BaseShop._input`: a script extension emits `lock_requested` instead while puppeting; the own panel shows the lock at once (see Locks) | `change_lock_status(wanted)` when the item `is_lockable` and is not already in that state |
     | ban | `ban_item_pressed` loses the container's handler (`ShopItem.ban_item` spends the token); the hold loop, `_release_BanButton` and the ban animation stay local and end in that signal | emits the item's `ban_item_pressed` when its ban button is enabled (the container checks the token) |
     | dismantle | `dismantle_button_pressed` loses the container's handler; `BaseShop._on_ban_shortcut_released` ends in it | `ShopItem._on_DismantleButton_pressed()` when `BaseShop._can_dismantle_with_shortcut` |
     | reroll | reroll button `pressed` loses `BaseShop._on_RerollButton_pressed` | presses the reroll button |
@@ -467,7 +469,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     sender's panel revision: the host bumps it when the panel offers something new (offered item
     instances per node, reroll count, weapon instances; locks and gold are not part of it) and at once
     when it applies a press, because buy and steal run deferred in the game. "go", "endless" and "lock"
-    carry the wanted state and are applied at most once; "go" and "endless" ignore the revision. Nothing
+    carry the wanted state, are applied at most once and ignore the revision (a lock names its item
+    by slot + id; with the revision, a lock pressed right after a buy was dropped until the new
+    state had arrived). Nothing
     is applied while the host's tree is paused. After an applied intent the state goes out in the next
     frame (once the deferred handlers ran; `StateStream.flush`), not at the next 0.1 s check, and not
     already in the intent's own frame. `ShopItemsContainer` ignores
@@ -476,6 +480,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     cursor with deferred `grab_focus` calls, one of them onto an element it already queued for deletion
     (it relies on a later call that a visible mouse skips), and a `FocusEmulator` that keeps a freed
     control errors on its next move.
+  - Locks (protocol 15): the state carries the lock of every slot node (`locks`, in the key), and the
+    client sets each node to it (`ShopSync._apply_locks`). Before, the client called the game's
+    `BaseShop._update_visual_locks`, which finds a locked item by its place in the offered list;
+    that is the slot only at shop entry. After a buy (the slot stays, the list shrinks) the lock
+    showed on a neighbour or on no slot at all, and since the lock shortcut toggles what the slot
+    shows, the host got "lock" for a locked item or "unlock" for an unlocked one and dropped both:
+    the item could not be unlocked any more. Two offered items with the same id had the same
+    problem. The own panel's press shows at once (`ShopLocal._on_own_lock`: `lock_visually` /
+    `unlock_visually`, view only, so the hint the game shows after the shortcut is right too); a
+    state from before the host's answer does not take it back, one that agrees ends the wait, and
+    after 1 s without one (`LOCK_WAIT_MSEC`: refused, or the item is gone) the slot shows the
+    host's lock again. A press that steals (a steal left) sends no lock. The host refreshes its
+    copy of the player's hint after an applied lock, like `BaseShop._input`.
   - Go: the client keeps no flag of its own. Its press sends "go"; the checkmark appears when the host's
     state has it. The game clears the flag itself when the cursor leaves the button, on cancel and on the
     triggers (`_on_GoButton_focus_exited`, `BaseShop._input`): `ShopLocal.process` sends "go 0" when the
@@ -491,7 +508,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     visible is ignored. Absent players and the pause hand-over
     work as before; while the host is paused (section `pause_shop`) the client's local buttons are off.
   - Differences from local co-op: with a steal left, the select shortcut steals and locks in one press;
-    the host applies the steal, which makes the lock stale (the game itself would lock the stolen item).
+    the client only sends the steal (the game itself would lock the stolen item).
     A second press made before the host's answer arrived (two quick buys) is dropped as stale.
   - Open: the host and the other clients do not see the own panel's focused inventory popup (cursor on its buttons is not
     visible on the host's copy); the client's hold-to-ban depends on its own `chal_banned_items` unlock
@@ -643,7 +660,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
       controls under the pointer the last in tree order (drawn on top), with clipping parents cutting
       their children; a popup's non-focusable background does not cover a button behind it. Every
       mouse event over any player's panel is marked handled, also when no panel is local, so another
-      player's panel never reacts. While the F9 panel is open (`InputSync.local_input_blocked`) the
+      player's panel never reacts. While the lobby popup is open (`InputSync.local_input_blocked`) the
       node does nothing. A popup that took the cursor (`ItemPopup._focused`, the crate weapon popup after
       a press on a weapon) keeps the mouse too: while it is open only its own buttons are hit, as its
       focus neighbours do for the keys. A mouse press stands for an accept that is held until the
@@ -709,18 +726,55 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     has) is ignored, as before: `apply_state` (only while mirroring and on the scene the body names;
     `local_emulators` are skipped) returns false until every cursor resolves to a visible control (scene
     still loading, retry prompt not shown yet), and the stream retries it every frame for up to 10 s. `ui/scene_paths.gd` only finds the emulators now (FocusSync, MenuSync, CoopSelection).
-- **Selection screens / end of run** (`sync/menu_sync.gd` + `ui/client_view.gd`): grids depend on local
-  unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
-  run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),
-  so they are not run on the client. Instead the host sends its grids (`BaseSelection._get_inventories()`,
-  visible ones: columns + ordered `[my_id, random/special/locked flags]`) and each
-  cursor as `[inventory, element index]`; `ui/selection_grid.gd` draws them with ids looked up in
-  `ItemService` (unknown ids → "?") and per-player colour borders (thicker when `_has_player_selected`),
-  plus `ItemPanelUI` cards for the item under each cursor. State stream sections menu (cursors, screen,
-  colours, `you` as the per-peer patch) and menu_grids (only when the grids change), both inactive in
-  battle / shop (null: the client forgets them, the next screen's own message takes over). Both carry
-  `screen` (host scene instance id): the client shows a state only with the grids of its screen, so a new
-  screen never shows with the previous one's grids (its grids follow in the same step).
+- **Selection screens / end of run** (`sync/menu_sync.gd`, `sync/menu_puppet.gd`, protocol 15): the
+  client runs the game's own scenes (`character_selection.tscn`, `weapon_selection.tscn`,
+  `difficulty_selection.tscn`, `coop_end_run.tscn`) as copies that decide nothing. Until protocol
+  14 it drew its own view of them (a grid of icons with coloured borders and an item card per
+  player), because the game's grids depend on local unlocks / DLC and the scenes run the join and
+  selection logic. Now:
+  - Host, state stream sections menu (kind, `screen` = host scene instance id, count, `coop`, who
+    selected, colours, `you` as the per-peer patch; character selection: zone `[id, random]`,
+    endless, `join` = hold progress while joining is open; weapon selection: `picks`; end of run:
+    `pages`) and menu_grids (per visible grid every element `[my_id, flags, tier]` in the host's
+    order; for weapon / difficulty selection and the end of run also the run state, packed once
+    per screen, and `won`). Both inactive in battle / shop. The cursors are FocusSync's, as on
+    every screen with FocusEmulators.
+  - Grids: `session/puppet_menu.gd` keeps the host's lists as this machine's items (duplicates
+    with the host's tier and lock); script extensions of the three selection scenes return them
+    from `_get_all_possible_elements` / `_get_unlocked_elements` while puppeting, so the scene's
+    own code builds the host's grid whenever it builds one (also for a player joining later). A
+    grid that still differs after a grids change is rebuilt the way
+    `_set_base_ui_player_count` does, the cursors on it put back by index. Ids this machine
+    does not know are left out (logged). Character cells are coloured by the host's tiers
+    (`MenuPuppet._apply_tiers`; `CharacterSelectionInventory.update_elements_color` reads this
+    machine's progress).
+  - Cut in the extensions while puppeting, where the decision is: `_on_element_pressed`,
+    `_on_selections_completed`, `_go_back`; character selection also `_on_BackButton_pressed`,
+    `_on_coop_initialized` and `_on_ZoneSelectionButton_item_selected` (writes
+    `ProgressData.settings`, and `_ready` calls it), and `CoopService.listening_for_inputs` is
+    switched off again after `_play_mode_init` / `_on_element_focused` (nobody joins on a
+    client; `MenuPuppet._process` keeps it off). End of run: `BaseEndRun._button_pressed = true`
+    spends its three buttons. A full-rect control on top of the copy takes the mouse, and a
+    control of the copy that gets the keyboard focus loses it in the same frame.
+  - Entering (`MenuPuppet._enter`, when a state names another `screen`): puppet mode, one puppet
+    slot per host player, `RunData.reset()` for the character selection or the host's run for
+    the others, co-op play mode, `RunData.menu_selection_back` for the character selection
+    (`init_coop_service` keeps the slots only on that path), then `change_scene`; the copy is
+    muted like the puppet shop (the host's UI sounds arrive as `UI_SOUNDS`).
+  - Applied from every state: player count (`connected_players_updated`, the scene adds and
+    removes its panels itself), who selected (`_has_player_selected` + the panel's `selected`,
+    never `_set_selected_element`, which ends the screen; a selected character keeps its panel
+    via `_player_characters` like on the host; re-applied every frame, the scene's own focus
+    handlers clear it), zone / background / endless without the scene's handlers, the join
+    progress through the CoopService extension (`bt_remote_progress`, so `CoopJoinPanel`s and
+    `ui/coop_selection.gd`'s hints follow), pick counts, end-of-run carousel pages.
+  - A screen without a copy (title screen and its pages, a host choosing for a solo run) shows
+    `ui/client_view.gd`, now only a waiting screen (key art, connection line, where the host is).
+  - Open: the cursor on these screens still makes the round trip through the host (no local
+    panel as in the shop); `CoopShowCharacterHint` (hold to see the character in weapon
+    selection) is not mirrored; item-set requirements are evaluated with this machine's sets; the
+    end of run shows the host's unlocked rewards; none of this has run between two real machines
+    yet (headless: `menu_puppet_tests.gd`).
 - **Co-op character selection UX** (`ui/coop_selection.gd`, `extensions/singletons/coop_service.gd`,
   protocol 9). Found in the game: `CoopJoinPanel1..4` (`coop_join_panel.gd :: update_indicators`) show
   the `COOP_HOLD_TO_JOIN` hint ("Hold {0} or {1} to join", A / Space glyphs) only in the *next* free slot
@@ -739,12 +793,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   colour", the game's glyphs) is added under the title. Colours travel as palette indices (`colors`) in
   the menu section, BATTLE_START and the shop state; the client validates them (one distinct palette index per slot)
   and mirrors them until it leaves the lobby (`bt_clear_remote_colors`). Nothing is saved.
-- **Locked characters**: the host's screen already shows the game's `LockedPanel` (challenge text via
-  `ChallengeService.find_challenge_from_reward`, or the item-set requirement) instead of the panel; only
-  the client cards showed the description. Menu state player entries now carry the host LockedPanel text
-  and "locked by a challenge"; the client card shows a `LockedPanel` with its own (localised) challenge
-  text, else the host's text. Free slots appear as client cards with the same join hint and the hold
-  progress (`join`), the colour hint shows once the client has a slot.
+- **Locked characters**: the game's `LockedPanel` (challenge text via
+  `ChallengeService.find_challenge_from_reward`, or the item-set requirement) shows instead of the
+  panel, on the host and, through the same code, on a client's copy (locked where the host has it
+  locked; the text is this machine's, so localised). Free slots, the join hint and the hold
+  progress are the scene's own `CoopJoinPanel`s there too.
 - **Wave failed** (`sync/retry_sync.gd`): `main.gd :: _on_EndWaveTimer_timeout` shows `UI/RetryWave`, which
   never runs on the puppet (timer callbacks disconnected). Host: state stream section retry, active while
   the prompt is visible (its `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's
@@ -754,14 +807,75 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - **Battle → next screen**: on `BATTLE_END` the client keeps the frozen battle (muted) until the shop / next
   battle / menu state replaces it (fallback to the client view after 2 s); the view only says "Waiting for
   the host" after 1.5 s.
-- **F9 panel input** (`ui/together_menu.gd`, `ui/menu_input_guard.gd`): `_input` runs in reverse tree order, so
-  while open a guard node kept as the root's last child sees key/pad events first, marks them handled (scene,
-  FocusEmulators, `CoopService`, GUI never see them) and `Input.action_release`s what they pressed (polling
-  stays neutral); after closing it also swallows the releases of keys pressed while open (the game pauses /
-  goes back on release). Mouse events pass; `InputService._input` hides the cursor on every event in co-op,
-  so the panel shows it again in `_input`/`_process`. Pad: hold `JOY_SELECT` (unbound in the game's InputMap).
-  Clients send neutral `INPUT` while it is open (`InputSync.local_input_blocked`). `ask_confirm()` = Yes/No
-  sub-state.
+- **Lobby in the game's menus** (`ui/lobby_menu.gd`; no overlay, hotkey or status pill of the mod's own).
+  `LobbyMenu` (a child of the mod node) holds the lobby actions, the texts (`details_text`, `status_text`,
+  `leave_question`) and the last error, and puts the controls where the game has its own. It finds the
+  places when `current_scene` changes (polled; no script extension of a menu):
+  - Page "Online co-op" (`ui/lobby_page.gd`): built in code like the game's pages (`menu_mods.tscn`: title
+    in `font_60_outline`, a `panel_style` panel with the details, 600 px `MyMenuButton`s, Back), with
+    `init()` and `back_button_pressed` as `Menus.switch` and its pages use them. Buttons by state: *Host
+    lobby* (out of a lobby; disabled without Steam, the details say why), *Invite friends* and *Leave
+    lobby* (in one), *Join invite* (a Steam invite is pending). The cursor follows when its button goes
+    away (*Host lobby* once the lobby exists; `MyMenuButton` disabling itself for 0.05 s after a press does
+    not count). Back on the plain `ui_cancel` (handled, like `MenuOptions`).
+  - It is added to a `Menus` node as one more page, with a button below a neighbour on the main page that
+    copies the neighbour's script (`MyMenuButton`), alignment, size and left / right focus neighbours; up /
+    down come from Godot's neighbour search in solo play and from the `FocusEmulator`'s in co-op (the pause
+    menu's emulator has `Menus` as a focus base, so every page under it is its player's). Title screen:
+    `TitleScreen._menus`, below `MainMenu.start_button`; the game dims the background for any page but the
+    main one. Pause menu (battle and shop, host and client): `PauseMenu._menus`, below `%OptionsButton`,
+    and appended to `IngameMainMenu._buttons_array` so `init()` leaves the cursor on it. The button calls
+    `menus.switch(main, page)` as `Menus.on_options_button_pressed` does; `PauseMenu.manage_back` /
+    `_menus.reset()` treat the page like the game's own.
+  - Leaving mid-run (`is_mid_run`: puppet mode, a battle, or a battle / shop scene) asks on the game's
+    confirm page: an instance of `menu_confirm.tscn` inside the lobby page, its label set to
+    `leave_question()` (autowrap) and its Yes rewired from `_on_ConfirmButton_pressed` (which ends the run)
+    to `LobbyMenu.leave`. `focus_before_created` is set to *Leave lobby* after `init()`: with a
+    `FocusEmulator` there is no Godot focus owner, and the page's own `null.grab_focus()` only passes in
+    release builds. When the page is hidden (back, the pause menu closed, the wave ended) the question is
+    dropped (a visible `MenuConfirm` takes every `ui_cancel`) and a pending invite declined.
+  - Character selection (`ui/online_options.gd`, added below `%CoopButton` in the run options box): an
+    *Online* `CheckButton` with the Co-op toggle's font and hover style (on: `host()` and, if it is off,
+    `CoopButton.pressed = true`, the game's own switch to co-op; off: `leave()`; shown pressed while
+    hosting or while Steam creates the lobby), *Invite friends* while hosting, and a status line
+    (`Online: N players`, `Online: needs Steam`, the last error). The box is a focus base of
+    `FocusEmulator1` only, so player 1's cursor finds them below Co-op (the grid's `focus_neighbour_top`
+    still leads to Co-op) and nobody else's does. A press that comes from a remote player holding slot 1
+    (`FocusEmulatorSignal.get_player_index` -> a virtual device) is ignored. Hidden and inert while
+    `session.is_client()`. The game's theme has no icons for a disabled `CheckButton`; the toggle gets the
+    normal ones as overrides (else it is 18 px lower than its neighbours). Cost: the box (500 px minimum)
+    grows while hosting, by 23 px without the Ban toggle (measured) and by about 100 px with it (about
+    15 px when not hosting); the character grid below gives that up and scrolls.
+  - Popup (`ui/lobby_popup.gd`): the same page (`framed`: a panel on the dimmed screen, CanvasLayer 128)
+    for a client on a screen without a pause menu (`popup_on_pause`: `session.is_client()` and the scene
+    has no `_pause_menu`: the waiting screen, mirrored selection screens). `LobbyMenu._poll_pause` opens it
+    when the client's own `ui_pause` comes up after a press that was the game's, from the action state: a
+    co-op screen's `FocusEmulator`s mark the event of a key that is nobody's as handled before any mod node
+    sees it. `open()` (invite mid-run, a client's Quit) uses it too when the scene's pause menu does not
+    open. Input (`ui/menu_input_guard.gd`): `_input` runs in reverse tree order, so while open a guard node
+    kept as the root's last child sees key/pad events first, marks them handled (scene, FocusEmulators,
+    `CoopService`, GUI never see them) and `Input.action_release`s what they pressed (polling stays
+    neutral); after closing it also swallows the releases of keys pressed while open (the game pauses /
+    goes back on release). The popup moves the Godot focus over the page's buttons itself (`move_focus`,
+    `press_focused`, `back`; Start closes) and gives the screen its focus owner back. Mouse events go the
+    same way (`handle_panel_mouse`: pointing takes the cursor, a left click that starts and ends on a
+    button presses it): unless the game listens for joining players, a co-op screen's `FocusEmulator`s
+    mark them handled before the GUI gets them. `InputService` hides the cursor in co-op, so the popup
+    shows it again every frame. Clients send neutral `INPUT` while it is open (`open_changed` ->
+    `InputSync.local_input_blocked`). The pages in the title screen and the pause menu never use the guard.
+  - `open()`: the page on screen, else the current scene's page (`PauseControl.open_menu` opens the pause
+    menu for the local player: `pause(first local player)` on the host, `open_live` in a client's wave),
+    else the popup. Used by `ask_leave()` (a client's *Quit*) and by a Steam invite accepted mid-run.
+  - Errors (`lobby_failed`: lobby not created, join refused with the host's reason, host left, connection
+    lost) open nothing: `last_error` shows in the page's details and the run options' status line, and in
+    the main menu's `%ErrorLabel` ("(!) ...", where the game reports a broken save), at once if the title
+    screen is up, else when it loads within 15 s (a client drops back to it when its lobby ends).
+    `MainMenu.init()` resets the label on every return to the main page.
+  - Open: a client in the shop or on the level-up panels has no way to the page (the shop's pause goes to
+    the host, the panels take none; the wave's Esc menu has it again); on a keyboard Esc is `ui_cancel`
+    and `ui_pause`, so the press that opens the popup on a mirrored selection screen reaches the host as
+    cancel first (a pad's Start does not); the host on weapon / difficulty selection has no entry (back to
+    character selection or on to the run); none of it has run with a real Steam lobby yet.
 - Puppet pitfalls found by tests: `Enemy.respawn()` → `update_target()` needs a spawner (use a visual revive);
   `PlayerProjectile.shoot()` needs weapon stats; enemy scenes have internal Timers (pause them).
 
@@ -849,16 +963,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the menu is open: its buttons move the cursor, not the character; weapons go on firing. Focus loss
     does nothing in live mode. Restart / end run / quit work as in the game.
   - Client: `PauseControl.client_update` polls the release of its own `ui_pause` (armed by a press that
-    was the game's: the F9 panel releases the actions of the keys it takes) and opens the puppet scene's
+    was the game's: the lobby popup releases the actions of the keys it takes) and opens the puppet scene's
     menu for its own slot (`open_live`). `InputSync.set_local_menu` feeds the local buttons into the own
     slot's device through a second `RemoteButtons` / `PressCounter` and sends the host a neutral `INPUT`
     (no move, no aim, no buttons, counters unchanged; when the menu closes the counters resume from
-    what is held, so nothing counts as a press). Restart / end run are disabled, Quit closes the menu
-    and opens the F9 panel's leave confirmation.
+    what is held, so nothing counts as a press). Restart / end run are disabled, Quit switches the menu
+    to its lobby page with the leave question (`LobbyMenu.ask_leave`).
   - The menu closes when the wave ends on that machine (level-up panels, retry prompt, `BATTLE_END`).
   - Open: the client's menu is keyboard / pad only (the emulator takes the mouse, as on every co-op
     screen); a spectator has none; options changed by a client are only written to disk after the
     session (saves are blocked while puppeting); none of this has run between two real machines yet.
 - Absent players (`sync/absent_players.gd`): after 20 s without messages (stale or left), the host makes the
   player's pending choice the game's way: first level-up option, crate take (recycle if it can't be taken),
-  shop Go. Listed in the F9 panel / pill; a returning player just plays on.
+  shop Go. Listed in the lobby page's details; a returning player just plays on.

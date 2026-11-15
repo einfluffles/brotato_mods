@@ -32,6 +32,7 @@ const ShopMecaTests := preload("res://mods-unpacked/einfluffles-TogetherTests/sh
 const ShopStreamTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_stream_tests.gd"
 )
+const ShopLockTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_lock_tests.gd")
 const PISTOL := "weapon_pistol_1"
 
 var _t: Node = null
@@ -40,6 +41,7 @@ var _input: Node = null
 var _shop: Node = null
 var _states := {}  # name -> RUN_SHOP body as a client receives it
 var _meca = ShopMecaTests.new()  # kept alive across its yields
+var _locks = ShopLockTests.new()
 
 
 func run(t: Node, together: Node):
@@ -217,10 +219,14 @@ func _host_slot_intents():
 	var node = _node(REMOTE, slot)
 	var id: String = node.item_data.my_id
 	var seq: int = _seq()
-	_t._check(_apply("lock", slot, id, 1), "lock applied by intent")
+	_t._check(_apply("lock", slot, id, 1, -1), "lock applied by intent, whatever the revision")
 	_t._check(
 		node.locked and RunData.get_player_locked_shop_items(REMOTE).size() == 1,
 		"host locked the item"
+	)
+	_t._check(
+		_locks.sent(self)[slot] and _locks.sent(self).count(true) == 1,
+		"the state names the locked slot"
 	)
 	_t._check(not _apply("lock", slot, id, 1), "locking a locked item does nothing")
 	_t._check(_apply("lock", slot, id, 0), "unlock applied by intent")
@@ -241,6 +247,7 @@ func _host_slot_intents():
 	_t._check(_slots(0) == others, "the other player's panel untouched")
 	_t._check(not _sync.host_apply_intent(_shop, REMOTE, press), "the same buy twice applies once")
 	yield(_buy_delay(), "completed")
+	_locks.host_after_buy(self, slot)
 
 	# Reroll.
 	seq = _seq()
@@ -394,12 +401,15 @@ func _client_part(together: Node):
 	yield(_tap("ui_select"), "completed")
 	sent = local.last_intent
 	_t._check(sent.get("kind") == "lock" and sent.get("arg") == 1, "lock shortcut sends an intent")
-	_t._check(not node.locked and _run_view(shop) == before, "nothing locked locally")
+	yield(_locks.client_own(self, shop, node, before), "completed")
 	shop._item_steals[0] = 1  # the same shortcut steals when the player has a steal
 	yield(_tap("ui_select"), "completed")
 	_t._check(local.last_intent.get("kind") == "steal", "steal shortcut sends an intent")
 	shop._item_steals[0] = 0
-	_t._check(node.active and _run_view(shop) == before, "nothing stolen locally")
+	_t._check(
+		node.active and not node.locked and _run_view(shop) == before,
+		"nothing stolen locally, and the stealing press locks nothing"
+	)
 
 	shop._get_reroll_button(0).emit_signal("pressed")
 	_t._check(local.last_intent.get("kind") == "reroll", "reroll sends a shop intent")
@@ -416,6 +426,7 @@ func _client_part(together: Node):
 	yield(_meca.client(self, shop, emulator, before), "completed")
 	_client_other_panel(shop, before)
 	yield(_client_view(together, emulator, node), "completed")
+	_locks.client_other(self)
 	yield(_client_states(emulator, node), "completed")
 	yield(_client_keyboard_mouse(emulator), "completed")
 
@@ -645,7 +656,9 @@ func _client_keyboard_mouse(emulator: Node):
 	var blocked: bool = local_panel.blocked
 	_input.local_input_blocked = false
 	local.process()
-	_t._check(blocked and not local_panel.blocked, "LocalPanel stands back while the F9 panel is open")
+	_t._check(
+		blocked and not local_panel.blocked, "LocalPanel stands back while the lobby popup is open"
+	)
 
 	# Pad on the stats page: trigger glyphs, Go leads down to the first stat.
 	yield(_pad_button(), "completed")

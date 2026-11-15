@@ -87,6 +87,23 @@ decompiled sources at the time of writing and will drift between game versions â
   `ui_cancel`, and Esc is `ui_pause` and `ui_cancel` at once: without the tree paused the same key press
   reaches a page, the pause menu and main's polling. The extension allows one step back per 200 ms.
 
+### Menu pages
+
+- `ui/menus/menus.gd` (`Menus`): a `Control` whose children are full-screen pages, one visible.
+  `switch(from, to)` = `to.show(); to.init(); from.hide()`, sets `_current_page`, emits
+  `menu_page_switched`; `back()` / `reset()` return to `_main_menu`. The main page emits a signal per
+  button, `Menus` connects it to a `switch`. Title screen: `TitleScreenMenus` (`TitleScreen._menus`,
+  main page `ui/menus/pages/main_menu.gd`, which resets `%ErrorLabel` and grabs the focus in `init()`,
+  i.e. on every return); pause menu: `IngameMenus` (`PauseMenu._menus`, main page `IngameMainMenu`).
+- A page: `init()`, a `back_button_pressed` / `cancel_button_pressed` signal, `_input` going back on the
+  plain `ui_cancel` release, and `focus_before_created = get_focus_owner()` to give the focus back. With a
+  `FocusEmulator` there is no Godot focus owner, so that is null in co-op (`null.grab_focus()` is only
+  ignored in release builds). Buttons are plain `Button`s with `ui/menus/global/my_menu_button.gd`
+  (sounds, focus on hover, `disabled` for 0.05 s after a press; `disable()` / `activate()`).
+- The pause menu's `FocusEmulator` has `Menus` as a focus base: any focusable control of any page under
+  it is reachable by the pausing player. Character selection: `FocusEmulator1` has the grid, the run
+  options box and Back as bases, the other emulators only the grid.
+
 ### Menu echo
 
 - `InputService._process` repeats held d-pad / left-stick directions as `ui_*_<dev>` pressed

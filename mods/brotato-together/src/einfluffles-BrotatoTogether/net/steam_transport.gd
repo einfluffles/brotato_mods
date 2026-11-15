@@ -253,7 +253,7 @@ func _on_lobby_joined(
 
 
 # Accepting a Steam invite while in a lobby would silently leave it (and a hosted run with it):
-# the F9 menu asks first (or accepts right away outside a run).
+# ui/lobby_menu.gd asks first (or accepts right away outside a run).
 func _on_join_requested(requested_lobby_id: int, _friend_id: int) -> void:
 	if requested_lobby_id == lobby_id:
 		return  # already there

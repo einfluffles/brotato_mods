@@ -74,7 +74,7 @@ const LOADING_TIMEOUT_MSEC := 10000  # a scene that never got ready must not blo
 var session: Node = null
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
-var interp_lag_msec := 0  # render time vs newest snapshot, for the F9 menu
+var interp_lag_msec := 0  # render time vs newest snapshot, for the lobby page
 
 var _battle_id := 0
 var _types := {}  # idx -> PackedScene (null if rejected)
