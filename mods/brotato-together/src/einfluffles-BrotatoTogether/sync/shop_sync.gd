@@ -382,8 +382,11 @@ func _apply_pause(body) -> bool:
 	return true
 
 
-# Per player, the parts of the sent run state that its panel is built from, as text: a panel
-# is only rebuilt when its part differs from what it shows.
+# Per player, the parts of the sent run state that its panel is built from, as hashes of their
+# content: a panel is only rebuilt when its part differs from what it shows. (As JSON text they
+# cost a client as much as the host's JSON.print: 43 / 90 ms per changed state in a late 2 /
+# 4-player run, now 1 / 2 ms; shop_change_tests.gd. Different content with equal hashes, 1 in
+# 2^32, would leave a panel as it is until its next change, like RunCache's check on the host.)
 static func player_keys(raw: Dictionary) -> Array:
 	var keys := []
 	var players = raw.get("players_data")
@@ -395,7 +398,7 @@ static func player_keys(raw: Dictionary) -> Array:
 		if typeof(data) == TYPE_DICTIONARY:
 			gear = [data.get("weapons"), data.get("items")]
 		var offered := [_at(raw.get("shop_items"), p), _at(raw.get("item_steals"), p)]
-		keys.append({"data": to_json(data), "gear": to_json(gear), "items": to_json(offered)})
+		keys.append({"data": hash(data), "gear": hash(gear), "items": hash(offered)})
 	return keys
 
 

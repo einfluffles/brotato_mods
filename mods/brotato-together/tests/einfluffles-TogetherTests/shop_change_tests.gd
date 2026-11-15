@@ -7,6 +7,8 @@ extends Reference
 # only the safety net can see (a stat written directly) still goes out and counts as missed; an
 # applied intent goes out in the next frame, serialized once; peer_ready resends without
 # compressing again. Prints the cost of a check before and after in a small and in late runs.
+# The client's side of a changed state: its per-player keys follow the content (which panels it
+# rebuilds), and what the state costs it before any panel is rebuilt.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -65,6 +67,7 @@ func _small_run():
 		RunData.add_gold(5000, p)
 	yield(_enter_shop(), "completed")
 	_measure("small run, 2 players", 30)
+	_test_client_keys()
 	_cache.clear()  # as when the host enters the shop
 	var session := StateStreamTests.FakeSession.new()
 	session.transport = StateStreamTests.FakeTransport.new()
@@ -389,6 +392,88 @@ func _measure(label: String, slow_calls: int) -> void:
 			+ " safety net %.0f usec once a second; a change %.0f usec (%d B of JSON)"
 		)
 		% [label, before, now, net, change, _cache.json.length()]
+	)
+	_measure_client(label, slow_calls <= 5)
+
+
+# What a changed state costs a client before its panels are rebuilt: the JSON parsed, the
+# players' keys (before: as JSON text), the game's deserializer. In one frame, for every client.
+func _measure_client(label: String, late: bool) -> void:
+	var payload: Dictionary = _cache.pack()
+	var started := OS.get_ticks_usec()
+	var raw := RunStateCodec.parse(payload)
+	var parse := OS.get_ticks_usec() - started
+	started = OS.get_ticks_usec()
+	var texts := []
+	for p in raw.players_data.size():
+		var data: Dictionary = raw.players_data[p]
+		var offered := [_sync._at(raw.shop_items, p), _sync._at(raw.item_steals, p)]
+		texts.append(to_json(data) + to_json([data.weapons, data.items]) + to_json(offered))
+	var before := OS.get_ticks_usec() - started
+	started = OS.get_ticks_usec()
+	var keys: Array = _sync.player_keys(raw)
+	var now := OS.get_ticks_usec() - started
+	started = OS.get_ticks_usec()
+	RunStateCodec.deserialize(raw)
+	var deserialize := OS.get_ticks_usec() - started
+	print(
+		(
+			"  info: shop state on a client, %s: %d B compressed; parse %d usec, player keys"
+			+ " %d usec (as JSON text before: %d), deserialize %d usec"
+		)
+		% [label, payload.data.size(), parse, now, before, deserialize]
+	)
+	if late:
+		_t._check(
+			keys.size() == texts.size() and now * 3 < before,
+			"%s: the client's player keys cost a fraction of the JSON text" % label
+		)
+
+
+# The client rebuilds a panel only when its part of the run state changed
+# (ShopSync.player_keys): the keys follow the content, nested values included.
+func _test_client_keys() -> void:
+	var payload: Dictionary = RunStateCodec.encode(_sync.shop_args(_shop))
+	var raw := RunStateCodec.parse(payload)
+	var keys: Array = _sync.player_keys(raw)
+	var again: Array = _sync.player_keys(RunStateCodec.parse(payload))
+	_t._check(
+		keys.size() == 2 and var2str(keys) == var2str(again),
+		"player keys: the same state parsed twice gives the same keys"
+	)
+	raw.players_data[0]["bt_test"] = 1.0
+	var data: Array = _sync.player_keys(raw)
+	_t._check(
+		(
+			data[0].data != keys[0].data
+			and data[0].gear == keys[0].gear
+			and data[0].items == keys[0].items
+			and var2str(data[1]) == var2str(keys[1])
+		),
+		"player keys: a value of one player changes that player's data key only"
+	)
+	var weapons: Array = raw.players_data[1].weapons
+	weapons[0] = [weapons[0], 1.0]
+	var gear: Array = _sync.player_keys(raw)
+	_t._check(
+		(
+			gear[1].gear != data[1].gear
+			and gear[1].data != data[1].data
+			and gear[1].items == data[1].items
+			and var2str(gear[0]) == var2str(data[0])
+		),
+		"player keys: a change inside a weapon changes its owner's gear and data keys"
+	)
+	var offered: Array = raw.shop_items[0]
+	offered[0] = [offered[0], 1.0]
+	var items: Array = _sync.player_keys(raw)
+	_t._check(
+		(
+			items[0].items != gear[0].items
+			and items[0].data == gear[0].data
+			and var2str(items[1]) == var2str(gear[1])
+		),
+		"player keys: a change inside an offered item changes that player's items key only"
 	)
 
 

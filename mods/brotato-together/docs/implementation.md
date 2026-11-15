@@ -278,6 +278,20 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Full resync = `peer_ready` re-emitted (every sync module, and the state stream for its sections right after
   them, resends its whole state on it), at most once per second per peer. Queued when a reliable send fails
   (`sendMessageToUser`'s EResult != 1, logged as a warning); unreliable failures are only logged at debug level.
+- Ping (`rtt_ms`, the Online co-op page's details): PING once a second from `Session._process`, unreliable, answered with
+  PONG where the transport reads it. Messages are only read once a frame (`Transport._process`), so the time
+  until the PONG is handled holds up to a frame of each game and all of a stalled one: with no network delay
+  at all, two 60 ms stalls read as 120 ms (`session_lifecycle_tests.gd`). Stalls measured headless: battle
+  scene 0.3 s, shop scene 0.2 / 0.5 / 0.8 s (small / late 2 / late 4-player run), a changed shop state on a
+  client 6 / 100 / 200 ms (now 4 / 60 / 115 ms, see Shop). `rtt_ms` therefore leaves out what both messages waited for their frame:
+  GodotSteam's `time_received` against `getLocalTimestamp()` when the message is handled
+  (`Transport.held_msec`); the PONG carries the PING's wait (`held`). What is left is the network and Steam's
+  send queue. The whole time stays in `answer_ms` (the page: "with frame time"). Without a receive time
+  (0 or implausible) nothing is taken off, as before. An answer later than 150 ms is logged ("Slow answer
+  from ...": network, the other game's frame, this one's, the time since this game's last frame, the scene,
+  and Steam's own numbers from `getSessionConnectionInfo`: its ping, send queue time, pending and unacked
+  bytes, send rate, quality), at most once a second per peer: it tells a stalled frame on either side from
+  the network and from a full send queue.
 - **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
   ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
   menu_grids, retry, pause_battle, pause_shop, cursors (state that builds controls before the cursors on
@@ -389,7 +403,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   Since protocol 8 the state also carries per player a panel revision (`seqs`) and the carousel page
   (`pages`), and for each client its own player index (`you`, so the message is sent per peer). The client
   rebuilds per player and per part: `ShopSync.player_keys` cuts the sent run state (before it is
-  deserialized) into the player's whole data, its gear (weapons / items) and its offered items, as text.
+  deserialized) into the player's whole data, its gear (weapons / items) and its offered items, as
+  `hash()` of each (as JSON text until the ping-spike work: 2 / 43 / 90 ms per changed state on every
+  client in a small / late 2 / late 4-player run, now 0.05 / 1 / 2 ms; what is left of a changed state
+  before any panel is rebuilt is `JSON.parse` 1 / 12 / 23 ms and the game's `deserialize_run_state`
+  3 / 47 / 90 ms, `shop_change_tests.gd`).
   A player whose data did not change keeps its `PlayerRunData` object across `resume_from_state` (the
   panel's gear elements and popup hold those objects), gear elements are only replaced when the gear
   changed (the cursor is taken off them first and put back on the element at the same index: a
@@ -842,8 +860,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the host, the panels take none; the wave's Esc menu has it again); on a keyboard Esc is `ui_cancel`
     and `ui_pause`, so the press that opens the popup on a mirrored selection screen reaches the host as
     cancel first (a pad's Start does not); the host on weapon / difficulty selection has no entry (back to
-    character selection or on to the run); the waiting screen's status line still names F9
-    (`ui/client_view.gd`, being replaced); none of it has run with a real Steam lobby yet.
+    character selection or on to the run); none of it has run with a real Steam lobby yet.
 - Puppet pitfalls found by tests: `Enemy.respawn()` → `update_target()` needs a spawner (use a visual revive);
   `PlayerProjectile.shoot()` needs weapon stats; enemy scenes have internal Timers (pause them).
 

@@ -8,6 +8,7 @@ extends Reference
 #  - HELLO resend until WELCOME, duplicate HELLO -> WELCOME again + resync, failed reliable
 #    send -> resync, member join accepts the session
 #  - join compatibility (game / mod version; DLC never rejects) with the reason shown on the client
+#  - the ping is the network's round trip: not the frames either game let the messages wait
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
@@ -20,6 +21,8 @@ const HOST := 2
 const CLIENT := 5
 const LOBBY := 99
 const RESULT_NO_CONNECTION := 3
+const STALL_MSEC := 60  # a frame that takes this long (a scene load takes several of these)
+const TIMER_SLACK_MSEC := 40
 
 var _t: Node = null  # test runner: _check()
 var _together: Node = null
@@ -38,13 +41,41 @@ class FakeSteam:
 	var created := 0
 	var invited := []  # lobby ids the invite dialog was opened for
 	var presence := {}
+	var inbox := []  # messages Steam has received and the game has not read yet
+
+	# stamped: with Steam's receive time, as GodotSteam delivers it.
+	func queue(sender: int, channel: int, data: PoolByteArray, stamped := true) -> void:
+		var message := {"identity": sender, "channel": channel, "payload": data}
+		if stamped:
+			message["time_received"] = getLocalTimestamp()
+		inbox.append(message)
+
+	# Steam's local clock: usec, with another start than the engine's.
+	func getLocalTimestamp() -> int:
+		return OS.get_ticks_usec() + 5000000000
+
+	func getSessionConnectionInfo(_steam_id: int, _connection: bool, _status: bool) -> Dictionary:
+		return {
+			"ping": 21,
+			"queue_time": 9000,
+			"pending_reliable": 3000,
+			"pending_unreliable": 40,
+			"sent_unacknowledged_reliable": 0,
+			"send_rate": 262144,
+			"local_quality": 0.5,
+		}
 
 	func sendMessageToUser(steam_id: int, data: PoolByteArray, _flags: int, channel: int) -> int:
 		sent.append([steam_id, channel, data])
 		return send_result
 
-	func receiveMessagesOnChannel(_channel: int, _max: int) -> Array:
-		return []
+	func receiveMessagesOnChannel(channel: int, _max: int) -> Array:
+		var messages := []
+		for message in inbox.duplicate():
+			if message.channel == channel:
+				messages.append(message)
+				inbox.erase(message)
+		return messages
 
 	func getPersonaName() -> String:
 		return "local"
@@ -123,6 +154,7 @@ func run(t: Node, together: Node) -> void:
 	_test_leave_confirmation(transport)
 	_test_client_handshake(transport, session)
 	_test_host_handshake(transport, session, input_sync)
+	_test_ping(transport, session)
 	_test_compat()
 	_test_join_presence(transport)
 
@@ -350,6 +382,76 @@ func _test_host_handshake(transport: Node, session: Node, input_sync: Node) -> v
 		"other game version rejected: %s" % answer.reason
 	)
 	input_sync.devices.erase(CLIENT)
+
+
+# Finding: the ping was the time until the PONG was handled. Messages are read once a frame, so
+# a frame that stalled on either side (a scene load, a big run state) showed as ping.
+func _test_ping(transport: Node, session: Node) -> void:
+	_enter_lobby(transport, LOCAL, [CLIENT])
+	var peer: Dictionary = session._add_peer(CLIENT)
+	peer.ready = true
+	var unreliable: int = transport.CHANNEL_UNRELIABLE
+	var logged: int = session.slow_answers
+	# Answering: the PING waits in Steam's queue for this game's frame.
+	_steam.sent.clear()
+	_steam.queue(CLIENT, unreliable, Protocol.encode(Protocol.Msg.PING, {"t": 7}))
+	OS.delay_msec(STALL_MSEC)
+	transport._process(0.0)
+	var pong = _last_body(Protocol.Msg.PONG)
+	var held: int = pong.get("held", -1)
+	_t._check(
+		pong.get("t") == 7 and held >= STALL_MSEC and held < STALL_MSEC + TIMER_SLACK_MSEC,
+		"PONG says how long the PING waited for the frame (%d ms of %d)" % [held, STALL_MSEC]
+	)
+	# Asking, on a network without any delay: the other game's frame stalls, then this one's.
+	_ask(session)
+	var ping = _last_body(Protocol.Msg.PING)
+	OS.delay_msec(STALL_MSEC)
+	var answer := {"t": ping.get("t"), "held": STALL_MSEC}
+	_steam.queue(CLIENT, unreliable, Protocol.encode(Protocol.Msg.PONG, answer))
+	OS.delay_msec(STALL_MSEC)
+	transport._process(0.0)
+	_t._check(
+		peer.answer_ms >= 2 * STALL_MSEC and peer.rtt_ms >= 0 and peer.rtt_ms < TIMER_SLACK_MSEC,
+		"stalled frames are not ping (%d ms, %d ms with them)" % [peer.rtt_ms, peer.answer_ms]
+	)
+	# No receive time and no "held" (what the ping was before): the stalls are all in it.
+	_ask(session)
+	ping = _last_body(Protocol.Msg.PING)
+	OS.delay_msec(STALL_MSEC)
+	var plain: PoolByteArray = Protocol.encode(Protocol.Msg.PONG, {"t": ping.get("t")})
+	_steam.queue(CLIENT, unreliable, plain, false)
+	OS.delay_msec(STALL_MSEC)
+	transport._process(0.0)
+	_t._check(
+		peer.rtt_ms == peer.answer_ms and peer.rtt_ms >= 2 * STALL_MSEC,
+		"without Steam's receive time the ping holds the frames (%d ms)" % peer.rtt_ms
+	)
+	_t._check(_steam.inbox.empty(), "every queued message was read")
+	_t._check(session.slow_answers == logged, "answers under the limit are not logged")
+	# A late answer is logged with where its time went and what Steam says about the connection.
+	_ask(session)
+	ping = _last_body(Protocol.Msg.PING)
+	var late := {"t": ping.get("t") - session.SLOW_ANSWER_MSEC, "held": 100}
+	_steam.queue(CLIENT, unreliable, Protocol.encode(Protocol.Msg.PONG, late))
+	transport._process(0.0)
+	var text: String = session.slow_answer_text(CLIENT, 100, 0)
+	_t._check(
+		(
+			session.slow_answers == logged + 1
+			and "+ its frame 100 +" in text
+			and "ping 21 ms, send queue 9000 us, pending 3000 + 40 B" in text
+			and "quality 0.5 / ?" in text
+		),
+		"a late answer is logged with the frames and Steam's numbers (%s)" % text
+	)
+	session.peers.erase(CLIENT)
+
+
+func _ask(session: Node) -> void:
+	_steam.sent.clear()
+	session._next_ping_msec = 0
+	session._process(0.0)
 
 
 func _test_compat() -> void:
