@@ -161,7 +161,7 @@ func _host_cursors(focus_sync: Node, shop: Node) -> Array:
 
 # What one check of the host's key costs (it runs 20 times a second: identities and child
 # indices), next to the body it stands for (every cursor described through ui/focus_targets.gd,
-# built on change only).
+# built on change only, and by the key's safety net once per FocusSync.SAFETY_NET_MSEC).
 func _measure_key(focus_sync: Node) -> void:
 	var started := OS.get_ticks_usec()
 	for _i in KEY_CHECKS:
@@ -172,7 +172,8 @@ func _measure_key(focus_sync: Node) -> void:
 		focus_sync.state_body(StateStream.CURSORS)
 	var body_usec := float(OS.get_ticks_usec() - started) / KEY_CHECKS
 	var line := "  info: cursors key per check, co-op shop with %d emulators, %d cursors: %.1f us"
-	line += " (%.3f ms per second at 20 checks); the body it stands for: %.1f us"
+	line += " (%.3f ms per second at 20 checks); the body it stands for (also the safety net,"
+	line += " once a second): %.1f us"
 	var cursors: int = focus_sync._cursors().size()
 	var emulators: int = focus_sync._emulators.size()
 	print(line % [emulators, cursors, key_usec, key_usec * 20.0 / 1000.0, body_usec])

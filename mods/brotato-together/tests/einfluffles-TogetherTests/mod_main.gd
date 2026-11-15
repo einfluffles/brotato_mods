@@ -52,6 +52,9 @@ const ShopLoopbackTests := preload(
 const ShopChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_change_tests.gd"
 )
+const UpgradesChangeTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_change_tests.gd"
+)
 const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
@@ -62,6 +65,9 @@ const BattleSceneTests := preload(
 )
 const StateStreamTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/state_stream_tests.gd"
+)
+const CursorKeyTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/cursor_key_tests.gd"
 )
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
@@ -89,6 +95,8 @@ const SUITES := [
 	"selection",
 	"state_stream",
 	"shop_change",
+	"cursor_key",
+	"upgrades_change",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -336,6 +344,21 @@ func _suite_state_stream(together: Node):
 func _suite_shop_change(together: Node):
 	coop_run(2)
 	_suite = ShopChangeTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+# The cursors' key against their description on the co-op shop (cursor_key_tests.gd; the
+# level-up panels and the retry prompt are checked in battle_loopback and menu_ux).
+func _suite_cursor_key(together: Node):
+	coop_run(2)
+	_suite = CursorKeyTests.new(self, together)
+	yield(_suite.run_shop(), "completed")
+
+
+# Change detection of the run state of the host's level-up / crate panels, with the cost of a
+# send and of a level-up sequence in small and late runs.
+func _suite_upgrades_change(together: Node):
+	_suite = UpgradesChangeTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

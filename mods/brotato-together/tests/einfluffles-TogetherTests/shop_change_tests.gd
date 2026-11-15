@@ -1,6 +1,6 @@
 extends Reference
 # Suite shop_change: the host serializes the shop's run state only when it can have changed
-# (sync/shop_run_cache.gd). On a stream of its own (fake session, stepped by hand) and the real
+# (sync/run_cache.gd). On a stream of its own (fake session, stepped by hand) and the real
 # co-op shop: every kind of change the game makes in the shop moves the fingerprint and goes out
 # once, serialized and compressed once; view-only changes (Go, page, colours, meca roll) go out
 # without serializing; an unchanged shop serializes nothing between safety-net checks; a change
@@ -17,9 +17,7 @@ const StateStreamTests := preload(
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
-const ShopRunCache := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_run_cache.gd"
-)
+const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const PEER := 4343
 const REMOTE := 1  # the player whose intents the host applies
@@ -363,7 +361,7 @@ func _measure(label: String, slow_calls: int) -> void:
 	var old_keys := []
 	var started := OS.get_ticks_usec()
 	for _i in slow_calls:
-		var json := RunStateCodec.encode_json(ShopRunCache.shop_args(_shop))
+		var json := RunStateCodec.encode_json(_sync.shop_args(_shop))
 		old_keys.append(json + var2str(_sync._shop_parts().values()))
 		old_keys.clear()
 	var before := (OS.get_ticks_usec() - started) / float(slow_calls)
@@ -478,7 +476,7 @@ func _add_gold() -> void:
 
 
 func _age_safety_net() -> void:
-	_cache._checked_msec = OS.get_ticks_msec() - ShopRunCache.SAFETY_NET_MSEC
+	_cache._checked_msec = OS.get_ticks_msec() - RunCache.SAFETY_NET_MSEC
 
 
 # An active slot of player p offering an item (no weapon slot rules) when there is one.

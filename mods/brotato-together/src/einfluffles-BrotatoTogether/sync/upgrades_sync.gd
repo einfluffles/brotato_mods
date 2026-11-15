@@ -3,7 +3,9 @@ extends Node
 #
 # Host: owns every decision. While the panels are visible it provides the state stream's
 #   UPGRADES section (sync/state_stream.gd; see body() for the fields): run state + per player
-#   what its panel shows, a panel revision, the carousel page and the meca upgrade rolls.
+#   what its panel shows, a panel revision, the carousel page and the meca upgrade rolls. The
+#   run state is serialized only when it can have changed (run_cache, sync/run_cache.gd, as in
+#   the shop): a page, a revision, a meca roll or a resend reuses the last one.
 # Client: shows those options in its own copy of the panels; nothing is rolled locally.
 #   Its OWN panel runs here: its buttons drive its slot's FocusEmulator locally
 #   (InputSync.set_local_device), so cursor, pages (upgrades / gear / stats), popups and the
@@ -34,6 +36,7 @@ const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
+const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const CHECK_INTERVAL := 0.1
 # A state can wait for the puppet battle scene to load (on a rejoin the stream's resync comes
 # right after BATTLE_START, which starts the load); it used to wait for battle_entered without
@@ -65,6 +68,7 @@ var battle_client: Node = null
 var focus_sync: Node = null
 var input_sync: Node = null
 var last_intent := {}  # client: the last decision sent (also read by the tests)
+var run_cache = RunCache.new("upgrades")  # host: the run state, serialized on change
 
 # host
 var _seq_ui_id := 0  # instance id of the UpgradesUI the revisions belong to
@@ -89,6 +93,8 @@ func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> voi
 	battle_host = host_battle
 	battle_client = client_battle
 	session.connect("message", self, "_on_message")
+	session.connect("peer_ready", self, "_on_peer_ready")
+	session.transport.connect("lobby_left", self, "_on_lobby_left")
 	state_stream.register_provider(StateStream.UPGRADES, self, CHECK_INTERVAL)
 	state_stream.register_handler(StateStream.UPGRADES, self, PENDING_TIMEOUT_SEC)
 	_meca.connect("roll_requested", self, "_on_own_meca_roll")
@@ -106,8 +112,13 @@ func _process(_delta: float) -> void:
 		_local_panel.blocked = input_sync != null and input_sync.local_input_blocked
 	if _local_active:
 		_report_own_focus()
+	var ui = _showing_ui()
+	if ui == null:
+		# Panels closed or battle over (also without peers, when the stream asks nothing): the
+		# run's text does not outlive the wave.
+		run_cache.clear()
 	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
-	var showing: bool = session.is_host() and _showing_ui() != null
+	var showing: bool = session.is_host() and ui != null
 	_block_remote_buttons(showing and not get_tree().paused)
 
 
@@ -138,22 +149,26 @@ func _showing_ui():
 
 
 # StateStream provider: "" (inactive: the clients get null once) unless the panels show. Called
-# every CHECK_INTERVAL and on peer_ready, so it is the text of the panels, never the run. Also
-# where the revisions follow the panels between intents (_update_seqs, as the old poll did).
+# every CHECK_INTERVAL and on peer_ready, so it is the text of the panels and the run state's
+# revision (run_cache: serialized only when it can have changed), never the run. Also where the
+# revisions follow the panels between intents (_update_seqs, as the old poll did).
 func state_key(_section: int) -> String:
 	var ui = _showing_ui()
 	if ui == null:
+		run_cache.clear()
 		return ""
 	var players := capture(ui)
 	_update_seqs(ui, players)
+	run_cache.refresh(ui, [], _options(ui))
 	var golds := []
 	for p in RunData.get_player_count():
 		golds.append(RunData.get_player_gold(p))
 	var pages := _pages(ui, players.size())
-	return var2str([battle_host._battle_id, players, _seqs, pages, golds, _mecas(ui)])
+	var rest := [battle_host._battle_id, players, _seqs, pages, golds, _mecas(ui)]
+	return str(run_cache.rev) + var2str(rest)
 
 
-# Built only when the stream sends (it encodes the run).
+# Built only when the stream sends.
 func state_body(_section: int):
 	var ui = _showing_ui()
 	return body(capture(ui)) if ui != null else null
@@ -166,12 +181,16 @@ func state_body(_section: int):
 #   pages: the carousel page
 #   mecas: the meca upgrade rolls its crate weapon popup remembers ([[weapon slot, weapon my_id,
 #     stat key hash, value, stat key hash, value]], MecaChoice.entries, as in the shop state)
+# The run is run_cache's, compressed once per change. Its refresh here is free right after
+# state_key (same check: nothing new); called alone (tests, StateStream.message_for) it still
+# sees a change of the fingerprint, so no body carries a run older than its own check.
 func body(players: Array) -> Dictionary:
 	var ui = battle_host._main.get("_coop_upgrades_ui")
 	_update_seqs(ui, players)
+	run_cache.refresh(ui, [], _options(ui))
 	return {
 		"battle_id": battle_host._battle_id,
-		"run": RunStateCodec.encode(),
+		"run": run_cache.pack(),
 		"players": players,
 		"seqs": _seqs.duplicate(),
 		"pages": _pages(ui, players.size()),
@@ -212,6 +231,34 @@ static func capture(ui: Node) -> Array:
 		else:
 			players.append(["none"])
 	return players
+
+
+# The panels' part of run_cache's fingerprint (the shared part, RunData and every player, is
+# RunCache.fingerprint's), per player: the option its panel processes, the crate item it shows,
+# its rerolls and whether it is done. Every decision moves it (an absent player's and the host's
+# own presses too, which no intent forces), also one whose effect on the run the shared part
+# might not see (a crate item recycled for 0 gold). What the decisions write to the run:
+# - choose (main.on_upgrade_selected -> RunData.add_upgrade): upgrades_taken, stats
+# - reroll (UpgradesUIPlayerContainer._on_RerollButton_pressed): gold, spyglass tracking
+# - take (main.on_item_box_take_button_pressed): items (try_mutate_item_on_equip), or weapons
+#   (_take_item_box_weapon: add_weapon, combine_weapon without a free slot)
+# - discard (on_item_box_discard_button_pressed): gold, recycling tracking, meca parts refund
+# - ban (on_item_box_ban_button_pressed): banned_items, remaining_ban_token, gold
+# - extra crate items (UpgradesUI._get_extra_crate_item): treasure map tracking, with the above
+# - crate weapon popup (UpgradesUI._on_weapon_combine / discard / meca_upgrade): weapons, gold,
+#   meca parts, all in the shared part
+# Pages, cursors, meca rolls and panel revisions are not run state: the key has them.
+static func _options(ui: Node) -> Array:
+	var values := []
+	for p in RunData.get_player_count():
+		var container = ui._get_player_container(p)
+		var option = ui._showing_option[p]
+		var item = container._item_data
+		values.append(option.get_instance_id() if option != null else 0)
+		values.append(item.get_instance_id() if item != null else 0)
+		values.append(container._reroll_count)
+		values.append(container._checkmark_group.visible)
+	return values
 
 
 # A player's decision, sent from its own panel. Only applied to what that panel shows right
@@ -263,6 +310,11 @@ func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 		return true  # the panel shows nothing new; the roll goes out with the next state
 	# The handlers show the next options right away: a second press on the old ones is stale.
 	_update_seqs(ui, capture(ui))
+	# The next check (the flush) serializes the run whatever the fingerprint says. The game's
+	# handlers here change the run before they return; only a held ban
+	# (_on_BanButton_pressed with ProgressData.settings.holding_button) ends later, in its own
+	# coroutine, and is found by the fingerprint (banned items, ban tokens, gold).
+	run_cache.force()
 	return true
 
 
@@ -330,6 +382,17 @@ func _host_ui(msg):
 	if typeof(msg) != TYPE_DICTIONARY or msg.get("battle_id") != battle_host._battle_id:
 		return null
 	return _showing_ui()
+
+
+# A peer that (re)joins must get the true run state: the stream's resync for it (its next step,
+# after every peer_ready handler) is a check that serializes it; a difference found goes to
+# everyone. (Harmless on a client: only the host's state_key refreshes.)
+func _on_peer_ready(_steam_id: int) -> void:
+	run_cache.force()
+
+
+func _on_lobby_left() -> void:
+	run_cache.clear()
 
 
 # The revision changes with what the panel shows, even when two options in a row look the same

@@ -262,7 +262,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   per check for a small 2-player run, 29 / 58 ms for a late endless run with 2 / 4 players (250 items
   each; headless container, `shop_change_tests.gd`), i.e. up to 58 % of the host's time in the shop,
   and twice more per change (key and body). Now 45 / 51 / 92 us per check; the run is serialized only
-  when it can have changed (`sync/shop_run_cache.gd`, see Shop).
+  when it can have changed (`sync/run_cache.gd`, see Shop).
+- The level-up / crate panels encoded the whole run in every body (`UpgradesSync.body`): 2.0 ms per send
+  for a small 2-player run, 28 / 58 ms for the late 2 / 4-player runs (`upgrades_change_tests.gd`), for
+  every page flip, revision, meca roll and resync too. Now a send that reuses the run costs 0.15 - 0.3 ms;
+  the run is encoded once per change (the same cache as the shop, see Level-up / crate panels).
 
 ## Session lifecycle
 
@@ -297,7 +301,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the other sections go on. Only from the host; `lobby_left` drops everything.
   - Tests step it by hand (`step`) and pass `message_for(section, steam_id)` to `receive`
     (`state_stream_tests.gd`). Idle cost, 8 sections checked per frame: about 13 us.
-  - On it: upgrades (`UpgradesSync`, was UPGRADES_STATE), menu + menu_grids (`MenuSync`, was
+  - On it: upgrades (`UpgradesSync`, was UPGRADES_STATE; key = the run state's revision from its own
+    `RunCache` + the panels, the run packed once per revision as in the shop), menu + menu_grids (`MenuSync`, was
     MENU_STATE), retry (`RetrySync`, was RETRY_PROMPT),
     pause_battle (`BattleHost` / `BattleClient`, was BATTLE_PAUSE and the `paused` of BATTLE_START).
     `BattleClient` retries the stream on `battle_entered`: retry and pause_battle stay pending until the
@@ -307,7 +312,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - cursors: `FocusSync` (provider and handler, 0.05 s, 10 s timeout) instead of FOCUS, its poll loop and
     its pending-per-scene table; see Cursors.
   - shop: `ShopSync` is provider and handler (was SHOP_STATE): key = the run state's revision
-    (`ShopRunCache.rev`, bumped when its JSON changes) + slots, Go, seqs, pages, mecas, `shop_id`, colors
+    (`run_cache.rev`, bumped when its JSON changes) + slots, Go, seqs, pages, mecas, `shop_id`, colors
     and every peer's player index; the run is serialized only when it can have changed and packed once
     per revision (resends reuse it); `you` is the patch.
     An applied intent flushes: the stream holds the section until the next frame (Buy / Steal
@@ -361,7 +366,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `ShopItem.set_shop_item/activate/deactivate`, `_update_visual_locks`, checkmarks). Client disconnects
   `BaseShop._on_tree_exited` (rolls curses on locked items). State stream section `shop`: the host checks
   every 0.1 s (slots, Go flags, revisions, pages, meca rolls, colours + the run state's revision).
-  Change detection of the run state (`sync/shop_run_cache.gd`): a fingerprint of cheap values, whose
+  Change detection of the run state (`sync/run_cache.gd`, shared with the level-up / crate panels: one
+  instance per screen; the shop adds its save args to the shared fingerprint part, `ShopSync.shop_args`):
+  a fingerprint of cheap values, whose
   cost does not grow with the item lists, that every mutation the game makes in the shop moves: offered
   items and locked items by instance + wave value, reroll / steal counters, per player gold, meca parts,
   health, level, xp, ban tokens, item count + last item's instance, weapon instances, the sizes of the
@@ -481,9 +488,25 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `show_upgrades_for_level` without `ItemService.get_upgrades` and uses `show_item` for crates (item rebuilt
   from `ItemService` base + `deserialize_and_merge`).
   - Transport: state stream section `upgrades` (protocol 14; was `UPGRADES_STATE`). Host provider:
-    inactive unless the host's battle shows the panels; the key is the text of the panels (`capture`,
-    seqs, pages, golds, meca rolls, battle id) and runs `_update_seqs` every check; the body (`body()`,
-    encodes the run) only on send. An applied intent `flush`es. Client handler: false (pending in the
+    inactive unless the host's battle shows the panels; the key is the run state's revision + the text of
+    the panels (`capture`, seqs, pages, golds, meca rolls, battle id) and runs `_update_seqs` every check
+    (0.16 / 0.32 ms in the late 2 / 4-player runs, half of it `capture`; does not grow with the items);
+    the body (`body()`) only on send. The run comes from `run_cache` (`sync/run_cache.gd`, as in the
+    shop): serialized only when the fingerprint moves (the shared part, gold, items, weapons, upgrades
+    taken, bans, health / level / xp ..., plus per player the option its panel processes, its crate item,
+    rerolls and done: every decision moves it, also the host's own and absent players' presses that no
+    intent forces), in the check after an applied intent (`force()`; not for a meca roll; the handlers
+    change the run before they return, only a held ban (`holding_button`) ends later and is found by the
+    fingerprint), after `peer_ready`, and by the 1 s safety net (hash first, a miss is logged); packed
+    once per revision. `body()` refreshes too, so a body built without a key (tests, `message_for`) still
+    has a run as new as its fingerprint. Pages, revisions, meca rolls and resyncs reuse it: 0.15 / 0.3 ms
+    per send instead of 2.0 / 28 / 58 ms (small, late 2 / 4 players). A typical sequence (every player
+    looks at its gear page and back, takes a crate item, rerolls, chooses twice; one resync) sent 13 / 25
+    times in the late 2 / 4-player runs, each encoding the run (0.37 / 1.47 s); now 8 / 16 encodes, one per
+    decision (0.25 / 0.99 s in the stream's checks). The cache keeps text and ints only and is dropped
+    when the panels close or the battle ends (`_process`, also without peers) and on `lobby_left`. A run
+    change alone (gold or a fruit still flying in) is now sent too, at most once per check.
+    An applied intent `flush`es. Client handler: false (pending in the
     stream, 30 s) until the state's battle is the puppet's and its scene is ready (a rejoin's resync
     comes right after `BATTLE_START`, while the scene loads); `battle_entered` calls `retry()`. Null (panels closed, battle over):
     the own panel stops taking input and every panel is rebuilt by the next state; the puppet's panels
@@ -628,9 +651,22 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `clear_state` (the cursors go with the client's scene). The key is not the description: describing
   builds `FocusTargets`' anchor table twice per cursor (about 380 us in a two-player shop, 20 checks a
   second), so the key is each cursor's control and emulator by instance id and child indices up to the
-  scene, plus the player count and the scene instance (about 15 us); the anchors are fixed nodes, so a
-  description changes only with those. One pending body: one for the next scene replaces one still
-  waiting for the previous scene, which only drops cursors on a screen the host has left.
+  scene, plus the player count and the scene instance (about 16 us). `cursor_key_tests.gd` checks
+  "description changed implies key changed" on the shop (cursor moves, emulator gains / loses a cursor,
+  buy, reroll, popup open / close, combine, player count, like elements added / removed / queued before
+  the cursor's, emulator freed, control detached, shop reloaded), the level-up panels (options rolled,
+  option taken) and the retry prompt: every change the game makes there moves the key in the same check,
+  except a sibling queued for deletion (`BaseShop._combine_weapon`): the description skips it at once,
+  the key's child index moves when it is freed at the end of the frame, so it goes out one check (0.05 s)
+  late. A node of another kind added before the control moves the key only (a harmless extra send). Not
+  seen by the key (never done by the game on these screens, possible for another mod): a rename, an owner
+  or script change on the path or on a sibling before it, a sibling replaced by another kind at the same
+  index (also a queued one, once freed), the control moved under another node at the same indices,
+  accessors or anchor lists handing out other nodes. A safety net catches those within 1 s: while the
+  key stays the same, the cursors are described once a second (about 380 us) and compared with the last
+  body (also on a resend under the same key); a difference bumps a counter in the key and is logged as a
+  warning. One pending body: one for the next scene replaces one still waiting for the previous scene,
+  which only drops cursors on a screen the host has left.
   Until protocol 9 emulator and control were child-index paths from the scene root, which broke as soon as
   the trees differed: Damage Meter adds a summary button next to the shop's reroll button, and with it on
   one machine only every later index was off by one. Now nothing visible travels as a tree position:

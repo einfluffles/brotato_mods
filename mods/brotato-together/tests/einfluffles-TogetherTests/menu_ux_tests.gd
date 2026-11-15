@@ -1,7 +1,8 @@
 extends Reference
 # F9 panel input (keyboard/pad navigation, input kept away from the game), the wave-failed retry
-# prompt and its cursor on clients (incl. focus messages that arrive before their controls are
-# visible), the battle -> next screen transition, and the client's copy of the selection grid.
+# prompt and its cursor on clients (incl. cursors that arrive before their controls are
+# visible, and the cursors' key on the prompt), the battle -> next screen transition, and the
+# client's copy of the selection grid.
 
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
@@ -22,6 +23,9 @@ const StateStreamTests := preload(
 )
 const PauseControl := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
+)
+const CursorKeyTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/cursor_key_tests.gd"
 )
 const GUARD_NAME := "BrotatoTogetherMenuInputGuard"
 const HOST := 2  # fake steam ids of the streams of its own
@@ -249,6 +253,7 @@ func _test_retry_prompt(together: Node):
 		"scene": main.filename, "cursors": [FocusSync.cursor_of(host_emulator, host_focus, main)]
 	}
 	focus_body = bytes2var(var2bytes(focus_body), false)
+	CursorKeyTests.new(t, together).run_retry(host_retry)
 	# The same button on the client, found by its scene path (the retry prompt is all named).
 	var focus_path: NodePath = main.get_path_to(host_focus) if host_focus != null else NodePath()
 	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)

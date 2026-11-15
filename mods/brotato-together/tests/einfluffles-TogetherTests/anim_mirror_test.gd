@@ -185,12 +185,31 @@ func _check_anim_puppets(client: Node, turret: Node, catling: Node, ids: Diction
 		"puppet turret's animation_finished handler disconnected"
 	)
 	var mirror = client._anim_mirror
+	# The snapshot replay may leave the puppet in the host's last "shoot" (0.3 s long), and replay()
+	# doesn't seek within SEEK_TOLERANCE of the event's position: from 0.207 s the advance below ran
+	# past the end (a flake under load). From "idle", the event plays "shoot" from exactly 0.15 s.
+	mirror.replay(client._entities, [Snapshot.EVENT_ANIM, ids.turret, "idle", 0.0, 1.0])
 	var event := [Snapshot.EVENT_ANIM, ids.turret, "shoot", 0.15, 1.0]
-	t._check(mirror.replay(client._entities, event), "shoot event replays")
-	player.advance(0.1)  # passes the original's shoot() key at 0.2 s
 	t._check(
-		turret._nb_shots_taken == 0 and player.current_animation == "shoot",
-		"replayed shot past its shoot() key calls nothing"
+		(
+			mirror.replay(client._entities, event)
+			and player.current_animation == "shoot"
+			and is_equal_approx(player.current_animation_position, 0.15)
+		),
+		"shoot event replays from its position (%.3f)" % player.current_animation_position
+	)
+	# Method keys are called deferred by default: the shot would only land after this function.
+	var shots: int = turret._nb_shots_taken
+	var call_mode: int = player.method_call_mode
+	player.method_call_mode = AnimationPlayer.ANIMATION_METHOD_CALL_IMMEDIATE
+	player.advance(0.1)  # passes the original's shoot() key at 0.2 s
+	player.method_call_mode = call_mode
+	t._check(
+		turret._nb_shots_taken == shots and player.current_animation == "shoot",
+		(
+			"replayed shot past its shoot() key calls nothing (%d shots, '%s')"
+			% [turret._nb_shots_taken - shots, player.current_animation]
+		)
 	)
 	t._check(
 		catling._animation_player.current_animation == "idle_attack",

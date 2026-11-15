@@ -1,16 +1,19 @@
 extends Reference
-# Host: the shop's run state for ShopSync (section shop of the state stream), serialized only
-# when it can have changed. Serializing it (ProgressData.get_run_state with the shop's save args,
-# serialize_run_state, JSON.print) grows with the run's items: 2.6 ms for a small 2-player run,
-# 29 / 58 ms for a late endless run with 2 / 4 players (250 items each), three quarters of it
-# JSON.print (shop_change_tests.gd measures it). The stream checks every 0.1 s, so the check
-# itself must not serialize: ShopSync's whole key now costs 45 / 51 / 92 us there.
+# Host: the run state a state stream section carries, serialized only when it can have changed.
+# One per provider: ShopSync (section shop) and UpgradesSync (section upgrades, the level-up /
+# crate panels). Serializing it (ProgressData.get_run_state, serialize_run_state, JSON.print)
+# grows with the run's items: 2.6 ms for a small 2-player run, 29 / 58 ms for a late endless run
+# with 2 / 4 players (250 items each), three quarters of it JSON.print (shop_change_tests.gd and
+# upgrades_change_tests.gd measure it). The stream checks every 0.1 s, so the check itself must
+# not serialize: a whole key costs 0.05 - 0.3 ms there (shop / panels).
 #
-# refresh(shop) brings json / rev up to date and serializes only when
-# - the fingerprint changed: cheap values that every mutation the game does in the shop moves
-#   (fingerprint() names them and the game function behind each), whose cost does not grow with
-#   the item lists;
-# - a check was forced: in the frame after an applied intent and after peer_ready (force());
+# refresh(screen, save_args, extra) brings json / rev up to date and serializes only when
+# - the fingerprint changed: cheap values that every mutation of the run the game does on that
+#   screen moves, whose cost does not grow with the item lists. The shared part (RunData and
+#   every player: fingerprint() names them) is here; the caller adds its screen's part: the
+#   save args (the shop's offered items and rerolls) and extra (UpgradesSync: the option each
+#   panel processes);
+# - a check was forced: after an applied intent and after peer_ready (force());
 # - the safety net is due (SAFETY_NET_MSEC since the last serialization): it catches what the
 #   fingerprint cannot see (a stat or effect written directly, by another mod say). Its check
 #   skips JSON.print: the serialized dictionary's hash() is compared first (1.2 / 8 / 15 ms in
@@ -20,28 +23,34 @@ extends Reference
 #   warning (missed) and sent like any other.
 # rev counts the changes of json (the stream's key carries it, so the key changes exactly when
 # the body's run does); pack() compresses json once per rev, for the key's check and every
-# resend of the same state.
+# resend of the same state. Only text and ints are kept, never a game object; clear() once the
+# screen is gone drops the text.
 
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
-const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
+const LOG_NAME := "einfluffles-BrotatoTogether:RunCache"
 # 1 s: what the fingerprint cannot see is at most that late, and the late 4-player run's check
-# (15 ms, about one frame) costs 1.5 % of the host's time in the shop (it cost 58 % before).
+# (15 ms, about one frame) costs 1.5 % of the host's time on the screen.
 const SAFETY_NET_MSEC := 1000
 
+var label := ""  # the screen, for the miss warning
 var json := ""  # the run state's JSON text as of the last change
 var rev := 0  # bumped whenever json changes
 var serialized := 0  # run states serialized (tests)
 var packs := 0  # run states compressed (tests)
 var missed := 0  # changes only a forced check or the safety net found (tests)
 
-var _shop_id := 0  # instance id of the shop json belongs to (0: none)
+var _screen_id := 0  # instance id of the screen json belongs to (0: none)
 var _hash := 0  # hash() of the serialized run state json was printed from
 var _fingerprint := []
 var _checked_msec := 0
 var _force_frame := -1  # a check from this idle frame on, whatever the fingerprint says
 var _packed := {}
+
+
+func _init(screen_label := "run") -> void:
+	label = screen_label
 
 
 # A full check at the first refresh from frames_ahead idle frames on (1: after deferred game
@@ -50,39 +59,41 @@ func force(frames_ahead := 0) -> void:
 	_force_frame = int(max(_force_frame, Engine.get_idle_frames() + frames_ahead))
 
 
-# Called on every check while the host is not in the shop: nothing to do once cleared.
+# Called on every check (or frame) while the screen is not up: nothing to do once cleared.
 func clear() -> void:
-	if _shop_id == 0 and json == "":
+	if _screen_id == 0 and json == "":
 		return
 	json = ""
-	_shop_id = 0
+	_screen_id = 0
 	_hash = 0
 	_fingerprint = []
 	_packed = {}
 	_force_frame = -1
 
 
-# Returns whether json changed.
-func refresh(shop: Node) -> bool:
-	var fingerprint := fingerprint(shop)
-	var same_shop: bool = shop.get_instance_id() == _shop_id and json != ""
+# Returns whether json changed. screen: the node the run state is shown on (another one starts
+# over); save_args: ProgressData.get_run_state's arguments (the shop's, [] elsewhere); extra:
+# the caller's part of the fingerprint (ints and floats only).
+func refresh(screen: Object, save_args := [], extra := []) -> bool:
+	var fingerprint := fingerprint(save_args, extra)
+	var same_screen: bool = screen.get_instance_id() == _screen_id and json != ""
 	var frame := Engine.get_idle_frames()
 	var forced: bool = _force_frame >= 0 and frame >= _force_frame
 	var now := OS.get_ticks_msec()
-	var unchanged: bool = same_shop and fingerprint == _fingerprint
+	var unchanged: bool = same_screen and fingerprint == _fingerprint
 	if unchanged and not forced and now - _checked_msec < SAFETY_NET_MSEC:
 		return false
-	if not same_shop:
+	if not same_screen:
 		clear()
-		_shop_id = shop.get_instance_id()
+		_screen_id = screen.get_instance_id()
 	if forced:
 		_force_frame = -1
 	_fingerprint = fingerprint
 	_checked_msec = now
-	var data := RunStateCodec.serialize(shop_args(shop))
+	var data := RunStateCodec.serialize(save_args)
 	serialized += 1
 	var data_hash := data.hash()
-	if same_shop and data_hash == _hash:
+	if same_screen and data_hash == _hash:
 		return false
 	_hash = data_hash
 	var text := JSON.print(data)
@@ -91,7 +102,7 @@ func refresh(shop: Node) -> bool:
 	if unchanged:
 		missed += 1
 		ModLoaderLog.warning(
-			"shop run state changed without a change of its fingerprint; sent", LOG_NAME
+			"%s run state changed without a change of its fingerprint; sent" % label, LOG_NAME
 		)
 	json = text
 	rev += 1
@@ -107,34 +118,22 @@ func pack() -> Dictionary:
 	return _packed.duplicate()
 
 
-# BaseShop.save_run_state's arguments: the shop's own part of the run state.
-static func shop_args(shop: Node) -> Array:
-	return [
-		shop._shop_items,
-		shop._reroll_count,
-		shop._paid_reroll_count,
-		shop._initial_free_rerolls,
-		shop._free_rerolls,
-		shop._item_steals,
-	]
-
-
-# Everything a mutation in the shop moves, as cheap values (ints and floats only: no object is
-# kept). Sizes and the last element stand for the item lists, so the cost does not grow with
-# them; weapons, offered and locked items are short and listed by instance.
-# - buy / steal / dismantle (BaseShop.on_shop_item_bought / _stolen / _dismantled): the offered
-#   items, gold (RunData.remove_currency), items (add_item_triggering_stat_gain_effects pushes
-#   at the end) or weapons (add_weapon duplicates), steals, meca parts
-# - reroll (_on_RerollButton_pressed): reroll counters, offered items, gold; its goldfish item
-#   (fill_shop_items) and bone dice stats come with them
-# - lock / unlock (ShopItem.change_lock_status -> RunData.lock_player_shop_item): locked items
-# - ban (ShopItem.ban_item): ban tokens, banned items
-# - combine / recycle / meca upgrade (RunData.combine_weapon, recycle_weapon,
-#   meca_upgrade_weapon): weapon instances, gold, meca parts
-# - endless toggle (CoopShopPlayerContainer._on_EndlessButton_toggled): RunData.is_endless_run
-# - DLC mutations on equip (RunData.try_mutate_item_on_equip): items, recently_mutated
-# Go, pages, colours, panel revisions and meca rolls are not run state: ShopSync's key has them.
-static func fingerprint(shop: Node) -> Array:
+# The shared part: everything a mutation of the run moves, as cheap values (ints and floats
+# only: no object is kept). Sizes and the last element stand for the item lists, so the cost
+# does not grow with them; weapons and locked items are short and listed by instance.
+# - gold (RunData.add_gold / remove_gold: buy, rerolls, recycling, ban, a crate item discarded)
+# - items: add_item_triggering_stat_gain_effects pushes at the end (buy, a crate item taken),
+#   try_mutate_item_on_equip (DLC) replaces one (recently_mutated)
+# - weapons: add_weapon duplicates; combine_weapon, recycle_weapon, meca_upgrade_weapon replace
+#   or remove (shop item popup, crate weapon popup), meca parts with them
+# - upgrades_taken (RunData.add_upgrade: a level-up option chosen; its stats come with it)
+# - banned_items, remaining_ban_token (ban in the shop or of a crate item)
+# - locked items (RunData.lock_player_shop_item), wave, endless, bonus gold, retries
+# - health, level, xp, pending mutations (consumables, gold and fruit still flying in)
+# A stat or effect written alone (the effects' sizes stay) is the safety net's.
+# save_args: their sizes and values, lists of [item, wave value] (the shop's offered items) by
+# item instance. extra: appended as it is.
+static func fingerprint(save_args := [], extra := []) -> Array:
 	var background = RunData.current_background
 	var values := [
 		RunData.players_data.size(),
@@ -151,7 +150,7 @@ static func fingerprint(shop: Node) -> Array:
 		RunData.shop_effects_checked,
 		RunData.locked_shop_items.size(),
 	]
-	for args in shop_args(shop):
+	for args in save_args:
 		values.append(args.size())
 		for p in args.size():
 			if args[p] is Array:  # offered items: [item, wave value]
@@ -161,6 +160,7 @@ static func fingerprint(shop: Node) -> Array:
 					values.append(entry[1])
 			else:
 				values.append(args[p])
+	values.append_array(extra)
 	var all_locked: Array = RunData.locked_shop_items
 	for p in RunData.players_data.size():
 		_player_values(values, RunData.players_data[p])

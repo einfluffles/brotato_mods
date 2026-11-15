@@ -25,6 +25,10 @@ const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const CHECK_INTERVAL := 0.05
+# The key's safety net (see state_key): one full description per second while the key stays the
+# same, about 0.4 ms in a two-player shop.
+const SAFETY_NET_MSEC := 1000
+const LOG_NAME := "einfluffles-BrotatoTogether:FocusSync"
 # A body stays pending this long until every cursor resolves to a visible control (scene still
 # loading, retry prompt not shown yet); a cursor on a control only the host has times it out.
 const PENDING_TIMEOUT_SEC := 10.0
@@ -36,11 +40,17 @@ var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 # client: FocusEmulators this client drives itself (its own level-up panel, see
 # sync/upgrades_sync.gd). The host's cursor for them is never applied here.
 var local_emulators := []
+var missed := 0  # host: changes only the key's safety net found (tests)
 
 # host: the scene the emulators were collected from (once per scene, like before the stream)
 var _scene: Node = null
 var _scene_id := 0
 var _emulators := []
+var _key := ""  # the key returned last
+var _described_key := ""  # the key the last body was described under
+var _described := ""  # that body's cursors (var2str)
+var _drift := 0  # bumped when the description changed under an unchanged key
+var _net_msec := 0  # when the cursors were last described
 
 
 func setup(netplay_session: Node) -> void:
@@ -53,18 +63,29 @@ func setup(netplay_session: Node) -> void:
 
 
 # Who points where by identity and tree position, not described: describing (cursor_of) builds
-# FocusTargets' anchor table for every player twice per cursor, about 0.38 ms per check in a
-# two-player shop, 20 checks a second. A description only changes with what this covers: the
-# control, its emulator (player_index, menu) and their child indices up to the scene (a named
-# step is fixed, a [type, k] step moves with the siblings before it), the player count (which
-# anchors exist). The anchors themselves are fixed nodes (the shop's slots come from
-# ShopItemsContainer._shop_items_node_paths at _ready). A sibling queued for deletion counts until
-# it is freed, so such a change goes out one check late at most. The scene instance makes a scene
-# reloaded under the same path (retry wave) send its cursors again.
+# FocusTargets' anchor table for every player twice per cursor, about 0.4 ms per check in a
+# two-player shop, 20 checks a second. Per cursor: the emulator's player_index, the control's
+# instance id, the child indices of emulator and control up to the scene; plus the player count
+# (which anchors exist) and the scene instance (a scene reloaded under the same path, retry wave,
+# sends its cursors again). Covered (cursor_key_tests.gd): every change the game makes on these
+# screens. A cursor moving or dropped, a sibling added or removed before the control or one of
+# its parents, the control leaving the scene, an emulator freed: the key changes in the same
+# check. A sibling queued for deletion: the description stops counting it at once, the key's
+# child index when it is freed at the end of that frame, so that change goes out one check late
+# (BaseShop._combine_weapon queues the combined weapons). The anchors are the game's fixed nodes
+# (onready vars; the shop's slots from ShopItemsContainer._shop_items_node_paths at _ready).
+# Not seen by the key, caught by the safety net within SAFETY_NET_MSEC (never done by the game
+# here, possible for another mod): a node on the path renamed, an owner or script changed on it
+# or on a sibling before it, a sibling replaced by a node of another kind at the same index (also
+# a queued one whose index another kind takes once it is freed), the control moved under another
+# node at the same child indices, an accessor or list handing out other anchor nodes. The net
+# describes the cursors once per SAFETY_NET_MSEC while the key stays the same and bumps _drift
+# (part of the key) when they differ from the last body.
 func state_key(_section: int) -> String:
 	if not _scan_scene():
+		_key = ""
 		return ""
-	var key := PoolStringArray([str(_scene_id), str(RunData.get_player_count())])
+	var key := PoolStringArray([str(_scene_id), str(RunData.get_player_count()), str(_drift)])
 	for emulator in _emulators:
 		if not is_instance_valid(emulator):
 			continue
@@ -79,11 +100,34 @@ func state_key(_section: int) -> String:
 				_tree_position(control),
 			]
 		)
-	return key.join("|")
+	_key = key.join("|")
+	var now := OS.get_ticks_msec()
+	if _key == _described_key and now - _net_msec >= SAFETY_NET_MSEC:
+		_net_msec = now
+		if var2str(_cursors()) != _described:
+			_missed()
+			key[2] = str(_drift)
+			_key = key.join("|")
+	return _key
 
 
+# Also when the stream resends under the same key (peer_ready): a description that changed
+# meanwhile is a miss of the key, so the next check sends it to every peer.
 func state_body(_section: int) -> Dictionary:
-	return {"scene": _scene.filename, "cursors": _cursors()}
+	var cursors := _cursors()
+	var text := var2str(cursors)
+	if _key == _described_key and text != _described:
+		_missed()
+	_described_key = _key
+	_described = text
+	_net_msec = OS.get_ticks_msec()
+	return {"scene": _scene.filename, "cursors": cursors}
+
+
+func _missed() -> void:
+	_drift += 1
+	missed += 1
+	ModLoaderLog.warning("cursors changed without a change of their key; sent", LOG_NAME)
 
 
 # False when there is nothing to send: no scene, or a scene without emulators.
