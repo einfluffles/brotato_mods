@@ -261,7 +261,7 @@ func _handle_welcome(steam_id: int, body) -> void:
 	else:
 		var reason := "The host rejected the join: %s" % str(body.get("reason", "?"))
 		ModLoaderLog.error(reason, LOG_NAME)
-		transport.emit_signal("lobby_failed", reason)  # shown in the F9 menu
+		transport.emit_signal("lobby_failed", reason)  # ui/lobby_menu.gd shows it
 		transport.leave_lobby()
 
 

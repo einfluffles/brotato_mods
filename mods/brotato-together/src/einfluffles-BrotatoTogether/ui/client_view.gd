@@ -46,7 +46,7 @@ func _process(delta: float) -> void:
 		host_name = session.peers[host_id].name
 		if session.peers[host_id].rtt_ms >= 0:
 			rtt = "%d ms" % session.peers[host_id].rtt_ms
-	_status.text = "brotato:together — connected to %s (rtt %s) — F9: menu" % [host_name, rtt]
+	_status.text = "Online co-op — connected to %s (%s) — Esc / Start: menu" % [host_name, rtt]
 	if _title.text == "" and _age >= WAITING_DELAY_SEC:
 		_title.text = "Waiting for the host…"
 

@@ -9,6 +9,9 @@ const VirtualDevices := preload(
 const PauseControl := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
 )
+const Lifecycle := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
+)
 const FAKE_PEER := 4242
 const DEVICE := VirtualDevices.FIRST
 const KEYBOARD := 7
@@ -166,7 +169,7 @@ func _test_client(main: Node):
 		"restart and end run are the host's"
 	)
 
-	# A pause press the F9 panel took opens nothing.
+	# A pause press the lobby popup took opens nothing.
 	input_sync.local_input_blocked = true
 	Input.action_press("ui_pause")
 	pause_control.client_update(main, you)
@@ -174,7 +177,7 @@ func _test_client(main: Node):
 	input_sync.local_input_blocked = false
 	Input.action_release("ui_pause")
 	pause_control.client_update(main, you)
-	t._check(not menu.live_open, "a pause press that went to the F9 panel opens nothing")
+	t._check(not menu.live_open, "a pause press that went to the lobby popup opens nothing")
 
 	yield(_client_pause_tap(main, you), "completed")
 	t._check(
@@ -226,16 +229,40 @@ func _test_client(main: Node):
 	pause_control.toggle_client_menu(menu, -1)
 	t._check(not menu.live_open, "no menu for a spectator")
 
-	# Quit asks to leave the lobby instead of dropping to the title screen.
+	# Quit asks to leave the lobby instead of dropping to the title screen: on the menu's lobby
+	# page. In the host's lobby for that (no frame passes meanwhile).
 	pause_control.client_update(main, you)
 	pause_control.toggle_client_menu(menu, you)
-	var together_menu: Node = together.get_node("TogetherMenu")
+	var lobby: Node = together.get_node("LobbyMenu")
+	var transport: Node = together.transport
+	var steam = transport.steam
+	transport.steam = Lifecycle.FakeSteam.new()
+	transport.lobby_id = 99
+	transport.host_id = FAKE_PEER
 	main_menu.emit_signal("quit_button_pressed")
+	var page = lobby.open_page()
 	t._check(
-		not menu.live_open and together_menu.is_open() and tree.current_scene == main,
-		"client's Quit opens the lobby panel"
+		menu.live_open and tree.current_scene == main and page != null
+		and page.get_parent() == menu._menus and not main_menu.visible,
+		"client's Quit opens the lobby page of its menu"
 	)
-	together_menu.close()
+	if page != null:
+		var question: String = page._confirm.get_node("Buttons/Label").text
+		t._check(
+			page.is_asking() and "You leave the host's run" in question,
+			"and asks before leaving the lobby (%s)" % question
+		)
+		t._check(
+			menu._focus_emulator.focused_control == page._confirm.get_node("Buttons/ConfirmButton"),
+			"the client's cursor is on the question"
+		)
+		page.back()
+		t._check(not page.is_asking() and page.visible, "No goes back to the page")
+	transport.lobby_id = 0
+	transport.host_id = 0
+	transport.steam = steam
+	menu.unpause()
+	t._check(not menu.live_open and (page == null or not page.visible), "the menu closes as before")
 	yield(tree, "idle_frame")
 	pause_control.client_update(main, you)
 	t._check(not tree.paused, "the client never paused")

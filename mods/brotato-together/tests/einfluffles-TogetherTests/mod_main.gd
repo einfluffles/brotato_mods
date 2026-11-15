@@ -38,6 +38,9 @@ const SessionLifecycleTests := preload(
 const DlcBorrowTests := preload("res://mods-unpacked/einfluffles-TogetherTests/dlc_borrow_tests.gd")
 const LocalShopTests := preload("res://mods-unpacked/einfluffles-TogetherTests/local_shop_tests.gd")
 const LiveMenuTests := preload("res://mods-unpacked/einfluffles-TogetherTests/live_menu_tests.gd")
+const LobbyMenuTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/lobby_menu_tests.gd"
+)
 const CleanupTests := preload("res://mods-unpacked/einfluffles-TogetherTests/cleanup_tests.gd")
 const BattleLoopbackTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/battle_loopback_tests.gd"
@@ -99,6 +102,7 @@ const SUITES := [
 	"shop_change",
 	"cursor_key",
 	"upgrades_change",
+	"lobby_menu",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -364,6 +368,13 @@ func _suite_upgrades_change(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
+# The lobby in the game's menus (lobby_menu_tests.gd): title screen, character selection, the
+# client's popup, the pause menu. Sets up its own scenes and run.
+func _suite_lobby_menu(together: Node):
+	_suite = LobbyMenuTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
 # Character selection: the menu mirror leaves the scene with two co-op players that the grid and
 # colour tests use.
 func _suite_selection(together: Node):
@@ -376,8 +387,8 @@ func _suite_selection(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
-# Input sync, the F9 menu, session lifecycle, DLC borrowing, the run state round trip. First in
-# any process: it checks that no session hook is installed yet.
+# Input sync, session lifecycle, DLC borrowing, the run state round trip. First in any process:
+# it checks that no session hook is installed yet.
 func _suite_core(together: Node):
 	var input_sync: Node = together.input_sync
 	PerfTests.new(self).test_no_global_hooks(together)
@@ -388,26 +399,11 @@ func _suite_core(together: Node):
 	InputService.enable_gamepad_movement()
 	_check(InputMap.has_action("analog_move_left_%s" % DEVICE), "actions survive rebuild")
 
-	# F9 menu: one hotkey, bottom-centre pill, no keyboard/gamepad focus stealing.
-	var menu: CanvasLayer = together.get_node("TogetherMenu")
-	_check(not menu.is_open(), "menu starts closed")
-	yield(_tap_key(KEY_F8), "completed")
-	_check(not menu.is_open(), "F8 (game bug reporter) is not ours")
-	yield(_tap_key(KEY_F9), "completed")
-	_check(menu.is_open(), "F9 opens the menu")
-	_check(not menu._pill.visible, "pill hidden while menu open")
-	_check(menu._host_button.focus_mode == Control.FOCUS_NONE, "menu buttons take no focus")
-	_check(menu.details_text() != "", "menu shows details")
-	yield(_tap_key(KEY_F9), "completed")
-	_check(not menu.is_open(), "F9 closes the menu")
-	_check(menu._pill.visible and menu.pill_text().ends_with("F9"), "pill shows hint")
-	var view_size: Vector2 = menu._pill.get_viewport_rect().size
-	var pill_rect: Rect2 = menu._pill.get_global_rect()
-	_check(
-		abs(pill_rect.get_center().x - view_size.x / 2.0) < 2.0 and pill_rect.end.y <= view_size.y,
-		"pill sits bottom-centre (%s in %s)" % [pill_rect, view_size]
-	)
-	_check(pill_rect.position.y > view_size.y * 0.85, "pill near the bottom edge")
+	# No overlay of the mod's own: nothing is open, and without Steam the texts say why.
+	var lobby: Node = together.get_node("LobbyMenu")
+	_check(lobby.open_page() == null, "lobby page starts closed")
+	_check("Steam is unavailable" in lobby.details_text(), "lobby details without Steam")
+	_check(lobby.status_text() == "Online: needs Steam", "lobby status line without Steam")
 
 	# Remote player joins via hold-to-join and is typed as a gamepad.
 	RunData.set_coop_run(true)

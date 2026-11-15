@@ -29,7 +29,7 @@ static func mod_version() -> String:
 
 
 # "" when a client with `client` info may join a host with `host` info, else a reason for the
-# client (shown in its F9 menu).
+# client (shown on its lobby page).
 static func incompatibility(host: Dictionary, client) -> String:
 	if typeof(client) != TYPE_DICTIONARY:
 		return "malformed HELLO"

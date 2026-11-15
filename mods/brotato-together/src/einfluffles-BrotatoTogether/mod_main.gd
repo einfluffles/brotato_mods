@@ -126,12 +126,13 @@ func _ready() -> void:
 
 	_add_player_control()
 
-	var menu: Node = _load_script("ui/together_menu.gd").new()
-	menu.name = "TogetherMenu"
+	var menu: Node = _load_script("ui/lobby_menu.gd").new()
+	menu.name = "LobbyMenu"
 	menu.setup(transport, session, battle_host, battle_client)
 	menu.absent_players = absent_players
+	menu.pause_control = pause_control
 	add_child(menu)
-	pause_control.together_menu = menu
+	pause_control.lobby_menu = menu
 	menu.connect("open_changed", self, "_on_menu_open_changed")
 
 	session.connect("peer_ready", self, "_on_peer_ready")
@@ -169,7 +170,7 @@ func _on_peer_ready(steam_id: int) -> void:
 		_enter_client_view()
 
 
-# While the F9 panel owns the keyboard/pad, the host gets neutral input from us.
+# While the lobby popup owns the keyboard/pad, the host gets neutral input from us.
 func _on_menu_open_changed(is_open: bool) -> void:
 	input_sync.local_input_blocked = is_open
 

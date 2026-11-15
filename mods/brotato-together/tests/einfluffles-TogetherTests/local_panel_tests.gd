@@ -437,13 +437,13 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	other.add_child(counter)
 	yield(_click(other._discard_button), "completed")
 	t._check(counter.events == 0, "a click on another player's panel ends at LocalPanel")
-	# Control: while the F9 panel is open the mouse is not LocalPanel's, so the click arrives.
+	# Control: while the lobby popup is open the mouse is not LocalPanel's, so the click arrives.
 	input_sync.local_input_blocked = true
 	yield(t.get_tree(), "idle_frame")
 	yield(_click(other._discard_button), "completed")
 	t._check(
 		counter.events == 2,
-		"(control) the same click passes while the F9 panel is open (%d events)" % counter.events
+		"(control) the same click passes while the lobby popup is open (%d events)" % counter.events
 	)
 	input_sync.local_input_blocked = false
 	counter.free()

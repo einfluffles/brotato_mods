@@ -322,8 +322,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `ShopSync` handles it (own panel off, banner; waits while the shop loads). No `clear_state`: the next
     screen replaces the shop.
 - Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
-  version (manifest) must match. Rejections carry a reason that the client shows in the F9 menu. DLC never
-  rejects (protocol 5 / 0.2.1).
+  version (manifest) must match. Rejections carry a reason that the client shows like every lobby error
+  (main menu error label, lobby page; see Lobby in the game's menus). DLC never rejects (protocol 5 / 0.2.1).
 - Host DLC on clients (`session/dlc_borrow.gd`), like Steam Remote Play Together: all DLC content ships in
   the base `Brotato.pck`; ownership only decides registration (`ProgressData.available_dlc_ids`, from which
   `ItemService.items/characters/weapons` are rebuilt, and `DLCData.add_resources()`: backgrounds, title
@@ -341,10 +341,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   appends the ids, `add_resources()` in `update_data_list` order, invalidates the item lists. Revert
   (`remove_resources()` in reverse, stash restored in place, borrowed music tracks dropped from
   `MusicManager.shuffled_tracks`) runs on `lobby_left` (every way out of client mode: Leave, host left /
-  timed out, rejection, joining another lobby, F9 *Host lobby*, which leaves first) and `lobby_ready`, before
+  timed out, rejection, joining another lobby, *Host lobby*, which leaves first) and `lobby_ready`, before
   the title screen loads; `Session._process` reverts if borrowed DLC exists without a welcomed client
   role. While borrowed, saves and challenges are blocked like puppet mode (`Puppet.blocks_progress()`);
-  HELLO / WELCOME report only owned DLC. The F9 details show "Using the host's DLC for this session: …".
+  HELLO / WELCOME report only owned DLC. The lobby page's details show "Using the host's DLC for this
+  session: …".
   Challenges of a borrowed DLC aren't loaded (the client never completes challenges; the end-of-run view
   is the host's).
 - Leaving is role-aware (`transport.was_host`). Client: puppet mode off (own run restored), puppet slots
@@ -352,8 +353,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   local pad unplugged mid-run); their steam id -> device mapping is kept, so they get their own characters
   back when they join the host's next lobby. Shop / level-ups wait for them (game rule). Before the run
   (players can still join) their slots are freed.
-- F9 *Leave lobby* mid-run needs a second click; a Steam invite accepted mid-run waits for *Join invite*
-  (outside a run it is taken right away, closing the menu declines it).
+- *Leave lobby* mid-run asks first (the game's confirm page); a Steam invite accepted mid-run opens the
+  lobby page and waits for *Join invite* (outside a run it is taken right away; closing the page declines
+  it). See Lobby in the game's menus.
 
 ## Menus
 
@@ -405,7 +407,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - Keyboard and mouse: `ShopLocal.guard` adds a `LocalPanel` (see the level-up panels) as the puppet
     shop's last child (after `FocusEmulator1..4`), with every `CoopShopPlayerContainer` as `panels`.
     The own panel is set while the local buttons drive it (`take_over`; unset on stop, leaving, a
-    host pause, and moved on another slot); `blocked` follows the F9 panel in `ShopLocal.process`.
+    host pause, and moved on another slot); `blocked` follows the lobby popup in `ShopLocal.process`.
     After a type change `ShopLocal` calls the container's `_set_focus_neighbours` (the game runs it
     in `_ready` and on a page change only) and, if the cursor sat on an arrow that became a glyph,
     puts it where `_set_focus_after_carousel_index_change` would: `_get_default_focus_control` on
@@ -625,7 +627,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
       controls under the pointer the last in tree order (drawn on top), with clipping parents cutting
       their children; a popup's non-focusable background does not cover a button behind it. Every
       mouse event over any player's panel is marked handled, also when no panel is local, so another
-      player's panel never reacts. While the F9 panel is open (`InputSync.local_input_blocked`) the
+      player's panel never reacts. While the lobby popup is open (`InputSync.local_input_blocked`) the
       node does nothing. A popup that took the cursor (`ItemPopup._focused`, the crate weapon popup after
       a press on a weapon) keeps the mouse too: while it is open only its own buttons are hit, as its
       focus neighbours do for the keys. A mouse press stands for an accept that is held until the
@@ -772,14 +774,76 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - **Battle → next screen**: on `BATTLE_END` the client keeps the frozen battle (muted) until the shop / next
   battle / menu state replaces it (fallback to the client view after 2 s); the view only says "Waiting for
   the host" after 1.5 s.
-- **F9 panel input** (`ui/together_menu.gd`, `ui/menu_input_guard.gd`): `_input` runs in reverse tree order, so
-  while open a guard node kept as the root's last child sees key/pad events first, marks them handled (scene,
-  FocusEmulators, `CoopService`, GUI never see them) and `Input.action_release`s what they pressed (polling
-  stays neutral); after closing it also swallows the releases of keys pressed while open (the game pauses /
-  goes back on release). Mouse events pass; `InputService._input` hides the cursor on every event in co-op,
-  so the panel shows it again in `_input`/`_process`. Pad: hold `JOY_SELECT` (unbound in the game's InputMap).
-  Clients send neutral `INPUT` while it is open (`InputSync.local_input_blocked`). `ask_confirm()` = Yes/No
-  sub-state.
+- **Lobby in the game's menus** (`ui/lobby_menu.gd`; no overlay, hotkey or status pill of the mod's own).
+  `LobbyMenu` (a child of the mod node) holds the lobby actions, the texts (`details_text`, `status_text`,
+  `leave_question`) and the last error, and puts the controls where the game has its own. It finds the
+  places when `current_scene` changes (polled; no script extension of a menu):
+  - Page "Online co-op" (`ui/lobby_page.gd`): built in code like the game's pages (`menu_mods.tscn`: title
+    in `font_60_outline`, a `panel_style` panel with the details, 600 px `MyMenuButton`s, Back), with
+    `init()` and `back_button_pressed` as `Menus.switch` and its pages use them. Buttons by state: *Host
+    lobby* (out of a lobby; disabled without Steam, the details say why), *Invite friends* and *Leave
+    lobby* (in one), *Join invite* (a Steam invite is pending). The cursor follows when its button goes
+    away (*Host lobby* once the lobby exists; `MyMenuButton` disabling itself for 0.05 s after a press does
+    not count). Back on the plain `ui_cancel` (handled, like `MenuOptions`).
+  - It is added to a `Menus` node as one more page, with a button below a neighbour on the main page that
+    copies the neighbour's script (`MyMenuButton`), alignment, size and left / right focus neighbours; up /
+    down come from Godot's neighbour search in solo play and from the `FocusEmulator`'s in co-op (the pause
+    menu's emulator has `Menus` as a focus base, so every page under it is its player's). Title screen:
+    `TitleScreen._menus`, below `MainMenu.start_button`; the game dims the background for any page but the
+    main one. Pause menu (battle and shop, host and client): `PauseMenu._menus`, below `%OptionsButton`,
+    and appended to `IngameMainMenu._buttons_array` so `init()` leaves the cursor on it. The button calls
+    `menus.switch(main, page)` as `Menus.on_options_button_pressed` does; `PauseMenu.manage_back` /
+    `_menus.reset()` treat the page like the game's own.
+  - Leaving mid-run (`is_mid_run`: puppet mode, a battle, or a battle / shop scene) asks on the game's
+    confirm page: an instance of `menu_confirm.tscn` inside the lobby page, its label set to
+    `leave_question()` (autowrap) and its Yes rewired from `_on_ConfirmButton_pressed` (which ends the run)
+    to `LobbyMenu.leave`. `focus_before_created` is set to *Leave lobby* after `init()`: with a
+    `FocusEmulator` there is no Godot focus owner, and the page's own `null.grab_focus()` only passes in
+    release builds. When the page is hidden (back, the pause menu closed, the wave ended) the question is
+    dropped (a visible `MenuConfirm` takes every `ui_cancel`) and a pending invite declined.
+  - Character selection (`ui/online_options.gd`, added below `%CoopButton` in the run options box): an
+    *Online* `CheckButton` with the Co-op toggle's font and hover style (on: `host()` and, if it is off,
+    `CoopButton.pressed = true`, the game's own switch to co-op; off: `leave()`; shown pressed while
+    hosting or while Steam creates the lobby), *Invite friends* while hosting, and a status line
+    (`Online: N players`, `Online: needs Steam`, the last error). The box is a focus base of
+    `FocusEmulator1` only, so player 1's cursor finds them below Co-op (the grid's `focus_neighbour_top`
+    still leads to Co-op) and nobody else's does. A press that comes from a remote player holding slot 1
+    (`FocusEmulatorSignal.get_player_index` -> a virtual device) is ignored. Hidden and inert while
+    `session.is_client()`. The game's theme has no icons for a disabled `CheckButton`; the toggle gets the
+    normal ones as overrides (else it is 18 px lower than its neighbours). Cost: the box (500 px minimum)
+    grows while hosting, by 23 px without the Ban toggle (measured) and by about 100 px with it (about
+    15 px when not hosting); the character grid below gives that up and scrolls.
+  - Popup (`ui/lobby_popup.gd`): the same page (`framed`: a panel on the dimmed screen, CanvasLayer 128)
+    for a client on a screen without a pause menu (`popup_on_pause`: `session.is_client()` and the scene
+    has no `_pause_menu`: the waiting screen, mirrored selection screens). `LobbyMenu._poll_pause` opens it
+    when the client's own `ui_pause` comes up after a press that was the game's, from the action state: a
+    co-op screen's `FocusEmulator`s mark the event of a key that is nobody's as handled before any mod node
+    sees it. `open()` (invite mid-run, a client's Quit) uses it too when the scene's pause menu does not
+    open. Input (`ui/menu_input_guard.gd`): `_input` runs in reverse tree order, so while open a guard node
+    kept as the root's last child sees key/pad events first, marks them handled (scene, FocusEmulators,
+    `CoopService`, GUI never see them) and `Input.action_release`s what they pressed (polling stays
+    neutral); after closing it also swallows the releases of keys pressed while open (the game pauses /
+    goes back on release). The popup moves the Godot focus over the page's buttons itself (`move_focus`,
+    `press_focused`, `back`; Start closes) and gives the screen its focus owner back. Mouse events go the
+    same way (`handle_panel_mouse`: pointing takes the cursor, a left click that starts and ends on a
+    button presses it): unless the game listens for joining players, a co-op screen's `FocusEmulator`s
+    mark them handled before the GUI gets them. `InputService` hides the cursor in co-op, so the popup
+    shows it again every frame. Clients send neutral `INPUT` while it is open (`open_changed` ->
+    `InputSync.local_input_blocked`). The pages in the title screen and the pause menu never use the guard.
+  - `open()`: the page on screen, else the current scene's page (`PauseControl.open_menu` opens the pause
+    menu for the local player: `pause(first local player)` on the host, `open_live` in a client's wave),
+    else the popup. Used by `ask_leave()` (a client's *Quit*) and by a Steam invite accepted mid-run.
+  - Errors (`lobby_failed`: lobby not created, join refused with the host's reason, host left, connection
+    lost) open nothing: `last_error` shows in the page's details and the run options' status line, and in
+    the main menu's `%ErrorLabel` ("(!) ...", where the game reports a broken save), at once if the title
+    screen is up, else when it loads within 15 s (a client drops back to it when its lobby ends).
+    `MainMenu.init()` resets the label on every return to the main page.
+  - Open: a client in the shop or on the level-up panels has no way to the page (the shop's pause goes to
+    the host, the panels take none; the wave's Esc menu has it again); on a keyboard Esc is `ui_cancel`
+    and `ui_pause`, so the press that opens the popup on a mirrored selection screen reaches the host as
+    cancel first (a pad's Start does not); the host on weapon / difficulty selection has no entry (back to
+    character selection or on to the run); the waiting screen's status line still names F9
+    (`ui/client_view.gd`, being replaced); none of it has run with a real Steam lobby yet.
 - Puppet pitfalls found by tests: `Enemy.respawn()` → `update_target()` needs a spawner (use a visual revive);
   `PlayerProjectile.shoot()` needs weapon stats; enemy scenes have internal Timers (pause them).
 
@@ -867,16 +931,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the menu is open: its buttons move the cursor, not the character; weapons go on firing. Focus loss
     does nothing in live mode. Restart / end run / quit work as in the game.
   - Client: `PauseControl.client_update` polls the release of its own `ui_pause` (armed by a press that
-    was the game's: the F9 panel releases the actions of the keys it takes) and opens the puppet scene's
+    was the game's: the lobby popup releases the actions of the keys it takes) and opens the puppet scene's
     menu for its own slot (`open_live`). `InputSync.set_local_menu` feeds the local buttons into the own
     slot's device through a second `RemoteButtons` / `PressCounter` and sends the host a neutral `INPUT`
     (no move, no aim, no buttons, counters unchanged; when the menu closes the counters resume from
-    what is held, so nothing counts as a press). Restart / end run are disabled, Quit closes the menu
-    and opens the F9 panel's leave confirmation.
+    what is held, so nothing counts as a press). Restart / end run are disabled, Quit switches the menu
+    to its lobby page with the leave question (`LobbyMenu.ask_leave`).
   - The menu closes when the wave ends on that machine (level-up panels, retry prompt, `BATTLE_END`).
   - Open: the client's menu is keyboard / pad only (the emulator takes the mouse, as on every co-op
     screen); a spectator has none; options changed by a client are only written to disk after the
     session (saves are blocked while puppeting); none of this has run between two real machines yet.
 - Absent players (`sync/absent_players.gd`): after 20 s without messages (stale or left), the host makes the
   player's pending choice the game's way: first level-up option, crate take (recycle if it can't be taken),
-  shop Go. Listed in the F9 panel / pill; a returning player just plays on.
+  shop Go. Listed in the lobby page's details; a returning player just plays on.

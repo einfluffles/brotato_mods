@@ -28,7 +28,7 @@ var devices := {}
 
 # client: recent [seq, move] pairs, replayed on top of the host's position for prediction
 var history := []
-# client: the F9 panel is open and owns the keyboard/pad; the host gets neutral input
+# client: the lobby popup is open and owns the keyboard/pad; the host gets neutral input
 var local_input_blocked := false
 # host: BUTTON_ACTIONS bits not delivered to remote players' virtual devices. Set while a
 # screen runs on the clients themselves and sends its decisions as messages (level-up panels,
@@ -66,7 +66,7 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	# Off while the F9 panel owns the input: it navigates with InputService's echo actions.
+	# Off while the lobby popup owns the input: it navigates with InputService's echo actions.
 	var client_mode: bool = session.is_client() and not local_input_blocked
 	if client_mode != VirtualDevices.is_client_mode():
 		VirtualDevices.set_client_mode(client_mode)

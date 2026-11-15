@@ -645,7 +645,9 @@ func _client_keyboard_mouse(emulator: Node):
 	var blocked: bool = local_panel.blocked
 	_input.local_input_blocked = false
 	local.process()
-	_t._check(blocked and not local_panel.blocked, "LocalPanel stands back while the F9 panel is open")
+	_t._check(
+		blocked and not local_panel.blocked, "LocalPanel stands back while the lobby popup is open"
+	)
 
 	# Pad on the stats page: trigger glyphs, Go leads down to the first stat.
 	yield(_pad_button(), "completed")
