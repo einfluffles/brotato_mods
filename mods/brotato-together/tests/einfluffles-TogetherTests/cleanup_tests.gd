@@ -33,7 +33,7 @@ const MONITORS := [
 ]
 const MOD_LOGS := "einfluffles-BrotatoTogether*"  # the Mod Loader keeps every log entry
 # Bounded and meant to last: caches per scene / sound, one value per player or peer.
-const KEPT_ON_PURPOSE := ["_seqs", "_seq_keys", "_meca_stats"]
+const KEPT_ON_PURPOSE := ["_seqs", "_seq_keys"]
 
 var _t: Node
 var _together: Node

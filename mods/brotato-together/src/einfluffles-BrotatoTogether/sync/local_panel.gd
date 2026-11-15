@@ -1,6 +1,6 @@
 extends Node
 # Client: the local player's keyboard, mouse and pad on a co-op screen whose own panel runs on
-# this client (the level-up / crate panels, sync/upgrades_sync.gd).
+# this client (the level-up / crate panels, sync/upgrades_sync.gd; the shop, sync/shop_local.gd).
 #
 # Co-op screens are driven by one FocusEmulator per player, and an emulator with a cursor marks
 # every event that is not a co-op action as handled. So the mouse never reaches the GUI there,
@@ -16,9 +16,10 @@ extends Node
 #   there; a left click presses it through the emulator, so the press belongs to the own
 #   player (a native GUI press has no player: PopupManager would book it on player 0).
 # - A mouse event over any player's panel ends here: another player's panel never reacts.
-# Nothing here knows the level-up screen. A screen sets panels, keeps blocked up to date,
+# Nothing here knows a particular screen. A screen sets panels, keeps blocked up to date,
 # calls set_own(panel, emulator, player_index) while its own panel is local, and redoes its
-# own focus neighbours on player_type_changed.
+# own focus neighbours on player_type_changed. hold_cursor is for a screen whose cursor
+# position means something (the shop's Go only counts while the cursor rests on it).
 
 # cursor_lost: the cursor sat on a control that cannot hold it any more (a page arrow).
 signal player_type_changed(player_type, cursor_lost)
@@ -36,6 +37,7 @@ const ARROW_TEXTURES := [
 
 var panels := []  # every player's panel (Controls): where the mouse is ours to handle
 var blocked := false  # the F9 panel is open and owns keyboard, pad and mouse
+var hold_cursor := false  # hover leaves the own cursor where it is (a click still moves it)
 
 var _own: Control = null
 var _emulator: Node = null
@@ -94,7 +96,7 @@ func _process(_delta: float) -> void:
 	if not _hover_pending:
 		return
 	_hover_pending = false
-	if blocked or not has_own():
+	if blocked or hold_cursor or not has_own():
 		return
 	var control := control_at(_cursor_root(), _hover_pos)
 	if control != null and _emulator.focused_control != control:
@@ -227,7 +229,9 @@ static func refresh_player_type(node: Node, player_index: int, emulator: Node) -
 		node.player_index = player_index
 		node._change_controller()
 	elif node is CoopShopHint:
-		node._update_key_icon()
+		# The setter reloads the glyph. CoopItemPopup._set_player_index skips its steal hint,
+		# which would show player 0's device.
+		node.player_index = player_index
 	for child in node.get_children():
 		refresh_player_type(child, player_index, emulator)
 

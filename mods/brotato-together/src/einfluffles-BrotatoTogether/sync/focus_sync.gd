@@ -3,13 +3,21 @@ extends Node
 # that both sides build from the same run state (shop, level-up/crate panels, end of run).
 # Setting focused_control on the client goes through the game's own setter, so highlights, info
 # panels and item popups follow.
+# A cursor is [player, menu, control]: the emulator by its player_index among the FocusEmulators
+# of its menu (the node they are children of: the scene root in the shop, UpgradesUI, PauseMenu,
+# RetryWave, ...; a menu with a single emulator needs no match), menu and control as
+# ui/focus_targets.gd targets (by meaning, so another mod's extra node on one side moves nothing).
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const CHECK_INTERVAL := 0.05
 const PENDING_TIMEOUT_MSEC := 10000
-const PATH_TYPES := [TYPE_INT_ARRAY, TYPE_ARRAY]
+const MAX_CURSORS := 16
+const MAX_PLAYERS := 4
 
 var session: Node = null
 # client: FocusEmulators this client drives itself (its own level-up panel, see
@@ -58,11 +66,38 @@ func _cursors() -> Array:
 		var control = emulator.focused_control
 		if control == null or not is_instance_valid(control):
 			continue
-		var control_path := ScenePaths.path_of(control, _scene)
-		if control_path.empty():
-			continue
-		cursors.append([ScenePaths.path_of(emulator, _scene), emulator.player_index, control_path])
+		var cursor := cursor_of(emulator, control, _scene)
+		if not cursor.empty():
+			cursors.append(cursor)
 	return cursors
+
+
+# [player, menu, control], or [] when either is not below scene.
+static func cursor_of(emulator: Node, control: Node, scene: Node) -> Array:
+	var menu: Array = FocusTargets.describe(emulator.get_parent(), scene)
+	var target: Array = FocusTargets.describe(control, scene)
+	if menu.empty() or target.empty():
+		return []
+	return [emulator.player_index, menu, target]
+
+
+# The FocusEmulator a cursor names, or null (network data).
+static func find_emulator(scene: Node, player, menu) -> Node:
+	if typeof(player) != TYPE_INT or player < -1 or player >= MAX_PLAYERS:
+		return null
+	var parent: Node = FocusTargets.resolve(menu, scene)
+	if parent == null:
+		return null
+	var found := []
+	for child in parent.get_children():
+		if child is FocusEmulator and not child.is_queued_for_deletion():
+			found.append(child)
+	if found.size() == 1:
+		return found[0]  # pause menu, retry prompt: who holds it is mirrored elsewhere
+	for emulator in found:
+		if player >= 0 and emulator.player_index == player:
+			return emulator
+	return null
 
 
 func _send_if_changed(force: bool) -> void:
@@ -92,6 +127,8 @@ func receive(body) -> void:
 		return
 	if typeof(body.get("scene")) != TYPE_STRING or typeof(body.get("cursors")) != TYPE_ARRAY:
 		return
+	if body.cursors.size() > MAX_CURSORS:
+		return
 	_pending[body.scene] = {"body": body, "msec": OS.get_ticks_msec()}
 	_retry_pending()
 
@@ -111,7 +148,8 @@ func _retry_pending() -> void:
 
 
 # Only while mirroring. Returns true once every cursor is where the host has it; until then
-# the body stays pending (a cursor on a control that isn't built / visible yet is retried).
+# the body stays pending (a cursor on a control that isn't built / visible yet is retried, one
+# on a control only the host has until the body times out).
 func _apply(body: Dictionary) -> bool:
 	if not Puppet.is_active() or not is_instance_valid(_scene) or _scene.filename != body.scene:
 		return false
@@ -119,12 +157,10 @@ func _apply(body: Dictionary) -> bool:
 	for cursor in body.cursors:
 		if typeof(cursor) != TYPE_ARRAY or cursor.size() != 3:
 			continue
-		if not (typeof(cursor[0]) in PATH_TYPES) or not (typeof(cursor[2]) in PATH_TYPES):
+		var emulator = find_emulator(_scene, cursor[0], cursor[1])
+		if emulator != null and emulator in local_emulators:
 			continue
-		var emulator = ScenePaths.resolve(_scene, PoolIntArray(cursor[0]))
-		if emulator in local_emulators:
-			continue
-		var control = ScenePaths.resolve(_scene, PoolIntArray(cursor[2]))
+		var control = FocusTargets.resolve(cursor[2], _scene)
 		if not (emulator is FocusEmulator) or not (control is Control):
 			done = false
 		elif not control.is_visible_in_tree():
