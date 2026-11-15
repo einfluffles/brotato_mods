@@ -126,9 +126,51 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `BattleClient._freeze` frees it. The host's bullets arrive as puppets.
 - One-shot events older than 250 ms when their turn comes (a stall, a scene load) are dropped, except
   animations (state).
-- Not mirrored yet (found by the audit for protocol 9, most visible first): burning /
-  cursed / charmed / boosted looks of enemies and the acid / petrol / fire puddles (`gpe_spawner.gd`;
-  charmed enemies look hostile, puddles are invisible; a fire explosion's puddle too), stat texts
+- Lasting looks (`sync/looks.gd`, protocol 11): states the game shows for seconds or for an entity's
+  life, from game logic puppets never run. One byte of bits per entity: `BURNING` (+ `BURN_RED` /
+  `BURN_BLUE`, the gradient `BurningParticles._update_color` picked), `CHARMED`, `CURSED`, `BOOSTED`.
+  The host reads them off what the game shows: the outline colours in `Entity._outline_colors`
+  (`Utils.CHARM_COLOR` from `CharmEnemyEffectBehavior.charm`, `CURSE_COLOR` from
+  `CurseEnemyEffectBehavior.init` and cursed structures / pets, `BOOST_COLOR` from `Entity.boost`
+  with `show_outline`; the curse's own boost has none), `Unit._is_burning`, and for enemy shots the
+  hue shift material a charmed enemy's `ShootingAttackBehavior` hands them (the game uses that shader
+  for nothing else; its `hue` is not read: `get_shader_param` asks the VisualServer, null when
+  headless). Plain entities cost two property reads per snapshot on the host (600 of them: 0.5 ms,
+  headless). Wire: a section after
+  the events, `varint count` + per entry `varint gap to the previous index + 1, u8 bits`; sent for 4
+  snapshots after a change (also to plain) and, while not plain, every 10th snapshot (staggered by
+  id), so a plain wave costs 1 B and a lasting look ~0.2 B per entity and snapshot. Measured
+  (`looks_tests.gd`, envelope included): the synthetic waves above 448 / 968 / 2184 B -> 452 / 968 /
+  2184 B (the count byte crossed `var2bytes`' 4 B padding once); a late wave with 105 burning or
+  charmed enemies 2168 B plain, 2380 B in the snapshot they all change, 2189 B on average after it;
+  the loopback with 5 looked entities 1.8 B per snapshot. The client keeps the last look per net id
+  (`Looks.resolve`, before `Snapshot.resolve` drops entities and shifts the indices); one not
+  confirmed for 45 received snapshots is plain again. Applied once per new
+  snapshot through the puppet's own visual code: `Entity._set_outlines` with the charm's alpha 0.4 /
+  desaturation 0.75 (a hit flash keeps its material and gets the outline back when it ends), the
+  sprite's white `self_modulate`, the unit's `BurningParticles.start_emitting / stop_emitting` (no
+  `burning_data`, so nothing spreads; no burning timer), the `CurseParticles` of
+  `curse_enemy_effect_behavior.tscn` instanced without its script next to (not among) the effect
+  behaviors, a pet's `curse_particles`, the charm material on a shot. A puppet that leaves the
+  snapshots (death, pool reuse) loses its look. Not mirrored: the meca / mutant evolution looks
+  (outline plus a texture swap, `MecaEnemyEffectBehavior.init`), percent-damage-taken outlines (lute,
+  diver), the one-shot boost particles (`stats_boosted` -> `EffectsManager`).
+- Puddles (`sync/puddles.gd`, protocol 11): acid / petrol / fire puddles (`GPESpawner`, children of
+  `main._gpe_container` / `_fire_puddles_container`) are tracked like gold: static, so mostly
+  `FLAG_REST`. A puddle's sprite (index into `puddle_sprites`) and target scale (`GPESpawner`'s size,
+  for fire also the `fire_puddle_size` stat) are set once in `init()` and travel in the type key,
+  `<scene>#puddle:<sprite>:<scale x>:<scale y>` (1/100), one type per source. The sprite's random
+  rotation is the client's own (exact would cost a type per puddle or bytes per snapshot). The host
+  drops a puddle from the snapshots when it starts to fade (`is_active()`: timeout, eviction); the
+  client runs the puddle's own spawn tween when it appears and its `despawn()` fade before pooling
+  the puppet (its despawn timer is paused, so a scene timer pools it). Puppets have no collision
+  layers, monitoring off and no lifetime timer: damage, slow and ignition stay with the host's.
+  Holes, dig sites and poacher zones in the same container are not puddles and are left alone.
+  The puddle a fire explosion leaves (arsonist: `PlayerExplosion.start_explosion` ->
+  `_spawn_fire_puddle`) is one of these on the host; the client's explosion puppet
+  (`FeedbackMirror.explode`) never runs `start_explosion`, so it puts down none of its own.
+  Not mirrored: the tint of a player standing in acid / petrol (`Player._set_color_modulation`).
+- Not mirrored yet (found by the audit for protocol 9, most visible first): stat texts
   (`RunData.stat_added`: stats on level up, harvesting at the wave's end, turret stats), the
   bigger sprite of a bonus-boosted gold, the music dip and the won-run animation at the wave's end
   (protocol 11 mirrors explosions, screen shake, level-up / heal / gold texts, dim screen, label

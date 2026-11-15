@@ -17,6 +17,8 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   Spawn markers (where the next enemies appear) and the life bars of bosses and elites are mirrored too,
   and so are explosions, screen shake, level-up / heal / material texts and the end of the wave
   (dimmed screen, "wave completed", the bonus material bag).
+  Charmed, burning, cursed and boosted enemies look like they do on the host (a charmed enemy and
+  its shots in the charm colour), and acid / petrol / fire puddles appear and fade with the host's.
 - **Esc during a wave opens the menu without pausing:** the wave runs on for everybody. The host
   gets the game's menu (its character stands still meanwhile), a client its own copy for options and
   the codex; restart / end run stay with the host, and a client's *Quit* asks to leave the lobby.
