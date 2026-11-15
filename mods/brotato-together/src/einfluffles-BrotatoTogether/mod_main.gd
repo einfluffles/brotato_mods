@@ -25,6 +25,7 @@ const EXTENSIONS := [
 
 var transport: Node = null
 var session: Node = null
+var state_stream: Node = null  # host state to clients in ordered sections (sync/state_stream.gd)
 var input_sync: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
@@ -69,29 +70,41 @@ func _ready() -> void:
 	session = _add("session/session.gd", "Session")
 	session.setup(transport)
 
+	# Before the sync modules, which get it ahead of their setup() (they register sections there)
+	# and process after it in a frame. Its peer_ready resync waits for its next step, so whatever
+	# the modules send from their own peer_ready goes out first (state_stream.gd header).
+	state_stream = _add("sync/state_stream.gd", "StateStream")
+	state_stream.setup(session)
+
 	input_sync = _add("sync/input_sync.gd", "InputSync")
 	input_sync.setup(session)
 
 	battle_host = _add("sync/battle_host.gd", "BattleHost")
+	battle_host.state_stream = state_stream
 	battle_host.setup(session, input_sync)
 
 	battle_client = _add("sync/battle_client.gd", "BattleClient")
+	battle_client.state_stream = state_stream
 	battle_client.setup(session, input_sync)
 
 	focus_sync = _add("sync/focus_sync.gd", "FocusSync")
+	focus_sync.state_stream = state_stream
 	focus_sync.setup(session)
 
 	shop_sync = _add("sync/shop_sync.gd", "ShopSync")
+	shop_sync.state_stream = state_stream
 	shop_sync.setup(session)
 	shop_sync.input_sync = input_sync
 	shop_sync.focus_sync = focus_sync
 
 	upgrades_sync = _add("sync/upgrades_sync.gd", "UpgradesSync")
+	upgrades_sync.state_stream = state_stream
 	upgrades_sync.setup(session, battle_host, battle_client)
 	upgrades_sync.focus_sync = focus_sync
 	upgrades_sync.input_sync = input_sync
 
 	menu_sync = _add("sync/menu_sync.gd", "MenuSync")
+	menu_sync.state_stream = state_stream
 	menu_sync.setup(session, battle_host)
 	menu_sync.connect("menu_state", self, "_on_menu_state")
 
@@ -99,6 +112,7 @@ func _ready() -> void:
 	ui_sounds.setup(session)
 
 	retry_sync = _add("sync/retry_sync.gd", "RetrySync")
+	retry_sync.state_stream = state_stream
 	retry_sync.setup(session, battle_host, battle_client)
 
 	coop_selection = _add("ui/coop_selection.gd", "CoopSelection")
@@ -134,6 +148,7 @@ func _add(path: String, node_name: String) -> Node:
 func _add_player_control() -> void:
 	input_sync.battle_client = battle_client
 	pause_control = _add("sync/pause_control.gd", "PauseControl")
+	pause_control.state_stream = state_stream
 	pause_control.setup(session, input_sync)
 	pause_control.battle_client = battle_client
 	battle_host.pause_control = pause_control

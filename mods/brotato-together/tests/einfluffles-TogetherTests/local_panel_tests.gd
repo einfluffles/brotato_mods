@@ -14,6 +14,9 @@ const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
 const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
+)
 const CursorTargetTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursor_target_tests.gd"
 )
@@ -394,14 +397,17 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 
 	# The host's cursor for the own panel is not applied; the others' pages are mirrored.
 	var own_cursor = emulator.focused_control
-	focus_sync._scene = main
 	var cursor := FocusSync.cursor_of(emulator, own._reroll_button, main)
 	t._check(
 		cursor.size() == 3 and FocusSync.find_emulator(main, cursor[0], cursor[1]) == emulator,
 		"host cursor names the own emulator by player (%s)" % [cursor]
 	)
-	focus_sync._apply({"scene": main.filename, "cursors": [cursor]})
-	t._check(emulator.focused_control == own_cursor, "host cursor never moves the own cursor")
+	var body := {"scene": main.filename, "cursors": [cursor]}
+	var done: bool = focus_sync.apply_state(StateStream.CURSORS, body, 0)
+	t._check(
+		done and emulator.focused_control == own_cursor,
+		"host cursor never moves the own cursor (handler done with it: %s)" % done
+	)
 	var paged := msg.duplicate()
 	paged.pages = [0, 2]
 	own._level = 99  # marker: an unchanged panel is not rebuilt

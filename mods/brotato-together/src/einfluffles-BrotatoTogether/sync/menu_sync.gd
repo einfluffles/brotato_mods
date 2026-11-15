@@ -3,81 +3,88 @@ extends Node
 # Their grids depend on each machine's own unlocks/DLC, so instead of running them on the client
 # we mirror *what* each player has under their cursor (by item id) and whether they're ready;
 # the client shows the game's own item cards for that (ui/client_view.gd).
-# The host's grids themselves (ordered element ids + flags per visible Inventory) travel as
-# "grids", only when they change; cursors are [inventory, index] into them, so the client draws
-# the host's grid with every cursor (ui/selection_grid.gd) whatever it has unlocked itself.
+# Two sections of the state stream (sync/state_stream.gd), both inactive while the host is in a
+# battle or the shop (their own messages take over there):
+#  - menu: the cursors and the screen, see _state(); `you` (the peer's player slot, -1:
+#    spectator) is the per-peer patch.
+#  - menu_grids: the host's grids themselves (ordered element ids + flags per visible Inventory,
+#    see grids_state()), sent only when they change. Cursors are [inventory, index] into them, so
+#    the client draws the host's grid with every cursor (ui/selection_grid.gd) whatever it has
+#    unlocked itself.
+# Both carry `screen` (the host scene's instance id): the client shows a state only with the grids
+# of the same screen, so a new screen never shows with the previous screen's grids. Its grids
+# come right after it (menu is ordered before menu_grids).
 
 signal menu_state(state)
 
-const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
+const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const SelectionGrid := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/selection_grid.gd"
 )
 const MIRRORED_ELSEWHERE := ["res://main.tscn", "res://ui/menus/shop/coop_shop.tscn"]
-const CHECK_INTERVAL := 0.1
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var battle_host: Node = null  # for the SteamID -> player slot mapping
 
 var _scene: Node = null
 var _emulators := []
-var _last_sent := {}  # steam id -> key
-var _last_grids := {}  # steam id -> grids key
-var _check_left := 0.0
-var _client_grids := {}  # client: last grids received (MENU_STATE carries them on change only)
+var _client_state := {}  # client: latest menu body (without grids)
+var _client_grids := {}  # client: latest menu_grids body
 
 
 func setup(netplay_session: Node, host_battle: Node) -> void:
 	session = netplay_session
 	battle_host = host_battle
-	session.connect("message", self, "_on_message")
-	session.connect("peer_ready", self, "_on_peer_ready")
+	for section in [StateStream.MENU, StateStream.MENU_GRIDS]:
+		state_stream.register_provider(section, self)
+		state_stream.register_handler(section, self)
 
 
-func _ready() -> void:
-	pause_mode = PAUSE_MODE_PROCESS
+# --- host ---
 
 
-func _process(delta: float) -> void:
-	if not session.is_host():
-		return
+# The host's menu scene, its focus emulators looked up again when it changes; false: none (no
+# scene, or one mirrored by its own messages).
+func _track_scene() -> bool:
 	var scene := get_tree().current_scene
 	if scene == null or scene.filename in MIRRORED_ELSEWHERE:
 		_scene = null
-		return
+		return false
 	if scene != _scene:
 		_scene = scene
 		_emulators = ScenePaths.find_focus_emulators(scene)
-		_last_sent.clear()
-		_last_grids.clear()
-	_check_left -= delta
-	if _check_left > 0.0:
-		return
-	_check_left = CHECK_INTERVAL
-	var base := _state()
-	var grids := grids_state()
-	var grids_key := var2str(grids)
+	return true
+
+
+# Built every check (0.1 s) like before the stream: the text of the state is the cheap part.
+# The menu key covers every ready peer's `you`.
+func state_key(section: int) -> String:
+	if not _track_scene():
+		return ""
+	if section == StateStream.MENU_GRIDS:
+		return var2str(grids_state())
+	var slots := []
 	for steam_id in session.peers:
-		if not session.peers[steam_id].ready:
-			continue
-		var body := base.duplicate()
-		body["you"] = battle_host._player_index_of(steam_id)
-		var key := var2str(body)
-		var new_grids: bool = _last_grids.get(steam_id) != grids_key
-		if new_grids or _last_sent.get(steam_id) != key:
-			_last_sent[steam_id] = key
-			_last_grids[steam_id] = grids_key
-			if new_grids:
-				body["grids"] = grids
-			session.send_reliable(steam_id, Protocol.Msg.MENU_STATE, body)
+		if session.peers[steam_id].ready:
+			slots.append([steam_id, battle_host._player_index_of(steam_id)])
+	return var2str(_state()) + var2str(slots)
 
 
-func _on_peer_ready(steam_id: int) -> void:
-	_last_sent.erase(steam_id)
-	_last_grids.erase(steam_id)
+func state_body(section: int):
+	return grids_state() if section == StateStream.MENU_GRIDS else _state()
 
 
+func state_patch(section: int, steam_id: int) -> Dictionary:
+	if section != StateStream.MENU:
+		return {}
+	return {"you": battle_host._player_index_of(steam_id)}
+
+
+# kind, screen, count, players [[id, label, random, ready, inv, idx, locked text, locked by
+# challenge]], colors (palette index per slot), max, reward, join (only while joining is open:
+# hold progress of joining players); `you` comes with the per-peer patch.
 func _state() -> Dictionary:
 	var count: int = CoopService.connected_players.size()
 	var players := []
@@ -116,6 +123,7 @@ func _state() -> Dictionary:
 		)
 	var state := {
 		"kind": _scene.filename.get_file().get_basename(),
+		"screen": _scene.get_instance_id(),
 		"count": count,
 		"players": players,
 		"colors": CoopService.bt_slot_colors.duplicate(),
@@ -142,7 +150,8 @@ static func _locked_text(panel) -> String:
 	return description.text if description is Label else ""
 
 
-# Visible selection grids in tree order: {random_icon, inventories: [[columns, [[id, flags]]]]}.
+# Visible selection grids in tree order: {screen, random_icon, inventories: [[columns, [[id,
+# flags]]]]}.
 func grids_state() -> Dictionary:
 	var inventories := []
 	for inventory in _inventories():
@@ -160,6 +169,7 @@ func grids_state() -> Dictionary:
 		inventories.append([inventory.columns, elements])
 	var random_icon = _scene.get("random_icon") if _scene != null else null
 	return {
+		"screen": _scene.get_instance_id() if _scene != null else 0,
 		"random_icon": random_icon.resource_path if random_icon is Texture else "",
 		"inventories": inventories,
 	}
@@ -193,20 +203,34 @@ func _focused_control(player_index: int):
 	return null
 
 
-func _on_message(steam_id: int, msg_type: int, body) -> void:
-	if msg_type != Protocol.Msg.MENU_STATE or not session.is_client():
-		return
-	if steam_id == session.transport.host_id:
-		receive_state(body)
+# --- client ---
 
 
-func receive_state(body) -> void:
+# Either section shows the latest state with the latest grids once both are of one screen
+# (mod_main.gd::_on_menu_state). Never pending: a state waits for its grids here, not in the
+# stream, so that the grids section shows it the moment they arrive.
+func apply_state(section: int, body, _revision: int) -> bool:
 	if typeof(body) != TYPE_DICTIONARY:
-		return
-	if typeof(body.get("kind")) != TYPE_STRING or typeof(body.get("players")) != TYPE_ARRAY:
-		return
-	CoopService.bt_apply_remote_colors(body.get("colors"))
-	if body.has("grids"):
-		_client_grids = body.grids if typeof(body.grids) == TYPE_DICTIONARY else {}
-	body["grids"] = _client_grids
-	emit_signal("menu_state", body)
+		return true
+	if section == StateStream.MENU_GRIDS:
+		_client_grids = body
+	else:
+		if typeof(body.get("kind")) != TYPE_STRING or typeof(body.get("players")) != TYPE_ARRAY:
+			return true
+		CoopService.bt_apply_remote_colors(body.get("colors"))
+		_client_state = body
+	if _client_state.empty() or _client_grids.get("screen") != _client_state.get("screen"):
+		return true
+	var state := _client_state.duplicate()
+	state["grids"] = _client_grids
+	emit_signal("menu_state", state)
+	return true
+
+
+# The host left the menus for a battle or the shop: nothing to show, its own message takes over
+# (as before the stream). Forgotten so that a later screen never pairs with them.
+func clear_state(section: int) -> void:
+	if section == StateStream.MENU_GRIDS:
+		_client_grids = {}
+	else:
+		_client_state = {}

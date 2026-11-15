@@ -12,10 +12,17 @@ const LocalPanelTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/local_panel_tests.gd"
 )
 const PerfTests := preload("res://mods-unpacked/einfluffles-TogetherTests/battle_perf_tests.gd")
+const UpgradesStreamTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_stream_tests.gd"
+)
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
+)
 
 var t: Node  # the test mod: _check, helpers, scene tree
 var _local_panel = LocalPanelTests.new()  # kept alive across its yields
 var _perf = null
+var _upgrades_stream = UpgradesStreamTests.new()
 
 
 func _init(test_mod: Node) -> void:
@@ -55,9 +62,16 @@ func run(together: Node):
 	crate_open.consumable_data = t._find_by_id(ItemService.consumables, "consumable_item_box")
 	crate_open.player_index = 1
 	upgrades_ui.show_options([[], [crate_open], [], []], [[level_up], [], [], []])
+	_upgrades_stream.host_part(t, together, upgrades_ui)
 	var upgrades_sync: Node = together.upgrades_sync
 	var host_panels: Array = upgrades_sync.capture(upgrades_ui)
-	var upgrades_msg: Dictionary = bytes2var(var2bytes(upgrades_sync.body(host_panels)), false)
+	# What the host's stream would send a peer now (no session here: the stream is not host).
+	var state_stream: Node = together.state_stream
+	var upgrades_state: Array = bytes2var(
+		var2bytes(state_stream.message_for(StateStream.UPGRADES, t.FAKE_PEER)), false
+	)
+	t._check(typeof(upgrades_state[2]) == TYPE_DICTIONARY, "host's upgrades section is active")
+	var upgrades_msg: Dictionary = upgrades_state[2]
 	yield(
 		_local_panel.host_part(t, together, upgrades_ui, host_panels, upgrades_msg), "completed"
 	)
@@ -90,11 +104,19 @@ func run(together: Node):
 	)
 
 	# --- client: replay ---
+	# Rejoin during the level-up phase. A rejoin gets BATTLE_START before the stream's resync
+	# (menu_ux_tests: join order); the state arriving first is kept as a robustness check, and the
+	# scene still loads after BATTLE_START. The state waits in the stream until battle_entered.
+	state_stream.receive(upgrades_state)
+	t._check(state_stream.is_pending(StateStream.UPGRADES), "panel state before its battle: pending")
 	client._on_battle_start(start)
 	t._check(Puppet.is_active(), "puppet mode on")
-	# Rejoin during the level-up phase: panel state arrives while the scene is still loading.
-	together.upgrades_sync._pending = upgrades_msg
+	state_stream.step(0.0)
+	t._check(state_stream.is_pending(StateStream.UPGRADES), "panel state pending while loading")
 	yield(client, "battle_entered")
+	t._check(
+		not state_stream.is_pending(StateStream.UPGRADES), "panel state applied once the scene is ready"
+	)
 	var puppet_main: Node = client._main
 	t._check(puppet_main != null and puppet_main != main, "client loaded its own battle scene")
 	var spawner = puppet_main.get("_entity_spawner")
@@ -151,6 +173,7 @@ func run(together: Node):
 		"client shows host's crate item (%s)" % host_panels[1][2]
 	)
 	yield(_local_panel.client_part(t, together, puppet_main, upgrades_msg), "completed")
+	_upgrades_stream.client_part(t, together, puppet_main)
 	puppet_main.get("_coop_upgrades_ui").hide()
 	client._set_paused(true)
 	t._check(puppet_main.get_node("BrotatoTogetherPauseBanner").visible, "pause banner shown")

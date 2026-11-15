@@ -246,9 +246,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   table, slot and pause (a resync mid-wave no longer reloads the scene); one for another battle while a
   scene loads is queued until that scene is ready and frozen; a scene that becomes ready after its
   battle ended is frozen all the same. Before, the second scene had no hook and ran as a real local
-  battle. The shop had the same race (a second `SHOP_STATE` before the puppet shop is ready
+  battle. The shop had the same race (a second shop state before the puppet shop is ready
   entered it again, unguarded and rolling its own items); a state for the shop that is loading now waits
-  for it.
+  for it (pending in the state stream, retried from `_on_shop_ready`).
 - Client run state: `RunStateCodec.apply` resets `RunData`'s item-count caches before
   `resume_from_state` (the game only refreshes them in add / remove item; `LinkedStats` reads them).
 - No per-node hooks: `PauseControl` finds the pause menu when the current scene changes instead of a
@@ -258,8 +258,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   logged one each (30 - 60 per second while a peer is unreachable) and are now limited to one a second.
 - `mod_main._enter_client_view` takes the previous scene out of the tree before the view becomes the
   current scene, like `change_scene` does.
-- Open: the host's shop check serializes the whole run to JSON every 0.1 s (`ShopSync._send_if_changed`),
-  which grows with the items of a long run; not measured yet.
+- The host's shop check serialized the whole run to JSON every 0.1 s (`ShopSync.state_key`): 2.6 ms
+  per check for a small 2-player run, 29 / 58 ms for a late endless run with 2 / 4 players (250 items
+  each; headless container, `shop_change_tests.gd`), i.e. up to 58 % of the host's time in the shop,
+  and twice more per change (key and body). Now 45 / 51 / 92 us per check; the run is serialized only
+  when it can have changed (`sync/shop_run_cache.gd`, see Shop).
 
 ## Session lifecycle
 
@@ -268,9 +271,51 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   dropped). The host answers every HELLO; a repeated HELLO from a ready peer means it missed WELCOME and what
   followed, so it gets a full resync. The transport accepts a member's message session when it enters the
   lobby and refreshes the member list for unknown senders.
-- Full resync = `peer_ready` re-emitted (every sync module resends its whole state on it), at most once per
-  second per peer. Queued when a reliable send fails (`sendMessageToUser`'s EResult != 1, logged as a
-  warning); unreliable failures are only logged at debug level.
+- Full resync = `peer_ready` re-emitted (every sync module, and the state stream for its sections right after
+  them, resends its whole state on it), at most once per second per peer. Queued when a reliable send fails
+  (`sendMessageToUser`'s EResult != 1, logged as a warning); unreliable failures are only logged at debug level.
+- **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
+  ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
+  menu_grids, retry, pause_battle, pause_shop, cursors (state that builds controls before the cursors on
+  them). Replaces the copy of the same machinery each module had (poll loop + change key, key forgotten on
+  `peer_ready`, per-peer sends, "keep the latest until the scene is ready").
+  - Host: a provider per section answers `state_key(section)` (text, "" = inactive; checked every interval,
+    0.05 / 0.1 s), `state_body(section)` (built only when something goes out, so zstd only runs on change)
+    and optionally `state_patch(section, steam_id)` (merged into a copy of the body per peer: `you`). A key
+    change bumps the section's revision and goes to every ready peer; turning inactive sends null once.
+    `flush` = check in the next idle frame, with `hold` none before it (deferred game code, e.g. a shop intent), `mark_dirty` = resend
+    without a key change. `peer_ready`: every section to that peer again, in section order, queued for the
+    stream's next step (before any interval / flush check; a held section holds it a frame). So what the
+    other modules send from their own `peer_ready` (BATTLE_START, InputSync's device behind `you`) is
+    ahead of every STATE for that peer; connection order would not do it (Godot 3 calls a signal's targets
+    by object id, and the stream is created before the modules). Nothing while not host; runs while paused.
+  - Client: a handler per section, `apply_state(section, body, revision) -> bool`; false keeps the latest
+    body of the section pending, retried every frame in section order until it applies, is replaced or
+    cleared, or its timeout passes (10 s default, per section); `retry()` from outside (e.g.
+    `battle_entered`). Null calls the optional `clear_state`. Lower revisions are dropped, equal ones applied
+    again (resync, so handlers are idempotent); a handler returning anything but a bool loses its body and
+    the other sections go on. Only from the host; `lobby_left` drops everything.
+  - Tests step it by hand (`step`) and pass `message_for(section, steam_id)` to `receive`
+    (`state_stream_tests.gd`). Idle cost, 8 sections checked per frame: about 13 us.
+  - On it: upgrades (`UpgradesSync`, was UPGRADES_STATE), menu + menu_grids (`MenuSync`, was
+    MENU_STATE), retry (`RetrySync`, was RETRY_PROMPT),
+    pause_battle (`BattleHost` / `BattleClient`, was BATTLE_PAUSE and the `paused` of BATTLE_START).
+    `BattleClient` retries the stream on `battle_entered`: retry and pause_battle stay pending until the
+    puppet battle of their `battle_id` is ready (a peer joining gets them right after its BATTLE_START,
+    which only starts the scene load; still coping with them first; 30 s timeout for the scene load);
+    only an earlier battle's or a malformed body is dropped.
+  - cursors: `FocusSync` (provider and handler, 0.05 s, 10 s timeout) instead of FOCUS, its poll loop and
+    its pending-per-scene table; see Cursors.
+  - shop: `ShopSync` is provider and handler (was SHOP_STATE): key = the run state's revision
+    (`ShopRunCache.rev`, bumped when its JSON changes) + slots, Go, seqs, pages, mecas, `shop_id`, colors
+    and every peer's player index; the run is serialized only when it can have changed and packed once
+    per revision (resends reuse it); `you` is the patch.
+    An applied intent flushes: the stream holds the section until the next frame (Buy / Steal
+    run deferred). Client: false while the shop it entered loads (`_on_shop_ready` calls `retry()`), so
+    "latest state until the shop is ready" is the stream's. pause_shop: `PauseControl` provides
+    `[paused, by, by_id]` while the host is in the shop (flushed on the menu's paused / unpaused),
+    `ShopSync` handles it (own panel off, banner; waits while the shop loads). No `clear_state`: the next
+    screen replaces the shop.
 - Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
   version (manifest) must match. Rejections carry a reason that the client shows in the F9 menu. DLC never
   rejects (protocol 5 / 0.2.1).
@@ -314,8 +359,24 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   so `BaseShop._ready` rolls nothing; updates re-run the per-player part of `BaseShop._ready`
   (`set_weapons_data/items_data`, `_update_stats`, gold label, reroll price via `ItemService.get_reroll_price`,
   `ShopItem.set_shop_item/activate/deactivate`, `_update_visual_locks`, checkmarks). Client disconnects
-  `BaseShop._on_tree_exited` (rolls curses on locked items). The host checks every 0.1 s by comparing the
-  run state's JSON text (+ slots, Go flags, revisions, pages); zstd only runs when something changed.
+  `BaseShop._on_tree_exited` (rolls curses on locked items). State stream section `shop`: the host checks
+  every 0.1 s (slots, Go flags, revisions, pages, meca rolls, colours + the run state's revision).
+  Change detection of the run state (`sync/shop_run_cache.gd`): a fingerprint of cheap values, whose
+  cost does not grow with the item lists, that every mutation the game makes in the shop moves: offered
+  items and locked items by instance + wave value, reroll / steal counters, per player gold, meca parts,
+  health, level, xp, ban tokens, item count + last item's instance, weapon instances, the sizes of the
+  other lists (banned items, upgrades, mutations, sets, effects), and wave / endless / bonus gold / retries
+  / background / challenges. That covers buy, steal, dismantle, reroll (and its goldfish / bone dice),
+  lock, ban, combine, recycle, meca upgrade, endless toggle, DLC mutations; Go, pages, colours, revisions
+  and meca rolls are in the key itself (sent without serializing). The run is serialized (once: the
+  body reuses the JSON, packed once per change) when the fingerprint changed, in the check after an
+  applied intent (`force(1)`, the flush frame) and after `peer_ready` (that check is the stream's queued
+  resync, so the new peer gets the true state; a difference goes to everyone). Safety net: every 1 s (only while a
+  peer is ready) the run is serialized without `JSON.print` and the dictionary's `hash()` compared
+  (1.2 / 8 / 15 ms in the runs above: 1.5 % of the host's time at worst); a different hash prints and
+  compares the text. A change found while the fingerprint stayed the same (a stat or effect written
+  directly, e.g. by another mod; the game's own come with a fingerprint change) is logged as a warning
+  and sent. A change costs one serialization + zstd (2.9 / 30 / 63 ms).
   Since protocol 8 the state also carries per player a panel revision (`seqs`) and the carousel page
   (`pages`), and for each client its own player index (`you`, so the message is sent per peer). The client
   rebuilds per player and per part: `ShopSync.player_keys` cuts the sent run state (before it is
@@ -364,7 +425,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     | reroll | reroll button `pressed` loses `BaseShop._on_RerollButton_pressed` | presses the reroll button |
     | Go | Go button `pressed` loses `BaseShop._on_GoButton_pressed` (starts the next wave when all are ready) | presses the Go button, or `_clear_go_button_pressed` |
     | combine / recycle | item popup `item_combine_button_pressed` / `item_discard_button_pressed` lose `BaseShop`'s handlers | emits the popup's signal with the host's weapon object |
-    | meca upgrade (popup) | `item_meca_upgrade_selected` loses `BaseShop`'s handler, the upgrade button loses the popup's own roll (`_on_UpgradeButton_pressed`) | "meca_roll": `MecaChoice.roll` into the host's copy of the player's popup, sent back in `SHOP_STATE.mecas`; "meca" (option index): `MecaChoice.take`, then the popup's `item_meca_upgrade_selected` with the remembered roll (see "Meca upgrade" below) |
+    | meca upgrade (popup) | `item_meca_upgrade_selected` loses `BaseShop`'s handler, the upgrade button loses the popup's own roll (`_on_UpgradeButton_pressed`) | "meca_roll": `MecaChoice.roll` into the host's copy of the player's popup, sent back in the shop state's `mecas`; "meca" (option index): `MecaChoice.take`, then the popup's `item_meca_upgrade_selected` with the remembered roll (see "Meca upgrade" below) |
     | endless (player 1, wave 20) | `EndlessButton.toggled` loses the panel's handler | sets `pressed` on the host's button (its `toggled` sets `RunData.is_endless_run`); mirrored back with `set_pressed_no_signal` |
 
     The own panel's signals go to `SHOP_INTENT`; on the other panels nothing listens, so a mouse click
@@ -383,7 +444,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     when it applies a press, because buy and steal run deferred in the game. "go", "endless" and "lock"
     carry the wanted state and are applied at most once; "go" and "endless" ignore the revision. Nothing
     is applied while the host's tree is paused. After an applied intent the state goes out in the next
-    frame (once the deferred handlers ran), not at the next 0.1 s check. `ShopItemsContainer` ignores
+    frame (once the deferred handlers ran; `StateStream.flush`), not at the next 0.1 s check, and not
+    already in the intent's own frame. `ShopItemsContainer` ignores
     presses for 0.05 s after a buy, steal or dismantle, for an intent as for a local press.
     `_settle_host_cursor` runs deferred after every applied intent: the game's combine handler moves the
     cursor with deferred `grab_focus` calls, one of them onto an element it already queued for deletion
@@ -402,7 +464,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     puts the remote cursor and page on the host's copy, from where `FocusSync` and `pages` carry them to
     the other clients. Cosmetic: a target that does not resolve (a control only one side has) or is not
     visible is ignored. Absent players and the pause hand-over
-    work as before; while the host is paused (`SHOP_PAUSE`) the client's local buttons are off.
+    work as before; while the host is paused (section `pause_shop`) the client's local buttons are off.
   - Differences from local co-op: with a steal left, the select shortcut steals and locks in one press;
     the host applies the steal, which makes the lock stale (the game itself would lock the stolen item).
     A second press made before the host's answer arrived (two quick buys) is dropped as stale.
@@ -418,6 +480,14 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `_level`, `_reroll_price`, `_item_data`, `_checkmark_group`; client re-implements
   `show_upgrades_for_level` without `ItemService.get_upgrades` and uses `show_item` for crates (item rebuilt
   from `ItemService` base + `deserialize_and_merge`).
+  - Transport: state stream section `upgrades` (protocol 14; was `UPGRADES_STATE`). Host provider:
+    inactive unless the host's battle shows the panels; the key is the text of the panels (`capture`,
+    seqs, pages, golds, meca rolls, battle id) and runs `_update_seqs` every check; the body (`body()`,
+    encodes the run) only on send. An applied intent `flush`es. Client handler: false (pending in the
+    stream, 30 s) until the state's battle is the puppet's and its scene is ready (a rejoin's resync
+    comes right after `BATTLE_START`, while the scene loads); `battle_entered` calls `retry()`. Null (panels closed, battle over):
+    the own panel stops taking input and every panel is rebuilt by the next state; the puppet's panels
+    stay shown until its scene goes, as before.
 - **Own level-up / crate panel runs on the client** (protocol 6; first screen of the "local view, decisions
   to the host" model, the shop followed with protocol 8). Each `CoopUpgradesUIPlayerContainer` is a
   `Carousel` with three pages (upgrades / gear / stats, switched with the triggers) and a per-player item
@@ -479,7 +549,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
       `UpgradesUI._on_weapon_meca_upgrade_selected`; shop: the popup's `item_meca_upgrade_selected` ->
       `BaseShop._on_item_meca_upgrade_selected`), which spends the parts. Anything else is dropped, so a
       client can only get one of the two options the host rolled and showed it.
-  - Host: `UPGRADES_STATE` carries a revision per player (`seqs`: bumped when the panel shows something
+  - Host: the state carries a revision per player (`seqs`: bumped when the panel shows something
     new, keyed on the entry, the option being processed, the item instance and the reroll count, so the same
     crate item twice still counts) and the carousel page (`pages`). `host_apply_intent` drops an intent whose
     revision or option id doesn't match the sender's panel, then calls the container's own handler
@@ -551,8 +621,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     two real machines yet (headless tests only: no real mouse, keyboard or pad; the crate weapon
     popup's combine, recycle hold, cancel and meca upgrade are driven through its real buttons by
     synthetic clicks).
-- **Cursors** (`sync/focus_sync.gd`, `ui/focus_targets.gd`; protocol 10): every `FocusEmulator` in the
-  scene; `FOCUS` = `scene, cursors [[player, menu, control]]`, applied through the `focused_control` setter.
+- **Cursors** (`sync/focus_sync.gd`, `ui/focus_targets.gd`; protocol 10, state stream section `cursors`
+  since 14): every `FocusEmulator` in the scene; body `scene, cursors [[player, menu, control]]`, applied
+  through the `focused_control` setter. Last section, so the shop, level-up panels and retry prompt are
+  applied before the cursors on them. Inactive (null) while the host's scene has no emulators; no
+  `clear_state` (the cursors go with the client's scene). The key is not the description: describing
+  builds `FocusTargets`' anchor table twice per cursor (about 380 us in a two-player shop, 20 checks a
+  second), so the key is each cursor's control and emulator by instance id and child indices up to the
+  scene, plus the player count and the scene instance (about 15 us); the anchors are fixed nodes, so a
+  description changes only with those. One pending body: one for the next scene replaces one still
+  waiting for the previous scene, which only drops cursors on a screen the host has left.
   Until protocol 9 emulator and control were child-index paths from the scene root, which broke as soon as
   the trees differed: Damage Meter adds a summary button next to the shop's reroll button, and with it on
   one machine only every later index was off by one. Now nothing visible travels as a tree position:
@@ -574,17 +652,21 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     inventory element). The own-panel messages only accept that player's anchors, never `scene`.
   - Network data is checked (types, anchor names, player 0..3, index and step counts, name lengths;
     steps match child names, never parse paths). A target that does not resolve (a control only one side
-    has) is ignored, as before: the latest message per scene stays pending (10 s) until every cursor
-    resolves to a visible control (scene still loading, retry prompt not shown yet) and is retried every
-    frame. `ui/scene_paths.gd` only finds the emulators now (FocusSync, MenuSync, CoopSelection).
+    has) is ignored, as before: `apply_state` (only while mirroring and on the scene the body names;
+    `local_emulators` are skipped) returns false until every cursor resolves to a visible control (scene
+    still loading, retry prompt not shown yet), and the stream retries it every frame for up to 10 s. `ui/scene_paths.gd` only finds the emulators now (FocusSync, MenuSync, CoopSelection).
 - **Selection screens / end of run** (`sync/menu_sync.gd` + `ui/client_view.gd`): grids depend on local
   unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
   run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),
   so they are not run on the client. Instead the host sends its grids (`BaseSelection._get_inventories()`,
-  visible ones: columns + ordered `[my_id, random/special/locked flags]`, only when they change) and each
+  visible ones: columns + ordered `[my_id, random/special/locked flags]`) and each
   cursor as `[inventory, element index]`; `ui/selection_grid.gd` draws them with ids looked up in
   `ItemService` (unknown ids → "?") and per-player colour borders (thicker when `_has_player_selected`),
-  plus `ItemPanelUI` cards for the item under each cursor.
+  plus `ItemPanelUI` cards for the item under each cursor. State stream sections menu (cursors, screen,
+  colours, `you` as the per-peer patch) and menu_grids (only when the grids change), both inactive in
+  battle / shop (null: the client forgets them, the next screen's own message takes over). Both carry
+  `screen` (host scene instance id): the client shows a state only with the grids of its screen, so a new
+  screen never shows with the previous one's grids (its grids follow in the same step).
 - **Co-op character selection UX** (`ui/coop_selection.gd`, `extensions/singletons/coop_service.gd`,
   protocol 9). Found in the game: `CoopJoinPanel1..4` (`coop_join_panel.gd :: update_indicators`) show
   the `COOP_HOLD_TO_JOIN` hint ("Hold {0} or {1} to join", A / Space glyphs) only in the *next* free slot
@@ -601,18 +683,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   remote players send it as a button) cycles to the next free colour; `CoopSelection` restyles what is on
   screen (focus styles, panels, locked panels, join progress). A hint row ("[F] / [Y] Change
   colour", the game's glyphs) is added under the title. Colours travel as palette indices (`colors`) in
-  MENU_STATE, BATTLE_START and SHOP_STATE; the client validates them (one distinct palette index per slot)
+  the menu section, BATTLE_START and the shop state; the client validates them (one distinct palette index per slot)
   and mirrors them until it leaves the lobby (`bt_clear_remote_colors`). Nothing is saved.
 - **Locked characters**: the host's screen already shows the game's `LockedPanel` (challenge text via
   `ChallengeService.find_challenge_from_reward`, or the item-set requirement) instead of the panel; only
-  the client cards showed the description. MENU_STATE player entries now carry the host LockedPanel text
+  the client cards showed the description. Menu state player entries now carry the host LockedPanel text
   and "locked by a challenge"; the client card shows a `LockedPanel` with its own (localised) challenge
   text, else the host's text. Free slots appear as client cards with the same join hint and the hold
   progress (`join`), the colour hint shows once the client has a slot.
 - **Wave failed** (`sync/retry_sync.gd`): `main.gd :: _on_EndWaveTimer_timeout` shows `UI/RetryWave`, which
-  never runs on the puppet (timer callbacks disconnected). Host sends `RETRY_PROMPT` (visible, its
-  `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's `FocusEmulator` index 0 + name);
-  the client shows its copy with `confirm/cancel_button_pressed = true` (local clicks do nothing) and a
+  never runs on the puppet (timer callbacks disconnected). Host: state stream section retry, active while
+  the prompt is visible (its `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's
+  `FocusEmulator` index 0 + name; null hides the client's copy); pending until the puppet battle is ready.
+  The client shows its copy with `confirm/cancel_button_pressed = true` (local clicks do nothing) and a
   "waiting for Pn" line. FocusSync mirrors the cursor.
 - **Battle → next screen**: on `BATTLE_END` the client keeps the frozen battle (muted) until the shop / next
   battle / menu state replaces it (fallback to the client view after 2 s); the view only says "Waiting for
@@ -700,7 +783,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   extension answers `is_manual_aim` for virtual devices from that flag.
 - Pause (`sync/pause_control.gd`): client puppet battle/shop get `PauseMenu.enabled = false` and lose the
   `game_lost_focus` connection. Host, shop: a remote pause hands the menu to the first local player; the
-  pauser resumes with pause (main page only). `BATTLE_PAUSE` / `SHOP_PAUSE` carry who paused ("Paused by ...").
+  pauser resumes with pause (main page only). Section pause_battle (active while the host's battle is
+  paused, flushed by `BattleHost._physics_process` on the change) / pause_shop carry who paused
+  ("Paused by ..."); null = resumed.
 - Live menu (protocol 9; `extensions/ui/pause_menu.gd`, see docs/brotato-hooks.md §5): during a wave
   (until `main._end_wave_timer_timedout`) the menu opens without pausing.
   - Host with at least one peer: `PauseControl.host_update` sets `menu.live` every frame and keeps the

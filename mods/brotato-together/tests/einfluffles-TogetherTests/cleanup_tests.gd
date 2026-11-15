@@ -7,8 +7,11 @@ extends Reference
 # Three suites (run_host, run_client, run_misc); each records the host wave it needs itself.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
-const RunStateCodec := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
+)
+const ShopStreamTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/shop_stream_tests.gd"
 )
 const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
@@ -195,7 +198,7 @@ func _host_shop_body(shop_sync: Node):
 	yield(tree, "idle_frame")
 	yield(tree, "idle_frame")
 	shop_sync._host_shop = tree.current_scene
-	var body: Dictionary = bytes2var(var2bytes(shop_sync._shop_body()), false)
+	var body: Dictionary = shop_sync.state_body(StateStream.RUN_SHOP)
 	shop_sync._host_shop = null
 	return body
 
@@ -221,11 +224,8 @@ func _client_wave(client: Node, recording: Dictionary):
 
 
 func _client_shop(shop_sync: Node, body: Dictionary):
-	var state := RunStateCodec.decode(body.run)
 	shop_sync._client_shop_id = 0
-	shop_sync._pending = {"state": state, "slots": body.slots, "go": body.go}
-	shop_sync._client_shop_id = body.shop_id
-	shop_sync._enter_shop(state)
+	ShopStreamTests.deliver(shop_sync.state_stream, StateStream.RUN_SHOP, body)
 	yield(shop_sync, "shop_entered")
 	yield(_t.get_tree().create_timer(SETTLE_SEC), "timeout")
 
@@ -454,16 +454,24 @@ func _measure(host: Node, client: Node):
 
 
 
-# The same for the shop: two states in one frame enter it once.
+# The same for the shop: two states in one frame enter it once, and the second one (the
+# other player ready) is applied once the shop is.
 func _test_shop_states(shop_sync: Node, body: Dictionary):
 	var tree := _t.get_tree()
+	var ready: Dictionary = body.duplicate()
+	ready.go = [false, true]
 	shop_sync._client_shop_id = 0
-	shop_sync._on_state(body)
-	shop_sync._on_state(body)
+	ShopStreamTests.deliver(shop_sync.state_stream, StateStream.RUN_SHOP, body)
+	ShopStreamTests.deliver(shop_sync.state_stream, StateStream.RUN_SHOP, ready)
 	yield(shop_sync, "shop_entered")
 	yield(tree, "idle_frame")
 	yield(tree, "idle_frame")
 	_t._check(
 		shop_sync.is_in_shop() and tree.current_scene == shop_sync._client_shop,
 		"two shop states in one frame: one guarded shop"
+	)
+	_t._check(
+		shop_sync._client_shop._player_pressed_go_button.slice(0, 1) == [false, true]
+		and not shop_sync.state_stream.is_pending(StateStream.RUN_SHOP),
+		"the state that came while the shop loaded is applied once it is ready"
 	)

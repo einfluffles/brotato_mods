@@ -105,8 +105,8 @@ func _bt_first_free(slots: Array) -> int:
 	return 0
 
 
-# Client: the host's slot colours (from MENU_STATE / BATTLE_START / SHOP_STATE). Ignored unless
-# it is one distinct palette index per slot.
+# Client: the host's slot colours (from the menu state, BATTLE_START and the shop state).
+# Ignored unless it is one distinct palette index per slot.
 func bt_apply_remote_colors(value) -> void:
 	_bt_init_colors()
 	if typeof(value) != TYPE_ARRAY or value.size() != player_colors.size():

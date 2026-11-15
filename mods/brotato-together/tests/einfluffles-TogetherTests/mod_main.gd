@@ -49,6 +49,9 @@ const BulletHellTests := preload(
 const ShopLoopbackTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_loopback_tests.gd"
 )
+const ShopChangeTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/shop_change_tests.gd"
+)
 const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
@@ -56,6 +59,9 @@ const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/fe
 const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks_tests.gd")
 const BattleSceneTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/battle_scene_tests.gd"
+)
+const StateStreamTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/state_stream_tests.gd"
 )
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
@@ -81,6 +87,8 @@ const SUITES := [
 	"looks",
 	"battle_scene",
 	"selection",
+	"state_stream",
+	"shop_change",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -315,6 +323,19 @@ func _suite_looks(together: Node):
 func _suite_battle_scene(together: Node):
 	coop_run(3)
 	_suite = BattleSceneTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+# sync/state_stream.gd with its own streams on a fake session; touches no game state.
+func _suite_state_stream(together: Node):
+	_suite = StateStreamTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+# Change detection of the host's shop state, with the cost of a check in small and late runs.
+func _suite_shop_change(together: Node):
+	coop_run(2)
+	_suite = ShopChangeTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

@@ -321,7 +321,7 @@ func _test_host_handshake(transport: Node, session: Node, input_sync: Node) -> v
 	_steam.send_result = RESULT_NO_CONNECTION
 	session.send_unreliable(CLIENT, Protocol.Msg.PING, {"t": 0})
 	_t._check(not session.peers[CLIENT].resync, "failed unreliable send needs no resync")
-	session.send_reliable(CLIENT, Protocol.Msg.SHOP_STATE, {})
+	session.send_reliable(CLIENT, Protocol.Msg.STATE, [])
 	_steam.send_result = 1
 	_t._check(session.peers[CLIENT].resync, "failed reliable send queues a resync")
 	session.process_resyncs(now + 4 * session.RESYNC_INTERVAL_MSEC)

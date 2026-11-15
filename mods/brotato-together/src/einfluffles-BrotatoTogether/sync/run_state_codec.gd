@@ -15,11 +15,16 @@ static func encode(shop_args := []) -> Dictionary:
 	return pack(encode_json(shop_args))
 
 
-# The JSON text alone: cheap to compare before compressing (ShopSync checks for changes).
+# The JSON text alone, before compressing.
 static func encode_json(shop_args := []) -> String:
+	return JSON.print(serialize(shop_args))
+
+
+# The run state as the save file has it before JSON.print (plain data, about a quarter of the
+# cost of the text: sync/shop_run_cache.gd compares its hash() first).
+static func serialize(shop_args := []) -> Dictionary:
 	var state: Dictionary = ProgressData.callv("get_run_state", shop_args)
-	var serialized: Dictionary = ProgressDataLoaderV3.new().serialize_run_state(state)
-	return JSON.print(serialized)
+	return ProgressDataLoaderV3.new().serialize_run_state(state)
 
 
 static func pack(json: String) -> Dictionary:

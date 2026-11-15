@@ -3,6 +3,7 @@ extends Node
 # - BATTLE_START (reliable) with the full run state + entity type table, also for late joiners
 # - SNAPSHOT (unreliable) at SNAPSHOT_HZ with players, entities and wave time
 # - BATTLE_END (reliable) when the battle scene goes away
+# - section pause_battle of the state stream while the battle is paused (state_key)
 
 # What is known about a mirrored node once it has its net id (see _record): looked up per
 # snapshot instead of asking the node again.
@@ -27,6 +28,7 @@ const FeedbackMirror := preload(
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
 const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
+const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleHost"
 const BATTLE_SCENE := "res://main.tscn"
 const SNAPSHOT_HZ := 30
@@ -52,9 +54,10 @@ const KIND_LOOK := 8  # can show a lasting look (sync/looks.gd)
 const MAX_CLOCK_DRIFT_MSEC := 250.0
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
 var snapshot_bytes := 0  # size of the last snapshot, for the F9 menu
-var pause_control: Node = null  # who paused (BATTLE_PAUSE)
+var pause_control: Node = null  # who paused (section pause_battle)
 
 var _main: Node = null
 var _battle_live := false  # between _start_battle and _end_battle
@@ -81,6 +84,7 @@ func setup(netplay_session: Node, remote_input: Node) -> void:
 	session = netplay_session
 	input_sync = remote_input
 	session.connect("peer_ready", self, "_on_peer_ready")
+	state_stream.register_provider(StateStream.PAUSE_BATTLE, self)
 
 
 func _ready() -> void:
@@ -109,15 +113,11 @@ func _physics_process(delta: float) -> void:
 		return
 	if not get_tree().paused:
 		_sim_msec = advance_clock(_sim_msec, OS.get_ticks_msec())
-	if not session.is_host():
-		return
 	if get_tree().paused != _paused:
 		_paused = get_tree().paused
-		var by: Array = pause_control.paused_by() if pause_control != null else ["", 0]
-		session.broadcast_reliable(
-			Protocol.Msg.BATTLE_PAUSE,
-			{"battle_id": _battle_id, "paused": _paused, "by": by[0], "by_id": by[1]}
-		)
+		state_stream.flush(StateStream.PAUSE_BATTLE)  # not up to an interval late (host only)
+	if not session.is_host():
+		return
 	if _paused:
 		return
 	_accumulator += delta
@@ -213,7 +213,6 @@ func _battle_start_body() -> Dictionary:
 		"battle_id": _battle_id,
 		"run": RunStateCodec.encode(),
 		"types": types_by_idx,
-		"paused": _paused,
 		"colors": CoopService.bt_slot_colors.duplicate(),
 		"holes": BattleScene.hole_layout(_main),
 		"weapon_slots": _battle_scene.start_slots(_main),
@@ -223,6 +222,21 @@ func _battle_start_body() -> Dictionary:
 func _on_peer_ready(steam_id: int) -> void:
 	if session.is_host() and is_in_battle():
 		_send_battle_start(steam_id, _battle_start_body())
+
+
+# Section pause_battle: active while this battle is paused (a joining peer gets it on peer_ready
+# like every section), inactive (null: resumed) otherwise. A pause flushes the section
+# (_physics_process), so it does not wait for the next check.
+func state_key(_section: int) -> String:
+	if not is_in_battle() or not get_tree().paused:
+		return ""
+	return var2str(state_body(StateStream.PAUSE_BATTLE))
+
+
+# battle_id, by (name, "": the host), by_id (steam id, 0: the host)
+func state_body(_section: int):
+	var by: Array = pause_control.paused_by() if pause_control != null else ["", 0]
+	return {"battle_id": _battle_id, "by": by[0], "by_id": by[1]}
 
 
 # Each client also learns which player slot it controls (-1: spectator).

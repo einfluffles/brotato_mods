@@ -4,6 +4,9 @@ extends Reference
 # file for the file length limit.
 
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
+)
 const MECA_DLC := "primal_dread"
 const REMOTE := 1  # the remote player's slot on the host
 
@@ -38,7 +41,8 @@ func host(s):
 		rolls.size() == 1 and entry[0] == 0 and entry[1] == id and entry[2] != entry[4],
 		"the host remembers two options for that weapon (%s)" % [rolls]
 	)
-	s._t._check(s._sync._shop_body().mecas[REMOTE] == rolls, "and sends them with the shop state")
+	var body: Dictionary = s._sync.state_body(StateStream.RUN_SHOP)
+	s._t._check(body.mecas[REMOTE] == rolls, "and sends them with the shop state")
 	s._t._check(s._seq() == seq, "a roll leaves the revision alone")
 	s._t._check(s._apply("meca_roll", 7, id), "asking again (found by identity)")
 	s._t._check(s._sync._shop_parts().mecas[REMOTE] == rolls, "the same roll: no reroll by asking")

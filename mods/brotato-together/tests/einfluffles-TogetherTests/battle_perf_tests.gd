@@ -2,7 +2,7 @@ extends Reference
 # Battle mirror robustness/performance (review findings): own-player prediction during pauses and
 # stalls, net ids of pooled nodes reused between snapshots, the brachiosaurus foot on clients,
 # only accepted sounds recorded (playSingle replayed as playSingle), client-side puppet pooling and
-# type warm-up, no always-on node_added hooks, shop change detection without compression.
+# type warm-up, no always-on node_added hooks (shop change detection: shop_stream_tests.gd).
 # Driven from mod_main.gd; checks go through its _check.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -62,18 +62,6 @@ func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Arra
 		"no prediction while paused or when snapshots stopped"
 	)
 	input_sync.history = saved
-
-
-# Shop loopback: the host compares the run state's JSON every check and compresses only changes.
-func test_shop_compare(shop_sync: Node) -> void:
-	shop_sync._last_sent_key = ""
-	var packed: int = shop_sync.states_packed
-	shop_sync._send_if_changed()
-	shop_sync._send_if_changed()
-	shop_sync._send_if_changed()
-	_t._check(
-		shop_sync.states_packed == packed + 1, "unchanged shop state compressed once, not every check"
-	)
 
 
 # Host: types announced up front, pooled nodes, the brachiosaurus and its foot, sounds.

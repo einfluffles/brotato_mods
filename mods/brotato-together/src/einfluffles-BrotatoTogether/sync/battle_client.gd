@@ -34,6 +34,7 @@ const FeedbackMirror := preload(
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
 const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
+const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -71,6 +72,7 @@ const KIND_POSE := 16  # its scene has parts sync/pose.gd moves
 const LOADING_TIMEOUT_MSEC := 10000  # a scene that never got ready must not block the next
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
 var interp_lag_msec := 0  # render time vs newest snapshot, for the F9 menu
 
@@ -114,6 +116,12 @@ func setup(netplay_session: Node, local_input: Node) -> void:
 	input_sync = local_input
 	session.connect("message", self, "_on_message")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
+	# Pending up to 30 s: a (re)joining peer gets it right after its BATTLE_START, while the scene
+	# loads (and copes with it arriving first all the same).
+	state_stream.register_handler(StateStream.PAUSE_BATTLE, self, 30.0)
+	# Sections waiting for the puppet battle (pause, retry prompt) apply the frame it is ready.
+	if not is_connected("battle_entered", state_stream, "retry"):
+		connect("battle_entered", state_stream, "retry")
 
 
 func _ready() -> void:
@@ -142,16 +150,33 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 				_define_type(body.get("idx"), body.get("path"))
 		Protocol.Msg.SNAPSHOT:
 			_on_snapshot(Snapshot.parse(body))
-		Protocol.Msg.BATTLE_PAUSE:
-			if typeof(body) == TYPE_DICTIONARY and body.get("battle_id") == _battle_id:
-				var by = body.get("by")
-				var by_id = body.get("by_id")
-				_pause_text = PauseControl.banner_text(
-					by if typeof(by) == TYPE_STRING else "",
-					by_id if typeof(by_id) == TYPE_INT else 0,
-					session.transport.local_id
-				)
-				_set_paused(bool(body.get("paused", false)))
+
+
+# Section pause_battle (BattleHost.state_body): the host's battle is paused. Pending until the
+# puppet battle of that battle_id is ready (a peer joining a paused battle gets it before its
+# BATTLE_START); a pause of an earlier battle is dropped.
+func apply_state(_section: int, body, _revision: int) -> bool:
+	if typeof(body) != TYPE_DICTIONARY or typeof(body.get("battle_id")) != TYPE_INT:
+		return true
+	if body.battle_id < _battle_id:
+		return true
+	if body.battle_id != _battle_id or not is_in_battle():
+		return false
+	var by = body.get("by")
+	var by_id = body.get("by_id")
+	_pause_text = PauseControl.banner_text(
+		by if typeof(by) == TYPE_STRING else "",
+		by_id if typeof(by_id) == TYPE_INT else 0,
+		session.transport.local_id
+	)
+	_set_paused(true)
+	return true
+
+
+# Resumed (or the battle is over: _leave_battle resets the pause anyway).
+func clear_state(_section: int) -> void:
+	_pause_text = ""
+	_set_paused(false)
 
 
 # --- battle lifecycle ---
@@ -198,17 +223,15 @@ func _on_battle_start(body) -> void:
 	ModLoaderLog.info("Entering battle %s (wave %s)" % [_battle_id, RunData.current_wave], LOG_NAME)
 
 
-# What a BATTLE_START says besides the run: this client's slot, the pause, the type table.
+# What a BATTLE_START says besides the run: this client's slot, the type table. The pause comes
+# with section pause_battle (apply_state).
 func _adopt_start(body: Dictionary) -> void:
 	_you = int(body.get("you", -1)) if typeof(body.get("you")) == TYPE_INT else -1
-	_paused = bool(body.get("paused", false))
 	var types = body.get("types")
 	if typeof(types) == TYPE_DICTIONARY:
 		for idx in types:
 			if not _types.has(idx):
 				_define_type(idx, types[idx])
-	if is_in_battle():
-		_set_paused(_paused)
 
 
 # The wave is over here too: its puppets, buffers and tables go, whatever screen comes next.

@@ -1,11 +1,9 @@
 extends Node
 # The end-of-wave level-up / crate panels (main.tscn's coop UpgradesUI).
 #
-# Host: owns every decision. While the panels are visible it sends UPGRADES_STATE on change:
-#   run state + per player
-#   ["none"] | ["done"] | ["upgrades", [upgrade ids], level, reroll_price] | ["item", json, id]
-#   plus, per player, a panel revision (seqs), the carousel page (pages) and the meca upgrade
-#   rolls its crate weapon popup remembers (mecas, MecaChoice.entries).
+# Host: owns every decision. While the panels are visible it provides the state stream's
+#   UPGRADES section (sync/state_stream.gd; see body() for the fields): run state + per player
+#   what its panel shows, a panel revision, the carousel page and the meca upgrade rolls.
 # Client: shows those options in its own copy of the panels; nothing is rolled locally.
 #   Its OWN panel runs here: its buttons drive its slot's FocusEmulator locally
 #   (InputSync.set_local_device), so cursor, pages (upgrades / gear / stats), popups and the
@@ -19,7 +17,7 @@ extends Node
 #   the pick is an option index (sync/meca_choice.gd).
 #   Its cursor and page also travel as UPGRADE_FOCUS: what the host and the others see.
 #   Keyboard and mouse on the own panel, and the mouse kept off the others: sync/local_panel.gd.
-# The other players' panels stay mirrored: cursors by FocusSync, pages from UPGRADES_STATE.
+# The other players' panels stay mirrored: cursors by FocusSync, pages from the state.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const RunStateCodec := preload(
@@ -33,7 +31,14 @@ const VirtualDevices := preload(
 )
 const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
+)
 const CHECK_INTERVAL := 0.1
+# A state can wait for the puppet battle scene to load (on a rejoin the stream's resync comes
+# right after BATTLE_START, which starts the load); it used to wait for battle_entered without
+# a limit.
+const PENDING_TIMEOUT_SEC := 30.0
 const ITEM_KINDS := ["take", "discard", "ban"]
 # UpgradesUI._ready: container signal -> UpgradesUI handler (bound to the player index).
 const DECISION_HANDLERS := {
@@ -54,6 +59,7 @@ const WEAPON_POPUP_HANDLERS := {
 const WEAPON_KINDS := ["weapon_combine", "weapon_discard", "weapon_meca_roll", "weapon_meca"]
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var battle_host: Node = null
 var battle_client: Node = null
 var focus_sync: Node = null
@@ -61,14 +67,11 @@ var input_sync: Node = null
 var last_intent := {}  # client: the last decision sent (also read by the tests)
 
 # host
-var _last_sent_key := ""
-var _check_left := 0.0
 var _seq_ui_id := 0  # instance id of the UpgradesUI the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel shows something new
 var _seq_keys := []
 
 # client
-var _pending := {}  # state that arrived while the battle scene was still loading
 var _guarded_ui: Node = null  # the puppet UpgradesUI whose decision signals are rewired
 var _applied := {}  # player index -> key of the entry last applied
 var _run_key := []
@@ -86,7 +89,8 @@ func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> voi
 	battle_host = host_battle
 	battle_client = client_battle
 	session.connect("message", self, "_on_message")
-	session.connect("peer_ready", self, "_on_peer_ready")
+	state_stream.register_provider(StateStream.UPGRADES, self, CHECK_INTERVAL)
+	state_stream.register_handler(StateStream.UPGRADES, self, PENDING_TIMEOUT_SEC)
 	_meca.connect("roll_requested", self, "_on_own_meca_roll")
 	_meca.connect("picked", self, "_on_own_meca_picked")
 	battle_client.connect("battle_entered", self, "_on_battle_entered")
@@ -97,46 +101,22 @@ func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
 
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	if is_instance_valid(_local_panel):
 		_local_panel.blocked = input_sync != null and input_sync.local_input_blocked
 	if _local_active:
 		_report_own_focus()
-	if not session.is_host() or not battle_host.is_in_battle():
-		_last_sent_key = ""
-		_block_remote_buttons(false)
-		return
-	var ui = battle_host._main.get("_coop_upgrades_ui")
-	var showing: bool = ui != null and ui.visible
 	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
+	var showing: bool = session.is_host() and _showing_ui() != null
 	_block_remote_buttons(showing and not get_tree().paused)
-	if not showing:
-		return
-	_check_left -= delta
-	if _check_left > 0.0:
-		return
-	_check_left = CHECK_INTERVAL
-	var players := capture(ui)
-	_update_seqs(ui, players)
-	var golds := []
-	for p in RunData.get_player_count():
-		golds.append(RunData.get_player_gold(p))
-	var key := var2str([players, _seqs, _pages(ui, players.size()), golds, _mecas(ui)])
-	if key == _last_sent_key:
-		return
-	_last_sent_key = key
-	session.broadcast_reliable(Protocol.Msg.UPGRADES_STATE, body(players))  # encodes the run
 
 
 func _on_message(steam_id: int, msg_type: int, msg) -> void:
 	match msg_type:
-		Protocol.Msg.UPGRADES_STATE:
-			if session.is_client() and steam_id == session.transport.host_id:
-				_on_state(msg)
 		Protocol.Msg.UPGRADE_INTENT:
 			var ui = _host_ui(msg)
 			if ui != null and host_apply_intent(ui, battle_host._player_index_of(steam_id), msg):
-				_check_left = 0.0
+				state_stream.flush(StateStream.UPGRADES)  # the answer goes out next frame
 		Protocol.Msg.UPGRADE_FOCUS:
 			var ui = _host_ui(msg)
 			if ui != null:
@@ -148,12 +128,49 @@ func _on_message(steam_id: int, msg_type: int, msg) -> void:
 # --- host ---
 
 
+# The host's UpgradesUI while its battle shows the panels, else null. No host check: the stream
+# only asks its provider while host, and the tests ask it on a battle without a session.
+func _showing_ui():
+	if not battle_host.is_in_battle():
+		return null
+	var ui = battle_host._main.get("_coop_upgrades_ui")
+	return ui if ui != null and ui.visible else null
+
+
+# StateStream provider: "" (inactive: the clients get null once) unless the panels show. Called
+# every CHECK_INTERVAL and on peer_ready, so it is the text of the panels, never the run. Also
+# where the revisions follow the panels between intents (_update_seqs, as the old poll did).
+func state_key(_section: int) -> String:
+	var ui = _showing_ui()
+	if ui == null:
+		return ""
+	var players := capture(ui)
+	_update_seqs(ui, players)
+	var golds := []
+	for p in RunData.get_player_count():
+		golds.append(RunData.get_player_gold(p))
+	var pages := _pages(ui, players.size())
+	return var2str([battle_host._battle_id, players, _seqs, pages, golds, _mecas(ui)])
+
+
+# Built only when the stream sends (it encodes the run).
+func state_body(_section: int):
+	var ui = _showing_ui()
+	return body(capture(ui)) if ui != null else null
+
+
+# battle_id, run (RunStateCodec), and per player:
+#   players: ["none"] | ["done"] | ["upgrades", [upgrade ids], level, reroll_price]
+#     | ["item", json, id]
+#   seqs: the panel revision (bumped when it shows something new; an intent names it)
+#   pages: the carousel page
+#   mecas: the meca upgrade rolls its crate weapon popup remembers ([[weapon slot, weapon my_id,
+#     stat key hash, value, stat key hash, value]], MecaChoice.entries, as in the shop state)
 func body(players: Array) -> Dictionary:
 	var ui = battle_host._main.get("_coop_upgrades_ui")
 	_update_seqs(ui, players)
 	return {
 		"battle_id": battle_host._battle_id,
-		"visible": true,
 		"run": RunStateCodec.encode(),
 		"players": players,
 		"seqs": _seqs.duplicate(),
@@ -289,8 +306,8 @@ static func _weapons_key(p: int) -> Array:
 	return key
 
 
-# A remote player's own cursor and page, for the host's screen and (through FocusSync and
-# UPGRADES_STATE) the other clients'. Cosmetic: decisions never depend on it.
+# A remote player's own cursor and page, for the host's screen and (through FocusSync and the
+# state) the other clients'. Cosmetic: decisions never depend on it.
 # target: a ui/focus_targets.gd target naming one of p's own panel parts.
 func host_apply_focus(ui: Node, p: int, page, target) -> void:
 	if p < 0 or p >= RunData.get_player_count():
@@ -312,8 +329,7 @@ func _host_ui(msg):
 		return null
 	if typeof(msg) != TYPE_DICTIONARY or msg.get("battle_id") != battle_host._battle_id:
 		return null
-	var ui = battle_host._main.get("_coop_upgrades_ui")
-	return ui if ui != null and ui.visible else null
+	return _showing_ui()
 
 
 # The revision changes with what the panel shows, even when two options in a row look the same
@@ -352,27 +368,38 @@ func _block_remote_buttons(block: bool) -> void:
 	input_sync.blocked_buttons = all & ~(1 << VirtualDevices.PAUSE_INDEX) if block else 0
 
 
-# A (re)joining client needs the current panels too: force a resend.
-func _on_peer_ready(_steam_id: int) -> void:
-	_last_sent_key = ""
-
-
 # --- client ---
 
 
+# A state that came before the puppet scene was ready is applied now, not a frame later.
 func _on_battle_entered() -> void:
-	if not _pending.empty() and _pending.get("battle_id") == battle_client._battle_id:
-		apply(battle_client._main, _pending)
-	_pending = {}
+	state_stream.retry()
 
 
-func _on_state(msg) -> void:
-	if typeof(msg) != TYPE_DICTIONARY or msg.get("battle_id") != battle_client._battle_id:
-		return
-	if not battle_client.is_in_battle():
-		_pending = msg  # BATTLE_START just arrived; the scene is still loading
-		return
-	apply(battle_client._main, msg)
+# StateStream handler. false keeps the state pending in the stream: its battle has not started
+# here yet (not expected: a rejoin's resync follows its BATTLE_START) or its puppet scene is
+# still loading. Applied again on a resync: apply() only rebuilds what changed.
+func apply_state(_section: int, state, _revision: int) -> bool:
+	if typeof(state) != TYPE_DICTIONARY or typeof(state.get("battle_id")) != TYPE_INT:
+		return true  # malformed: dropped
+	if state.battle_id != battle_client._battle_id or not battle_client.is_in_battle():
+		return false
+	var main: Node = battle_client._main
+	if main.get("_coop_upgrades_ui") == null:
+		return false
+	apply(main, state)
+	return true
+
+
+# The host's panels are gone (everyone done, or its battle is over). The puppet's panels stay
+# as they are until its scene goes (_on_battle_left), as before; the own panel stops taking
+# input (its intents would name a revision the host no longer has), and a later state
+# rebuilds every panel.
+func clear_state(_section: int) -> void:
+	stop_local()
+	_applied = {}
+	_own_seq = -1
+	_own_item_id = ""
 
 
 func apply(main: Node, msg: Dictionary) -> void:
@@ -433,7 +460,6 @@ func _on_battle_left() -> void:
 	_meca.detach()
 	_applied = {}
 	_run_key = []
-	_pending = {}
 
 
 func stop_local() -> void:

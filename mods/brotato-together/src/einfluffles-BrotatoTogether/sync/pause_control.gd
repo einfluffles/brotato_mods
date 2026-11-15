@@ -12,10 +12,13 @@ extends Node
 #   game's own "change pause ownership" steps from PauseMenu.on_game_lost_focus), since the
 #   remote player can't see it and must not quit or restart blind. The remote player who paused
 #   resumes with pause again (while the menu shows its main page). Clients learn who paused
-#   (BATTLE_PAUSE via BattleHost, SHOP_PAUSE from here).
+#   (section PAUSE_BATTLE via BattleHost; in the shop, section PAUSE_SHOP provided here and
+#   handled by ShopSync).
 # Client: puppet scenes never pause locally (focus loss, pad disconnect, pause button).
 
-const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
+)
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
@@ -28,6 +31,7 @@ const BANNER_NAME := "BrotatoTogetherPauseBanner"
 const HOST_ONLY_BUTTONS := ["%RestartButton", "%EndRunButton"]
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
 var battle_client: Node = null
 var together_menu: Node = null  # client: Quit asks there
@@ -36,7 +40,6 @@ var together_menu: Node = null  # client: Quit asks there
 var _menu: Node = null  # PauseMenu that is open
 var _pauser_device := -1  # virtual device that paused (-1: the host or nobody)
 var _paused_frame := -1  # the shop pauses on the release event that is still propagating
-var _last_shop_pause := []
 var _held_behavior: Node = null  # movement of the live menu's owner, parked on the idle device
 var _held_device := -1
 var _scene_id := 0  # instance id of the scene whose pause menu is watched
@@ -48,8 +51,7 @@ var _pause_armed := false  # own pause went down while the buttons were the game
 func setup(netplay_session: Node, remote_input: Node) -> void:
 	session = netplay_session
 	input_sync = remote_input
-	session.connect("message", self, "_on_message")
-	session.connect("peer_ready", self, "_on_peer_ready")
+	state_stream.register_provider(StateStream.PAUSE_SHOP, self)
 
 
 func _ready() -> void:
@@ -130,11 +132,13 @@ func _watch_scene(scene: Node) -> void:
 func _on_menu_paused(menu: Node) -> void:
 	if session.is_host():
 		handle_pause(menu)
+	state_stream.flush(StateStream.PAUSE_SHOP)  # the banner in the next frame, not at the check
 
 
 func _on_menu_unpaused() -> void:
 	_menu = null
 	_pauser_device = -1
+	state_stream.flush(StateStream.PAUSE_SHOP)
 
 
 # PauseMenu.pause() emits "paused" before it sets the menu up for the pausing player, so the
@@ -207,27 +211,24 @@ func _process(_delta: float) -> void:
 	_poll_pauser_release()
 	_watch_scene(get_tree().current_scene)
 	_update_live_menu()
-	if not session.is_host():
-		_last_shop_pause = []
-		return
+
+
+# State stream provider, section PAUSE_SHOP: [paused, by (name), by_id (steam id, 0: the host)]
+# while the host is in the shop (like PAUSE_BATTLE); inactive elsewhere. Handled by ShopSync.
+func state_key(_section: int) -> String:
 	var scene := get_tree().current_scene
 	if scene == null or scene.filename != SHOP_SCENE:
-		_last_shop_pause = []
-		return
-	var state := _shop_pause_state()
-	if state != _last_shop_pause:
-		_last_shop_pause = state
-		session.broadcast_reliable(Protocol.Msg.SHOP_PAUSE, state)
+		return ""
+	return var2str(_shop_pause_state())
+
+
+func state_body(_section: int) -> Array:
+	return _shop_pause_state()
 
 
 func _shop_pause_state() -> Array:
 	var by := paused_by()
 	return [get_tree().paused, by[0], by[1]]
-
-
-func _on_peer_ready(steam_id: int) -> void:
-	if session.is_host() and not _last_shop_pause.empty():
-		session.send_reliable(steam_id, Protocol.Msg.SHOP_PAUSE, _last_shop_pause)
 
 
 # --- live menu ---
@@ -345,23 +346,3 @@ func _on_client_quit(menu: Node) -> void:
 	if together_menu != null:
 		together_menu.open()
 		together_menu.ask_leave()
-
-
-# --- client ---
-
-
-func _on_message(steam_id: int, msg_type: int, body) -> void:
-	if msg_type != Protocol.Msg.SHOP_PAUSE or not session.is_client():
-		return
-	if steam_id != session.transport.host_id or typeof(body) != TYPE_ARRAY or body.size() != 3:
-		return
-	if typeof(body[1]) != TYPE_STRING or typeof(body[2]) != TYPE_INT:
-		return
-	var scene := get_tree().current_scene
-	if scene == null or scene.filename != SHOP_SCENE:
-		return
-	show_shop_pause(scene, bool(body[0]), banner_text(body[1], body[2], session.transport.local_id))
-
-
-func show_shop_pause(shop: Node, paused: bool, text: String) -> void:
-	show_banner(shop, paused, text)
