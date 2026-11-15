@@ -171,6 +171,7 @@ func _on_battle_start(body) -> void:
 	_battle_id = body.battle_id
 	_adopt_start(body)
 
+	CoopService.bt_apply_remote_colors(body.get("colors"))
 	Puppet.set_active(true)
 	RunStateCodec.apply(state)
 	VirtualDevices.fill_puppet_slots(RunData.get_player_count())

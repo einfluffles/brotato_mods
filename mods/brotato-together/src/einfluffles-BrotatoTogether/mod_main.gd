@@ -36,6 +36,7 @@ var ui_sounds: Node = null
 var pause_control: Node = null
 var absent_players: Node = null
 var retry_sync: Node = null
+var coop_selection: Node = null  # join hints + colour picking on the co-op selection screen
 
 var _client_active := false
 var _sound_relay: Script = null
@@ -99,6 +100,8 @@ func _ready() -> void:
 
 	retry_sync = _add("sync/retry_sync.gd", "RetrySync")
 	retry_sync.setup(session, battle_host, battle_client)
+
+	coop_selection = _add("ui/coop_selection.gd", "CoopSelection")
 
 	_add_player_control()
 
@@ -184,6 +187,7 @@ func _on_menu_state(state: Dictionary) -> void:
 
 
 func _on_lobby_left() -> void:
+	CoopService.bt_clear_remote_colors()  # a client goes back to its own colours
 	if _client_active:
 		_client_active = false
 		get_tree().paused = false

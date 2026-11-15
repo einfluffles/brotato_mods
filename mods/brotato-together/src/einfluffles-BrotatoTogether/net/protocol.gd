@@ -9,18 +9,22 @@ enum Msg {
 	# client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons (held mask),
 	# presses (4-bit counter per button, sync/press_counter.gd), flags (sync/local_aim.gd)]
 	INPUT,
-	BATTLE_START,  # host -> client: battle_id, run (RunStateCodec), types {idx: scene_path}
+	# host -> client: battle_id, run (RunStateCodec), types {idx: scene_path}, colors (palette
+	# index per slot, CoopService extension; also in SHOP_STATE and MENU_STATE)
+	BATTLE_START,
 	BATTLE_END,  # host -> client: battle_id
 	TYPE_DEF,  # host -> client: battle_id, idx, path
 	SNAPSHOT,  # host -> client, unreliable: see sync/snapshot.gd
 	FOCUS,  # host -> client: scene, cursors [[emulator path, player, control path]]
-	# host -> client: shop_id, run (RunStateCodec incl. shop), slots, go, seqs, pages, you
-	# (see sync/shop_sync.gd)
+	# host -> client: shop_id, run (RunStateCodec incl. shop), slots, go, seqs, pages, you,
+	# colors (see sync/shop_sync.gd)
 	SHOP_STATE,
 	# host -> client: battle_id, visible, run, players, seqs, pages (see upgrades_sync.gd)
 	UPGRADES_STATE,
-	MENU_STATE,  # host -> client: kind, count, you, players [[id, label, random, ready, inv, idx]],
-	#   grids (on change; see menu_sync.gd)
+	# host -> client: kind, count, you, colors, max, reward, join (only while joining is open:
+	# hold progress of joining players), players [[id, label, random, ready, inv, idx,
+	# locked text, locked by challenge]], grids (on change; see menu_sync.gd)
+	MENU_STATE,
 	BATTLE_PAUSE,  # host -> client: battle_id, paused, by (name), by_id (steam id, 0: host)
 	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
 	RETRY_PROMPT,  # host -> client: battle_id, visible, retry, retries, player, name

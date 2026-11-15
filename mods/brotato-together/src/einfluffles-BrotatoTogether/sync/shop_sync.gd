@@ -149,6 +149,7 @@ func _body_from(parts: Dictionary) -> Dictionary:
 		"go": parts.go,
 		"seqs": parts.seqs,
 		"pages": parts.pages,
+		"colors": CoopService.bt_slot_colors.duplicate(),
 	}
 
 

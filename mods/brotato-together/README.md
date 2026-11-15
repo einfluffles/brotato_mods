@@ -59,7 +59,13 @@ Esc / B to go back or close (F9 / Select close it too). While it is open the gam
 your keyboard/gamepad input (a client sends neutral input to the host) and the mouse cursor
 stays visible.
 
-The host opens co-op character selection; remote players hold *accept* to join like local players.
+The host opens co-op character selection; remote players hold *accept* (Space / Enter / A) to join
+like local players. Every free slot shows "Player N" and the game's hold-to-join hint, on the host and
+on clients. In character selection each player can change their colour with **F** (keyboard) /
+**Y** (gamepad; Triangle on PlayStation pads), cycling through 8 colours and skipping colours other
+players already have. The colour is used everywhere the game uses player colours (cursor, panels,
+HUD, player highlight) and clients see the same colours. Nothing is saved; players who don't pick keep
+the game's colours. A locked character under a cursor shows how to unlock it (also on clients' cards).
 
 A wave never pauses while friends are connected (Esc opens the menu over the running game, see
 above; losing window focus pauses nothing either). In the shop anyone can pause: the host operates
