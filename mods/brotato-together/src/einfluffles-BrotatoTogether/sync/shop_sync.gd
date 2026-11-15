@@ -49,7 +49,7 @@ var _shop_id := 0
 var _last_sent_key := ""
 var _check_left := 0.0
 var _flush_frame := -1  # send in this idle frame (an intent was applied the frame before)
-var _seq_shop: Node = null
+var _seq_shop_id := 0  # instance id of the shop the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel offers something new
 var _seq_keys := []
 
@@ -247,8 +247,8 @@ func _host_shop_for(msg):
 
 
 func _update_seqs(shop: Node) -> void:
-	if shop != _seq_shop:
-		_seq_shop = shop
+	if shop.get_instance_id() != _seq_shop_id:
+		_seq_shop_id = shop.get_instance_id()
 		_seqs = []
 		_seq_keys = []
 	for p in RunData.get_player_count():
@@ -348,7 +348,7 @@ func _enter_shop(state: Dictionary) -> void:
 	Puppet.set_active(true)
 	_client_shop = null
 	_applied = {}
-	RunData.resume_from_state(state)
+	RunStateCodec.apply(state)
 	# The game's "continue run in shop" path: BaseShop._ready takes items/rerolls from here.
 	ProgressData.saved_run_state = state
 	RunData.resumed_from_state_in_shop = true
@@ -376,6 +376,8 @@ func _on_node_added(node: Node) -> void:
 func _on_puppet_shop_exited(shop: Node) -> void:
 	SoundRelay.set_muted(false)
 	local.leave(shop)
+	if shop == _client_shop:
+		_client_shop = null
 
 
 func _stop_watching_scenes() -> void:
@@ -404,7 +406,7 @@ func _apply_pending() -> void:
 	var run_changed: bool = _pending.get("run_changed", true)
 	var shown: Array = RunData.players_data
 	if run_changed:
-		RunData.resume_from_state(state)
+		RunStateCodec.apply(state)
 	local.guard(shop, _client_shop_id)
 	for p in RunData.get_player_count():
 		# No keys (a state that did not come through _on_state): everything counts as new.

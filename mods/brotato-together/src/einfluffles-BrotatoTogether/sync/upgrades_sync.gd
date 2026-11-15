@@ -58,7 +58,7 @@ var last_intent := {}  # client: the last decision sent (also read by the tests)
 # host
 var _last_sent_key := ""
 var _check_left := 0.0
-var _seq_ui: Node = null
+var _seq_ui_id := 0  # instance id of the UpgradesUI the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel shows something new
 var _seq_keys := []
 
@@ -87,7 +87,7 @@ func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> voi
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
 	battle_client.connect("battle_entered", self, "_on_battle_entered")
-	battle_client.connect("battle_left", self, "stop_local")
+	battle_client.connect("battle_left", self, "_on_battle_left")
 
 
 func _ready() -> void:
@@ -327,8 +327,8 @@ func _host_ui(msg):
 # (the same crate item twice): the option being processed and the reroll count are part of it.
 # So are the player's weapons: the crate weapon popup changes them under the same crate item.
 func _update_seqs(ui: Node, players: Array) -> void:
-	if ui != _seq_ui:
-		_seq_ui = ui
+	if ui.get_instance_id() != _seq_ui_id:
+		_seq_ui_id = ui.get_instance_id()
 		_seqs = []
 		_seq_keys = []
 	while _seqs.size() < players.size():
@@ -426,6 +426,18 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var page: int = _int_at(pages, p)
 		if p != you and page >= 0 and container.carousel.index != page:
 			container.carousel.index = page
+
+
+# The puppet scene goes with its wave: keep nothing of it (a freed node's address is reused).
+func _on_battle_left() -> void:
+	stop_local()
+	_guarded_ui = null
+	_own = null
+	_local_panel = null  # a child of the scene's UpgradesUI
+	_meca_weapon = null
+	_applied = {}
+	_run_key = []
+	_pending = {}
 
 
 func stop_local() -> void:

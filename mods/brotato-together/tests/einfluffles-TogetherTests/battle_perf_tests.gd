@@ -26,7 +26,7 @@ func _init(tests: Node) -> void:
 func test_no_global_hooks(together: Node) -> void:
 	var hooked := []
 	for connection in _t.get_tree().get_signal_connection_list("node_added"):
-		if connection.target in [together.battle_client, together.shop_sync, together.ui_sounds]:
+		if connection.target.get_parent() == together:
 			hooked.append(connection.target.name)
 	_t._check(hooked.empty(), "no node_added hooks outside a session %s" % [hooked])
 
@@ -108,6 +108,7 @@ func test_battle(together: Node):
 		start.types[host._types[path]] = path
 	var foot_type: int = host._types[FOOT]
 	var gold_type: int = host._types[main.gold_scene.resource_path]
+	var bullet_type: int = host._types[BULLET]
 	host._end_battle()
 	var views := SnapshotTests.views(recorded)
 	var last: Dictionary = views[-1]
@@ -123,7 +124,7 @@ func test_battle(together: Node):
 	var foot_only := _single(ids.foot, foot_type, last.positions[Snapshot.index_of(last, ids.foot)])
 	client._apply_entities(foot_only, foot_only, 1.0)
 	_t._check(not client._entities.has(ids.foot), "foot waits for its boss puppet")
-	_check_client_ids(client, gold_type, host._types[BULLET])
+	_check_client_ids(client, gold_type, bullet_type)
 	client.set_process(true)
 	var replay_start := OS.get_ticks_msec()
 	for msg in recorded:
@@ -146,7 +147,7 @@ func test_battle(together: Node):
 			boss_puppet.global_position.distance_to(host_position) < 1.0,
 			"the foot's _ready did not send the boss puppet away"
 		)
-	_check_puppet_pool(client, host._types[BULLET])
+	_check_puppet_pool(client, bullet_type)
 	client.set_process(true)
 	client._leave_battle()
 	Puppet.set_active(false)

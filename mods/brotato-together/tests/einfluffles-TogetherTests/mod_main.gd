@@ -37,8 +37,9 @@ const LocalPanelTests := preload(
 )
 const LocalShopTests := preload("res://mods-unpacked/einfluffles-TogetherTests/local_shop_tests.gd")
 const LiveMenuTests := preload("res://mods-unpacked/einfluffles-TogetherTests/live_menu_tests.gd")
+const CleanupTests := preload("res://mods-unpacked/einfluffles-TogetherTests/cleanup_tests.gd")
 const FAKE_PEER := 4242
-const WATCHDOG_SEC := 170.0
+const WATCHDOG_SEC := 220.0
 const DEVICE := VirtualDevices.FIRST
 const BIT_ACCEPT := 1
 
@@ -51,7 +52,7 @@ var _runtime_parts = null  # kept alive across its coroutines
 var _perf = null  # kept alive across its coroutines
 var _local_panel = LocalPanelTests.new()  # kept alive across its yields
 var _local_shop = LocalShopTests.new()  # kept alive across its yields
-var _live_menu = LiveMenuTests.new()  # kept alive across its yields
+var _late_suites := [LiveMenuTests.new(), CleanupTests.new()]  # kept alive across their yields
 
 
 func _ready() -> void:
@@ -167,7 +168,8 @@ func _run() -> void:
 	yield(_local_shop.run(self, together), "completed")
 	_pause_input = PauseInputTests.new(self, together)
 	yield(_pause_input.run(), "completed")  # needs the run state
-	yield(_live_menu.run(self, together), "completed")
+	for suite in _late_suites:
+		yield(suite.run(self, together), "completed")
 	yield(_test_menu_mirror(together), "completed")
 	yield(menu_ux.run_menu_tests(self, together), "completed")
 	_finish()
@@ -265,6 +267,7 @@ func _test_battle_loopback(together: Node):
 		_local_panel.host_part(self, together, upgrades_ui, host_panels, upgrades_msg), "completed"
 	)
 	upgrades_ui.hide()
+	var host_types: Dictionary = host._types.duplicate()  # the wave's tables go with it
 	host._end_battle()
 	var damage_events := 0
 	var sound_events := 0
@@ -279,8 +282,8 @@ func _test_battle_loopback(together: Node):
 	_check(last.players.size() == 2, "snapshot has both players")
 	_check(last.ids.size() > 0, "host battle has entities after 6 s (%d)" % last.ids.size())
 	start.types = {}
-	for path in host._types:
-		start.types[host._types[path]] = path
+	for path in host_types:
+		start.types[host_types[path]] = path
 	var max_bytes := 0
 	for msg in recorded:
 		max_bytes = max(max_bytes, var2bytes(msg).size())
@@ -355,9 +358,9 @@ func _test_battle_loopback(together: Node):
 	yield(_local_panel.client_part(self, together, puppet_main, upgrades_msg), "completed")
 	puppet_main.get("_coop_upgrades_ui").hide()
 	client._set_paused(true)
-	_check(client._banner != null and client._banner.visible, "pause banner shown")
+	_check(puppet_main.get_node("BrotatoTogetherPauseBanner").visible, "pause banner shown")
 	client._set_paused(false)
-	_check(not client._banner.visible, "pause banner hidden")
+	_check(not puppet_main.get_node("BrotatoTogetherPauseBanner").visible, "pause banner hidden")
 	ProgressData.settings.pause_on_focus_lost = true
 	InputService.emit_signal("game_lost_focus")  # alt-tab / pad disconnect
 	_check(not get_tree().paused, "client battle ignores focus loss")
@@ -372,7 +375,7 @@ func _test_battle_loopback(together: Node):
 	_check(player2.dead and not player2._weapons_container.visible, "dead player shown dead")
 	_check(puppet_main.get_tree().current_scene == puppet_main, "death did not end the wave")
 	var kinds := {}
-	for path in host._types:
+	for path in host_types:
 		kinds[path.get_file()] = true
 	print("  info: mirrored types %s" % [kinds.keys()])
 	_check(
@@ -437,7 +440,7 @@ func _test_battle_loopback(together: Node):
 		yield(get_tree().create_timer(2.0), "timeout")
 		_check(puppet_main.is_in_pool(victim), "dead puppet returned to pool")
 		var pooled: Array = puppet_main._pool[victim.pool_id].duplicate()
-		var reused: Node = client._spawn(host._types[victim.filename])
+		var reused: Node = client._spawn(host_types[victim.filename])
 		_check(
 			reused in pooled and not reused.dead and reused.is_inside_tree(),
 			"puppet reused from pool"

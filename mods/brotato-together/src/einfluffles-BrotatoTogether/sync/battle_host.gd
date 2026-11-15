@@ -37,6 +37,7 @@ var snapshot_bytes := 0  # size of the last snapshot, for the F9 menu
 var pause_control: Node = null  # who paused (BATTLE_PAUSE)
 
 var _main: Node = null
+var _battle_live := false  # between _start_battle and _end_battle
 var _battle_id := 0
 var _next_net_id := 1
 var _types := {}  # scene path -> type idx
@@ -63,19 +64,19 @@ func _ready() -> void:
 
 
 func is_in_battle() -> bool:
-	return _main != null and is_instance_valid(_main)
+	return _battle_live and is_instance_valid(_main)
 
 
 func _process(_delta: float) -> void:
 	if not session.is_host():
-		if is_in_battle():
+		if _battle_live:
 			_end_battle()
 		return
 	var scene := get_tree().current_scene
 	var in_battle_scene := scene != null and scene.filename == BATTLE_SCENE
-	if is_in_battle() and scene != _main:
+	if _battle_live and scene != _main:
 		_end_battle()
-	if in_battle_scene and not is_in_battle():
+	if in_battle_scene and not _battle_live:
 		_start_battle(scene)
 
 
@@ -106,8 +107,13 @@ func _physics_process(delta: float) -> void:
 
 
 func _start_battle(main: Node) -> void:
+	if _battle_live:
+		_end_battle()
 	_main = main
+	_battle_live = true
 	_battle_id += 1
+	# The scene change frees the battle before the next _process could compare scenes.
+	main.connect("tree_exited", self, "_on_battle_scene_exited", [_battle_id], CONNECT_ONESHOT)
 	_paused = false
 	_events.clear()
 	_anim_mirror = AnimMirror.new()
@@ -131,9 +137,23 @@ func _start_battle(main: Node) -> void:
 			_send_battle_start(steam_id, start)
 
 
+func _on_battle_scene_exited(battle_id: int) -> void:
+	if _battle_live and battle_id == _battle_id:
+		_end_battle()
+
+
+# Nothing of a wave outlives it: endless runs play a hundred of them.
 func _end_battle() -> void:
 	ModLoaderLog.info("Battle %s ended" % _battle_id, LOG_NAME)
 	_main = null
+	_battle_live = false
+	_types.clear()
+	_seen_last_snapshot.clear()
+	_live_ids.clear()
+	_rest.clear()
+	_stats.clear()
+	_events.clear()
+	_anim_mirror = AnimMirror.new()
 	SoundRelay.set_sink(null)
 	if session.is_host():
 		session.broadcast_reliable(Protocol.Msg.BATTLE_END, {"battle_id": _battle_id})
@@ -425,7 +445,8 @@ func _tracked_nodes() -> Array:
 	# Pooled projectiles are removed from the tree, so container children are the live ones.
 	for container_name in ["_player_projectiles", "_enemy_projectiles"]:
 		var container = _main.get(container_name)
-		if container != null:
+		# clean_up_room frees the enemy projectiles' container while the scene lives on.
+		if is_instance_valid(container):
 			for child in container.get_children():
 				if child is Projectile:
 					nodes.append(child)

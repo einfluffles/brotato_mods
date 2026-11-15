@@ -24,6 +24,7 @@ const BATTLE_SCENE := "res://main.tscn"
 const REMOTE_PRESS_WINDOW_MSEC := 1000  # a remote pause press this recent caused the pause
 const BLOCK_KEY := "battle"  # InputSync.blocked_by
 const CLIENT_MENU_META := "brotato_together_client_menu"
+const BANNER_NAME := "BrotatoTogetherPauseBanner"
 const HOST_ONLY_BUTTONS := ["%RestartButton", "%EndRunButton"]
 
 var session: Node = null
@@ -38,10 +39,9 @@ var _paused_frame := -1  # the shop pauses on the release event that is still pr
 var _last_shop_pause := []
 var _held_behavior: Node = null  # movement of the live menu's owner, parked on the idle device
 var _held_device := -1
+var _scene_id := 0  # instance id of the scene whose pause menu is watched
 
 # client
-var _shop_banner: CanvasLayer = null
-var _shop: Node = null
 var _pause_armed := false  # own pause went down while the buttons were the game's
 
 
@@ -50,7 +50,6 @@ func setup(netplay_session: Node, remote_input: Node) -> void:
 	input_sync = remote_input
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
-	get_tree().connect("node_added", self, "_on_node_added")
 
 
 func _ready() -> void:
@@ -72,8 +71,20 @@ static func banner_text(by: String, by_id: int, local_id: int) -> String:
 	return "Paused by %s" % (by if by != "" else "the host")
 
 
+# The banner lives in the scene it covers and is found there by name: nothing to keep here.
+static func show_banner(parent: Node, visible: bool, text: String) -> void:
+	var banner = parent.get_node_or_null(BANNER_NAME)
+	if banner == null:
+		if not visible:
+			return
+		banner = make_banner(parent)
+	banner.get_node("Label").text = text
+	banner.visible = visible
+
+
 static func make_banner(parent: Node) -> CanvasLayer:
 	var banner := CanvasLayer.new()
+	banner.name = BANNER_NAME
 	banner.layer = 100
 	var label := Label.new()
 	label.name = "Label"
@@ -100,10 +111,20 @@ func paused_by() -> Array:
 	return ["a player", 0]
 
 
-func _on_node_added(node: Node) -> void:
-	if node is PauseMenu:
-		node.connect("paused", self, "_on_menu_paused", [node])
-		node.connect("unpaused", self, "_on_menu_unpaused")
+# The battle scene and the shop each have one pause menu. Looked up when the scene changes:
+# a node_added handler would run for every spawn of every wave, also in solo play.
+func _watch_scene(scene: Node) -> void:
+	var scene_id := scene.get_instance_id() if scene != null else 0
+	if scene_id == _scene_id:
+		return
+	_scene_id = scene_id
+	_menu = null
+	_pauser_device = -1
+	_held_behavior = null  # freed with its scene
+	var menu = scene.get("_pause_menu") if scene != null else null
+	if menu is PauseMenu and not menu.is_connected("paused", self, "_on_menu_paused"):
+		menu.connect("paused", self, "_on_menu_paused", [menu])
+		menu.connect("unpaused", self, "_on_menu_unpaused")
 
 
 func _on_menu_paused(menu: Node) -> void:
@@ -166,6 +187,7 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(_delta: float) -> void:
+	_watch_scene(get_tree().current_scene)
 	_update_live_menu()
 	if not session.is_host():
 		_last_shop_pause = []
@@ -203,9 +225,15 @@ func _update_live_menu() -> void:
 	_hold_player(null)
 	if main != null and is_client_battle(main):
 		client_update(main, battle_client._you)
-	else:
-		input_sync.set_local_menu(-1)
-		_pause_armed = false
+		return
+	input_sync.set_local_menu(-1)
+	_pause_armed = false
+	# No session any more, or a client's battle that is over and still on screen.
+	var menu = main.get("_pause_menu") if main != null else null
+	if menu != null and menu.live:
+		menu.live = false
+		if menu.live_open:
+			menu.unpause()
 
 
 func is_client_battle(main: Node) -> bool:
@@ -318,8 +346,4 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 
 
 func show_shop_pause(shop: Node, paused: bool, text: String) -> void:
-	if shop != _shop or not is_instance_valid(_shop_banner):
-		_shop = shop
-		_shop_banner = make_banner(shop)
-	_shop_banner.get_node("Label").text = text
-	_shop_banner.visible = paused
+	show_banner(shop, paused, text)

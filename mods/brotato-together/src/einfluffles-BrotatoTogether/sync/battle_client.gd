@@ -55,6 +55,7 @@ const BRACHIOSAURUS_FOOT := (
 )
 const BOSS_PARTS := {BRACHIOSAURUS_FOOT: "Brachiosaurus"}  # scene -> boss node its _ready finds
 const PUPPET_TYPE_META := "brotato_together_puppet_type"
+const LOADING_TIMEOUT_MSEC := 10000  # a scene that never got ready must not block the next
 
 var session: Node = null
 var input_sync: Node = null
@@ -67,6 +68,10 @@ var _buffer := []  # parsed snapshots, ascending t
 var _clock_offset := 0.0  # local_msec - host_msec (min-filtered)
 var _has_clock := false
 var _main: Node = null
+var _main_id := 0  # its instance id: tells this battle's scene from a later one when it exits
+var _loading := false  # change_scene called, the scene not ready yet
+var _loading_msec := 0
+var _queued_start := {}  # BATTLE_START of another battle that arrived while loading
 var _entities := {}  # net id -> node
 var _entity_types := {}  # net id -> type idx of its node
 var _resolve_cache := {}  # see Snapshot.resolve
@@ -80,7 +85,6 @@ var _own_error := Vector2.ZERO
 var _own_display := Vector2.ZERO
 var _paused := false
 var _pause_text := ""
-var _banner: CanvasLayer = null
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
@@ -108,8 +112,12 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 		Protocol.Msg.BATTLE_START:
 			_on_battle_start(body)
 		Protocol.Msg.BATTLE_END:
-			if typeof(body) == TYPE_DICTIONARY and body.get("battle_id") == _battle_id:
+			if typeof(body) != TYPE_DICTIONARY:
+				return
+			if body.get("battle_id") == _battle_id:
 				_leave_battle()
+			elif body.get("battle_id") == _queued_start.get("battle_id"):
+				_queued_start = {}  # over before its scene could load
 		Protocol.Msg.TYPE_DEF:
 			if typeof(body) == TYPE_DICTIONARY and body.get("battle_id") == _battle_id:
 				_define_type(body.get("idx"), body.get("path"))
@@ -133,18 +141,25 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 func _on_battle_start(body) -> void:
 	if typeof(body) != TYPE_DICTIONARY or typeof(body.get("battle_id")) != TYPE_INT:
 		return
+	# A resync of the battle this client is in or is loading: keep the scene.
+	var loading := _loading and OS.get_ticks_msec() - _loading_msec < LOADING_TIMEOUT_MSEC
+	if body.battle_id == _battle_id and (loading or is_in_battle()):
+		_adopt_start(body)
+		return
+	# Two scene changes in one frame would leave the second one unhooked (a real local battle).
+	if loading:
+		_queued_start = body
+		return
 	var state := RunStateCodec.decode(body.get("run"))
 	if state.empty():
 		ModLoaderLog.error("Invalid run state in BATTLE_START", LOG_NAME)
 		return
-	_reset_battle_state()
+	if _main_id != 0:
+		_leave_battle()  # replaced without a BATTLE_END: the others drop its scene's nodes too
+	else:
+		_reset_battle_state()
 	_battle_id = body.battle_id
-	_you = int(body.get("you", -1)) if typeof(body.get("you")) == TYPE_INT else -1
-	_paused = bool(body.get("paused", false))
-	var types = body.get("types")
-	if typeof(types) == TYPE_DICTIONARY:
-		for idx in types:
-			_define_type(idx, types[idx])
+	_adopt_start(body)
 
 	Puppet.set_active(true)
 	RunStateCodec.apply(state)
@@ -153,13 +168,35 @@ func _on_battle_start(body) -> void:
 	# Only until the battle scene is ready: no node_added handler for every node otherwise.
 	if not get_tree().is_connected("node_added", self, "_on_node_added"):
 		get_tree().connect("node_added", self, "_on_node_added")
+	_loading = true
+	_loading_msec = OS.get_ticks_msec()
 	if get_tree().change_scene(BATTLE_SCENE) != OK:
+		_loading = false
+		_stop_watching_scenes()
 		ModLoaderLog.error("Could not load the battle scene", LOG_NAME)
 	ModLoaderLog.info("Entering battle %s (wave %s)" % [_battle_id, RunData.current_wave], LOG_NAME)
 
 
+# What a BATTLE_START says besides the run: this client's slot, the pause, the type table.
+func _adopt_start(body: Dictionary) -> void:
+	_you = int(body.get("you", -1)) if typeof(body.get("you")) == TYPE_INT else -1
+	_paused = bool(body.get("paused", false))
+	var types = body.get("types")
+	if typeof(types) == TYPE_DICTIONARY:
+		for idx in types:
+			if not _types.has(idx):
+				_define_type(idx, types[idx])
+	if is_in_battle():
+		_set_paused(_paused)
+
+
+# The wave is over here too: its puppets, buffers and tables go, whatever screen comes next.
 func _leave_battle() -> void:
 	_reset_battle_state()
+	# main.on_wave_start set these; only the host's flow would clear them (the shop's stats
+	# read the flag, the timer is freed with the scene).
+	RunData.wave_in_progress = false
+	RunData.wave_timer = null
 	emit_signal("battle_left")
 
 
@@ -173,6 +210,8 @@ func _on_lobby_left() -> void:
 
 func _reset_battle_state() -> void:
 	_main = null
+	_main_id = 0
+	_queued_start = {}
 	_battle_id = 0
 	_types.clear()
 	_type_data.clear()
@@ -182,14 +221,14 @@ func _reset_battle_state() -> void:
 	_resolve_cache = {}
 	_newest_rx_msec = 0
 	_free_puppet_pool()
-	_stop_watching_scenes()
+	if not _loading:  # a scene still loading must be frozen when it is ready, battle or not
+		_stop_watching_scenes()
 	_last_positions.clear()
 	_despawned.clear()
 	_has_clock = false
 	_you = -1
 	_paused = false
 	_pause_text = ""
-	_banner = null
 	_events.clear()
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
@@ -197,7 +236,7 @@ func _reset_battle_state() -> void:
 
 
 func _on_node_added(node: Node) -> void:
-	if Puppet.is_active() and _battle_id != 0 and node.filename == BATTLE_SCENE:
+	if node.filename == BATTLE_SCENE:
 		node.connect("ready", self, "_on_battle_scene_ready", [node], CONNECT_ONESHOT)
 
 
@@ -209,7 +248,29 @@ func _stop_watching_scenes() -> void:
 # Runs right after main._ready(), before the first physics frame.
 func _on_battle_scene_ready(main: Node) -> void:
 	_stop_watching_scenes()
-	_main = main
+	_loading = false
+	_freeze(main)
+	# No battle: it ended while its scene loaded. Frozen until the next screen replaces it.
+	if _battle_id != 0:
+		_main = main
+		_main_id = main.get_instance_id()
+		# The next screen can replace the scene without a BATTLE_END (the shop was faster).
+		main.connect("tree_exited", self, "_on_battle_scene_exited", [_main_id], CONNECT_ONESHOT)
+		_set_paused(_paused)
+		SoundRelay.set_muted(true)  # only the host's sounds from now on
+		emit_signal("battle_entered")
+	if not _queued_start.empty():
+		var next := _queued_start
+		_queued_start = {}
+		call_deferred("_on_battle_start", next)
+
+
+func _on_battle_scene_exited(main_id: int) -> void:
+	if main_id == _main_id:
+		_leave_battle()
+
+
+func _freeze(main: Node) -> void:
 	# Local pause/aim handling off (PauseControl opens the menu for this client's own pause).
 	# main._physics_process stays on: it only recolors life bars. Focus loss / pad disconnect
 	# would open the local pause menu.
@@ -231,9 +292,13 @@ func _on_battle_scene_ready(main: Node) -> void:
 				timer.stop()
 	for player in main.get("_players"):
 		PuppetEntity.puppetize(player)
-	_set_paused(_paused)
-	SoundRelay.set_muted(true)  # only the host's sounds from now on
-	emit_signal("battle_entered")
+	# On a bullet-hell wave main._ready adds its own generator (a random pattern); the host's
+	# bullets arrive as puppets.
+	var enemy_projectiles = main.get("_enemy_projectiles")
+	if enemy_projectiles != null:
+		for child in enemy_projectiles.get_children():
+			if child is BulletHell:
+				child.free()
 
 
 # Host paused: snapshots stop, so say why the world froze.
@@ -241,10 +306,8 @@ func _set_paused(paused: bool) -> void:
 	_paused = paused
 	if not is_in_battle():
 		return
-	if _banner == null or not is_instance_valid(_banner):
-		_banner = PauseControl.make_banner(_main)
-	_banner.get_node("Label").text = _pause_text if _pause_text != "" else "Paused by the host"
-	_banner.visible = paused
+	var text := _pause_text if _pause_text != "" else "Paused by the host"
+	PauseControl.show_banner(_main, paused, text)
 
 
 # Wave end, half-wave events, harvesting, ... are host decisions. Timers keep counting (the wave

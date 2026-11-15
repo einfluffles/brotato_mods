@@ -27,6 +27,7 @@ var transport: Node = null
 var peers := {}
 
 var _next_ping_msec := 0
+var _next_send_warning_msec := 0
 var _next_hello_msec := -1  # client: next HELLO (re)send, -1 when not waiting for WELCOME
 
 
@@ -179,8 +180,7 @@ func _on_peer_joined(steam_id: int) -> void:
 # ...): a failed send means a full resync. Unreliable ones are superseded by the next anyway.
 func _on_send_failed(steam_id: int, channel: int, result) -> void:
 	if channel != transport.CHANNEL_RELIABLE:
-		ModLoaderLog.debug("Unreliable send to %s failed: %s" % [steam_id, result], LOG_NAME)
-		return
+		return  # the transport warns once a second; the Mod Loader keeps every log entry
 	var peer = peers.get(steam_id)
 	if is_host() and peer != null and peer.ready:
 		if not peer.resync:
@@ -189,7 +189,8 @@ func _on_send_failed(steam_id: int, channel: int, result) -> void:
 				LOG_NAME
 			)
 		peer.resync = true
-	else:
+	elif OS.get_ticks_msec() >= _next_send_warning_msec:
+		_next_send_warning_msec = OS.get_ticks_msec() + 1000
 		ModLoaderLog.warning("Reliable send to %s failed (result %s)" % [steam_id, result], LOG_NAME)
 
 

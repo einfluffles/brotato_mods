@@ -155,9 +155,11 @@ func _on_menu_open_changed(is_open: bool) -> void:
 func _on_client_battle_left() -> void:
 	if not _client_active:
 		return
-	_sound_relay.set_muted(true)
 	var stale := get_tree().current_scene
-	var stale_id := stale.get_instance_id() if stale != null else 0
+	if stale == null or not stale.is_inside_tree():
+		return  # the next screen is replacing the battle right now
+	_sound_relay.set_muted(true)
+	var stale_id := stale.get_instance_id()
 	get_tree().create_timer(TRANSITION_GRACE_SEC, true).connect(
 		"timeout", self, "_on_transition_grace_over", [stale_id]
 	)
