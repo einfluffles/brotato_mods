@@ -278,6 +278,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Full resync = `peer_ready` re-emitted (every sync module, and the state stream for its sections right after
   them, resends its whole state on it), at most once per second per peer. Queued when a reliable send fails
   (`sendMessageToUser`'s EResult != 1, logged as a warning); unreliable failures are only logged at debug level.
+- Ping (`rtt_ms`, pill and F9 panel): PING once a second from `Session._process`, unreliable, answered with
+  PONG where the transport reads it. Messages are only read once a frame (`Transport._process`), so the time
+  until the PONG is handled holds up to a frame of each game and all of a stalled one: with no network delay
+  at all, two 60 ms stalls read as 120 ms (`session_lifecycle_tests.gd`). Stalls measured headless: battle
+  scene 0.3 s, shop scene 0.2 / 0.5 / 0.8 s (small / late 2 / late 4-player run), a changed shop state on a
+  client 6 / 100 / 200 ms. `rtt_ms` therefore leaves out what both messages waited for their frame:
+  GodotSteam's `time_received` against `getLocalTimestamp()` when the message is handled
+  (`Transport.held_msec`); the PONG carries the PING's wait (`held`). What is left is the network and Steam's
+  send queue. The whole time stays in `answer_ms` (F9 panel: "with frame time"). Without a receive time
+  (0 or implausible) nothing is taken off, as before.
 - **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
   ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
   menu_grids, retry, pause_battle, pause_shop, cursors (state that builds controls before the cursors on

@@ -413,6 +413,9 @@ func details_text() -> String:
 			if session.is_peer_stale(steam_id):
 				state = "no response"
 			var rtt: String = ("%d ms" % peer.rtt_ms) if peer.rtt_ms >= 0 else "-"
+			var answer: int = peer.get("answer_ms", -1)
+			if peer.rtt_ms >= 0 and answer > peer.rtt_ms:  # what the games' frames added
+				rtt += " (%d ms with frame time)" % answer
 			lines.append("  %s — %s — %s" % [peer.name, state, rtt])
 	if absent_players != null:
 		lines += absent_players.describe()

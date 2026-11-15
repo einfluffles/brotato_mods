@@ -1,5 +1,9 @@
 extends Node
 # Session state on top of the transport: role, handshake, per-peer liveness/RTT.
+# RTT: a PING once a second, answered with a PONG. Both are read once a frame, so the time until
+# the PONG is handled (answer_ms) holds up to a frame of each side, and all of a stalled one (a
+# scene load, a big run state). rtt_ms is that time without what both messages waited for their
+# frame (transport.held_msec): the network's part, Steam's send queue included.
 # Handshake: the client sends HELLO (session/compat.gd local_info) every HELLO_INTERVAL_MSEC
 # until WELCOME: the first one can be lost while Steam's member list / session acceptance on the
 # host lags behind the join. The host answers every HELLO; a repeated HELLO from a ready peer
@@ -23,7 +27,7 @@ const HELLO_INTERVAL_MSEC := 1000
 const RESYNC_INTERVAL_MSEC := 1000  # at most one full resync per peer and interval
 
 var transport: Node = null
-# steam_id -> {name, ready, rtt_ms, last_seen_msec, resync, last_resync_msec}
+# steam_id -> {name, ready, rtt_ms, answer_ms, last_seen_msec, resync, last_resync_msec}
 var peers := {}
 
 var _next_ping_msec := 0
@@ -146,6 +150,7 @@ func _add_peer(steam_id: int) -> Dictionary:
 			"name": transport.get_persona_name(steam_id),
 			"ready": false,
 			"rtt_ms": -1,
+			"answer_ms": -1,
 			"last_seen_msec": OS.get_ticks_msec(),
 			"resync": false,
 			"last_resync_msec": -RESYNC_INTERVAL_MSEC,
@@ -199,7 +204,9 @@ func _on_peer_left(steam_id: int) -> void:
 		emit_signal("peer_removed", steam_id)
 
 
-func _on_message_received(steam_id: int, _channel: int, data: PoolByteArray) -> void:
+func _on_message_received(
+	steam_id: int, _channel: int, data: PoolByteArray, received_usec := 0
+) -> void:
 	var decoded = Protocol.decode(data)
 	if decoded == null:
 		ModLoaderLog.debug("Malformed message from %s" % steam_id, LOG_NAME)
@@ -214,13 +221,35 @@ func _on_message_received(steam_id: int, _channel: int, data: PoolByteArray) -> 
 		Protocol.Msg.WELCOME:
 			_handle_welcome(steam_id, body)
 		Protocol.Msg.PING:
-			send_unreliable(steam_id, Protocol.Msg.PONG, body)
+			send_unreliable(steam_id, Protocol.Msg.PONG, _pong(body, received_usec))
 		Protocol.Msg.PONG:
-			if typeof(body) == TYPE_DICTIONARY and body.has("t"):
-				peer.rtt_ms = OS.get_ticks_msec() - int(body.t)
+			_handle_pong(peer, body, received_usec)
 		_:
 			if peer.ready:
 				emit_signal("message", steam_id, msg_type, body)
+
+
+# The PING's body and how long the PING waited here for this frame.
+func _pong(body, received_usec: int):
+	if typeof(body) != TYPE_DICTIONARY:
+		return body
+	var pong: Dictionary = body.duplicate()
+	pong["held"] = transport.held_msec(received_usec)
+	return pong
+
+
+func _handle_pong(peer: Dictionary, body, received_usec: int) -> void:
+	if typeof(body) != TYPE_DICTIONARY or typeof(body.get("t")) != TYPE_INT:
+		return
+	var answer := OS.get_ticks_msec() - int(body.t)
+	if answer < 0:
+		return
+	var held = body.get("held")
+	var waited: int = transport.held_msec(received_usec)
+	if typeof(held) == TYPE_INT and held > 0:
+		waited += held
+	peer.answer_ms = answer
+	peer.rtt_ms = int(max(0, answer - waited))
 
 
 # Idempotent: answered every time (the client resends until it sees WELCOME).

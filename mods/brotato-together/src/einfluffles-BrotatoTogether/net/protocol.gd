@@ -5,7 +5,7 @@ enum Msg {
 	HELLO,  # client -> host, resent until WELCOME: see session/compat.gd local_info
 	WELCOME,  # host -> client: version, accepted, reason, dlcs (session/dlc_borrow.gd)
 	PING,  # any -> any: t
-	PONG,  # any -> any: t
+	PONG,  # any -> any: t, held (ms the PING waited for the answering frame, see session.gd)
 	# client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons (held mask),
 	# presses (4-bit counter per button, sync/press_counter.gd), flags (sync/local_aim.gd)]
 	INPUT,

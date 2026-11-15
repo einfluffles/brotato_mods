@@ -10,7 +10,8 @@ signal lobby_failed(reason)
 signal lobby_left  # was_host tells the handlers which role was left
 signal peer_joined(steam_id)
 signal peer_left(steam_id)
-signal message_received(steam_id, channel, data)
+# received_usec: when Steam got the message, on its local clock (0: unknown), see held_msec
+signal message_received(steam_id, channel, data, received_usec)
 signal send_failed(steam_id, channel, result)
 signal join_invite(lobby_id)  # Steam invite accepted while in a lobby: see accept_pending_join
 
@@ -30,6 +31,7 @@ const LOBBY_ENTER_SUCCESS := 1
 const CHAT_MEMBER_ENTERED := 1
 const MAX_LOBBY_MEMBERS := 4
 const MAX_MESSAGES_PER_POLL := 128
+const MAX_HELD_MSEC := 60000  # a longer wait is a clock that does not fit: unknown
 const LOBBY_KEY_MOD := "brotato_together"
 
 const LOG_NAME := "einfluffles-BrotatoTogether:Transport"
@@ -157,7 +159,18 @@ func _process(_delta: float) -> void:
 			# A joiner's first messages can arrive before lobby_chat_update: refresh on a miss.
 			if sender == 0 or not _is_lobby_member(sender):
 				continue
-			emit_signal("message_received", sender, channel, msg.get("payload", PoolByteArray()))
+			var received := int(msg.get("time_received", 0))
+			var payload: PoolByteArray = msg.get("payload", PoolByteArray())
+			emit_signal("message_received", sender, channel, payload, received)
+
+
+# How long a message has waited for the frame that handles it, since Steam received it
+# (message_received's received_usec); 0 when unknown. Messages are only read once a frame.
+func held_msec(received_usec: int) -> int:
+	if received_usec <= 0 or steam == null or not steam.has_method("getLocalTimestamp"):
+		return 0
+	var held := (int(steam.getLocalTimestamp()) - received_usec) / 1000
+	return held if held >= 0 and held < MAX_HELD_MSEC else 0
 
 
 func _message_sender(msg: Dictionary) -> int:
