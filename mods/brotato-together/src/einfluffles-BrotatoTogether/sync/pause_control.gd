@@ -12,7 +12,7 @@ extends Node
 #   game's own "change pause ownership" steps from PauseMenu.on_game_lost_focus), since the
 #   remote player can't see it and must not quit or restart blind. The remote player who paused
 #   resumes with pause again (while the menu shows its main page). Clients learn who paused
-#   (BATTLE_PAUSE via BattleHost; in the shop, state stream section PAUSE_SHOP provided here and
+#   (section PAUSE_BATTLE via BattleHost; in the shop, section PAUSE_SHOP provided here and
 #   handled by ShopSync).
 # Client: puppet scenes never pause locally (focus loss, pad disconnect, pause button).
 
@@ -214,7 +214,7 @@ func _process(_delta: float) -> void:
 
 
 # State stream provider, section PAUSE_SHOP: [paused, by (name), by_id (steam id, 0: the host)]
-# while the host is in the shop (like BATTLE_PAUSE); inactive elsewhere. Handled by ShopSync.
+# while the host is in the shop (like PAUSE_BATTLE); inactive elsewhere. Handled by ShopSync.
 func state_key(_section: int) -> String:
 	var scene := get_tree().current_scene
 	if scene == null or scene.filename != SHOP_SCENE:

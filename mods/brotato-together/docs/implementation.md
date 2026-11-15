@@ -280,7 +280,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     0.05 / 0.1 s), `state_body(section)` (built only when something goes out, so zstd only runs on change)
     and optionally `state_patch(section, steam_id)` (merged into a copy of the body per peer: `you`). A key
     change bumps the section's revision and goes to every ready peer; turning inactive sends null once.
-    `flush` = check in the next idle frame (deferred game code, e.g. a shop intent), `mark_dirty` = resend
+    `flush` = check in the next idle frame, with `hold` none before it (deferred game code, e.g. a shop intent), `mark_dirty` = resend
     without a key change. `peer_ready`: every section to that peer again, in section order. Nothing while
     not host; runs while paused.
   - Client: a handler per section, `apply_state(section, body, revision) -> bool`; false keeps the latest
@@ -291,7 +291,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the other sections go on. Only from the host; `lobby_left` drops everything.
   - Tests step it by hand (`step`) and pass `message_for(section, steam_id)` to `receive`
     (`state_stream_tests.gd`). Idle cost, 8 sections checked per frame: about 13 us.
-  - On it: upgrades (`UpgradesSync`, was UPGRADES_STATE), menu + menu_grids (`MenuSync`, was MENU_STATE), retry (`RetrySync`, was RETRY_PROMPT),
+  - On it: upgrades (`UpgradesSync`, was UPGRADES_STATE), menu + menu_grids (`MenuSync`, was
+    MENU_STATE), retry (`RetrySync`, was RETRY_PROMPT),
     pause_battle (`BattleHost` / `BattleClient`, was BATTLE_PAUSE and the `paused` of BATTLE_START).
     `BattleClient` retries the stream on `battle_entered`: retry and pause_battle stay pending until the
     puppet battle of their `battle_id` is ready (a peer joining gets them before its BATTLE_START; 30 s
@@ -300,7 +301,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     its pending-per-scene table; see Cursors.
   - shop: `ShopSync` is provider and handler (was SHOP_STATE): key = run JSON + slots, Go, seqs, pages,
     mecas, `shop_id`, colors and every peer's player index; body packed only on send; `you` is the patch.
-    An applied intent flushes, and a check in the intent's own frame keeps the previous key (Buy / Steal
+    An applied intent flushes: the stream holds the section until the next frame (Buy / Steal
     run deferred). Client: false while the shop it entered loads (`_on_shop_ready` calls `retry()`), so
     "latest state until the shop is ready" is the stream's. pause_shop: `PauseControl` provides
     `[paused, by, by_id]` while the host is in the shop (flushed on the menu's paused / unpaused),

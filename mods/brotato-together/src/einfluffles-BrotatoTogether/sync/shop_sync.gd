@@ -58,8 +58,6 @@ var local = ShopLocal.new()  # client: this client's own panel
 # host
 var _host_shop: Node = null
 var _shop_id := 0
-var _intent_frame := -1  # an intent was applied in this idle frame: its deferred handlers wait
-var _key := ""  # the state key last computed
 var _seq_shop_id := 0  # instance id of the shop the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel offers something new
 var _seq_keys := []
@@ -141,19 +139,12 @@ func state_key(_section: int) -> String:
 		return ""
 	if _host_shop != get_tree().current_scene:
 		return ""
-	if Engine.get_idle_frames() == _intent_frame and _key != "":
-		# The game connects Buy and Steal deferred: they run at the end of this frame, so the
-		# state goes out in the next one instead of once before and once after. This check
-		# consumed the flush of host_apply_intent: armed again.
-		state_stream.flush(StateStream.RUN_SHOP)
-		return _key
 	var parts := _shop_parts()
 	var rest := [
 		_shop_id, parts.slots, parts.go, parts.seqs, parts.pages, parts.mecas, _yous(),
 		CoopService.bt_slot_colors,
 	]
-	_key = parts.json + var2str(rest)
-	return _key
+	return parts.json + var2str(rest)
 
 
 func state_body(_section: int) -> Dictionary:
@@ -228,9 +219,10 @@ func host_apply_intent(shop: Node, p: int, msg: Dictionary) -> bool:
 	if result == ShopIntents.CHANGED:
 		# A second press made on the same panel is stale, whatever this one turns out to do.
 		_seqs[p] += 1
-	# Out in the next frame, once the game's deferred handlers ran (see state_key).
-	_intent_frame = Engine.get_idle_frames()
-	state_stream.flush(StateStream.RUN_SHOP)
+	# The game connects Buy and Steal deferred: they run at the end of this frame, so the state
+	# goes out in the next one (the stream holds its check until then) instead of once before
+	# and once after.
+	state_stream.flush(StateStream.RUN_SHOP, true)
 	call_deferred("_settle_host_cursor", shop, p)
 	return true
 

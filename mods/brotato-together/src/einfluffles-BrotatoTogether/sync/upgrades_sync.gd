@@ -164,7 +164,7 @@ func state_body(_section: int):
 #   seqs: the panel revision (bumped when it shows something new; an intent names it)
 #   pages: the carousel page
 #   mecas: the meca upgrade rolls its crate weapon popup remembers ([[weapon slot, weapon my_id,
-#     stat key hash, value, stat key hash, value]], MecaChoice.entries, as in SHOP_STATE)
+#     stat key hash, value, stat key hash, value]], MecaChoice.entries, as in the shop state)
 func body(players: Array) -> Dictionary:
 	var ui = battle_host._main.get("_coop_upgrades_ui")
 	_update_seqs(ui, players)

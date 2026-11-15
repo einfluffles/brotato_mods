@@ -176,7 +176,7 @@ func _on_peer_joined(steam_id: int) -> void:
 		resend_hello(OS.get_ticks_msec())
 
 
-# Reliable messages are state the client can't do without (BATTLE_START, TYPE_DEF, SHOP_STATE,
+# Reliable messages are state the client can't do without (BATTLE_START, TYPE_DEF, STATE,
 # ...): a failed send means a full resync. Unreliable ones are superseded by the next anyway.
 func _on_send_failed(steam_id: int, channel: int, result) -> void:
 	if channel != transport.CHANNEL_RELIABLE:

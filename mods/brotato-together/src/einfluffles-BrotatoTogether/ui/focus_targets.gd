@@ -1,7 +1,7 @@
 extends Reference
 # A cursor's control named by what it is, not by where it sits in the tree, so a node another
 # mod adds on one machine only (Damage Meter's summary button next to the shop's reroll button)
-# moves no cursor on the other. Used for FOCUS, SHOP_FOCUS and UPGRADE_FOCUS.
+# moves no cursor on the other. Used for the cursors section, SHOP_FOCUS and UPGRADE_FOCUS.
 #
 # Target (wire format): [anchor, player, index, steps]
 #   anchor  one of ANCHORS: a control the game hands out per player through its own accessors

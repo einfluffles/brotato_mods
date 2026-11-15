@@ -3,7 +3,8 @@ extends Reference
 #  - every empty slot shows "Player N" + the game's hold-to-join hint (host screen), and the
 #    client view shows the free slots with the same hint and the join progress;
 #  - players cycle their colour with ui_info (virtual device = remote player, keyboard F), never
-#    onto another player's colour; the colours travel in the menu state / BATTLE_START / SHOP_STATE
+#    onto another player's colour; the colours travel in the menu state, BATTLE_START and the
+#    shop state
 #    and the game's own colour code (cursors, labels, highlight) reads them;
 #  - a locked character under a cursor shows how to unlock it, on the host and on client cards.
 # Needs the character selection scene with two virtual co-op players (after the menu tests).
@@ -34,7 +35,7 @@ func run(test_mod: Node, together: Node):
 		return
 	together.menu_sync.set_process(false)
 	CoopService.listening_for_inputs = true
-	# The loopback tests ran this process as a client too (BATTLE_START / SHOP_STATE colours).
+	# The loopback tests ran this process as a client too (BATTLE_START and shop state colours).
 	CoopService.bt_clear_remote_colors()
 	yield(_frames(2), "completed")
 	_test_join_hints(scene)

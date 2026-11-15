@@ -10,7 +10,7 @@ enum Msg {
 	# presses (4-bit counter per button, sync/press_counter.gd), flags (sync/local_aim.gd)]
 	INPUT,
 	# host -> client: battle_id, run (RunStateCodec), types {idx: scene_path}, colors (palette
-	# index per slot, CoopService extension; also in SHOP_STATE and MENU_STATE)
+	# index per slot, CoopService extension; also in the shop and menu states)
 	# + holes (hole layout scene, "" none), weapon_slots (per player; sync/battle_scene.gd)
 	BATTLE_START,
 	BATTLE_END,  # host -> client: battle_id

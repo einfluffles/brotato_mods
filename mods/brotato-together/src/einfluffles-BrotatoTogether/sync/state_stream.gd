@@ -13,8 +13,9 @@ extends Node
 #   state_patch(section, steam_id) -> Dictionary (optional): merged into a copy of the body for
 #     each peer (`you`). Split from state_body so the expensive part is built once per send
 #     without the provider caching anything; a patch needs a Dictionary body.
-# flush(section): check in the next idle frame whatever the interval (state changed by deferred
-# game code, like a shop intent). mark_dirty(section, steam_id = 0: every ready peer): send the
+# flush(section, hold = false): check in the next idle frame whatever the interval (state
+# changed by deferred game code, like a shop intent); with hold, no check before that frame
+# either. mark_dirty(section, steam_id = 0: every ready peer): send the
 # current state again at the next check even when the key did not change.
 # Only ready peers get anything; nothing is sent while not host. A key change bumps the
 # section's revision and goes to every ready peer; a section that turns inactive after having
@@ -104,13 +105,16 @@ func register_provider(section: int, provider: Object, interval := DEFAULT_INTER
 		"key": "",
 		"rev": 0,
 		"flush_frame": -1,
+		"hold": false,
 		"dirty": {},
 	}
 
 
-func flush(section: int) -> void:
+# hold: no check at all before that frame (a check in between would send the state half done).
+func flush(section: int, hold := false) -> void:
 	if _providers.has(section):
 		_providers[section].flush_frame = Engine.get_idle_frames() + 1
+		_providers[section].hold = hold
 
 
 func mark_dirty(section: int, steam_id := 0) -> void:
@@ -144,7 +148,8 @@ func _host_step(delta: float) -> void:
 			continue
 		entry.left -= delta
 		var flushed: bool = entry.flush_frame >= 0 and frame >= entry.flush_frame
-		if entry.left > 0.0 and not flushed:
+		var held: bool = entry.hold and entry.flush_frame >= 0 and not flushed
+		if held or (entry.left > 0.0 and not flushed):
 			continue
 		if peers == null:
 			peers = _ready_peers()
@@ -157,7 +162,8 @@ func _host_step(delta: float) -> void:
 # resend_to (0: nobody).
 func _check(section: int, entry: Dictionary, peers: Array, resend_to: int) -> void:
 	entry.left = entry.interval
-	entry.flush_frame = -1
+	if entry.flush_frame >= 0 and Engine.get_idle_frames() >= entry.flush_frame:
+		entry.flush_frame = -1  # a check before its frame (peer_ready) leaves the flush armed
 	var key = entry.provider.call("state_key", section)
 	if typeof(key) != TYPE_STRING:
 		return  # provider error: keep what was sent, check again next interval
