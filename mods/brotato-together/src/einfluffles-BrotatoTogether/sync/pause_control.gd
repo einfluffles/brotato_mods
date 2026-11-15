@@ -28,6 +28,7 @@ const BANNER_NAME := "BrotatoTogetherPauseBanner"
 const HOST_ONLY_BUTTONS := ["%RestartButton", "%EndRunButton"]
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
 var battle_client: Node = null
 var together_menu: Node = null  # client: Quit asks there

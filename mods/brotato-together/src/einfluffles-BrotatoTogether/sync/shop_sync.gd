@@ -41,6 +41,7 @@ const LOADING_TIMEOUT_MSEC := 10000  # a shop that never got ready must not bloc
 const BLOCK_KEY := "shop"  # InputSync.blocked_by
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null setget set_input_sync
 var focus_sync: Node = null setget set_focus_sync
 var states_packed := 0  # compressed run states built (tests)

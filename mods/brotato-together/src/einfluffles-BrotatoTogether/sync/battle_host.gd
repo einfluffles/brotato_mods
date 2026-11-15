@@ -52,6 +52,7 @@ const KIND_LOOK := 8  # can show a lasting look (sync/looks.gd)
 const MAX_CLOCK_DRIFT_MSEC := 250.0
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
 var snapshot_bytes := 0  # size of the last snapshot, for the F9 menu
 var pause_control: Node = null  # who paused (BATTLE_PAUSE)

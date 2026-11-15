@@ -18,6 +18,7 @@ const MIRRORED_ELSEWHERE := ["res://main.tscn", "res://ui/menus/shop/coop_shop.t
 const CHECK_INTERVAL := 0.1
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var battle_host: Node = null  # for the SteamID -> player slot mapping
 
 var _scene: Node = null

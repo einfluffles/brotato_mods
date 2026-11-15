@@ -20,6 +20,7 @@ const MAX_CURSORS := 16
 const MAX_PLAYERS := 4
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 # client: FocusEmulators this client drives itself (its own level-up panel, see
 # sync/upgrades_sync.gd). The host's cursor for them is never applied here.
 var local_emulators := []

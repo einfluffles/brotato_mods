@@ -54,6 +54,7 @@ const WEAPON_POPUP_HANDLERS := {
 const WEAPON_KINDS := ["weapon_combine", "weapon_discard", "weapon_meca_roll", "weapon_meca"]
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var battle_host: Node = null
 var battle_client: Node = null
 var focus_sync: Node = null

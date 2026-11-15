@@ -268,9 +268,31 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   dropped). The host answers every HELLO; a repeated HELLO from a ready peer means it missed WELCOME and what
   followed, so it gets a full resync. The transport accepts a member's message session when it enters the
   lobby and refreshes the member list for unknown senders.
-- Full resync = `peer_ready` re-emitted (every sync module resends its whole state on it), at most once per
-  second per peer. Queued when a reliable send fails (`sendMessageToUser`'s EResult != 1, logged as a
-  warning); unreliable failures are only logged at debug level.
+- Full resync = `peer_ready` re-emitted (every sync module, and the state stream for its sections, resends its
+  whole state on it), at most once per second per peer. Queued when a reliable send fails
+  (`sendMessageToUser`'s EResult != 1, logged as a warning); unreliable failures are only logged at debug level.
+- **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
+  ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
+  menu_grids, retry, pause_battle, pause_shop, cursors (state that builds controls before the cursors on
+  them). Replaces the copy of the same machinery each module had (poll loop + change key, key forgotten on
+  `peer_ready`, per-peer sends, "keep the latest until the scene is ready").
+  - Host: a provider per section answers `state_key(section)` (text, "" = inactive; checked every interval,
+    0.05 / 0.1 s), `state_body(section)` (built only when something goes out, so zstd only runs on change)
+    and optionally `state_patch(section, steam_id)` (merged into a copy of the body per peer: `you`). A key
+    change bumps the section's revision and goes to every ready peer; turning inactive sends null once.
+    `flush` = check in the next idle frame (deferred game code, e.g. a shop intent), `mark_dirty` = resend
+    without a key change. `peer_ready`: every section to that peer again, in section order. Nothing while
+    not host; runs while paused.
+  - Client: a handler per section, `apply_state(section, body, revision) -> bool`; false keeps the latest
+    body of the section pending, retried every frame in section order until it applies, is replaced or
+    cleared, or its timeout passes (10 s default, per section); `retry()` from outside (e.g.
+    `battle_entered`). Null calls the optional `clear_state`. Lower revisions are dropped, equal ones applied
+    again (resync, so handlers are idempotent); a handler returning anything but a bool loses its body and
+    the other sections go on. Only from the host; `lobby_left` drops everything.
+  - Tests step it by hand (`step`) and pass `message_for(section, steam_id)` to `receive`
+    (`state_stream_tests.gd`). Idle cost, 8 sections checked per frame: about 13 us.
+  - SHOP_STATE, UPGRADES_STATE, MENU_STATE (and its grids), RETRY_PROMPT, BATTLE_PAUSE, SHOP_PAUSE and FOCUS
+    move onto it in follow-up changes; until then they still travel as their own messages.
 - Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
   version (manifest) must match. Rejections carry a reason that the client shows in the F9 menu. DLC never
   rejects (protocol 5 / 0.2.1).

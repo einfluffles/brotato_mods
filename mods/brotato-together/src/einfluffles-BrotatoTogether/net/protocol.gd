@@ -50,9 +50,12 @@ enum Msg {
 	SHOP_INTENT,
 	# client -> host: shop_id, page, target (like UPGRADE_FOCUS, inside the sender's shop panel)
 	SHOP_FOCUS,
+	# host -> client: [section, revision, body or null (the section has no state now)], see
+	# sync/state_stream.gd
+	STATE,
 }
 
-const VERSION := 13
+const VERSION := 14
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

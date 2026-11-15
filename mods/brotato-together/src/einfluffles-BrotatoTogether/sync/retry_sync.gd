@@ -13,6 +13,7 @@ const WAITING_LABEL := "BrotatoTogetherRetryWaiting"
 const DECIDING_PLAYER := 0  # player_index of RetryWave/FocusEmulator
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var battle_host: Node = null
 var battle_client: Node = null
 

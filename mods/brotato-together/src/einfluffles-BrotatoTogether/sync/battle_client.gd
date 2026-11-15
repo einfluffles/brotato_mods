@@ -71,6 +71,7 @@ const KIND_POSE := 16  # its scene has parts sync/pose.gd moves
 const LOADING_TIMEOUT_MSEC := 10000  # a scene that never got ready must not block the next
 
 var session: Node = null
+var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
 var interp_lag_msec := 0  # render time vs newest snapshot, for the F9 menu
 

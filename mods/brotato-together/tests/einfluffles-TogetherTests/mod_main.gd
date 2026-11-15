@@ -57,6 +57,9 @@ const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks
 const BattleSceneTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/battle_scene_tests.gd"
 )
+const StateStreamTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/state_stream_tests.gd"
+)
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -81,6 +84,7 @@ const SUITES := [
 	"looks",
 	"battle_scene",
 	"selection",
+	"state_stream",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -315,6 +319,12 @@ func _suite_looks(together: Node):
 func _suite_battle_scene(together: Node):
 	coop_run(3)
 	_suite = BattleSceneTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+# sync/state_stream.gd with its own streams on a fake session; touches no game state.
+func _suite_state_stream(together: Node):
+	_suite = StateStreamTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
