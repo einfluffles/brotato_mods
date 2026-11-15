@@ -37,7 +37,8 @@ tools/deploy.sh <name> <workshop_item_id>     # replace the subscribed item's zi
 
 `tools/check.sh` uses podman, or docker when podman is missing (`CONTAINER=...` picks one). A test mod
 names its suites in `tests/<test_mod_id>/shards.txt`, one group per line, and every group runs in its own
-game process at the same time. On a slow mount (a Windows drive under WSL) the game runs from a copy of
+game process at the same time. A line ending in `+<mod folder>` also loads that mod's `src/` in its process
+(brotato:trade's tests next to brotato:together). Each process only sees the mods mounted for it. On a slow mount (a Windows drive under WSL) the game runs from a copy of
 `reference/` in `~/.cache/brotato-modtools`, refreshed when `reference/project.godot` changes
 (`MOD_CHECK_RESYNC=1` forces it): booting from the Windows drive takes close to a minute, from the copy
 a few seconds.
