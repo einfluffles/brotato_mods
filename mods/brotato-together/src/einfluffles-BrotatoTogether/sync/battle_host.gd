@@ -21,6 +21,9 @@ const RunStateCodec := preload(
 const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
+const FeedbackMirror := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
+)
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleHost"
 const BATTLE_SCENE := "res://main.tscn"
 const SNAPSHOT_HZ := 30
@@ -65,6 +68,7 @@ var _paused := false
 var _events := []  # one-shot feedback since the last snapshot
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
+var _feedback = FeedbackMirror.new()  # explosions, bonus gold, wave end (protocol 10)
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -145,6 +149,7 @@ func _start_battle(main: Node) -> void:
 	_paused = false
 	_events.clear()
 	_anim_mirror = AnimMirror.new()
+	_feedback = FeedbackMirror.new()
 	SoundRelay.set_sink(self)
 	var main_players: Array = main.get("_players")
 	for i in main_players.size():
@@ -183,6 +188,7 @@ func _end_battle() -> void:
 	_stats.clear()
 	_events.clear()
 	_anim_mirror = AnimMirror.new()
+	_feedback = FeedbackMirror.new()
 	SoundRelay.set_sink(null)
 	if session.is_host():
 		session.broadcast_reliable(Protocol.Msg.BATTLE_END, {"battle_id": _battle_id})
@@ -275,6 +281,7 @@ func _preregister_types(main: Node) -> void:
 	var gold_scene = main.get("gold_scene")
 	if gold_scene is PackedScene:
 		paths.append(gold_scene.resource_path)
+	paths.append(FeedbackMirror.EXPLOSION_SCENE)
 	for path in paths:
 		if path != "" and not _types.has(path):
 			_types[path] = _types.size()
@@ -385,6 +392,7 @@ func _build_snapshot() -> Array:
 	view.types = types
 	view.positions = positions
 	view.flags = Snapshot.pack_flags(flags)
+	_feedback.capture(_main, _events, _snapshot_count, funcref(self, "_type_idx"))
 	view["events"] = Snapshot.select_events(_events, MAX_EVENTS)
 	_events = []
 	_snapshot_count += 1
@@ -403,6 +411,7 @@ func _record(node: Node, key: int) -> Array:
 		kind |= KIND_UNIT
 		if not node.is_connected("took_damage", self, "_on_took_damage"):
 			node.connect("took_damage", self, "_on_took_damage", [0])
+	_feedback.track(node)
 	var layout: Dictionary = _pose.layout(node)
 	if not layout.parts.empty() or layout.group != Pose.Group.NONE:
 		kind |= KIND_POSE

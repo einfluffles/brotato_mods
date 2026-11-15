@@ -28,6 +28,9 @@ const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const PauseControl := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
 )
+const FeedbackMirror := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
+)
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -98,6 +101,7 @@ var _pause_text := ""
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
+var _feedback = FeedbackMirror.new()  # explosions, texts, shake, wave end (protocol 10)
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -243,6 +247,7 @@ func _reset_battle_state() -> void:
 	_paused = false
 	_pause_text = ""
 	_events.clear()
+	_feedback = FeedbackMirror.new()
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
@@ -480,6 +485,7 @@ func _own_target(player: Node2D, entry: Array) -> Vector2:
 func _apply_player_stats(player: Node, i: int, entry: Array) -> void:
 	if entry[PF.HEALTH] <= 0 and not player.dead:
 		PuppetEntity.player_died(player)
+	_feedback.player_stats(_main, i, entry)  # heal and level-up texts
 	if (
 		player.current_stats.health != entry[PF.HEALTH]
 		or player.max_stats.health != entry[PF.MAX_HEALTH]
@@ -596,6 +602,7 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 	var now := OS.get_ticks_msec()
 	for id in _entities.keys():
 		if not alive.has(id):
+			FeedbackMirror.gold_gone(_main, _entities[id])  # picked up: its sparkle
 			_despawn(_entities[id])
 			_despawned[id] = [_entities[id], now + DESPAWN_GRACE_MSEC]
 			_entities.erase(id)
@@ -754,8 +761,8 @@ func _fire_events(render_t: float) -> void:
 		var event = entry[1]
 		if typeof(event) != TYPE_ARRAY or event.empty() or typeof(event[0]) != TYPE_INT:
 			continue
-		# Animations are state and still count.
-		if entry[0] < render_t - STALE_EVENT_MSEC and event[0] != Snapshot.EVENT_ANIM:
+		# Animations, bonus gold and the wave's end are state and still count.
+		if entry[0] < render_t - STALE_EVENT_MSEC and not Snapshot.is_state_event(event[0]):
 			continue
 		if event[0] == Snapshot.EVENT_DAMAGE and event.size() == 6:
 			_show_damage(event)
@@ -765,6 +772,8 @@ func _fire_events(render_t: float) -> void:
 				SoundRelay.replay(sound, event[2], event[3], event[4], event[5], event[6])
 		elif event[0] == Snapshot.EVENT_ANIM:
 			_anim_mirror.replay(_entities, event)
+		else:
+			_feedback.fire(_main, _types, entry[0], event)
 
 
 # Same handlers main.gd connects to Unit.took_damage (numbers, particles) + the hit flash.
@@ -789,6 +798,7 @@ func _show_damage(event: Array) -> void:
 		var manager = _main.get(manager_name)
 		if manager != null:
 			manager.callv("_on_unit_took_damage", args)
+	FeedbackMirror.shake(_main, target, args)
 	if int(event[2]) > 0 and target.has_method("flash") and not target.dead:
 		target.flash()
 
