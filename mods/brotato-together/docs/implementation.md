@@ -268,8 +268,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   dropped). The host answers every HELLO; a repeated HELLO from a ready peer means it missed WELCOME and what
   followed, so it gets a full resync. The transport accepts a member's message session when it enters the
   lobby and refreshes the member list for unknown senders.
-- Full resync = `peer_ready` re-emitted (every sync module, and the state stream for its sections, resends its
-  whole state on it), at most once per second per peer. Queued when a reliable send fails
+- Full resync = `peer_ready` re-emitted (every sync module, and the state stream for its sections right after
+  them, resends its whole state on it), at most once per second per peer. Queued when a reliable send fails
   (`sendMessageToUser`'s EResult != 1, logged as a warning); unreliable failures are only logged at debug level.
 - **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
   ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
@@ -281,8 +281,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     and optionally `state_patch(section, steam_id)` (merged into a copy of the body per peer: `you`). A key
     change bumps the section's revision and goes to every ready peer; turning inactive sends null once.
     `flush` = check in the next idle frame, with `hold` none before it (deferred game code, e.g. a shop intent), `mark_dirty` = resend
-    without a key change. `peer_ready`: every section to that peer again, in section order. Nothing while
-    not host; runs while paused.
+    without a key change. `peer_ready`: every section to that peer again, in section order, queued for the
+    stream's next step (before any interval / flush check; a held section holds it a frame). So what the
+    other modules send from their own `peer_ready` (BATTLE_START, InputSync's device behind `you`) is
+    ahead of every STATE for that peer; connection order would not do it (Godot 3 calls a signal's targets
+    by object id, and the stream is created before the modules). Nothing while not host; runs while paused.
   - Client: a handler per section, `apply_state(section, body, revision) -> bool`; false keeps the latest
     body of the section pending, retried every frame in section order until it applies, is replaced or
     cleared, or its timeout passes (10 s default, per section); `retry()` from outside (e.g.
@@ -295,8 +298,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     MENU_STATE), retry (`RetrySync`, was RETRY_PROMPT),
     pause_battle (`BattleHost` / `BattleClient`, was BATTLE_PAUSE and the `paused` of BATTLE_START).
     `BattleClient` retries the stream on `battle_entered`: retry and pause_battle stay pending until the
-    puppet battle of their `battle_id` is ready (a peer joining gets them before its BATTLE_START; 30 s
-    timeout for the scene load); only an earlier battle's or a malformed body is dropped.
+    puppet battle of their `battle_id` is ready (a peer joining gets them right after its BATTLE_START,
+    which only starts the scene load; still coping with them first; 30 s timeout for the scene load);
+    only an earlier battle's or a malformed body is dropped.
   - cursors: `FocusSync` (provider and handler, 0.05 s, 10 s timeout) instead of FOCUS, its poll loop and
     its pending-per-scene table; see Cursors.
   - shop: `ShopSync` is provider and handler (was SHOP_STATE): key = run JSON + slots, Go, seqs, pages,
@@ -461,7 +465,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     seqs, pages, golds, meca rolls, battle id) and runs `_update_seqs` every check; the body (`body()`,
     encodes the run) only on send. An applied intent `flush`es. Client handler: false (pending in the
     stream, 30 s) until the state's battle is the puppet's and its scene is ready (a rejoin's resync
-    comes before `BATTLE_START`); `battle_entered` calls `retry()`. Null (panels closed, battle over):
+    comes right after `BATTLE_START`, while the scene loads); `battle_entered` calls `retry()`. Null (panels closed, battle over):
     the own panel stops taking input and every panel is rebuilt by the next state; the puppet's panels
     stay shown until its scene goes, as before.
 - **Own level-up / crate panel runs on the client** (protocol 6; first screen of the "local view, decisions

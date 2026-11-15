@@ -35,8 +35,9 @@ const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const CHECK_INTERVAL := 0.1
-# A state can wait for BATTLE_START (on a rejoin the stream's resync comes first) and then for
-# the puppet battle scene to load; it used to wait for battle_entered without a limit.
+# A state can wait for the puppet battle scene to load (on a rejoin the stream's resync comes
+# right after BATTLE_START, which starts the load); it used to wait for battle_entered without
+# a limit.
 const PENDING_TIMEOUT_SEC := 30.0
 const ITEM_KINDS := ["take", "discard", "ban"]
 # UpgradesUI._ready: container signal -> UpgradesUI handler (bound to the player index).
@@ -376,7 +377,7 @@ func _on_battle_entered() -> void:
 
 
 # StateStream handler. false keeps the state pending in the stream: its battle has not started
-# here yet (on a rejoin the stream's resync comes before BATTLE_START) or its puppet scene is
+# here yet (not expected: a rejoin's resync follows its BATTLE_START) or its puppet scene is
 # still loading. Applied again on a resync: apply() only rebuilds what changed.
 func apply_state(_section: int, state, _revision: int) -> bool:
 	if typeof(state) != TYPE_DICTIONARY or typeof(state.get("battle_id")) != TYPE_INT:

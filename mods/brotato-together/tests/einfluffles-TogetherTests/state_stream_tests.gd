@@ -3,7 +3,8 @@ extends Reference
 # fake session that keeps what the host sends, with probe sections that record what the client
 # applies. Then the mod's own stream: created before the sync modules, given to each of them.
 #  - host: change key and interval, per-peer bodies built once, dirty, flush, resync on
-#    peer_ready in section order, inactive -> null once, nothing while not host
+#    peer_ready in section order (next step, after what other peer_ready handlers send), inactive
+#    -> null once, nothing while not host
 #  - client: pending until the handler accepts, retry(), superseding, revisions, timeout, clear,
 #    section order, malformed STATE, senders other than the host, a broken handler, lobby_left
 #  - host -> client in one process (message_for -> receive) and the idle cost per frame
@@ -84,6 +85,15 @@ class Probe:
 		cleared.append(section)
 
 
+# A module that sends from its own peer_ready (as BattleHost sends BATTLE_START).
+class Joiner:
+	extends Reference
+	var session: Node = null
+
+	func _on_peer_ready(steam_id: int) -> void:
+		session.send_reliable(steam_id, Protocol.Msg.BATTLE_START, {"battle_id": 7})
+
+
 # A handler without clear_state.
 class Plain:
 	extends Reference
@@ -102,6 +112,7 @@ func run(test_mod: Node, together: Node):
 	_test_dirty()
 	yield(_test_flush(), "completed")
 	_test_resync()
+	yield(_test_resync_after_modules(), "completed")
 	_test_inactive()
 	_test_pending()
 	_test_revisions()
@@ -270,6 +281,8 @@ func _test_resync() -> void:
 	_take(stream)
 	stream.session.peers[P2] = {"ready": true}
 	stream.session.emit_signal("peer_ready", P2)
+	t._check(_take(stream).empty(), "peer_ready: the resync waits for the next step")
+	stream.step(0.0)
 	var sent := _take(stream)
 	var expected := [
 		[P2, [StateStream.RUN_SHOP, 1, {"s": StateStream.RUN_SHOP}]],
@@ -280,6 +293,8 @@ func _test_resync() -> void:
 	t._check(_same(sent, expected), "peer_ready: every section again, in order: %s" % [sent])
 	probes[StateStream.MENU].key = "m2"
 	stream.session.emit_signal("peer_ready", P2)
+	stream.session.emit_signal("peer_ready", P2)  # twice before the step: one resync
+	stream.step(0.0)
 	sent = _take(stream)
 	var to_p1 := []
 	for message in sent:
@@ -289,6 +304,75 @@ func _test_resync() -> void:
 		sent.size() == 5 and _same(to_p1, [[StateStream.MENU, 2, {"s": StateStream.MENU}]]),
 		"a change found on peer_ready goes to everyone"
 	)
+
+
+# Every message to steam_id the session kept, as [msg_type, section or -1]. Clears nothing.
+func _sent_to(stream: Node, steam_id: int) -> Array:
+	var messages := []
+	for sent in stream.session.sent:
+		if sent[0] == steam_id:
+			messages.append([sent[1], sent[2][0] if sent[1] == Protocol.Msg.STATE else -1])
+	return messages
+
+
+# The resync comes after what another peer_ready handler sends (BATTLE_START here), even one
+# connected after the stream, and before any interval check: a key change and a mark_dirty in
+# between reach the new peer in section order with the rest. A held section holds the resync
+# (one real frame: flush is frame based); lobby_left drops a queued one.
+func _test_resync_after_modules():
+	var stream := _stream(true, [P1])
+	var shop := _probe("s", {"s": 0})
+	var pause := _probe("p", {"p": 0})
+	stream.register_provider(StateStream.PAUSE_BATTLE, pause)
+	stream.register_provider(StateStream.RUN_SHOP, shop, 10.0)
+	var joiner := Joiner.new()
+	joiner.session = stream.session
+	stream.session.connect("peer_ready", joiner, "_on_peer_ready")
+	stream.step(0.0)
+	_take(stream)
+	var start := [Protocol.Msg.BATTLE_START, -1]
+	var in_order := [
+		start, [Protocol.Msg.STATE, StateStream.RUN_SHOP],
+		[Protocol.Msg.STATE, StateStream.PAUSE_BATTLE]
+	]
+	stream.session.peers[P2] = {"ready": true}
+	stream.session.emit_signal("peer_ready", P2)
+	t._check(_same(_sent_to(stream, P2), [start]), "peer_ready: the module's message, no state")
+	pause.key = "p2"
+	stream.mark_dirty(StateStream.RUN_SHOP)
+	stream.step(1.0)
+	var to_p2 := _sent_to(stream, P2)
+	t._check(_same(to_p2, in_order), "BATTLE_START first, then the sections in order: %s" % [to_p2])
+	var others := _take(stream)
+	var pause_rev := -1
+	for message in others:
+		if message[0] == P1 and message[1][0] == StateStream.PAUSE_BATTLE:
+			pause_rev = message[1][1]
+	t._check(
+		_sections(others, P1) == [StateStream.RUN_SHOP, StateStream.PAUSE_BATTLE] and pause_rev == 2,
+		"the change and the dirty mark in between go to the others once: %s" % [others]
+	)
+	stream.session.peers[P3] = {"ready": true}
+	stream.flush(StateStream.RUN_SHOP, true)
+	stream.session.emit_signal("peer_ready", P3)
+	stream.step(1.0)
+	t._check(_same(_sent_to(stream, P3), [start]), "a held section holds the resync")
+	yield(t.get_tree(), "idle_frame")
+	stream.step(0.0)
+	var to_p3 := _sent_to(stream, P3)
+	t._check(_same(to_p3, in_order), "and it goes out the frame after, in order: %s" % [to_p3])
+	_take(stream)
+	stream.session.emit_signal("peer_ready", P3)
+	stream.session.transport.emit_signal("lobby_left")
+	t._check(stream._resyncs.empty(), "lobby_left drops a queued resync")
+
+
+static func _sections(messages: Array, steam_id: int) -> Array:
+	var sections := []
+	for message in messages:
+		if message[0] == steam_id:
+			sections.append(message[1][0])
+	return sections
 
 
 func _test_inactive() -> void:

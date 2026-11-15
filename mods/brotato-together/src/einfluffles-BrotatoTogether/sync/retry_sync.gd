@@ -13,8 +13,8 @@ extends Node
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const WAITING_LABEL := "BrotatoTogetherRetryWaiting"
 const DECIDING_PLAYER := 0  # player_index of RetryWave/FocusEmulator
-# Pending that long at most: a (re)joining peer gets the prompt before its BATTLE_START, then
-# loads the battle scene.
+# Pending that long at most: a (re)joining peer gets the prompt right after its BATTLE_START,
+# while the battle scene loads.
 const PENDING_TIMEOUT_SEC := 30.0
 
 var session: Node = null

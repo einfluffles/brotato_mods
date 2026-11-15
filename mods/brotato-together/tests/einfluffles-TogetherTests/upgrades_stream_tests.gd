@@ -113,6 +113,7 @@ func host_part(t: Node, together: Node, ui: Node) -> void:
 
 	host.session.peers[P2] = {"ready": true}
 	host.session.emit_signal("peer_ready", P2)
+	host.step(0.0)  # the resync goes out in the stream's next step
 	sent = _take(host)
 	t._check(
 		sent.size() == 1 and sent[0][0] == P2 and sent[0][1][1] == 2 and provider.builds == 3,

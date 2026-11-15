@@ -45,6 +45,15 @@ class Probe:
 			events.append(event)
 
 
+# Calls BattleHost's peer_ready handler from a newer object (see _test_join_order).
+class PeerReadyRelay:
+	extends Reference
+	var target: Node = null
+
+	func _on_peer_ready(steam_id: int) -> void:
+		target._on_peer_ready(steam_id)
+
+
 # In a battle-capable state (run from the battle tests); leaves no scene of its own behind.
 func run_battle_tests(test_mod: Node, together: Node):
 	t = test_mod
@@ -243,9 +252,11 @@ func _test_retry_prompt(together: Node):
 	# The same button on the client, found by its scene path (the retry prompt is all named).
 	var focus_path: NodePath = main.get_path_to(host_focus) if host_focus != null else NodePath()
 	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
+	_test_join_order(together)
 	host._end_battle()
 
-	# The order of a (re)join: the stream resyncs on peer_ready before BattleHost's BATTLE_START.
+	# The other order, kept as a robustness check (a join gets BATTLE_START first, see
+	# _test_join_order): the sections arrive before their battle is known.
 	stream.receive(message)
 	stream.receive(pause_message)
 	yield(_frames(2), "completed")  # retried every frame meanwhile
@@ -328,6 +339,45 @@ func _test_retry_prompt(together: Node):
 	host.set_process(true)
 
 
+# A peer becomes ready while the host's battle shows the retry prompt, paused: the first message
+# it gets is BattleHost's BATTLE_START (which battle the sections are for), then retry and
+# pause_battle in section order. A stream of its own with the real providers on a fake session;
+# BattleHost answers its peer_ready through a relay connected after the stream (and newer), so
+# Godot calls the stream's handler first. Synchronous: the tree is paused only for this check.
+func _test_join_order(together: Node) -> void:
+	var host: Node = together.battle_host
+	var joins := _stream(true, [P1])
+	joins.register_provider(StateStream.RETRY, together.retry_sync)
+	joins.register_provider(StateStream.PAUSE_BATTLE, host)
+	var relay := PeerReadyRelay.new()
+	relay.target = host
+	joins.session.connect("peer_ready", relay, "_on_peer_ready")
+	var session: Node = host.session
+	host.session = joins.session  # BATTLE_START goes out on the fake session too
+	_tree().paused = true
+	joins.step(0.0)
+	joins.session.sent.clear()
+	joins.session.peers[P2] = {"ready": true}
+	joins.session.emit_signal("peer_ready", P2)
+	joins.step(0.0)
+	_tree().paused = false
+	host.session = session
+	var to_p2 := []
+	for sent in joins.session.sent:
+		if sent[0] == P2:
+			to_p2.append([sent[1], sent[2][0] if sent[1] == Protocol.Msg.STATE else -1])
+	var expected := [
+		[Protocol.Msg.BATTLE_START, -1],
+		[Protocol.Msg.STATE, StateStream.RETRY],
+		[Protocol.Msg.STATE, StateStream.PAUSE_BATTLE],
+	]
+	t._check(
+		var2str(to_p2) == var2str(expected),
+		"join mid-battle: BATTLE_START first, then retry and pause in order: %s" % [to_p2]
+	)
+	_free_stream(joins)
+
+
 # Section pause_battle on the host (a battle running): BattleHost as the provider of a stream of
 # its own. Nothing while it runs; a pause flushes the section (no waiting for the interval), a
 # peer joining while paused gets it, resuming sends null. Returns the pause as a peer gets it.
@@ -354,6 +404,7 @@ func _test_pause_host(together: Node) -> Array:
 	)
 	pauses.session.peers[P2] = {"ready": true}
 	pauses.session.emit_signal("peer_ready", P2)
+	pauses.step(0.0)  # the resync goes out in the stream's next step
 	sent = _take(pauses)
 	t._check(
 		_sections(sent) == [[P2, StateStream.PAUSE_BATTLE]] and sent[0][1][1] == 1,
@@ -503,6 +554,7 @@ func _test_menu_sections(together: Node) -> void:
 	)
 	host.session.peers[P2] = {"ready": true}
 	host.session.emit_signal("peer_ready", P2)
+	host.step(0.0)  # the resync goes out in the stream's next step
 	sent = _take(host)
 	t._check(
 		_sections(sent) == [[P2, StateStream.MENU], [P2, StateStream.MENU_GRIDS]],

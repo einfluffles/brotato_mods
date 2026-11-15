@@ -68,6 +68,7 @@ func run_host(shop: Node):
 		"unchanged shop state compressed once, not every check"
 	)
 	session.emit_signal("peer_ready", PEER)
+	host.step(0.0)  # the resync goes out in the stream's next step
 	sent = _take(StateStream.RUN_SHOP)
 	t._check(
 		sent.size() == 1 and sent[0][1] == 1 and shop_sync.states_packed == packed + 2,

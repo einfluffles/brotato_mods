@@ -71,7 +71,8 @@ func _ready() -> void:
 	session.setup(transport)
 
 	# Before the sync modules, which get it ahead of their setup() (they register sections there)
-	# and process after it in a frame.
+	# and process after it in a frame. Its peer_ready resync waits for its next step, so whatever
+	# the modules send from their own peer_ready goes out first (state_stream.gd header).
 	state_stream = _add("sync/state_stream.gd", "StateStream")
 	state_stream.setup(session)
 

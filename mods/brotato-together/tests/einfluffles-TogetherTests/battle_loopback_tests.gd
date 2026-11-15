@@ -104,8 +104,9 @@ func run(together: Node):
 	)
 
 	# --- client: replay ---
-	# Rejoin during the level-up phase: the stream's resync comes before BATTLE_START, and the
-	# scene still loads after it. The state waits in the stream until battle_entered.
+	# Rejoin during the level-up phase. A rejoin gets BATTLE_START before the stream's resync
+	# (menu_ux_tests: join order); the state arriving first is kept as a robustness check, and the
+	# scene still loads after BATTLE_START. The state waits in the stream until battle_entered.
 	state_stream.receive(upgrades_state)
 	t._check(state_stream.is_pending(StateStream.UPGRADES), "panel state before its battle: pending")
 	client._on_battle_start(start)

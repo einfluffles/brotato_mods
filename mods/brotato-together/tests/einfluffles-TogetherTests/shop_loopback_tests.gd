@@ -127,6 +127,7 @@ func _host_cursors(focus_sync: Node, shop: Node) -> Array:
 	stream.step(FocusSync.CHECK_INTERVAL)
 	var unchanged := _sent(stream)
 	stream.session.emit_signal("peer_ready", PEER)
+	stream.step(0.0)  # the resync goes out in the stream's next step
 	var resent := _sent(stream)
 	_measure_key(focus_sync)
 	var emulator = Utils.get_focus_emulator(0, shop)

@@ -22,6 +22,15 @@ extends Node
 # been active sends a null body once. On peer_ready the peer gets every section again in section
 # order (current revision, null for one that was active once and is not now): a resync must
 # re-deliver what the peer may have missed.
+# That resync is queued and runs first thing in the next step, never inside the peer_ready
+# emission: what other modules send from their own peer_ready handler (BattleHost's BATTLE_START,
+# which tells the client which battle the battle sections belong to; InputSync's device, which
+# the `you` patches read) is on the reliable channel before any STATE for that peer. Running last
+# in the emission does not work: Godot 3 calls a signal's targets by object id, not in connection
+# order, and this node is created before the modules that register with it. Nothing goes out in
+# between: the stream only sends from step, and that step resyncs before any interval or flush
+# check (a key change meanwhile reaches the new peer in section order with the rest). Held
+# sections (flush with hold) hold the resync too, so the peer still gets every section in order.
 #
 # Client: register_handler(section, handler, timeout_sec) with a handler object that has
 #   apply_state(section, body, revision) -> bool: true = applied, false = not now (scene still
@@ -38,7 +47,8 @@ extends Node
 # idempotent. lobby_left drops everything on both sides.
 #
 # Tests drive it by hand: message_for(section, steam_id) is the STATE body the host would send
-# that peer now, receive() takes it, step(delta) is one frame (what _process does).
+# that peer now, receive() takes it, step(delta) is one frame (what _process does; after
+# peer_ready, step(0.0) sends the resync).
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:StateStream"
@@ -63,6 +73,7 @@ var session: Node = null
 
 # host: section -> {provider, patched, interval, left, key, rev, flush_frame, dirty {steam_id}}
 var _providers := {}
+var _resyncs := {}  # host: steam_id -> true, peers that became ready since the last step
 # client: section -> {handler, clears, timeout_msec}
 var _handlers := {}
 var _revs := {}  # section -> last revision received
@@ -141,6 +152,10 @@ func message_for(section: int, steam_id: int) -> Array:
 
 func _host_step(delta: float) -> void:
 	var frame := Engine.get_idle_frames()
+	if not _resyncs.empty():
+		if _held(frame):
+			return  # no check at all this frame: the resync waits for the hold (one frame)
+		_resync()
 	var peers = null  # built only when a section is due
 	for section in NAMES.size():
 		var entry = _providers.get(section)
@@ -163,7 +178,7 @@ func _host_step(delta: float) -> void:
 func _check(section: int, entry: Dictionary, peers: Array, resend_to: int) -> void:
 	entry.left = entry.interval
 	if entry.flush_frame >= 0 and Engine.get_idle_frames() >= entry.flush_frame:
-		entry.flush_frame = -1  # a check before its frame (peer_ready) leaves the flush armed
+		entry.flush_frame = -1  # a check before its frame (a resync) leaves the flush armed
 	var key = entry.provider.call("state_key", section)
 	if typeof(key) != TYPE_STRING:
 		return  # provider error: keep what was sent, check again next interval
@@ -205,15 +220,28 @@ func _ready_peers() -> Array:
 	return peers
 
 
-# Every section again for this peer, in section order (sections that changed meanwhile go to
-# everyone).
+func _held(frame: int) -> bool:
+	for entry in _providers.values():
+		if entry.hold and entry.flush_frame >= 0 and frame < entry.flush_frame:
+			return true
+	return false
+
+
+# Queued for the next step (header: after every other peer_ready handler of this emission).
 func _on_peer_ready(steam_id: int) -> void:
-	if not session.is_host():
-		return
+	if session.is_host():
+		_resyncs[steam_id] = true
+
+
+# Every section again for each queued peer, in section order (sections that changed meanwhile go
+# to everyone). A peer gone or no longer ready by now gets nothing (_check sends to ready peers).
+func _resync() -> void:
 	var peers := _ready_peers()
-	for section in NAMES.size():
-		if _providers.has(section):
-			_check(section, _providers[section], peers, steam_id)
+	for steam_id in _resyncs:
+		for section in NAMES.size():
+			if _providers.has(section):
+				_check(section, _providers[section], peers, steam_id)
+	_resyncs.clear()
 
 
 # --- client ---
@@ -283,6 +311,7 @@ func _on_lobby_left() -> void:
 	_revs.clear()
 	_live.clear()
 	_pending.clear()
+	_resyncs.clear()
 	for entry in _providers.values():
 		entry.left = 0.0
 		entry.key = ""

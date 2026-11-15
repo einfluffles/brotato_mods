@@ -116,7 +116,8 @@ func setup(netplay_session: Node, local_input: Node) -> void:
 	input_sync = local_input
 	session.connect("message", self, "_on_message")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
-	# Pending up to 30 s: a (re)joining peer gets it before its BATTLE_START, then loads the scene.
+	# Pending up to 30 s: a (re)joining peer gets it right after its BATTLE_START, while the scene
+	# loads (and copes with it arriving first all the same).
 	state_stream.register_handler(StateStream.PAUSE_BATTLE, self, 30.0)
 	# Sections waiting for the puppet battle (pause, retry prompt) apply the frame it is ready.
 	if not is_connected("battle_entered", state_stream, "retry"):
