@@ -17,11 +17,14 @@ extends Reference
 #   buttons drive its own slot's FocusEmulator (InputSync.set_local_device): cursor, pages,
 #   popups, the hold-to-ban bar and the meca effect choice on a shop item run here, without a
 #   round trip. Its cursor and page travel as SHOP_FOCUS (what the host and the others see).
+#   Keyboard and mouse: sync/local_panel.gd (added to the puppet shop by guard()) types the own
+#   slot as the device in use and moves / presses the own cursor with the mouse.
 # A control this file does not know (another mod's button) keeps its own handler: it can show
 # things, but every way into the run above is cut.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
 # ShopItemsContainer.connect_shop_items: ShopItem signal -> container handler.
 const ITEM_HANDLERS := {
 	"buy_button_pressed": "on_shop_item_buy_button_pressed",
@@ -43,6 +46,7 @@ var last_intent := {}  # the last decision sent (also read by the tests)
 var active := false  # the own panel runs locally
 var you := -1
 var seq := -1  # revision of the own panel, from the last state
+var local_panel: Node = null  # LocalPanel in the puppet shop: device type and mouse, own panel
 
 var _shop: Node = null  # the puppet shop whose handlers are cut
 var _shop_id := 0
@@ -51,7 +55,9 @@ var _paused := false  # the host paused: the pause menu is the host's, nothing r
 var _driving := false  # the local buttons drive the own slot's device
 var _host_ready := false  # the own Go flag as the host has it
 var _unready_sent := false
+var _go_sent := false  # "go 1" left and the host's ready flag is not here yet
 var _sent_focus := ""
+var _panel_player := -1  # whose panel LocalPanel drives (-1: none)
 
 
 func guard(shop: Node, shop_id: int) -> void:
@@ -77,6 +83,7 @@ func guard(shop: Node, shop_id: int) -> void:
 			popup._upgrade_button = null  # the popup treats that as "no meca upgrade here"
 		var panel = shop._get_coop_player_container(p)
 		_disconnect(panel.get("_endless_button"), "toggled", panel, "_on_EndlessButton_toggled")
+	_add_local_panel()
 
 
 # The own panel takes local input. Safe to call again; another slot releases the old one.
@@ -92,6 +99,7 @@ func take_over(player: int) -> void:
 	_apply_device()
 	if focus_sync != null:
 		focus_sync.local_emulators = [Utils.get_focus_emulator(you, _shop)]
+	_apply_local_panel()
 
 
 func stop() -> void:
@@ -100,6 +108,7 @@ func stop() -> void:
 	seq = -1
 	_host_ready = false
 	_unready_sent = false
+	_go_sent = false
 	_sent_focus = ""
 	if not active:
 		return
@@ -107,6 +116,7 @@ func stop() -> void:
 	_apply_device()
 	if focus_sync != null:
 		focus_sync.local_emulators = []
+	_apply_local_panel()
 
 
 # The puppet shop left the tree.
@@ -114,6 +124,7 @@ func leave(shop: Node) -> void:
 	if shop == _shop:
 		stop()
 		_shop = null
+		local_panel = null  # freed with the shop
 
 
 # A state from the host was applied: the own panel's revision and Go flag as the host has them.
@@ -121,15 +132,21 @@ func on_state(revision: int, ready: bool) -> void:
 	seq = revision
 	_host_ready = ready
 	_unready_sent = false
+	if ready:
+		_go_sent = false
 
 
 func set_paused(paused: bool) -> void:
 	_paused = paused
 	_apply_device()
+	_apply_local_panel()
 
 
 # Every frame while the puppet shop runs.
 func process() -> void:
+	if is_instance_valid(local_panel):
+		# Also while nothing is local: LocalPanel stops mouse events over the panels otherwise.
+		local_panel.blocked = input_sync != null and input_sync.local_input_blocked
 	if not active:
 		return
 	if not is_instance_valid(_shop) or not _shop.is_inside_tree():
@@ -140,13 +157,19 @@ func process() -> void:
 	# cursor leaves, on cancel and on the triggers. A press that reached the host after the
 	# cursor had already left is cleared the same way; either way the host has to hear of it.
 	var emulator = Utils.get_focus_emulator(you, _shop)
+	var on_go: bool = emulator != null and emulator.focused_control == _shop._get_go_button(you)
 	var ready: bool = _shop._player_pressed_go_button[you]
-	if ready and emulator != null and emulator.focused_control != _shop._get_go_button(you):
+	if ready and emulator != null and not on_go:
 		_shop._clear_go_button_pressed(you)
 		ready = false
 	if _host_ready and not ready and not _unready_sent:
 		_unready_sent = true
 		_send_intent("go", -1, "", 0)
+	if not on_go:
+		_go_sent = false
+	if is_instance_valid(local_panel):
+		# A mouse that drifts off Go would take the ready flag back (or the press on its way).
+		local_panel.hold_cursor = on_go and (ready or _go_sent)
 
 
 func _connect_own() -> void:
@@ -198,6 +221,62 @@ func _apply_device() -> void:
 	input_sync.set_local_device(device)
 
 
+# Once per puppet shop, as its last child: after the FocusEmulators, so it gets every event
+# before them (sync/local_panel.gd).
+func _add_local_panel() -> void:
+	if is_instance_valid(local_panel):
+		local_panel.queue_free()
+	var containers := []
+	for p in RunData.get_player_count():
+		containers.append(_shop._get_coop_player_container(p))
+	local_panel = LocalPanel.new()
+	local_panel.panels = containers
+	local_panel.connect("player_type_changed", self, "_on_own_type_changed")
+	_shop.add_child(local_panel)
+	_panel_player = -1
+
+
+# LocalPanel drives the own panel while the local buttons do (not while the host is paused).
+func _apply_local_panel() -> void:
+	if not is_instance_valid(local_panel):
+		return
+	var player := you if active and not _paused else -1
+	if player == _panel_player:
+		return
+	_panel_player = player
+	if player < 0:
+		local_panel.set_own(null, null, -1)
+		local_panel.hold_cursor = false
+		return
+	local_panel.set_own(
+		_shop._get_coop_player_container(player), Utils.get_focus_emulator(player, _shop), player
+	)
+
+
+# The own slot is typed as another device now (keyboard <-> pad): LocalPanel has switched the
+# carousel and the glyphs. The way to the page arrows is the panel's own
+# (CoopShopPlayerContainer._set_focus_neighbours, which the game runs in _ready and on a page
+# change only).
+func _on_own_type_changed(_player_type: int, cursor_lost: bool) -> void:
+	if not active or not is_instance_valid(_shop):
+		return
+	var container = _shop._get_coop_player_container(you)
+	container._set_focus_neighbours()
+	if not cursor_lost:
+		return
+	# The cursor sat on a page arrow that is a trigger glyph now. Where the game puts a cursor
+	# after a page change (_set_focus_after_carousel_index_change): the shop's default on the
+	# shop page, Go on the stats pages.
+	var target: Control = _shop._get_go_button(you)
+	if container.carousel.index == 0:
+		var shop_default: Control = _shop._get_default_focus_control(you)
+		if shop_default != null and shop_default.is_visible_in_tree():
+			target = shop_default
+	var emulator = Utils.get_focus_emulator(you, _shop)
+	if emulator != null and target.is_visible_in_tree():
+		emulator.focused_control = target
+
+
 func _report_focus() -> void:
 	var panel = _shop._get_coop_player_container(you)
 	var emulator = Utils.get_focus_emulator(you, _shop)
@@ -239,7 +318,9 @@ func _on_own_reroll() -> void:
 
 # No local flag: the checkmark shows once the host has it.
 func _on_own_go() -> void:
-	_send_intent("go", -1, "", int(not _shop._player_pressed_go_button[you]))
+	var wanted := int(not _shop._player_pressed_go_button[you])
+	_go_sent = wanted == 1
+	_send_intent("go", -1, "", wanted)
 
 
 func _on_own_endless(pressed: bool) -> void:

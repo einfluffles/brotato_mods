@@ -258,6 +258,23 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     emulator. The shop scene processes input by itself, so cursor, carousel pages, item popup, inventory
     browsing, the hold-to-ban bar (`ShopItem._on_BanButton_button_down`), the hold-to-recycle bar and a
     meca item's effect choice (`effect_choice_selected`) run locally.
+  - Keyboard and mouse: `ShopLocal.guard` adds a `LocalPanel` (see the level-up panels) as the puppet
+    shop's last child (after `FocusEmulator1..4`), with every `CoopShopPlayerContainer` as `panels`.
+    The own panel is set while the local buttons drive it (`take_over`; unset on stop, leaving, a
+    host pause, and moved on another slot); `blocked` follows the F9 panel in `ShopLocal.process`.
+    After a type change `ShopLocal` calls the container's `_set_focus_neighbours` (the game runs it
+    in `_ready` and on a page change only) and, if the cursor sat on an arrow that became a glyph,
+    puts it where `_set_focus_after_carousel_index_change` would: `_get_default_focus_control` on
+    the shop page, Go on the stats pages. The item popup fits as it is: a focused popup keeps the
+    mouse inside (`_focused`), and its hold-to-recycle ends on the device's `ui_accept` release
+    that LocalPanel sends with the mouse button. Hold-to-ban has no mouse path in co-op (the ban
+    button is hidden; the shortcut is a key). Shop specific: while the own Go flag is set or a
+    "go 1" is on its way, and the cursor rests on Go, hover leaves the cursor there
+    (`LocalPanel.hold_cursor`; a click still moves it): the game clears the flag when the cursor
+    leaves Go, so a drifting mouse would take it back. The slot type survives state updates (only
+    `fill_puppet_slots` at shop entry resets it, before the panel is set), so rebuilt gear and
+    shop items read the right device; `CoopShopHint`s also get the panel's player (the game skips
+    the popup's steal hint, which showed player 0's device).
   - Guard, every client and every player's panel (`ShopLocal.guard`). The cuts sit where the mutation is,
     which is below `BaseShop` in places:
 
@@ -315,7 +332,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     visible on the host's copy); the client's hold-to-ban depends on its own `chal_banned_items` unlock
     and the ban animation / press sounds of the own panel are not heard (the puppet shop is muted; the
     host's sounds for the applied decision are); no feedback on the client for a refused buy (the host's
-    gold label shakes); a keyboard client is still typed as a gamepad; dismantle and the meca effect choice
+    gold label shakes); dismantle and the meca effect choice
     are only tested against stand-ins (no meca weapons without the DLC in the headless suite); none of
     this has run between two real machines yet.
 - **Level-up / crate panels** (`sync/upgrades_sync.gd`): per player container state from `_old_upgrades`,
@@ -373,8 +390,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - The client rebuilds a panel only when its revision or entry changed, and re-applies the run state only
     when its bytes changed (a rebuild of the own panel would fight the local cursor).
   - Keyboard and mouse (`sync/local_panel.gd`, a node `UpgradesSync` adds as the puppet `UpgradesUI`'s
-    last child; written against "the own panel + its emulator", so another client-run screen can use
-    it). Why a node there: a `FocusEmulator` with a cursor marks every event that is not a co-op action
+    last child; written against "the own panel + its emulator", the shop uses it too, see above).
+    Why a node there: a `FocusEmulator` with a cursor marks every event that is not a co-op action
     as handled, so on a co-op screen the mouse never reaches the GUI and `InputService` (an autoload,
     last in `_input` order) never sees which device is in use. `_input` runs in reverse tree order, so
     a node after the emulators sees every event first.
