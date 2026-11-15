@@ -87,7 +87,7 @@ func _check_round_trip(events: Array) -> void:
 
 
 # A snapshot without events or looks with one hand-written event put in: its last two bytes are
-# the event count and the count of the looks section that follows the events (protocol 11).
+# the event count and the count of the looks section that follows the events (protocol 12).
 static func _with_event(empty: PoolByteArray, event_bytes: Array) -> PoolByteArray:
 	var bytes := empty.subarray(0, empty.size() - 3)
 	bytes.append(1)

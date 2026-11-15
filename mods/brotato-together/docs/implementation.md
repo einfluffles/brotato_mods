@@ -126,7 +126,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `BattleClient._freeze` frees it. The host's bullets arrive as puppets.
 - One-shot events older than 250 ms when their turn comes (a stall, a scene load) are dropped, except
   animations (state).
-- Lasting looks (`sync/looks.gd`, protocol 11): states the game shows for seconds or for an entity's
+- Lasting looks (`sync/looks.gd`, protocol 12): states the game shows for seconds or for an entity's
   life, from game logic puppets never run. One byte of bits per entity: `BURNING` (+ `BURN_RED` /
   `BURN_BLUE`, the gradient `BurningParticles._update_color` picked), `CHARMED`, `CURSED`, `BOOSTED`.
   The host reads them off what the game shows: the outline colours in `Entity._outline_colors`
@@ -155,7 +155,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   snapshots (death, pool reuse) loses its look. Not mirrored: the meca / mutant evolution looks
   (outline plus a texture swap, `MecaEnemyEffectBehavior.init`), percent-damage-taken outlines (lute,
   diver), the one-shot boost particles (`stats_boosted` -> `EffectsManager`).
-- Puddles (`sync/puddles.gd`, protocol 11): acid / petrol / fire puddles (`GPESpawner`, children of
+- Puddles (`sync/puddles.gd`, protocol 12): acid / petrol / fire puddles (`GPESpawner`, children of
   `main._gpe_container` / `_fire_puddles_container`) are tracked like gold: static, so mostly
   `FLAG_REST`. A puddle's sprite (index into `puddle_sprites`) and target scale (`GPESpawner`'s size,
   for fire also the `fire_puddle_size` stat) are set once in `init()` and travel in the type key,

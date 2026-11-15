@@ -1,5 +1,5 @@
 extends Reference
-# Lasting looks of mirrored entities (protocol 11): states the game shows for seconds or for the
+# Lasting looks of mirrored entities (protocol 12): states the game shows for seconds or for the
 # rest of an entity's life, which puppets never get because the game logic behind them only runs
 # on the host. One byte per entity (bits below), in the snapshot's looks section.
 #   BURNING: Unit.apply_burning starts the unit's BurningParticles; BURN_RED / BURN_BLUE are the

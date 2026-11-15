@@ -1,5 +1,5 @@
 extends Reference
-# Acid, petrol and fire puddles (GPESpawner, protocol 11): enemies and projectiles of evolved
+# Acid, petrol and fire puddles (GPESpawner, protocol 12): enemies and projectiles of evolved
 # enemies leave acid / petrol, molotovs, explosions, fire trails and burning deaths leave fire.
 # They are mirrored like gold: static nodes, so after their first snapshots only their net id and
 # a FLAG_REST nibble travel. What they hurt, slow or set on fire is decided by the host's own

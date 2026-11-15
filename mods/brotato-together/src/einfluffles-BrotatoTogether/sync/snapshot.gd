@@ -19,7 +19,7 @@ extends Reference
 #     [EVENT_BONUS_GOLD, value, label visible: bool] (state, repeated)
 #     [EVENT_WAVE_END, WAVE_* flags] (state, repeated)
 #     [EVENT_GOLD_BOOST, position: Vector2, boost]
-#   looks: {entity index: look bits} (since protocol 11, see sync/looks.gd; indices of the parsed
+#   looks: {entity index: look bits} (since protocol 12, see sync/looks.gd; indices of the parsed
 #     entity order: Looks.resolve reads them before resolve() may drop entities)
 #
 # Wire layout:
