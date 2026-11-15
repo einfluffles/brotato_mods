@@ -379,7 +379,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (`ProgressData.saved_run_state`, `RunData.resumed_from_state_in_shop = true`, `shop_effects_checked = true`)
   so `BaseShop._ready` rolls nothing; updates re-run the per-player part of `BaseShop._ready`
   (`set_weapons_data/items_data`, `_update_stats`, gold label, reroll price via `ItemService.get_reroll_price`,
-  `ShopItem.set_shop_item/activate/deactivate`, `_update_visual_locks`, checkmarks). Client disconnects
+  `ShopItem.set_shop_item/activate/deactivate`, the lock per slot, checkmarks). Client disconnects
   `BaseShop._on_tree_exited` (rolls curses on locked items). State stream section `shop`: the host checks
   every 0.1 s (slots, Go flags, revisions, pages, meca rolls, colours + the run state's revision).
   Change detection of the run state (`sync/run_cache.gd`, shared with the level-up / crate panels: one
@@ -446,7 +446,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     |---|---|---|
     | buy | `ShopItem.buy_button_pressed` loses `ShopItemsContainer.on_shop_item_buy_button_pressed` (gold check, `deactivate`, buy delay, `shop_item_bought`) | sets `effect_choice_selected` for a meca item, then presses the item's buy button (`FocusEmulatorSignal.emit(button, "pressed", p)`, what a FocusEmulator does) |
     | steal | `steal_button_pressed` loses the container's handler; `BaseShop._input` calls `ShopItem.steal_item()`, which ends in that signal | `ShopItem.steal_item()` when `_item_steals[p] > 0` |
-    | lock / unlock | `ShopItem.change_lock_status` writes `RunData` and is called directly by `BaseShop._input`: a script extension emits `lock_requested` instead while puppeting | `change_lock_status(wanted)` when the item `is_lockable` and is not already in that state |
+    | lock / unlock | `ShopItem.change_lock_status` writes `RunData` and is called directly by `BaseShop._input`: a script extension emits `lock_requested` instead while puppeting; the own panel shows the lock at once (see Locks) | `change_lock_status(wanted)` when the item `is_lockable` and is not already in that state |
     | ban | `ban_item_pressed` loses the container's handler (`ShopItem.ban_item` spends the token); the hold loop, `_release_BanButton` and the ban animation stay local and end in that signal | emits the item's `ban_item_pressed` when its ban button is enabled (the container checks the token) |
     | dismantle | `dismantle_button_pressed` loses the container's handler; `BaseShop._on_ban_shortcut_released` ends in it | `ShopItem._on_DismantleButton_pressed()` when `BaseShop._can_dismantle_with_shortcut` |
     | reroll | reroll button `pressed` loses `BaseShop._on_RerollButton_pressed` | presses the reroll button |
@@ -469,7 +469,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     sender's panel revision: the host bumps it when the panel offers something new (offered item
     instances per node, reroll count, weapon instances; locks and gold are not part of it) and at once
     when it applies a press, because buy and steal run deferred in the game. "go", "endless" and "lock"
-    carry the wanted state and are applied at most once; "go" and "endless" ignore the revision. Nothing
+    carry the wanted state, are applied at most once and ignore the revision (a lock names its item
+    by slot + id; with the revision, a lock pressed right after a buy was dropped until the new
+    state had arrived). Nothing
     is applied while the host's tree is paused. After an applied intent the state goes out in the next
     frame (once the deferred handlers ran; `StateStream.flush`), not at the next 0.1 s check, and not
     already in the intent's own frame. `ShopItemsContainer` ignores
@@ -478,6 +480,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     cursor with deferred `grab_focus` calls, one of them onto an element it already queued for deletion
     (it relies on a later call that a visible mouse skips), and a `FocusEmulator` that keeps a freed
     control errors on its next move.
+  - Locks (protocol 15): the state carries the lock of every slot node (`locks`, in the key), and the
+    client sets each node to it (`ShopSync._apply_locks`). Before, the client called the game's
+    `BaseShop._update_visual_locks`, which finds a locked item by its place in the offered list;
+    that is the slot only at shop entry. After a buy (the slot stays, the list shrinks) the lock
+    showed on a neighbour or on no slot at all, and since the lock shortcut toggles what the slot
+    shows, the host got "lock" for a locked item or "unlock" for an unlocked one and dropped both:
+    the item could not be unlocked any more. Two offered items with the same id had the same
+    problem. The own panel's press shows at once (`ShopLocal._on_own_lock`: `lock_visually` /
+    `unlock_visually`, view only, so the hint the game shows after the shortcut is right too); a
+    state from before the host's answer does not take it back, one that agrees ends the wait, and
+    after 1 s without one (`LOCK_WAIT_MSEC`: refused, or the item is gone) the slot shows the
+    host's lock again. A press that steals (a steal left) sends no lock. The host refreshes its
+    copy of the player's hint after an applied lock, like `BaseShop._input`.
   - Go: the client keeps no flag of its own. Its press sends "go"; the checkmark appears when the host's
     state has it. The game clears the flag itself when the cursor leaves the button, on cancel and on the
     triggers (`_on_GoButton_focus_exited`, `BaseShop._input`): `ShopLocal.process` sends "go 0" when the
@@ -493,7 +508,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     visible is ignored. Absent players and the pause hand-over
     work as before; while the host is paused (section `pause_shop`) the client's local buttons are off.
   - Differences from local co-op: with a steal left, the select shortcut steals and locks in one press;
-    the host applies the steal, which makes the lock stale (the game itself would lock the stolen item).
+    the client only sends the steal (the game itself would lock the stolen item).
     A second press made before the host's answer arrived (two quick buys) is dropped as stale.
   - Open: the host and the other clients do not see the own panel's focused inventory popup (cursor on its buttons is not
     visible on the host's copy); the client's hold-to-ban depends on its own `chal_banned_items` unlock

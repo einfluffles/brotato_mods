@@ -19,8 +19,10 @@ extends Reference
 # "meca_roll"  index in the weapons weapon my_id  -
 # "meca"       index in the weapons weapon my_id  option index (0 / 1) of the roll sent
 # "go", "endless" and "lock" say what the player wants to be true: applying them twice changes
-# nothing, so "go" and "endless" need no revision. Everything else is a press on what the
-# sender's panel showed (the revision) and makes that revision stale once applied, except
+# nothing, so they need no revision ("lock" names its item by slot and id; with the revision a
+# lock pressed right after a buy, before the new state arrived, was dropped). Everything else
+# is a press on what the sender's panel showed (the revision) and makes that revision stale
+# once applied, except
 # "meca_roll": it only rolls (or finds) the two meca upgrade options the host keeps for that
 # weapon in its copy of the player's popup, sent back with the state (sync/meca_choice.gd).
 
@@ -30,7 +32,7 @@ const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
-const SLOT_KINDS := ["buy", "steal", "lock", "ban", "dismantle"]
+const SLOT_KINDS := ["buy", "steal", "ban", "dismantle"]
 const WEAPON_KINDS := ["combine", "discard", "meca_roll", "meca"]
 
 
@@ -49,6 +51,9 @@ static func apply(shop: Node, p: int, msg: Dictionary, seq: int) -> int:
 		return _go(shop, p, arg != 0)
 	if kind == "endless":
 		return _endless(shop, p, arg != 0)
+	if kind == "lock":
+		var node = find_slot(shop._get_shop_items_container(p), slot, id)
+		return DROPPED if node == null else _slot(shop, p, node, kind, arg)
 	if typeof(msg.get("seq")) != TYPE_INT or msg.seq != seq:
 		return DROPPED
 	if kind == "reroll":
@@ -147,6 +152,9 @@ static func _slot(shop: Node, p: int, node: Node, kind: String, arg: int) -> int
 			if node.locked == (arg != 0) or not node.item_data.is_lockable:
 				return DROPPED
 			node.change_lock_status(arg != 0)
+			var popup = shop._get_item_popup(p)
+			if popup.shop_item == node:
+				popup.show_shop_hints(node)  # as BaseShop._input does after the shortcut
 			return APPLIED
 		"ban":
 			if node._ban_button.disabled:

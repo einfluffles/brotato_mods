@@ -4,9 +4,10 @@ extends Node
 #   the state stream (sync/state_stream.gd), sent whenever the shop or run state changes (the
 #   run state is serialized only when it can have changed: sync/run_cache.gd). Body:
 #   shop_id, run (RunStateCodec: the full run state incl. the shop's own save data: offered items,
-#   rerolls, steals), per player slots (the slot layout), go (the Go flag), seqs (a panel
-#   revision), pages (the carousel page) and mecas (the meca upgrade rolls its item popup
-#   remembers: [[weapon slot, weapon my_id, stat key hash, value, stat key hash, value]],
+#   rerolls, steals), per player slots (the slot layout), locks (the lock per slot), go (the Go
+#   flag), seqs (a panel revision), pages (the carousel page) and mecas (the meca upgrade rolls
+#   its item popup remembers:
+#   [[weapon slot, weapon my_id, stat key hash, value, stat key hash, value]],
 #   sync/meca_choice.gd), colors (palette index per slot), and per peer you (which player it is,
 #   -1: none). Remote players' decisions arrive as SHOP_INTENT and are applied by the
 #   game's own code when they still match the sender's panel (sync/shop_intents.gd); their raw
@@ -147,8 +148,8 @@ func state_key(_section: int) -> String:
 	run_cache.refresh(_host_shop, shop_args(_host_shop))
 	var parts := _shop_parts()
 	var rest := [
-		_shop_id, parts.slots, parts.go, parts.seqs, parts.pages, parts.mecas, _yous(),
-		CoopService.bt_slot_colors,
+		_shop_id, parts.slots, parts.locks, parts.go, parts.seqs, parts.pages, parts.mecas,
+		_yous(), CoopService.bt_slot_colors,
 	]
 	return str(run_cache.rev) + var2str(rest)
 
@@ -162,6 +163,7 @@ func state_body(_section: int) -> Dictionary:
 		"shop_id": _shop_id,
 		"run": run_cache.pack(),
 		"slots": parts.slots,
+		"locks": parts.locks,
 		"go": parts.go,
 		"seqs": parts.seqs,
 		"pages": parts.pages,
@@ -210,18 +212,22 @@ func _shop_parts() -> Dictionary:
 	var shop := _host_shop
 	_update_seqs(shop)
 	var slots := []
+	var locks := []
 	var pages := []
 	var mecas := []
 	for p in RunData.get_player_count():
 		mecas.append(MecaChoice.entries(shop._get_item_popup(p), p))
 		var active := []
-		var container = shop._get_shop_items_container(p)
-		for i in container._shop_items.size():
-			active.append(container.get_shop_item_node(i).active)
+		var locked := []
+		for node in shop._get_shop_items_container(p)._shop_items:
+			active.append(node.active)
+			locked.append(node.active and node.locked)
 		slots.append(active)
+		locks.append(locked)
 		pages.append(shop._get_coop_player_container(p).carousel.index)
 	return {
 		"slots": slots,
+		"locks": locks,
 		"go": shop._player_pressed_go_button.duplicate(),
 		"seqs": _seqs.duplicate(),
 		"pages": pages,
@@ -487,7 +493,7 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 			RunData.players_data[p] = shown[p]
 		_refresh_player(shop, state, p, changed, body)
 		_applied[p] = fresh if keyed else {}
-	shop._update_visual_locks()
+	_apply_locks(shop, body.get("locks"))
 	shop.update_go_next_button_text()
 	var you: int = body.you if typeof(body.get("you")) == TYPE_INT else -1
 	_mirror_view(shop, you, body.get("pages"))
@@ -549,6 +555,28 @@ func _refresh_player(
 	var go: bool = body.go[p] if p < body.go.size() else false
 	shop._player_pressed_go_button[p] = go
 	shop._get_checkmark(p).visible = go
+
+
+# The lock of every slot as the host's slot has it. BaseShop._update_visual_locks would look
+# the locked items up by their place in the offered list, which is the slot only until an
+# item is bought: the lock then showed on a neighbour and the host refused to toggle either.
+# The own panel shows a press the host has not answered yet (ShopLocal.lock_shown).
+func _apply_locks(shop: Node, locks) -> void:
+	for p in RunData.get_player_count():
+		var flags := _list_at(locks, p)
+		var nodes: Array = shop._get_shop_items_container(p)._shop_items
+		var popup = shop._get_item_popup(p)
+		for i in nodes.size():
+			var node = nodes[i]
+			if not node.active or node.item_data == null:
+				continue
+			var host_locked: bool = i < flags.size() and typeof(flags[i]) == TYPE_BOOL and flags[i]
+			var locked: bool = local.lock_shown(node, host_locked)
+			if locked == node.locked:
+				continue
+			ShopLocal.show_lock(node, locked)
+			if popup.shop_item == node:
+				popup.show_shop_hints(node)  # "lock" <-> "unlock"
 
 
 # set_weapons_data / set_items_data replace every inventory element. A cursor resting on one
