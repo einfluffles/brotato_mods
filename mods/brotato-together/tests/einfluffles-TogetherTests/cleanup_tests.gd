@@ -9,7 +9,15 @@ const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
+const PuppetEntity := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
+)
 const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
+const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const TREE := "res://entities/units/neutral/tree.tscn"
+const ENEMY := "res://entities/units/enemies/crash_zone/basic/baby_alien/baby_alien.tscn"
+const BULLET := "res://projectiles/bullet/bullet_projectile.tscn"
+const LOAD := {"enemies": 400, "bullets": 200, "gold": 50}  # a late endless wave
 const ROUNDS := 6
 const WARM_UP := 2
 const WAVE_MSEC := 2400
@@ -27,6 +35,8 @@ const KEPT_ON_PURPOSE := ["_seqs", "_seq_keys", "_meca_stats"]
 
 var _t: Node
 var _together: Node
+var _markers_seen := 0
+var _flash_ended := false
 
 
 func run(test_mod: Node, together: Node):
@@ -53,6 +63,17 @@ func run(test_mod: Node, together: Node):
 		yield(_blank_scene(), "completed")
 		host_counts.append(_sample())
 	_report("host", host_counts)
+	_t._check(recording.spawn_id_kept, "host: a spawned entity keeps the net id its spawn gave it")
+	var markers := 0
+	for key in recording.start.types.values():
+		markers += 1 if "#birth_" in key else 0
+	_t._check(markers > 0, "host: spawn markers are part of the wave (%d kinds)" % markers)
+	var times: Array = recording.times
+	_t._check(
+		times[1] - times[0] > 15 and times[1] - times[0] < 60 and times[2] - times[0] > 2000,
+		"host: snapshot time follows the simulation %s" % [times]
+	)
+	_test_clock(host)
 	_t._check(
 		not host._battle_live and not host.is_in_battle(),
 		"host: the wave ends when its scene is replaced"
@@ -72,10 +93,13 @@ func run(test_mod: Node, together: Node):
 		"client: the wave ends when the shop replaces its scene"
 	)
 	_t._check(not RunData.wave_in_progress, "client: no wave in progress in the shop")
+	_t._check(_markers_seen > 0, "client: spawn markers shown and flickering (%d)" % _markers_seen)
+	_t._check(_flash_ended, "client: a hit flash ends")
 	var kept := _kept([client, together.upgrades_sync])
 	_t._check(kept.empty(), "client: nothing of the wave is kept %s" % [kept])
 	_t._check(_dangling().empty(), "client: no reference to a freed node %s" % [_dangling()])
 	yield(_test_starts(client, recording), "completed")
+	yield(_measure(host, client), "completed")
 
 	ModLoaderStore.ml_options.ignored_mod_names_in_log = ignored
 	Puppet.set_active(false)
@@ -95,6 +119,10 @@ func _host_wave(host: Node):
 	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
 	var recorded := []
 	var killed := false
+	var spawned: Node = _t._spawn_on_host(
+		main._entity_spawner, TREE, EntityType.NEUTRAL, Vector2(600, 600)
+	)
+	var spawn_id: int = spawned.get_meta(host.NET_ID_META)
 	var t0 := OS.get_ticks_msec()
 	while OS.get_ticks_msec() - t0 < WAVE_MSEC:
 		yield(tree.create_timer(1.0 / 30.0), "timeout")
@@ -107,7 +135,14 @@ func _host_wave(host: Node):
 	start.types = {}
 	for path in host._types:
 		start.types[host._types[path]] = path
-	return {"start": start, "recorded": recorded}
+	var first: Dictionary = Snapshot.parse(recorded[0][1])
+	var times := [first.t, Snapshot.parse(recorded[1][1]).t, Snapshot.parse(recorded[-1][1]).t]
+	return {
+		"start": start,
+		"recorded": recorded,
+		"spawn_id_kept": spawn_id in Array(first.ids),
+		"times": times,
+	}
 
 
 func _host_shop_body(shop_sync: Node):
@@ -132,7 +167,13 @@ func _client_wave(client: Node, recording: Dictionary):
 		while OS.get_ticks_msec() < snap.t:
 			yield(tree, "idle_frame")
 		client._on_snapshot(snap)
+		for birth in client._main._births_container.get_children():
+			_markers_seen += 1 if birth.visible and birth.is_physics_processing() else 0
+	var player: Node = client._main._players[0]
+	player.flash()
+	var flashing: bool = player.sprite.material == player.flash_mat
 	yield(tree.create_timer(0.3), "timeout")
+	_flash_ended = flashing and player.sprite.material != player.flash_mat
 
 
 func _client_shop(shop_sync: Node, body: Dictionary):
@@ -268,3 +309,83 @@ func _test_starts(client: Node, recording: Dictionary):
 	orphaned._enemy_projectiles.add_child(bullet_hell)
 	client._freeze(orphaned)
 	_t._check(not is_instance_valid(bullet_hell), "no local bullet-hell generator on a client")
+
+
+# Three physics steps in one frame are three steps of the wave; a pause or a long hitch puts the
+# snapshot clock back onto the wall clock.
+func _test_clock(host: Node) -> void:
+	var now := 100000
+	var t0: float = host.advance_clock(float(now), now)
+	var t1: float = host.advance_clock(t0, now)
+	var t2: float = host.advance_clock(t1, now)
+	_t._check(
+		abs(t1 - t0 - 1000.0 / 60.0) < 0.01 and abs(t2 - t1 - 1000.0 / 60.0) < 0.01,
+		"snapshot clock: one step is 1/60 s whenever it runs"
+	)
+	_t._check(host.advance_clock(t2, now + 5000) == now + 5000.0, "snapshot clock: back after a pause")
+
+
+# What a late endless wave costs per snapshot on the host and per frame on a client.
+func _measure(host: Node, client: Node):
+	var tree := _t.get_tree()
+	tree.change_scene("res://main.tscn")
+	yield(tree, "idle_frame")
+	yield(tree, "idle_frame")
+	var main: Node = tree.current_scene
+	host._start_battle(main)
+	for i in LOAD.enemies:
+		var at := Vector2(200 + (i % 40) * 40, 200 + (i / 40) * 100)
+		_t._spawn_on_host(main._entity_spawner, ENEMY, EntityType.ENEMY, at)
+	var bullet: PackedScene = load(BULLET)
+	for i in LOAD.bullets:
+		var node: Node2D = bullet.instance()
+		main._player_projectiles.add_child(node)
+		node.global_position = Vector2(100 + i * 8, 900)
+		PuppetEntity.puppetize(node)  # never shot: no stats, no pool id, must hit nothing
+	main.spawn_gold(LOAD.gold, Vector2(1000, 700), 300)
+	yield(tree, "idle_frame")
+	var recorded := []
+	var build_usec := 0
+	for _i in 30:
+		yield(tree, "physics_frame")
+		var before := OS.get_ticks_usec()
+		var message: Array = host._build_snapshot()
+		build_usec += OS.get_ticks_usec() - before
+		recorded.append(bytes2var(var2bytes(message), false))
+	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
+	start.types = {}
+	for path in host._types:
+		start.types[host._types[path]] = path
+	var bytes: int = var2bytes(recorded[-1]).size()
+	var nodes: int = Snapshot.parse(recorded[-1][1]).ids.size()
+	print(
+		"  info: host builds a snapshot of %d nodes in %.2f ms (%d B)"
+		% [nodes, build_usec / 30000.0, bytes]
+	)
+	client._on_battle_start(start)
+	yield(client, "battle_entered")
+	client.set_process(false)
+	var cache := {}
+	var parse_usec := OS.get_ticks_usec()
+	var views := []
+	for msg in recorded:
+		views.append(Snapshot.resolve(Snapshot.parse(msg[1]), cache))
+	parse_usec = OS.get_ticks_usec() - parse_usec
+	var spawn_usec := OS.get_ticks_usec()
+	client._apply_entities(views[0], views[1], 0.5)
+	spawn_usec = OS.get_ticks_usec() - spawn_usec
+	var frame_usec := OS.get_ticks_usec()
+	for i in range(1, 29):
+		client._apply_entities(views[i], views[i + 1], 0.5)
+	frame_usec = OS.get_ticks_usec() - frame_usec
+	print(
+		(
+			"  info: client applies them in %.2f ms per frame (first frame, spawning: %.1f ms;"
+			+ " parsing a snapshot: %.2f ms)"
+		)
+		% [frame_usec / 28000.0, spawn_usec / 1000.0, parse_usec / 30000.0]
+	)
+	_t._check(client._entities.size() == nodes, "client mirrors the whole late wave")
+	client.set_process(true)
+	client._leave_battle()
+

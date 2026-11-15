@@ -4,6 +4,10 @@ extends Node
 # - SNAPSHOT (unreliable) at SNAPSHOT_HZ with players, entities and wave time
 # - BATTLE_END (reliable) when the battle scene goes away
 
+# What is known about a mirrored node once it has its net id (see _record): looked up per
+# snapshot instead of asking the node again.
+enum Rec { ID, TYPE, KIND, NODE, X, Y, STILL }
+
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
@@ -13,6 +17,9 @@ const SoundRelay := preload(
 )
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
+)
+const PuppetEntity := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleHost"
 const BATTLE_SCENE := "res://main.tscn"
@@ -30,6 +37,12 @@ const REST_REFRESH := 15  # ... but it is still sent every this many snapshots (
 const STATS_REPEAT := 4  # snapshots: player stats are sent this long after they change
 const STATS_REFRESH := 10  # ... and every this many snapshots
 const MAX_EVENTS := 48  # per snapshot; Snapshot.select_events drops the least valuable
+const KIND_ENTITY := 1  # has `dead` and an AnimationPlayer worth watching
+const KIND_UNIT := 2  # has a sprite whose facing is host state
+const KIND_POSE := 4  # its scene has parts that sync/pose.gd captures
+# Snapshot time runs with the simulation; it is set back onto the wall clock when they part
+# (a pause, a long hitch, a host that cannot keep 8 physics steps per frame).
+const MAX_CLOCK_DRIFT_MSEC := 250.0
 
 var session: Node = null
 var input_sync: Node = null
@@ -41,12 +54,13 @@ var _battle_live := false  # between _start_battle and _end_battle
 var _battle_id := 0
 var _next_net_id := 1
 var _types := {}  # scene path -> type idx
-var _seen_last_snapshot := {}  # instance id -> true
+var _records := {}  # instance id -> Rec array of every node in the last snapshot
 var _live_ids := {}  # net ids in the last snapshot (not reused while alive)
-var _rest := {}  # instance id -> [net id, quantized position, unchanged snapshots]
 var _stats := {}  # player index -> [stats Array, snapshot count of the last change]
 var _snapshot_count := 0
 var _accumulator := 0.0
+var _sim_msec := 0.0  # host time of the simulation step being captured
+var _fresh_ids := {}  # instance id -> true: got its net id from a spawn signal since the snapshot
 var _paused := false
 var _events := []  # one-shot feedback since the last snapshot
 var _pose = Pose.new()
@@ -81,7 +95,11 @@ func _process(_delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if not is_in_battle() or not session.is_host():
+	if not is_in_battle():
+		return
+	if not get_tree().paused:
+		_sim_msec = advance_clock(_sim_msec, OS.get_ticks_msec())
+	if not session.is_host():
 		return
 	if get_tree().paused != _paused:
 		_paused = get_tree().paused
@@ -103,6 +121,16 @@ func _physics_process(delta: float) -> void:
 			session.transport.send(steam_id, session.transport.CHANNEL_UNRELIABLE, bytes)
 
 
+# Below 60 fps the engine runs several physics steps in one frame: stamped with the wall clock,
+# two snapshots of one frame would be a few ms apart and the next one a whole frame later, and
+# clients would play the wave fast, slow, fast. Each step is 1/60 s of the wave whenever it runs.
+static func advance_clock(sim_msec: float, now_msec: int) -> float:
+	sim_msec += 1000.0 / Engine.iterations_per_second
+	if abs(now_msec - sim_msec) > MAX_CLOCK_DRIFT_MSEC:
+		sim_msec = float(now_msec)
+	return sim_msec
+
+
 # --- battle lifecycle ---
 
 
@@ -122,9 +150,10 @@ func _start_battle(main: Node) -> void:
 	for i in main_players.size():
 		main_players[i].connect("took_damage", self, "_on_took_damage", [-(i + 1)])
 	_types.clear()
-	_seen_last_snapshot.clear()
-	_rest.clear()
+	_records.clear()
+	_fresh_ids.clear()
 	_stats.clear()
+	_sim_msec = float(OS.get_ticks_msec())
 	_preregister_types(main)
 	var spawner = main.get("_entity_spawner")
 	for signal_name in SPAWNER_RESPAWN_SIGNALS:
@@ -148,9 +177,9 @@ func _end_battle() -> void:
 	_main = null
 	_battle_live = false
 	_types.clear()
-	_seen_last_snapshot.clear()
+	_records.clear()
+	_fresh_ids.clear()
 	_live_ids.clear()
-	_rest.clear()
 	_stats.clear()
 	_events.clear()
 	_anim_mirror = AnimMirror.new()
@@ -207,6 +236,8 @@ func _input_ack_of(player_index: int) -> int:
 # Pooled nodes are reused for new entities; every (re)spawn gets a fresh net id.
 func _on_entity_respawned(entity: Node) -> void:
 	_assign_net_id(entity)
+	_records.erase(entity.get_instance_id())
+	_fresh_ids[entity.get_instance_id()] = true  # the id its first snapshot uses, hits included
 
 
 func _assign_net_id(node: Node) -> void:
@@ -218,6 +249,7 @@ func _assign_net_id(node: Node) -> void:
 # Pools take nodes out of the tree: whatever comes back is a new entity, even when it is reused
 # before the next snapshot (the game's pools are LIFO).
 func _on_tracked_exiting(node: Node) -> void:
+	_records.erase(node.get_instance_id())
 	if node.has_meta(NET_ID_META):
 		node.remove_meta(NET_ID_META)
 
@@ -253,7 +285,7 @@ func _preregister_types(main: Node) -> void:
 func _build_snapshot() -> Array:
 	var view := {
 		"battle_id": _battle_id,
-		"t": OS.get_ticks_msec(),
+		"t": int(_sim_msec),
 		"wave_time_left": 0.0,
 		"players": _capture_players(),
 		"ids": PoolIntArray(),
@@ -263,32 +295,90 @@ func _build_snapshot() -> Array:
 	}
 	var wave_timer = _main.get("_wave_timer")
 	view.wave_time_left = wave_timer.time_left if wave_timer != null else 0.0
+	# Grouped by type (types travel as runs) in the order the types first appear, so bosses stay
+	# first; ids sorted inside a group (they travel as deltas).
+	var groups := {}  # type idx -> net ids
+	var order := []
+	var by_id := {}  # net id -> record
+	var records := {}
+	for node in _tracked_nodes():
+		if not is_instance_valid(node):
+			continue
+		var key: int = node.get_instance_id()
+		var record = _records.get(key)
+		if record == null:
+			# Not in the last snapshot: a new logical entity (also a pooled node that came back).
+			if not node.is_inside_tree() or node.get("dead"):
+				continue
+			record = _record(node, key)
+		elif record[Rec.KIND] & KIND_ENTITY and node.dead:
+			continue
+		records[key] = record
+		var type_idx: int = record[Rec.TYPE]
+		var group = groups.get(type_idx)
+		if group == null:
+			group = []
+			groups[type_idx] = group
+			order.append(type_idx)
+		group.append(record[Rec.ID])
+		by_id[record[Rec.ID]] = record
 	var flags := []
 	var ids := PoolIntArray()  # pool arrays are values: filled locally, stored at the end
 	var types := PoolIntArray()
 	var positions := PoolVector2Array()
-	var seen := {}
-	var rest := {}
-	for node in _grouped_by_type(_tracked_nodes(), seen):
-		if node is Unit and not node.is_connected("took_damage", self, "_on_took_damage"):
-			node.connect("took_damage", self, "_on_took_damage", [0])
-		var net_id: int = node.get_meta(NET_ID_META)
-		ids.append(net_id)
-		types.append(_type_idx(_type_key(node)))
-		positions.append(node.global_position)
-		_anim_mirror.capture(node, net_id, _events)
-		var pose: PoolRealArray = _pose.capture(node)
-		if not pose.empty():
-			view.poses[ids.size() - 1] = pose
-		var node_flags := _flags_of(node)
-		if pose.empty() and _is_resting(node, net_id, rest):
-			node_flags |= Snapshot.FLAG_REST
-		flags.append(node_flags)
-	_seen_last_snapshot = seen
-	_rest = rest
-	_live_ids = {}
-	for net_id in ids:
-		_live_ids[net_id] = true
+	var live := {}
+	for type_idx in order:
+		var group: Array = groups[type_idx]
+		group.sort()
+		for net_id in group:
+			var record: Array = by_id[net_id]
+			var node: Node2D = record[Rec.NODE]
+			var kind: int = record[Rec.KIND]
+			var position: Vector2 = node.global_position
+			live[net_id] = true
+			ids.append(net_id)
+			types.append(type_idx)
+			positions.append(position)
+			# Facing is host state: behaviors turn units toward their target, and knockback would
+			# flip a puppet that faced its interpolated motion. flip_h: JumpAttackBehavior turns
+			# the sprite toward its landing spot (and leaves it so). Hidden: e.g. stampede dinos
+			# before their charge.
+			var node_flags := 0 if node.visible else Snapshot.FLAG_HIDDEN
+			if kind & KIND_UNIT:
+				var sprite = node.sprite
+				if sprite != null:
+					if sprite.scale.x < 0:
+						node_flags |= Snapshot.FLAG_FACING_LEFT
+					if sprite.flip_h:
+						node_flags |= Snapshot.FLAG_FLIP_H
+			if kind & KIND_ENTITY:
+				_anim_mirror.capture(node, net_id, _events)
+			var posed := false
+			if kind & KIND_POSE:
+				var pose: PoolRealArray = _pose.capture(node)
+				if not pose.empty():
+					view.poses[ids.size() - 1] = pose
+					posed = true
+			# Unmoved for REST_AFTER snapshots: the position is left out (clients keep the last
+			# one), except in a refresh every REST_REFRESH snapshots for clients that missed it.
+			if not posed:
+				var x := int(round(position.x * Snapshot.POS_SCALE))
+				var y := int(round(position.y * Snapshot.POS_SCALE))
+				if x != record[Rec.X] or y != record[Rec.Y]:
+					record[Rec.X] = x
+					record[Rec.Y] = y
+					record[Rec.STILL] = 0
+				else:
+					record[Rec.STILL] += 1
+					if (
+						record[Rec.STILL] >= REST_AFTER
+						and (_snapshot_count + net_id) % REST_REFRESH != 0
+					):
+						node_flags |= Snapshot.FLAG_REST
+			flags.append(node_flags)
+	_records = records
+	_fresh_ids.clear()
+	_live_ids = live
 	_anim_mirror.end_snapshot()
 	view.ids = ids
 	view.types = types
@@ -298,6 +388,25 @@ func _build_snapshot() -> Array:
 	_events = []
 	_snapshot_count += 1
 	return [Protocol.Msg.SNAPSHOT, Snapshot.encode(view)]
+
+
+# A node enters the snapshots: its net id (the one a spawn signal just gave it, else a new
+# one), its type, what kind of thing it is, the damage hook.
+func _record(node: Node, key: int) -> Array:
+	if not node.has_meta(NET_ID_META) or not _fresh_ids.has(key):
+		_assign_net_id(node)
+	var kind := 0
+	if node is Entity:
+		kind |= KIND_ENTITY
+	if node is Unit:
+		kind |= KIND_UNIT
+		if not node.is_connected("took_damage", self, "_on_took_damage"):
+			node.connect("took_damage", self, "_on_took_damage", [0])
+	var layout: Dictionary = _pose.layout(node)
+	if not layout.parts.empty() or layout.group != Pose.Group.NONE:
+		kind |= KIND_POSE
+	# X / Y: no position yet (out of the wire's range), so the first snapshot never rests.
+	return [node.get_meta(NET_ID_META), _type_idx(_type_key(node)), kind, node, 1 << 20, 0, 0]
 
 
 func _capture_players() -> Array:
@@ -326,62 +435,6 @@ func _capture_players() -> Array:
 				entry[Snapshot.STAT_FIELDS[k]] = stats[k]
 		players.append(entry)
 	return players
-
-
-# Live nodes with their net ids, grouped by type (types travel as runs) and sorted by id inside a
-# group (ids travel as deltas); groups keep the order in which their first entity appears, so
-# bosses stay first.
-func _grouped_by_type(nodes: Array, seen: Dictionary) -> Array:
-	var groups := {}
-	var order := []
-	for node in nodes:
-		if not is_instance_valid(node) or not node.is_inside_tree() or node.get("dead"):
-			continue
-		var instance_id: int = node.get_instance_id()
-		# Not present last snapshot -> new logical entity (covers pool reuse without a signal).
-		if not node.has_meta(NET_ID_META) or not _seen_last_snapshot.has(instance_id):
-			_assign_net_id(node)
-		seen[instance_id] = true
-		var key := _type_key(node)
-		if not groups.has(key):
-			groups[key] = []
-			order.append(key)
-		groups[key].append(node)
-	var grouped := []
-	for key in order:
-		var group: Array = groups[key]
-		group.sort_custom(self, "_net_id_less")
-		grouped += group
-	return grouped
-
-
-func _net_id_less(a: Node, b: Node) -> bool:
-	return a.get_meta(NET_ID_META) < b.get_meta(NET_ID_META)
-
-
-# Unmoved for REST_AFTER snapshots: the position is left out (clients keep the last one), except
-# in a refresh every REST_REFRESH snapshots for clients that missed it.
-func _is_resting(node: Node, net_id: int, rest: Dictionary) -> bool:
-	var position := Snapshot.quantize_position(node.global_position)
-	var last = _rest.get(node.get_instance_id())
-	var unchanged := 0
-	if last != null and last[0] == net_id and last[1] == position:
-		unchanged = last[2] + 1
-	rest[node.get_instance_id()] = [net_id, position, unchanged]
-	return unchanged >= REST_AFTER and (_snapshot_count + net_id) % REST_REFRESH != 0
-
-
-# Facing is host state: behaviors turn units toward their target, and knockback would flip a
-# puppet that faced its interpolated motion. Hidden: e.g. stampede dinos before their charge.
-# flip_h: JumpAttackBehavior turns the sprite toward its landing spot (and leaves it so).
-func _flags_of(node: Node) -> int:
-	var flags := 0
-	if node is Unit and node.sprite != null:
-		flags |= Snapshot.FLAG_FACING_LEFT if node.sprite.scale.x < 0 else 0
-		flags |= Snapshot.FLAG_FLIP_H if node.sprite.flip_h else 0
-	if not node.visible:
-		flags |= Snapshot.FLAG_HIDDEN
-	return flags
 
 
 # --- one-shot feedback (damage numbers, hit flashes/particles, sounds) ---
@@ -442,6 +495,12 @@ func _tracked_nodes() -> Array:
 		var list = _main.get(list_name)
 		if list is Array:
 			nodes += list
+	# Spawn markers: where the next enemies, trees and turrets appear.
+	var births = _main.get("_births_container")
+	if births != null:
+		for child in births.get_children():
+			if child is EntityBirth and child.visible:
+				nodes.append(child)
 	# Pooled projectiles are removed from the tree, so container children are the live ones.
 	for container_name in ["_player_projectiles", "_enemy_projectiles"]:
 		var container = _main.get(container_name)
@@ -460,6 +519,8 @@ func _type_key(node: Node) -> String:
 		return "%s#%s" % [node.filename, node.consumable_data.my_id]
 	if node is Structure and node.is_cursed:
 		return "%s#%s" % [node.filename, CURSED_TAG]
+	if node is EntityBirth:
+		return "%s#%s" % [node.filename, PuppetEntity.birth_tag(node)]
 	return node.filename
 
 
