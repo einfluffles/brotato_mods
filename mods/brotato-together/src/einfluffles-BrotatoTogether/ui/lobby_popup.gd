@@ -2,8 +2,8 @@ extends CanvasLayer
 # The lobby page (ui/lobby_page.gd) as a popup over the screen, for where no game menu can hold
 # it: a client on a screen without a pause menu (ui/lobby_menu.gd opens it on pause).
 # Co-op screens have FocusEmulators that mark every foreign event as handled, so while it is open
-# ui/menu_input_guard.gd takes every key/pad event away from the game and hands it to
-# handle_panel_input(). The mouse stays the GUI's and is kept visible (the game hides it in
+# ui/menu_input_guard.gd takes every key/pad and mouse event away from the game and hands it to
+# handle_panel_input() / handle_panel_mouse(). The cursor is kept visible (the game hides it in
 # co-op). The buttons hold the Godot focus meanwhile; the screen gets its own back on close.
 
 signal open_changed(is_open)
@@ -21,6 +21,7 @@ var page: Control = null  # set before this node enters the tree
 var _guard: Node = null
 var _mouse_mode_before := Input.MOUSE_MODE_VISIBLE
 var _focus_before: Control = null
+var _mouse_down_on: Button = null
 
 
 func _ready() -> void:
@@ -39,6 +40,7 @@ func open() -> void:
 	if page.visible:
 		return
 	_focus_before = page.get_focus_owner()
+	_mouse_down_on = null
 	_mouse_mode_before = Input.get_mouse_mode()
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_guard = MenuInputGuard.new()
@@ -64,15 +66,24 @@ func close() -> void:
 	emit_signal("open_changed", false)
 
 
-# The game's InputService hides the cursor on every event in co-op.
-func _input(_event: InputEvent) -> void:
-	if page.visible:
-		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-
-
+# The game's InputService hides the cursor in co-op.
 func _process(_delta: float) -> void:
 	if page.visible:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+
+# The mouse while open (from MenuInputGuard): pointing takes the cursor, as on the game's menu
+# buttons; a left click that starts and ends on a button presses it.
+func handle_panel_mouse(event: InputEvent) -> void:
+	var button: Button = page.button_at(event.position)
+	if event is InputEventMouseMotion:
+		if button != null and not button.has_focus():
+			button.grab_focus()
+	elif event is InputEventMouseButton and event.button_index == BUTTON_LEFT:
+		if event.pressed:
+			_mouse_down_on = button
+		elif button != null and button == _mouse_down_on:
+			page.press(button)
 
 
 # Keyboard / gamepad while open (from MenuInputGuard).

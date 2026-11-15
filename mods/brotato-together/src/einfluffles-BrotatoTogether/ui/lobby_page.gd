@@ -202,7 +202,19 @@ func nav_buttons() -> Array:
 	return found
 
 
-# --- the popup's keys (MenuInputGuard keeps them from the GUI) ---
+# --- the popup's keys and mouse (MenuInputGuard keeps them from the GUI) ---
+
+
+func button_at(position: Vector2) -> Button:
+	for button in nav_buttons():
+		if button.get_global_rect().has_point(position):
+			return button
+	return null
+
+
+func press(button: Button) -> void:
+	if button in nav_buttons() and not button.disabled:
+		button.emit_signal("pressed")
 
 
 func move_focus(step: int) -> void:
@@ -214,9 +226,7 @@ func move_focus(step: int) -> void:
 
 
 func press_focused() -> void:
-	var button := get_focus_owner()
-	if button in nav_buttons() and not button.disabled:
-		button.emit_signal("pressed")
+	press(get_focus_owner() as Button)
 
 
 func back() -> void:

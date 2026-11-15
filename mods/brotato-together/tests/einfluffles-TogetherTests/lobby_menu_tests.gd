@@ -144,6 +144,32 @@ func _tap_pad(button: int):
 	yield(_frames(2), "completed")
 
 
+# The middle of a control in window coordinates, like a real mouse event's position.
+static func _window_pos(control: Control) -> Vector2:
+	var canvas_pos: Vector2 = control.get_global_transform_with_canvas().xform(
+		control.rect_size / 2.0
+	)
+	return control.get_viewport().get_final_transform().xform(canvas_pos)
+
+
+func _mouse_move(control: Control) -> void:
+	var event := InputEventMouseMotion.new()
+	event.position = _window_pos(control)
+	event.global_position = event.position
+	Input.parse_input_event(event)
+
+
+func _mouse_click(control: Control) -> void:
+	_mouse_move(control)
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = BUTTON_LEFT
+		event.pressed = pressed
+		event.position = _window_pos(control)
+		event.global_position = event.position
+		Input.parse_input_event(event)
+
+
 # A player's device action, as a FocusEmulator reads it.
 func _tap_action(action: String, device: int):
 	var name := "%s_%s" % [action, device]
@@ -464,6 +490,22 @@ func _test_client_popup():
 	t._check(not input_sync.local_input_blocked, "popup: client input back")
 	yield(_tap_key(KEY_RIGHT), "completed")
 	t._check(probe.events.size() == 2, "popup: game gets keys again (%d)" % probe.events.size())
+
+	# Mouse (a co-op screen's FocusEmulators would keep it from the GUI): pointing moves the
+	# cursor, a click presses.
+	yield(_tap_key(KEY_ESCAPE), "completed")
+	_mouse_move(page._back_button)
+	yield(_frames(1), "completed")
+	t._check(page.get_focus_owner() == page._back_button, "mouse: pointing takes the cursor")
+	_mouse_click(page._leave_button)
+	yield(_frames(2), "completed")
+	t._check(page.is_asking() and transport.is_active(), "mouse: a click presses Leave lobby")
+	_mouse_click(page._confirm.get_node("Buttons/CancelButton"))
+	yield(_frames(2), "completed")
+	t._check(not page.is_asking() and lobby.open_page() == page, "mouse: No on the question")
+	_mouse_click(page._back_button)
+	yield(_frames(2), "completed")
+	t._check(lobby.open_page() == null, "mouse: Back closes the popup")
 
 	# Gamepad: Start opens and closes, B goes back.
 	yield(_tap_pad(JOY_START), "completed")

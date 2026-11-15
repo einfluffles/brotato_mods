@@ -788,9 +788,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `CoopService`, GUI never see them) and `Input.action_release`s what they pressed (polling stays
     neutral); after closing it also swallows the releases of keys pressed while open (the game pauses /
     goes back on release). The popup moves the Godot focus over the page's buttons itself (`move_focus`,
-    `press_focused`, `back`; Start closes) and gives the screen its focus owner back. Mouse events pass;
-    `InputService._input` hides the cursor on every event in co-op, so the popup shows it again in
-    `_input`/`_process`. Clients send neutral `INPUT` while it is open (`open_changed` ->
+    `press_focused`, `back`; Start closes) and gives the screen its focus owner back. Mouse events go the
+    same way (`handle_panel_mouse`: pointing takes the cursor, a left click that starts and ends on a
+    button presses it): unless the game listens for joining players, a co-op screen's `FocusEmulator`s
+    mark them handled before the GUI gets them. `InputService` hides the cursor in co-op, so the popup
+    shows it again every frame. Clients send neutral `INPUT` while it is open (`open_changed` ->
     `InputSync.local_input_blocked`). The pages in the title screen and the pause menu never use the guard.
   - `open()`: the page on screen, else the current scene's page (`PauseControl.open_menu` opens the pause
     menu for the local player: `pause(first local player)` on the host, `open_live` in a client's wave),

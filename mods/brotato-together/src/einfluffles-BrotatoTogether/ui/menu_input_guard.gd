@@ -3,7 +3,8 @@ extends Node
 # _input runs before every other node's (_input is dispatched in reverse tree order, then GUI,
 # then unhandled). Keyboard/gamepad events go to the popup only and are marked handled, so the
 # game's scene, FocusEmulators, CoopService (hold-to-join) and GUI focus never see them. Mouse
-# events pass: the popup's buttons are GUI controls.
+# events go to the popup the same way: on most co-op screens the FocusEmulators mark them handled
+# before the GUI gets them.
 # Input state is updated before events are dispatched, so the actions an event pressed are
 # released again: code that polls Input (player movement, InputSync on clients) stays neutral.
 # After the popup closes, the releases of keys/buttons pressed while it was open are swallowed
@@ -11,7 +12,7 @@ extends Node
 
 const DRAIN_TIMEOUT_SEC := 2.0
 
-var handler: Object = null  # handler.handle_panel_input(event)
+var handler: Object = null  # handle_panel_input(event), handle_panel_mouse(event)
 
 var _held := {}  # key / pad button id -> true, pressed while the popup was open
 var _closing := false
@@ -30,6 +31,9 @@ func _process(_delta: float) -> void:
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouse:
+		if handler != null:
+			get_tree().set_input_as_handled()
+			handler.handle_panel_mouse(event)
 		return
 	var id := _id_of(event)
 	if _closing:
