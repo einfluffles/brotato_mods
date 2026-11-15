@@ -223,6 +223,10 @@ func _test_battle(together: Node):
 		client._on_snapshot(snap)
 		var node = client._entities.get(seen_fire)
 		fire_puppet = node if node != null else fire_puppet
+		var playing := 0  # sampled: explosion puppets pool themselves when "explode" ends
+		for child in puppet_main._explosions.get_children():
+			playing += 1 if child is PlayerExplosion else 0
+		host_values["client_explosions"] = int(max(host_values.get("client_explosions", 0), playing))
 	yield(_t.get_tree().create_timer(0.3), "timeout")
 	client.set_process(false)
 	var puppets := {}
@@ -397,7 +401,8 @@ func _check_host_snapshots(recorded: Array, ids: Dictionary, types: Dictionary) 
 		if "#" + Puddles.TAG in types[idx]:
 			puddle_types.append(types[idx].get_file())
 	puddle_types.sort()
-	_t._check(puddle_types.size() == 3, "one puddle type per source %s" % [puddle_types])
+	# acid, petrol, fire at 1.5 and the explosion's fire at its own size
+	_t._check(puddle_types.size() == 4, "one puddle type per source %s" % [puddle_types])
 	_t._check(
 		Snapshot.index_of(last, ids.acid) >= 0 and Snapshot.index_of(last, ids.petrol) >= 0,
 		"acid and petrol puddles in the snapshot"
@@ -501,9 +506,8 @@ func _check_fire_puddle(client: Node, fire) -> void:
 func _check_blast_fire(client: Node, puppet_main: Node, puppets: Dictionary, values: Dictionary):
 	if not puppets.has("blast_fire"):
 		return
-	var explosions := 0
-	for child in puppet_main._explosions.get_children():
-		explosions += 1 if child is PlayerExplosion else 0
+	var explosions: int = values.get("client_explosions", 0)
+	_t._check(explosions > 0, "the client played the host's explosion")
 	var puddle: Node = puppets.blast_fire
 	_t._check(
 		(

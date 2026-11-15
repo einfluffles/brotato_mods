@@ -86,11 +86,13 @@ func _check_round_trip(events: Array) -> void:
 	t._check(ok, "explosion, bonus gold, wave end and gold boost events survive %s" % [events])
 
 
-# A snapshot without events with one hand-written event appended (event count byte is last).
+# A snapshot without events or looks with one hand-written event put in: its last two bytes are
+# the event count and the count of the looks section that follows the events (protocol 11).
 static func _with_event(empty: PoolByteArray, event_bytes: Array) -> PoolByteArray:
-	var bytes := empty
-	bytes[bytes.size() - 1] = 1
+	var bytes := empty.subarray(0, empty.size() - 3)
+	bytes.append(1)
 	bytes.append_array(PoolByteArray(event_bytes))
+	bytes.append(0)
 	return bytes
 
 
