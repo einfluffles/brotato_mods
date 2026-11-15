@@ -11,7 +11,13 @@ extends Reference
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
+const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const CursorTargetTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/cursor_target_tests.gd"
+)
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const ShopIntents := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_intents.gd"
@@ -122,13 +128,63 @@ func _host_focus() -> void:
 	var panel = _shop._get_coop_player_container(REMOTE)
 	var emulator = Utils.get_focus_emulator(REMOTE, _shop)
 	var node = _node(REMOTE, 2)
-	ShopIntents.apply_focus(_shop, REMOTE, 0, ScenePaths.path_of(node._button, panel))
+	# Described on the sender, a Damage-Meter-like button next to reroll on the host only.
+	var target := FocusTargets.describe(node._button, _shop, REMOTE)
+	var reroll: Node = _shop._get_reroll_button(REMOTE)
+	var extra := Button.new()
+	reroll.get_parent().add_child(extra)
+	reroll.get_parent().move_child(extra, reroll.get_index())
+	ShopIntents.apply_focus(_shop, REMOTE, 0, target)
 	_t._check(emulator.focused_control == node._button, "host shows a remote shop cursor")
 	_t._check(_shop._focused_shop_item[REMOTE] == node, "and the game follows it (focused item)")
-	ShopIntents.apply_focus(_shop, REMOTE, 1, PoolIntArray())
+	ShopIntents.apply_focus(_shop, REMOTE, 0, FocusTargets.describe(reroll, _shop, REMOTE))
+	_t._check(emulator.focused_control == reroll, "remote cursor on reroll, next to another mod's")
+	extra.get_parent().remove_child(extra)
+	extra.free()
+	var own_target := FocusTargets.describe(_shop._get_reroll_button(0), _shop)
+	ShopIntents.apply_focus(_shop, REMOTE, 0, own_target)
+	_t._check(emulator.focused_control == reroll, "a target in another player's panel ignored")
+	_t._check(
+		FocusTargets.describe(_shop._get_reroll_button(0), _shop, REMOTE).empty(),
+		"a client reports nothing outside its own panel"
+	)
+	ShopIntents.apply_focus(_shop, REMOTE, 0, target)
+	ShopIntents.apply_focus(_shop, REMOTE, 1, [])
 	_t._check(panel.carousel.index == 1, "host shows a remote player's shop page")
 	ShopIntents.apply_focus(_shop, REMOTE, 0, ["junk"])
-	_t._check(panel.carousel.index == 0, "page back, junk path ignored")
+	_t._check(panel.carousel.index == 0, "page back, junk target ignored")
+	_shop_targets()
+
+
+# Every kind of shop cursor target, by meaning, with extra nodes on one side only.
+func _shop_targets() -> void:
+	var panel = _shop._get_coop_player_container(REMOTE)
+	var reroll: Node = _shop._get_reroll_button(REMOTE)
+	var gear = _shop._get_gear_container(REMOTE)
+	var popup = _shop._get_item_popup(REMOTE)
+	var weapon_element = gear.weapons_container.get_element(1)  # the second of three pistols
+	_t._check(weapon_element != null, "remote player's gear shows its second weapon")
+	var controls := [
+		reroll,
+		_shop._get_go_button(REMOTE),
+		_node(REMOTE, 2)._button,
+		popup._combine_button,
+		panel.carousel.arrow_right,
+		panel.get("_endless_button"),
+	]
+	if weapon_element != null:
+		controls.append(weapon_element)
+	CursorTargetTests.check_robust(_t, "shop (own panel)", _shop, controls, REMOTE, reroll)
+	var pause_button = CursorTargetTests.first_button(_shop._pause_menu)
+	if pause_button != null:
+		controls.append(pause_button)  # outside the panels: the generic path from the scene
+	CursorTargetTests.check_robust(_t, "shop (FocusSync)", _shop, controls, -1, reroll)
+	var element: Array = FocusTargets.describe(weapon_element, _shop)
+	_t._check(
+		element.size() == 4 and element[0] == "shop_gear" and element[1] == REMOTE,
+		"a gear element is named from the player's gear container (%s)" % [element]
+	)
+	CursorTargetTests.check_junk(_t, _shop)
 
 
 func _host_rejections() -> void:
@@ -450,17 +506,24 @@ func _client_view(together: Node, emulator: Node, node: Node):
 	_t._check(emulator.focused_control != node._button, "own shop cursor moves locally")
 	local._sent_focus = ""
 	local.process()
-	var path := ScenePaths.path_of(emulator.focused_control, shop._get_coop_player_container(0))
+	var target := FocusTargets.describe(emulator.focused_control, shop, 0)
 	_t._check(
-		not path.empty() and var2str(path) in local._sent_focus, "own shop cursor reported to the host"
+		not target.empty() and var2str(target) in local._sent_focus,
+		"own shop cursor reported to the host (%s)" % [target]
+	)
+	_t._check(
+		FocusTargets.resolve(target, shop, 0) == emulator.focused_control,
+		"and the report names that control"
 	)
 	var focus_sync: Node = together.focus_sync
 	var own_cursor = emulator.focused_control
 	focus_sync._scene = shop
-	var go_path := ScenePaths.path_of(shop._get_go_button(0), shop)
-	focus_sync._apply(
-		{"scene": shop.filename, "cursors": [[ScenePaths.path_of(emulator, shop), 0, go_path]]}
+	var cursor := FocusSync.cursor_of(emulator, shop._get_go_button(0), shop)
+	_t._check(
+		cursor.size() == 3 and FocusSync.find_emulator(shop, cursor[0], cursor[1]) == emulator,
+		"host cursor names the own emulator by player (%s)" % [cursor]
 	)
+	focus_sync._apply({"scene": shop.filename, "cursors": [cursor]})
 	_t._check(emulator.focused_control == own_cursor, "host cursor never moves the own shop cursor")
 
 

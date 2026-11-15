@@ -22,10 +22,11 @@ extends Reference
 
 enum { DROPPED, APPLIED, CHANGED }
 
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
 const SLOT_KINDS := ["buy", "steal", "lock", "ban", "dismantle"]
 const WEAPON_KINDS := ["combine", "discard"]
-const PATH_TYPES := [TYPE_INT_ARRAY, TYPE_ARRAY]
 
 
 # seq: the current revision of player p's panel. Returns DROPPED, APPLIED (nothing a press
@@ -75,17 +76,15 @@ static func revision_key(shop: Node, p: int) -> String:
 
 # A remote player's own cursor and page, for the host's screen and (through FocusSync and
 # SHOP_STATE) the other clients'. Cosmetic: decisions never depend on it.
-static func apply_focus(shop: Node, p: int, page, path) -> void:
+# target: a ui/focus_targets.gd target naming one of p's own shop parts.
+static func apply_focus(shop: Node, p: int, page, target) -> void:
 	var emulator = Utils.get_focus_emulator(p, shop)
 	if emulator == null:
 		return
 	var panel = shop._get_coop_player_container(p)
 	if typeof(page) == TYPE_INT and page >= 0 and page != panel.carousel.index:
 		panel.carousel.index = page  # the setter clamps and shows that page
-	var indices := int_path(path)
-	if indices.empty():
-		return
-	var control = ScenePaths.resolve(panel, indices)
+	var control = FocusTargets.resolve(target, shop, p)
 	if control is Control and control.is_visible_in_tree() and emulator.focused_control != control:
 		emulator.focused_control = control
 
@@ -109,18 +108,6 @@ static func find_weapon(weapons: Array, slot: int, id: String):
 		if weapon.my_id == id:
 			return weapon
 	return null
-
-
-# A child-index path from the network: empty unless it is a list of ints.
-static func int_path(value) -> PoolIntArray:
-	var path := PoolIntArray()
-	if not (typeof(value) in PATH_TYPES):
-		return path
-	for index in value:
-		if typeof(index) != TYPE_INT:
-			return PoolIntArray()
-		path.append(index)
-	return path
 
 
 static func _offers(node: Node, id: String) -> bool:

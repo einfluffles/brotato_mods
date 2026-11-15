@@ -10,7 +10,13 @@ extends Reference
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
+const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const CursorTargetTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/cursor_target_tests.gd"
+)
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
@@ -76,12 +82,24 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 
 	# A remote player's own cursor and page, shown on the host.
 	var second_button: Control = container._get_upgrade_uis()[1].button
-	panels.host_apply_focus(ui, 0, 0, ScenePaths.path_of(second_button, container))
+	var target := FocusTargets.describe(second_button, ui, 0)
+	var extra := Control.new()  # another mod's node on the host only
+	container.add_child(extra)
+	container.move_child(extra, 0)
+	panels.host_apply_focus(ui, 0, 0, target)
 	t._check(container.focus_emulator.focused_control == second_button, "host shows a remote cursor")
-	panels.host_apply_focus(ui, 0, 1, PoolIntArray())
+	container.remove_child(extra)
+	extra.free()
+	panels.host_apply_focus(ui, 1, 0, target)
+	t._check(
+		ui._get_player_container(1).focus_emulator.focused_control != second_button,
+		"a target in another player's panel ignored"
+	)
+	panels.host_apply_focus(ui, 0, 1, [])
 	t._check(container.carousel.index == 1, "host shows a remote player's page")
 	panels.host_apply_focus(ui, 0, 0, ["junk"])
-	t._check(container.carousel.index == 0, "page back, junk path ignored")
+	t._check(container.carousel.index == 0, "page back, junk target ignored")
+	_panel_targets(t, ui)
 
 	_host_weapons(t, panels, ui, msg.battle_id)
 
@@ -103,6 +121,41 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 	}
 	t._check(panels.host_apply_intent(ui, 1, discard), "crate item discarded by intent")
 	t._check(panels.capture(ui)[1][0] != "item", "crate panel moved on")
+
+
+# Every kind of level-up / crate cursor target, by meaning, with extra nodes on one side only:
+# from the UpgradesUI (UPGRADE_FOCUS) and from the scene (FocusSync, through main's
+# _coop_upgrades_ui), plus the emulators by player.
+func _panel_targets(t: Node, ui: Node) -> void:
+	var level_up = ui._get_player_container(0)
+	var crate = ui._get_player_container(1)
+	var options: Array = level_up._get_upgrade_uis()
+	var own := [
+		options[0].button,
+		options[1].button,
+		level_up._reroll_button,
+		level_up.carousel.arrow_right,
+		level_up.item_popup._discard_button,
+	]
+	CursorTargetTests.check_robust(t, "level-up (own panel)", ui, own, 0, level_up._reroll_button)
+	var weapons = crate.crate_weapons_container
+	var controls := own + [crate._take_button, crate._ban_button]
+	if weapons.get_element_count() > 1:
+		controls.append(weapons.get_element(1))
+	var main: Node = ui.get_tree().current_scene
+	CursorTargetTests.check_robust(t, "level-up (FocusSync)", main, controls, -1, crate._take_button)
+	var option: Array = FocusTargets.describe(options[1].button, main)
+	t._check(
+		option.size() == 4 and option[0] == "up_option" and option[1] == 0 and option[2] == 1,
+		"a level-up option is named by its player and place (%s)" % [option]
+	)
+	var found := true
+	for p in 2:
+		var emulator = ui._get_player_container(p).focus_emulator
+		var cursor := FocusSync.cursor_of(emulator, options[0].button, main)
+		found = found and cursor.size() == 3
+		found = found and FocusSync.find_emulator(main, cursor[0], cursor[1]) == emulator
+	t._check(found, "the panels' emulators are found by player")
 
 
 # Crate weapon popup intents (player 1, whose crate panel shows an item): the host applies
@@ -282,14 +335,21 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	panels._sent_focus = ""
 	panels._report_own_focus()
 	t._check('"page":1' in panels._sent_focus.replace(" ", ""), "own page reported to the host")
+	var target := FocusTargets.describe(emulator.focused_control, panels._guarded_ui, own.player_index)
+	t._check(
+		not target.empty() and var2str(target) in panels._sent_focus,
+		"own cursor reported by meaning (%s)" % [target]
+	)
 
 	# The host's cursor for the own panel is not applied; the others' pages are mirrored.
 	var own_cursor = emulator.focused_control
 	focus_sync._scene = main
-	var reroll_path := ScenePaths.path_of(own._reroll_button, main)
-	focus_sync._apply(
-		{"scene": main.filename, "cursors": [[ScenePaths.path_of(emulator, main), 0, reroll_path]]}
+	var cursor := FocusSync.cursor_of(emulator, own._reroll_button, main)
+	t._check(
+		cursor.size() == 3 and FocusSync.find_emulator(main, cursor[0], cursor[1]) == emulator,
+		"host cursor names the own emulator by player (%s)" % [cursor]
 	)
+	focus_sync._apply({"scene": main.filename, "cursors": [cursor]})
 	t._check(emulator.focused_control == own_cursor, "host cursor never moves the own cursor")
 	var paged := msg.duplicate()
 	paged.pages = [0, 2]

@@ -15,7 +15,9 @@ enum Msg {
 	BATTLE_END,  # host -> client: battle_id
 	TYPE_DEF,  # host -> client: battle_id, idx, path
 	SNAPSHOT,  # host -> client, unreliable: see sync/snapshot.gd
-	FOCUS,  # host -> client: scene, cursors [[emulator path, player, control path]]
+	# host -> client: scene, cursors [[player, menu, control]] (menu: the emulator's parent; menu
+	# and control as ui/focus_targets.gd targets, see sync/focus_sync.gd)
+	FOCUS,
 	# host -> client: shop_id, run (RunStateCodec incl. shop), slots, go, seqs, pages, you,
 	# colors (see sync/shop_sync.gd)
 	SHOP_STATE,
@@ -34,17 +36,17 @@ enum Msg {
 	# Crate weapon popup: kind "weapon_combine" | "weapon_discard" | "weapon_meca", id (the
 	# weapon's my_id), weapon (its slot in the sender's weapons), stat (meca: stat key hash)
 	UPGRADE_INTENT,
-	# client -> host: battle_id, page (the sender's carousel page), path (its cursor as a
-	# child-index path inside its own panel, empty: none). Cosmetic: what the others see.
+	# client -> host: battle_id, page (the sender's carousel page), target (its cursor as a
+	# ui/focus_targets.gd target inside its own panel, []: none). Cosmetic: what the others see.
 	UPGRADE_FOCUS,
 	# client -> host: shop_id, seq (of the sender's panel), kind, slot, id, arg (the kinds are
 	# listed in sync/shop_intents.gd)
 	SHOP_INTENT,
-	# client -> host: shop_id, page, path (like UPGRADE_FOCUS, inside the sender's shop panel)
+	# client -> host: shop_id, page, target (like UPGRADE_FOCUS, inside the sender's shop panel)
 	SHOP_FOCUS,
 }
 
-const VERSION := 9
+const VERSION := 10
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

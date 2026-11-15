@@ -23,8 +23,10 @@ extends Reference
 # things, but every way into the run above is cut.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
 # ShopItemsContainer.connect_shop_items: ShopItem signal -> container handler.
 const ITEM_HANDLERS := {
 	"buy_button_pressed": "on_shop_item_buy_button_pressed",
@@ -281,10 +283,10 @@ func _report_focus() -> void:
 	var panel = _shop._get_coop_player_container(you)
 	var emulator = Utils.get_focus_emulator(you, _shop)
 	var control = emulator.focused_control if emulator != null else null
-	var path := PoolIntArray()
+	var target := []
 	if control != null and is_instance_valid(control):
-		path = ScenePaths.path_of(control, panel)
-	var message := {"shop_id": _shop_id, "page": panel.carousel.index, "path": path}
+		target = FocusTargets.describe(control, _shop, you)  # [] outside the own panel
+	var message := {"shop_id": _shop_id, "page": panel.carousel.index, "target": target}
 	var key := var2str(message)
 	if key != _sent_focus:
 		_sent_focus = key

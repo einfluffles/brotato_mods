@@ -294,6 +294,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     The own panel's signals go to `SHOP_INTENT`; on the other panels nothing listens, so a mouse click
     there is dead. A control this list does not know (another mod's button, e.g. Damage Meter's summary
     button next to reroll) keeps its own handler and can show things, but every way into the run is cut.
+    A cursor on it is only mirrored where that control exists; the other cursors are not shifted by it
+    (see Cursors).
     The view half of a cut handler is called where the panel needs it: `give_focus_to_mecha_choice` before
     a meca buy without a choice, `BaseShop._on_item_cancel_button_pressed` (close the popup, cursor back on
     the weapon) after combine / recycle.
@@ -319,10 +321,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     Go when that player comes back).
   - Host: `InputSync.blocked_by["shop"]` keeps every remote button but pause off the virtual devices while
     the shop runs and the tree is not paused (`blocked_by` is OR-ed with `blocked_buttons`, which
-    `UpgradesSync` resets every frame outside a battle). `SHOP_FOCUS` (`shop_id, page, path` inside the
-    sender's `CoopShopPlayerContainer`) puts the remote cursor and page on the host's copy, from where
-    `FocusSync` and `pages` carry them to the other clients. Cosmetic: a path that does not resolve (a mod
-    added a control on one side only) or is not visible is ignored. Absent players and the pause hand-over
+    `UpgradesSync` resets every frame outside a battle). `SHOP_FOCUS` (`shop_id, page, target`; since
+    protocol 10 the cursor is a cursor target, see Cursors, restricted to the sender's own shop anchors)
+    puts the remote cursor and page on the host's copy, from where `FocusSync` and `pages` carry them to
+    the other clients. Cosmetic: a target that does not resolve (a control only one side has) or is not
+    visible is ignored. Absent players and the pause hand-over
     work as before; while the host is paused (`SHOP_PAUSE`) the client's local buttons are off.
   - Differences from local co-op: with a steal left, the select shortcut steals and locks in one press;
     the host applies the steal, which makes the lock stale (the game itself would lock the stolen item).
@@ -384,8 +387,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     are visible (and the game isn't paused: the pause menu is the host's) `InputSync.blocked_buttons` keeps
     every remote button but pause off the virtual devices, so a remote accept can't also press the host's
     copy.
-  - Presence: the client reports its page and cursor (`UPGRADE_FOCUS`, child-index path inside its own
-    container, on change); the host applies them to its copy, from where `FocusSync` and `pages` carry them
+  - Presence: the client reports its page and cursor (`UPGRADE_FOCUS`, `battle_id, page, target`: a
+    cursor target restricted to its own panel's anchors since protocol 10, see Cursors; on change); the
+    host applies them to its copy, from where `FocusSync` and `pages` carry them
     to the other clients. Cosmetic: decisions never depend on it.
   - The client rebuilds a panel only when its revision or entry changed, and re-applies the run state only
     when its bytes changed (a rebuild of the own panel would fight the local cursor).
@@ -415,7 +419,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     - Host: unchanged, a remote player stays a gamepad there (stick aim and `Utils.is_manual_aim` depend
       on it) and its type is not sent. The host and the other clients therefore draw a keyboard
       player's page arrows as trigger glyphs, and show its cursor on one when it is there
-      (`UPGRADE_FOCUS` paths are child indices, the same in both layouts). Cosmetic only.
+      (the arrows are named scene nodes, the same in both layouts). Cosmetic only.
     - Mouse: motion over a focusable control of the own panel sets the own emulator's
       `focused_control` (once per frame; the setter emits the focus signals as that player, so popups
       follow); a left click runs the emulator's own accept on it (`_handle_input` with an
@@ -446,10 +450,32 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     two real machines yet (headless tests only: no real mouse, keyboard or pad; the crate weapon
     popup's combine, recycle hold and cancel are driven through its real buttons by synthetic clicks,
     its meca upgrade only through its signals).
-- **Cursors** (`sync/focus_sync.gd`): every `FocusEmulator` in the scene; emulator + focused control sent as
-  child-index paths from the scene root (`ui/scene_paths.gd`), applied through the `focused_control` setter.
-  The latest message per scene stays pending (10 s) until every cursor resolves to a visible control
-  (scene still loading, retry prompt not shown yet) and is retried every frame.
+- **Cursors** (`sync/focus_sync.gd`, `ui/focus_targets.gd`; protocol 10): every `FocusEmulator` in the
+  scene; `FOCUS` = `scene, cursors [[player, menu, control]]`, applied through the `focused_control` setter.
+  Until protocol 9 emulator and control were child-index paths from the scene root, which broke as soon as
+  the trees differed: Damage Meter adds a summary button next to the shop's reroll button, and with it on
+  one machine only every later index was off by one. Now nothing visible travels as a tree position:
+  - Emulator: its `player_index` among the `FocusEmulator` children of its menu (the node they hang
+    under: the shop scene root, `UpgradesUI`, `PauseMenu`, `RetryWave`, ...; `menu` is that node's
+    target). A menu with a single emulator takes it whatever its index (who holds the pause menu or the
+    retry prompt is mirrored elsewhere).
+  - Control (also `SHOP_FOCUS` / `UPGRADE_FOCUS`): a cursor target `[anchor, player, index, steps]`.
+    `anchor` is the nearest of the player's parts the game hands out through its own accessors:
+    `shop_item` (k in `_get_shop_items_container(p)._shop_items`), `shop_reroll`, `shop_go`, `shop_popup`,
+    `shop_gear`, `shop_panel` (`CoopShop._get_*`), `up_option` (k in `_get_upgrade_uis()`), `up_reroll`,
+    `up_popup`, `up_weapons` (crate weapons list), `up_gear`, `up_panel` (`UpgradesUI._get_player_container`,
+    from main through `_coop_upgrades_ui`); else `scene` (the generic fallback: pause menu, retry prompt,
+    end of run, any screen not special-cased). `steps` lead from the anchor to the control: a node from a
+    scene file (it has an `owner`) by its name, a node added by code (no owner, generated "@Name@123"
+    names differ between machines: inventory elements, other mods' nodes) as `[script path or class, k]`,
+    the k-th such sibling of that type, nodes queued for deletion not counted. So an extra node only one
+    side has shifts nothing unless it is added by code into a list of nodes of its own type (another
+    inventory element). The own-panel messages only accept that player's anchors, never `scene`.
+  - Network data is checked (types, anchor names, player 0..3, index and step counts, name lengths;
+    steps match child names, never parse paths). A target that does not resolve (a control only one side
+    has) is ignored, as before: the latest message per scene stays pending (10 s) until every cursor
+    resolves to a visible control (scene still loading, retry prompt not shown yet) and is retried every
+    frame. `ui/scene_paths.gd` only finds the emulators now (FocusSync, MenuSync, CoopSelection).
 - **Selection screens / end of run** (`sync/menu_sync.gd` + `ui/client_view.gd`): grids depend on local
   unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
   run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),

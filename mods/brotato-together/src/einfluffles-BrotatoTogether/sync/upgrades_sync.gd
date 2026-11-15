@@ -22,13 +22,14 @@ const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/p
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
 const CHECK_INTERVAL := 0.1
-const PATH_TYPES := [TYPE_INT_ARRAY, TYPE_ARRAY]
 const ITEM_KINDS := ["take", "discard", "ban"]
 # UpgradesUI._ready: container signal -> UpgradesUI handler (bound to the player index).
 const DECISION_HANDLERS := {
@@ -138,7 +139,7 @@ func _on_message(steam_id: int, msg_type: int, msg) -> void:
 			var ui = _host_ui(msg)
 			if ui != null:
 				host_apply_focus(
-					ui, battle_host._player_index_of(steam_id), msg.get("page"), msg.get("path")
+					ui, battle_host._player_index_of(steam_id), msg.get("page"), msg.get("target")
 				)
 
 
@@ -296,7 +297,8 @@ static func _weapons_key(p: int) -> Array:
 
 # A remote player's own cursor and page, for the host's screen and (through FocusSync and
 # UPGRADES_STATE) the other clients'. Cosmetic: decisions never depend on it.
-func host_apply_focus(ui: Node, p: int, page, path) -> void:
+# target: a ui/focus_targets.gd target naming one of p's own panel parts.
+func host_apply_focus(ui: Node, p: int, page, target) -> void:
 	if p < 0 or p >= RunData.get_player_count():
 		return
 	var container = ui._get_player_container(p)
@@ -306,10 +308,7 @@ func host_apply_focus(ui: Node, p: int, page, path) -> void:
 	var carousel = container.carousel
 	if typeof(page) == TYPE_INT and page >= 0 and page != carousel.index:
 		carousel.index = page  # the setter clamps and shows that page
-	var indices := _int_path(path)
-	if indices.empty():
-		return
-	var control = ScenePaths.resolve(container, indices)
+	var control = FocusTargets.resolve(target, ui, p)
 	if control is Control and control.is_visible_in_tree() and emulator.focused_control != control:
 		emulator.focused_control = control
 
@@ -610,11 +609,12 @@ func _report_own_focus() -> void:
 		stop_local()
 		return
 	var control = _own.focus_emulator.focused_control
-	var path := PoolIntArray()
-	if control != null and is_instance_valid(control):
-		path = ScenePaths.path_of(control, _own)
+	var target := []
+	if control != null and is_instance_valid(control) and is_instance_valid(_guarded_ui):
+		# [] outside the own panel
+		target = FocusTargets.describe(control, _guarded_ui, _own.player_index)
 	var message := {
-		"battle_id": battle_client._battle_id, "page": _own.carousel.index, "path": path
+		"battle_id": battle_client._battle_id, "page": _own.carousel.index, "target": target
 	}
 	var key := var2str(message)
 	if key != _sent_focus:
@@ -751,15 +751,3 @@ static func _int_at(values, index: int) -> int:
 	if typeof(values) != TYPE_ARRAY or index >= values.size():
 		return -1
 	return values[index] if typeof(values[index]) == TYPE_INT else -1
-
-
-# A child-index path from the network: empty unless it is a list of ints.
-static func _int_path(value) -> PoolIntArray:
-	var path := PoolIntArray()
-	if not (typeof(value) in PATH_TYPES):
-		return path
-	for index in value:
-		if typeof(index) != TYPE_INT:
-			return PoolIntArray()
-		path.append(index)
-	return path

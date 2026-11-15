@@ -5,6 +5,10 @@ extends Reference
 
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const CursorTargetTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/cursor_target_tests.gd"
+)
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
@@ -175,16 +179,11 @@ func _test_retry_prompt(together: Node):
 	var host_focus = host_emulator.focused_control
 	t._check(host_focus != null, "retry: host cursor on a button")
 	var focus_body := {
-		"scene": main.filename,
-		"cursors": [
-			[
-				ScenePaths.path_of(host_emulator, main),
-				0,
-				ScenePaths.path_of(host_focus, main) if host_focus != null else PoolIntArray()
-			]
-		]
+		"scene": main.filename, "cursors": [FocusSync.cursor_of(host_emulator, host_focus, main)]
 	}
 	focus_body = bytes2var(var2bytes(focus_body), false)
+	# The same button on the client, found by its scene path (the retry prompt is all named).
+	var focus_path: NodePath = main.get_path_to(host_focus) if host_focus != null else NodePath()
 	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
 	host._end_battle()
 
@@ -200,13 +199,17 @@ func _test_retry_prompt(together: Node):
 	t._check(client_retry.visible, "retry: client shows the prompt")
 	var label = client_retry.get_node_or_null(retry_sync.WAITING_LABEL)
 	t._check(label != null and "P1" in label.text, "retry: says whose choice it is")
+	# Nodes another mod added on the client only: first in the scene and next to the button.
+	var expected = puppet.get_node_or_null(focus_path) if not focus_path.is_empty() else null
+	var next_to := [expected] if expected != null else []
+	var extras := CursorTargetTests.add_mod_nodes(client._main, next_to)
 	focus_sync._retry_pending()  # what FocusSync._process does every frame on a client
-	var client_emulator = ScenePaths.resolve(puppet, focus_body.cursors[0][0])
-	var client_focus = client_emulator.focused_control if client_emulator != null else null
+	var client_focus = client_retry.get_node("FocusEmulator").focused_control
 	t._check(
-		client_focus != null and client_focus == ScenePaths.resolve(puppet, focus_body.cursors[0][2]),
-		"focus: cursor applied once the prompt is visible"
+		client_focus != null and client_focus == expected,
+		"focus: cursor applied once the prompt is visible, extra nodes on the client"
 	)
+	CursorTargetTests.remove_nodes(extras)
 	t._check(not focus_sync.is_pending(scene_path), "focus: resolved message cleared")
 	client_retry.get_node("%ConfirmButton").emit_signal("pressed")
 	client_retry.get_node("%OkButton").emit_signal("pressed")

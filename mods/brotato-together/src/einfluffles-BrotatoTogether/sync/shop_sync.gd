@@ -130,7 +130,7 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 			var shop = _host_shop_for(body)
 			var p := _player_index_of(steam_id)
 			if shop != null and p >= 0 and p < RunData.get_player_count():
-				ShopIntents.apply_focus(shop, p, body.get("page"), body.get("path"))
+				ShopIntents.apply_focus(shop, p, body.get("page"), body.get("target"))
 
 
 # --- host ---

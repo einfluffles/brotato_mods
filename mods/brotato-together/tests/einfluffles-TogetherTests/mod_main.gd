@@ -750,15 +750,14 @@ func _test_shop_loopback(together: Node):
 	var host_sounds: Dictionary = yield(_ui_sounds_host_buy(together, bought), "completed")
 	var after: Dictionary = bytes2var(var2bytes(shop_sync._shop_body()), false)
 
-	# Host cursor for player 0 on shop slot 2 (focus mirroring).
+	# Host cursor for player 0 on shop slot 2 (focus mirroring, another mod's nodes on the host).
 	var focus_sync: Node = together.focus_sync
 	var host_emulator = Utils.get_focus_emulator(0, host_shop)
-	var focus_target = container.get_shop_item_node(2)._button
-	host_emulator.focused_control = focus_target
+	host_emulator.focused_control = container.get_shop_item_node(2)._button
 	focus_sync._scene = host_shop
 	focus_sync._emulators = ScenePaths.find_focus_emulators(host_shop)
-	var focus_body := {"scene": host_shop.filename, "cursors": focus_sync._cursors()}
-	var focus_path := ScenePaths.path_of(focus_target, host_shop)
+	var cursors: Array = preload("cursor_target_tests.gd").host_cursors(focus_sync, host_shop)
+	var focus_body := {"scene": host_shop.filename, "cursors": cursors}
 	var host_after := _shop_slots(host_shop, 0)
 	var host_gold_after: int = RunData.get_player_gold(0)
 	_check(host_gold_after < gold_before, "host bought %s" % bought_id)
@@ -793,8 +792,8 @@ func _test_shop_loopback(together: Node):
 	focus_sync._apply(focus_body)
 	var client_focus = Utils.get_focus_emulator(0, client_shop).focused_control
 	_check(
-		client_focus != null and ScenePaths.path_of(client_focus, client_shop) == focus_path,
-		"client cursor mirrors host cursor"
+		client_focus == client_shop._get_shop_items_container(0).get_shop_item_node(2)._button,
+		"client cursor mirrors host cursor (another mod's nodes on the host only)"
 	)
 	_test_ui_sounds_client(together, host_sounds, dropped_before)
 	var owned := false
