@@ -78,9 +78,9 @@ func setup(netplay_session: Node) -> void:
 # here, possible for another mod): a node on the path renamed, an owner or script changed on it
 # or on a sibling before it, a sibling replaced by a node of another kind at the same index (also
 # a queued one whose index another kind takes once it is freed), the control moved under another
-# node at the same child indices, an accessor or list handing out other anchor nodes. The net describes the
-# cursors once per SAFETY_NET_MSEC while the key stays the same and bumps _drift (part of the
-# key) when they differ from the last body.
+# node at the same child indices, an accessor or list handing out other anchor nodes. The net
+# describes the cursors once per SAFETY_NET_MSEC while the key stays the same and bumps _drift
+# (part of the key) when they differ from the last body.
 func state_key(_section: int) -> String:
 	if not _scan_scene():
 		_key = ""
