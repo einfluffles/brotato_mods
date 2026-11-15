@@ -18,10 +18,13 @@ enum Msg {
 	# host -> client: scene, cursors [[player, menu, control]] (menu: the emulator's parent; menu
 	# and control as ui/focus_targets.gd targets, see sync/focus_sync.gd)
 	FOCUS,
-	# host -> client: shop_id, run (RunStateCodec incl. shop), slots, go, seqs, pages, you,
-	# colors (see sync/shop_sync.gd)
+	# host -> client: shop_id, run (RunStateCodec incl. shop), slots, go, seqs, pages, mecas
+	# (per player the meca upgrade rolls the host keeps: [[weapon slot, weapon my_id, stat key
+	# hash, value, stat key hash, value]], sync/meca_choice.gd), you, colors (see
+	# sync/shop_sync.gd)
 	SHOP_STATE,
-	# host -> client: battle_id, visible, run, players, seqs, pages (see upgrades_sync.gd)
+	# host -> client: battle_id, visible, run, players, seqs, pages, mecas (as in SHOP_STATE,
+	# for the crate weapon popup; see upgrades_sync.gd)
 	UPGRADES_STATE,
 	# host -> client: kind, count, you, colors, max, reward, join (only while joining is open:
 	# hold progress of joining players), players [[id, label, random, ready, inv, idx,
@@ -33,8 +36,10 @@ enum Msg {
 	SHOP_PAUSE,  # host -> client: paused, by, by_id (like BATTLE_PAUSE, while in the shop)
 	# client -> host: battle_id, seq (of the sender's panel), kind ("choose" | "reroll" |
 	# "take" | "discard" | "ban"), id (upgrade / item my_id, "" for reroll), meca (-1: none).
-	# Crate weapon popup: kind "weapon_combine" | "weapon_discard" | "weapon_meca", id (the
-	# weapon's my_id), weapon (its slot in the sender's weapons), stat (meca: stat key hash)
+	# Crate weapon popup: kind "weapon_combine" | "weapon_discard" | "weapon_meca_roll" (the
+	# host rolls the two meca options, sent in UPGRADES_STATE.mecas) | "weapon_meca" (meca: the
+	# index of the option picked), id (the weapon's my_id), weapon (its slot in the sender's
+	# weapons)
 	UPGRADE_INTENT,
 	# client -> host: battle_id, page (the sender's carousel page), target (its cursor as a
 	# ui/focus_targets.gd target inside its own panel, []: none). Cosmetic: what the others see.

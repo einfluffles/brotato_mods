@@ -25,7 +25,9 @@ const ShopIntents := preload(
 const BIT_ACCEPT := 1
 const BIT_INFO := 1 << 3
 const REMOTE := 1  # the remote player's slot on the host
+const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const PISTOL := "weapon_pistol_1"
+const MECA_DLC := "primal_dread"
 
 var _t: Node = null
 var _sync: Node = null
@@ -329,6 +331,74 @@ func _host_weapon_intents():
 		not (PISTOL in _weapon_ids(REMOTE)) and RunData.get_player_gold(REMOTE) > gold,
 		"host recycled the weapon"
 	)
+	yield(_host_meca(), "completed")
+
+
+# The item popup's meca upgrade (primal_dread, switched on for these checks): the host rolls
+# the two options into its copy of the player's popup and sends them with the state; a pick by
+# index applies exactly that roll through the popup's signal (BaseShop's handler).
+func _host_meca():
+	yield(_frames(1), "completed")
+	var dlc = ItemService.get_dlc_data_by_id(MECA_DLC)
+	if dlc == null:
+		print("  info: no %s data, shop meca upgrade not tested" % MECA_DLC)
+		return
+	var weapon = RunData.get_player_weapons(REMOTE)[0]
+	var id: String = weapon.my_id
+	var cost: int = dlc.get_meca_upgrade_cost(weapon)
+	var was_active: bool = MECA_DLC in ProgressData.active_update_data
+	RunData.players_data[REMOTE].meca_parts = cost
+	if not was_active:
+		_t._check(not _apply("meca_roll", 0, id), "shop meca roll without the DLC dropped")
+		ProgressData.active_update_data.push_back(MECA_DLC)
+	RunData.players_data[REMOTE].meca_parts = 0
+	_t._check(not _apply("meca_roll", 0, id), "shop meca roll without parts dropped")
+	RunData.players_data[REMOTE].meca_parts = cost
+	_t._check(not _apply("meca_roll", 0, id, -1, -1), "shop meca roll: stale revision dropped")
+	_t._check(not _apply("meca", 0, id, 0), "shop meca pick without a roll dropped")
+	var seq: int = _seq()
+	_t._check(_apply("meca_roll", 0, id), "shop meca roll applied")
+	var rolls: Array = _sync._shop_parts().mecas[REMOTE]
+	var entry: Array = rolls[0] if rolls.size() == 1 else [0, "", 0, 0, 0, 0]
+	_t._check(
+		rolls.size() == 1 and entry[0] == 0 and entry[1] == id and entry[2] != entry[4],
+		"the host remembers two options for that weapon (%s)" % [rolls]
+	)
+	_t._check(_sync._shop_body().mecas[REMOTE] == rolls, "and sends them with the shop state")
+	_t._check(_seq() == seq, "a roll leaves the revision alone")
+	_t._check(_apply("meca_roll", 7, id), "asking again (found by identity)")
+	_t._check(_sync._shop_parts().mecas[REMOTE] == rolls, "the same roll: no reroll by asking")
+	for index in [2, -1]:
+		_t._check(not _apply("meca", 0, id, index), "shop meca pick %d dropped" % index)
+	_t._check(not _apply("meca", 0, "weapon_smg_1", 0), "shop meca pick: another weapon dropped")
+	_t._check(not _apply("meca", 0, id, 0, -1), "shop meca pick: stale revision dropped")
+	_t._check(
+		(
+			_weapon_ids(REMOTE) == [id]
+			and not weapon.is_meca
+			and RunData.get_player_meca_parts(REMOTE) == cost
+		),
+		"nothing upgraded or paid so far"
+	)
+	_t._check(_apply("meca", 0, id, 0), "shop meca pick applied")
+	yield(_frames(1), "completed")
+	var upgraded = RunData.get_player_weapons(REMOTE)[0]
+	var picked_value := 0
+	for effect in upgraded.effects:
+		if effect.key_hash == entry[2] and not effect is EffectOption:
+			picked_value = effect.value
+	_t._check(
+		upgraded != weapon and upgraded.is_meca and picked_value == entry[3],
+		"the weapon got the first option the host rolled (%s)" % [picked_value]
+	)
+	_t._check(RunData.get_player_meca_parts(REMOTE) == 0, "meca parts paid on the host")
+	_t._check(_sync._shop_parts().mecas[REMOTE].empty(), "the roll is forgotten once picked")
+	_t._check(not _apply("meca", 0, id, 0), "a pick without a remembered roll dropped")
+	# The later checks expect plain pistols: the upgraded one goes, a plain one comes back.
+	RunData.remove_weapon_by_index(0, REMOTE)
+	RunData.add_weapon(_t._find_by_id(ItemService.weapons, "weapon_pistol_2"), REMOTE)
+	if not was_active:
+		ProgressData.active_update_data.erase(MECA_DLC)
 
 
 func _host_ready_intents() -> void:
@@ -403,6 +473,7 @@ func _client_part(together: Node):
 	_t._check(local.last_intent.get("kind") == "dismantle", "dismantle sends an intent")
 	yield(_client_ban(node, before), "completed")
 	_client_popup(shop, before)
+	yield(_client_meca(shop, emulator, before), "completed")
 	_client_other_panel(shop, before)
 	yield(_client_view(together, emulator, node), "completed")
 	yield(_client_states(emulator, node), "completed")
@@ -469,11 +540,84 @@ func _client_popup(shop: Node, before: String) -> void:
 	_t._check(local.last_intent.get("kind") == "discard", "recycling sends an intent")
 	local.last_intent = {}
 	popup.emit_signal("item_meca_upgrade_selected", weapon, weapon)
+	_t._check(local.last_intent.empty(), "a meca selection without an effect pressed sends nothing")
+	var own_button = popup._upgrade_button
+	var other_popup = shop._get_item_popup(REMOTE)
+	var other_button = other_popup._upgrade_button
 	_t._check(
-		local.last_intent.empty() and popup._upgrade_button == null,
-		"the popup's meca upgrade fails closed"
+		(
+			own_button != null
+			and other_button != null
+			and not own_button.is_connected("pressed", popup, "_on_UpgradeButton_pressed")
+			and own_button.is_connected("pressed", local.meca, "_on_upgrade_pressed")
+			and not other_button.is_connected("pressed", other_popup, "_on_UpgradeButton_pressed")
+			and not other_button.is_connected("pressed", local.meca, "_on_upgrade_pressed")
+		),
+		"the own popup's meca upgrade asks the host, another player's is dead"
 	)
 	_t._check(_run_view(shop) == before, "no weapon changed locally")
+
+
+# The own popup's meca upgrade (primal_dread switched on): the button asks the host, the
+# host's two options (from a state) fill the game's own choice, the pick leaves as an index.
+func _client_meca(shop: Node, emulator: Node, before: String):
+	var local = _sync.local
+	yield(_frames(1), "completed")
+	if ItemService.get_dlc_data_by_id(MECA_DLC) == null:
+		print("  info: no %s data, client shop meca upgrade not tested" % MECA_DLC)
+		return
+	var was_active: bool = MECA_DLC in ProgressData.active_update_data
+	if not was_active:
+		ProgressData.active_update_data.push_back(MECA_DLC)
+	var parts: int = RunData.get_player_meca_parts(0)
+	RunData.players_data[0].meca_parts = 5
+	var popup = shop._get_item_popup(0)
+	var element = shop._get_gear_container(0).weapons_container._elements.get_child(0)
+	shop._popup_manager._on_element_pressed(element)  # what a press on a gear weapon does
+	var weapon = popup._item_data
+	var slot: int = RunData.get_player_weapons(0).find(weapon)
+	var id: String = weapon.my_id if weapon != null else ""
+	_t._check(
+		popup._focused and slot >= 0 and popup._upgrade_button.visible,
+		"the own shop popup offers the meca upgrade"
+	)
+	local.last_intent = {}
+	FocusEmulatorSignal.emit(popup._upgrade_button, "pressed", 0)
+	var sent: Dictionary = local.last_intent
+	_t._check(
+		sent.get("kind") == "meca_roll" and sent.get("slot") == slot and sent.get("id") == id,
+		"the shop's upgrade button asks the host (%s)" % [sent]
+	)
+	_t._check(popup._focused and not popup.is_choosing_meca_upgrade(), "nothing rolled here")
+	var damage: int = Keys.stat_damage_hash
+	var armor: int = Keys.stat_armor_hash
+	local.on_mecas([[slot, id, damage, 7, armor, 3], [slot, id, 12345, 1, armor, 1]])
+	var shown := []
+	if popup._pending_upgrade != null:
+		for option in MecaChoice.options(popup._pending_upgrade):
+			shown.append([option.key_hash, option.value])
+	_t._check(
+		shown == [[damage, 7], [armor, 3]] and local.meca.rolls.size() == 1,
+		"the shop popup shows the host's two options, a malformed roll is ignored (%s)" % [shown]
+	)
+	local.last_intent = {}
+	_t._check(
+		emulator.focused_control == popup._effect_button_0, "the own cursor is on the first option"
+	)
+	FocusEmulatorSignal.emit(popup._effect_button_0, "pressed", 0)  # what accept there does
+	sent = local.last_intent
+	_t._check(
+		sent.get("kind") == "meca" and sent.get("arg") == 0 and sent.get("slot") == slot,
+		"the shop pick leaves as the option's index (%s)" % [sent]
+	)
+	_t._check(not popup._focused and not popup.is_choosing_meca_upgrade(), "the shop popup closed")
+	_t._check(
+		_run_view(shop) == before and RunData.get_player_meca_parts(0) == 5,
+		"nothing upgraded or paid in the client's shop"
+	)
+	if not was_active:
+		ProgressData.active_update_data.erase(MECA_DLC)
+	RunData.players_data[0].meca_parts = parts
 
 
 func _client_other_panel(shop: Node, before: String) -> void:

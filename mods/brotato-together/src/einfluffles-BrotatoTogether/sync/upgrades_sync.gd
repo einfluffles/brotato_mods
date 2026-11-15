@@ -4,7 +4,8 @@ extends Node
 # Host: owns every decision. While the panels are visible it sends UPGRADES_STATE on change:
 #   run state + per player
 #   ["none"] | ["done"] | ["upgrades", [upgrade ids], level, reroll_price] | ["item", json, id]
-#   plus, per player, a panel revision (seqs) and the carousel page (pages).
+#   plus, per player, a panel revision (seqs), the carousel page (pages) and the meca upgrade
+#   rolls its crate weapon popup remembers (mecas, MecaChoice.entries).
 # Client: shows those options in its own copy of the panels; nothing is rolled locally.
 #   Its OWN panel runs here: its buttons drive its slot's FocusEmulator locally
 #   (InputSync.set_local_device), so cursor, pages (upgrades / gear / stats), popups and the
@@ -13,7 +14,9 @@ extends Node
 #   current panel (revision + option id) and runs the panel's own handler, so the rules stay
 #   in the game's code and nothing is decided on a client.
 #   The same goes for the crate weapon popup (characters whose crates give weapons): combine,
-#   recycle and meca upgrade leave as intents that name the weapon by slot and id.
+#   recycle and meca upgrade leave as intents that name the weapon by slot and id. The meca
+#   upgrade's two options are rolled on the host on request and shown from the state (mecas);
+#   the pick is an option index (sync/meca_choice.gd).
 #   Its cursor and page also travel as UPGRADE_FOCUS: what the host and the others see.
 #   Keyboard and mouse on the own panel, and the mouse kept off the others: sync/local_panel.gd.
 # The other players' panels stay mirrored: cursors by FocusSync, pages from UPGRADES_STATE.
@@ -29,6 +32,7 @@ const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
+const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const CHECK_INTERVAL := 0.1
 const ITEM_KINDS := ["take", "discard", "ban"]
 # UpgradesUI._ready: container signal -> UpgradesUI handler (bound to the player index).
@@ -46,8 +50,8 @@ const WEAPON_POPUP_HANDLERS := {
 	"item_discard_button_pressed": "_on_weapon_discard_button_pressed",
 	"item_meca_upgrade_selected": "_on_weapon_meca_upgrade_selected",
 }
-const WEAPON_KINDS := ["weapon_combine", "weapon_discard", "weapon_meca"]
-const MECA_DLC := "primal_dread"
+# weapon_meca_roll: the host rolls (or finds) the two meca options; weapon_meca: picks one.
+const WEAPON_KINDS := ["weapon_combine", "weapon_discard", "weapon_meca_roll", "weapon_meca"]
 
 var session: Node = null
 var battle_host: Node = null
@@ -73,11 +77,7 @@ var _own_seq := -1
 var _own_item_id := ""
 var _local_active := false
 var _sent_focus := ""
-# The own popup's meca upgrade: the stats of the two options it offers, then the weapon and
-# the option picked (two signals, sent once both are known).
-var _meca_stats := []
-var _meca_weapon = null
-var _meca_choice := -1
+var _meca = MecaChoice.new()  # the own popup's meca upgrade
 var _local_panel: Node = null  # in the guarded UI: device type and mouse for the own panel
 
 
@@ -87,6 +87,8 @@ func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> voi
 	battle_client = client_battle
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
+	_meca.connect("roll_requested", self, "_on_own_meca_roll")
+	_meca.connect("picked", self, "_on_own_meca_picked")
 	battle_client.connect("battle_entered", self, "_on_battle_entered")
 	battle_client.connect("battle_left", self, "_on_battle_left")
 
@@ -119,7 +121,7 @@ func _process(delta: float) -> void:
 	var golds := []
 	for p in RunData.get_player_count():
 		golds.append(RunData.get_player_gold(p))
-	var key := var2str([players, _seqs, _pages(ui, players.size()), golds])
+	var key := var2str([players, _seqs, _pages(ui, players.size()), golds, _mecas(ui)])
 	if key == _last_sent_key:
 		return
 	_last_sent_key = key
@@ -156,6 +158,7 @@ func body(players: Array) -> Dictionary:
 		"players": players,
 		"seqs": _seqs.duplicate(),
 		"pages": _pages(ui, players.size()),
+		"mecas": _mecas(ui),
 	}
 
 
@@ -164,6 +167,15 @@ static func _pages(ui: Node, count: int) -> Array:
 	for p in count:
 		pages.append(ui._get_player_container(p).carousel.index)
 	return pages
+
+
+# Per player, the meca upgrade rolls its crate weapon popup remembers ([] without that popup).
+static func _mecas(ui: Node) -> Array:
+	var mecas := []
+	for p in RunData.get_player_count():
+		var popup = ui._get_player_container(p).item_popup
+		mecas.append(MecaChoice.entries(popup, p) if ui._weapons_inventory_enabled[p] else [])
+	return mecas
 
 
 static func capture(ui: Node) -> Array:
@@ -230,6 +242,8 @@ func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 			return false
 	elif not (kind in WEAPON_KINDS) or not _host_apply_weapon(ui, p, kind, msg):
 		return false
+	if kind == "weapon_meca_roll":
+		return true  # the panel shows nothing new; the roll goes out with the next state
 	# The handlers show the next options right away: a second press on the old ones is stale.
 	_update_seqs(ui, capture(ui))
 	return true
@@ -238,7 +252,7 @@ func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 # The crate weapon popup of a player whose crates give weapons: combine, recycle or meca
 # upgrade one of its weapons, named by its slot in the player's weapons and its id. The game's
 # handlers decide (locked weapons, no partner, too few meca parts). Returns whether the
-# weapons changed.
+# weapons changed (a meca roll: whether the player's popup now remembers one for the weapon).
 func _host_apply_weapon(ui: Node, p: int, kind: String, msg: Dictionary) -> bool:
 	if not ui._weapons_inventory_enabled[p]:
 		return false
@@ -249,6 +263,10 @@ func _host_apply_weapon(ui: Node, p: int, kind: String, msg: Dictionary) -> bool
 	var weapon = weapons[slot]
 	if weapon.my_id != msg.id:
 		return false
+	var popup = ui._get_player_container(p).item_popup
+	if kind == "weapon_meca_roll":
+		# Kept in the host's copy of the player's popup, where the game keeps its own roll.
+		return MecaChoice.roll(popup, weapon, p) != null
 	var before := _weapons_key(p)
 	match kind:
 		"weapon_combine":
@@ -256,36 +274,12 @@ func _host_apply_weapon(ui: Node, p: int, kind: String, msg: Dictionary) -> bool
 		"weapon_discard":
 			ui._on_weapon_discard_button_pressed(weapon, p)
 		"weapon_meca":
-			_host_meca_upgrade(ui, p, weapon, msg.get("stat"))
+			# Only one of the two options rolled and sent for this weapon (meca: the index).
+			var upgraded = MecaChoice.take(popup, weapon, p, msg.get("meca"))
+			if upgraded == null:
+				return false
+			ui._on_weapon_meca_upgrade_selected(weapon, upgraded, p)
 	return _weapons_key(p) != before
-
-
-# The popup rolls the two stats on offer where it runs, so the client names the stat it
-# picked. It is only taken if the game could offer it to this player; the amount, the cost and
-# the upgraded weapon are worked out here.
-func _host_meca_upgrade(ui: Node, p: int, weapon, stat) -> void:
-	var dlc = ItemService.get_dlc_data_by_id(MECA_DLC)
-	if dlc == null or not (MECA_DLC in ProgressData.active_update_data):
-		return
-	if typeof(stat) != TYPE_INT or not ItemService.can_weapon_be_mechanized(weapon):
-		return
-	var cost: int = dlc.get_meca_upgrade_cost(weapon)
-	if RunData.get_player_meca_parts(p) < cost:
-		return
-	var offered := false
-	for stats in dlc._get_allowed_meca_stats(p).values():
-		offered = offered or stat in stats
-	if not offered:
-		return
-	var upgraded = dlc.meca_item(weapon, p)
-	var options: Array = ui._get_player_container(p).item_popup._get_effect_options(upgraded)
-	if options.size() < 2:
-		return
-	options[0].key = Keys.hash_to_string[stat]
-	options[0].key_hash = stat
-	options[0].value = dlc.get_meca_stat_value(stat, cost)
-	upgraded = dlc.change_effect_option_to_modular_effect(upgraded, 0)
-	ui._on_weapon_meca_upgrade_selected(weapon, upgraded, p)
 
 
 static func _weapons_key(p: int) -> Array:
@@ -422,6 +416,9 @@ func apply(main: Node, msg: Dictionary) -> void:
 		elif run_changed and p == you and _local_active and in_popup and not on_weapon:
 			# The refresh closed the popup the cursor was in (opened from the gear page).
 			container.call_deferred("focus")
+		if p == you:
+			# The host's meca rolls for this player: the one the own popup asked for is shown.
+			_meca.set_rolls(_list_at(msg.get("mecas"), p))
 		var page: int = _int_at(pages, p)
 		if p != you and page >= 0 and container.carousel.index != page:
 			container.carousel.index = page
@@ -433,7 +430,7 @@ func _on_battle_left() -> void:
 	_guarded_ui = null
 	_own = null
 	_local_panel = null  # a child of the scene's UpgradesUI
-	_meca_weapon = null
+	_meca.detach()
 	_applied = {}
 	_run_key = []
 	_pending = {}
@@ -527,9 +524,7 @@ func _guard(ui: Node, you: int) -> void:
 	_own = null
 	_own_seq = -1
 	_own_item_id = ""
-	_meca_stats = []
-	_meca_weapon = null
-	_meca_choice = -1
+	_meca.detach()
 	stop_local()
 	var containers := []
 	for p in RunData.get_player_count():
@@ -540,6 +535,7 @@ func _guard(ui: Node, you: int) -> void:
 		_disconnect(container._reroll_button, "pressed", container, "_on_RerollButton_pressed")
 		for signal_name in WEAPON_POPUP_HANDLERS:
 			_disconnect(container.item_popup, signal_name, ui, WEAPON_POPUP_HANDLERS[signal_name])
+		MecaChoice.cut(container.item_popup)  # the popup would roll its own meca options
 		# The "still to process" icons are never filled on a puppet, and the container's press
 		# handlers would look up the option there (a crate's ConsumableData, unknown here).
 		container._things_to_process_container = null
@@ -553,12 +549,7 @@ func _guard(ui: Node, you: int) -> void:
 		var popup = container.item_popup
 		popup.connect("item_combine_button_pressed", self, "_on_own_weapon", ["weapon_combine"])
 		popup.connect("item_discard_button_pressed", self, "_on_own_weapon", ["weapon_discard"])
-		popup.connect("meca_upgrade_choice_toggled", self, "_on_own_meca_toggled")
-		popup.connect("item_meca_upgrade_selected", self, "_on_own_meca_selected")
-		for choice in 2:
-			var button = popup.get("_effect_button_%d" % choice)
-			if button != null:
-				button.connect("pressed", self, "_on_own_meca_choice", [choice])
+		_meca.attach(popup, p)
 	if is_instance_valid(_local_panel):
 		_local_panel.free()
 	_local_panel = LocalPanel.new()
@@ -635,51 +626,28 @@ func _on_own_reroll() -> void:
 	_send_intent("reroll", "")
 
 
-# The crate weapon popup's combine / recycle (and, through _send_meca, meca upgrade). The
-# weapon goes out as its slot in the own weapons plus its id, never as an object.
-func _on_own_weapon(weapon, kind: String, stat := 0) -> void:
+# The crate weapon popup's combine / recycle / meca pick. The weapon goes out as its slot in
+# the own weapons plus its id, never as an object.
+func _on_own_weapon(weapon, kind: String, meca := -1) -> void:
 	var slot: int = RunData.get_player_weapons(_own.player_index).find(weapon)
 	if slot >= 0:
-		_send_intent(kind, weapon.my_id, -1, {"weapon": slot, "stat": stat})
+		_send_intent(kind, weapon.my_id, meca, {"weapon": slot})
 	# The game's handlers close the popup once they changed the weapons. Here they change
 	# when the host answers, if it does: until then the cursor is back on the weapon.
 	_guarded_ui._on_weapon_cancel_button_pressed(weapon, _own.player_index)
 
 
-func _on_own_meca_toggled(choosing: bool) -> void:
-	if not choosing:
-		return  # also emitted right before the selection: the stats are still needed then
-	_meca_weapon = null
-	_meca_choice = -1
-	_meca_stats = []
-	var popup = _own.item_popup
-	for option in popup._get_effect_options(popup._pending_upgrade):
-		_meca_stats.append(option.key_hash)
+# The popup's upgrade button: the host rolls the two options (the popup stays as it is, so
+# Cancel still closes it); they arrive with the next state (MecaChoice.set_rolls).
+func _on_own_meca_roll(weapon) -> void:
+	var slot: int = RunData.get_player_weapons(_own.player_index).find(weapon)
+	if slot >= 0:
+		_send_intent("weapon_meca_roll", weapon.my_id, -1, {"weapon": slot})
 
 
-func _on_own_meca_selected(weapon, _upgraded) -> void:
-	_meca_weapon = weapon
-	_send_meca()
-
-
-func _on_own_meca_choice(choice: int) -> void:
-	_meca_choice = choice
-	_send_meca()
-
-
-# The popup's signal carries the weapon it upgraded locally, the option button which of the
-# two stats was picked; the host builds the upgrade itself from the stat.
-func _send_meca() -> void:
-	if _meca_weapon == null or _meca_choice < 0:
-		return
-	var weapon = _meca_weapon
-	var choice := _meca_choice
-	_meca_weapon = null
-	_meca_choice = -1
-	# The popup keeps its rolled preview per weapon and has just used up its options.
-	_own.item_popup._upgrade_preview_cache.erase(weapon.get_instance_id())
-	if choice < _meca_stats.size():
-		_on_own_weapon(weapon, "weapon_meca", _meca_stats[choice])
+# One of the host's two options, by index.
+func _on_own_meca_picked(weapon, index: int) -> void:
+	_on_own_weapon(weapon, "weapon_meca", index)
 
 
 func _send_intent(kind: String, id: String, meca := -1, weapon := {}) -> void:
@@ -744,6 +712,13 @@ static func _find(elements: Array, my_id: String):
 		if element.my_id == my_id:
 			return element
 	return null
+
+
+# values[index] when it is a list, else [] (network data: mecas may be missing).
+static func _list_at(values, index: int) -> Array:
+	if typeof(values) != TYPE_ARRAY or index < 0 or index >= values.size():
+		return []
+	return values[index] if typeof(values[index]) == TYPE_ARRAY else []
 
 
 # values[index] when it is an int, else -1 (network data: seqs / pages may be missing).

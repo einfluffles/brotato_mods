@@ -11,9 +11,9 @@ extends Reference
 #   - ShopItem.change_lock_status (no signal at all): extensions/ui/shop_item.gd.
 #   - reroll and Go buttons -> BaseShop; item popup combine / recycle / meca upgrade -> BaseShop;
 #     the "endless" toggle -> its panel.
-#   The item popup's meca upgrade rolls its two options when the button is pressed, so there is
-#   nothing a client could honestly choose from: the button is taken out (fails closed).
-# take_over(): the same signals of this client's own panel go to SHOP_INTENT instead, and its
+#   The item popup's meca upgrade button loses the popup's own roll (MecaChoice.cut).
+# take_over(): the same signals of this client's own panel go to SHOP_INTENT instead (the meca
+#   upgrade asks the host for its two options and picks one by index: sync/meca_choice.gd), and its
 #   buttons drive its own slot's FocusEmulator (InputSync.set_local_device): cursor, pages,
 #   popups, the hold-to-ban bar and the meca effect choice on a shop item run here, without a
 #   round trip. Its cursor and page travel as SHOP_FOCUS (what the host and the others see).
@@ -27,6 +27,7 @@ const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
+const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 # ShopItemsContainer.connect_shop_items: ShopItem signal -> container handler.
 const ITEM_HANDLERS := {
 	"buy_button_pressed": "on_shop_item_buy_button_pressed",
@@ -49,6 +50,7 @@ var active := false  # the own panel runs locally
 var you := -1
 var seq := -1  # revision of the own panel, from the last state
 var local_panel: Node = null  # LocalPanel in the puppet shop: device type and mouse, own panel
+var meca = MecaChoice.new()  # the own item popup's meca upgrade
 
 var _shop: Node = null  # the puppet shop whose handlers are cut
 var _shop_id := 0
@@ -60,6 +62,11 @@ var _unready_sent := false
 var _go_sent := false  # "go 1" left and the host's ready flag is not here yet
 var _sent_focus := ""
 var _panel_player := -1  # whose panel LocalPanel drives (-1: none)
+
+
+func _init() -> void:
+	meca.connect("roll_requested", self, "_on_own_meca_roll")
+	meca.connect("picked", self, "_on_own_meca_picked")
 
 
 func guard(shop: Node, shop_id: int) -> void:
@@ -79,10 +86,7 @@ func guard(shop: Node, shop_id: int) -> void:
 		var popup = shop._get_item_popup(p)
 		for signal_name in POPUP_HANDLERS:
 			_disconnect(popup, signal_name, shop, POPUP_HANDLERS[signal_name])
-		var upgrade = popup.get("_upgrade_button")
-		if upgrade != null:
-			upgrade.hide()
-			popup._upgrade_button = null  # the popup treats that as "no meca upgrade here"
+		MecaChoice.cut(popup)  # the popup would roll its own meca options
 		var panel = shop._get_coop_player_container(p)
 		_disconnect(panel.get("_endless_button"), "toggled", panel, "_on_EndlessButton_toggled")
 	_add_local_panel()
@@ -138,6 +142,12 @@ func on_state(revision: int, ready: bool) -> void:
 		_go_sent = false
 
 
+# The same state: the meca upgrade rolls the host remembers for the own player's weapons (the
+# one the own popup asked for is shown).
+func on_mecas(rolls) -> void:
+	meca.set_rolls(rolls)
+
+
 func set_paused(paused: bool) -> void:
 	_paused = paused
 	_apply_device()
@@ -188,6 +198,7 @@ func _connect_own() -> void:
 	var popup = _shop._get_item_popup(you)
 	for kind in ["combine", "discard"]:
 		_connect(popup, "item_%s_button_pressed" % kind, "_on_own_weapon", [kind])
+	meca.attach(popup, you)
 	var endless = _shop._get_coop_player_container(you).get("_endless_button")
 	if endless != null:
 		_connect(endless, "toggled", "_on_own_endless")
@@ -203,6 +214,7 @@ func _release_own() -> void:
 		if is_instance_valid(entry[0]):
 			_disconnect(entry[0], entry[1], self, entry[2])
 	_own = []
+	meca.detach()
 
 
 static func _disconnect(source: Object, signal_name: String, target: Object, method: String):
@@ -334,6 +346,18 @@ func _on_own_weapon(weapon, kind: String) -> void:
 		return
 	_send_intent(kind, RunData.get_player_weapons(you).find(weapon), weapon.my_id)
 	# The view half of the shop's handler: close the popup, cursor back on the weapon.
+	_shop._on_item_cancel_button_pressed(weapon, you)
+
+
+# The popup's upgrade button: the host rolls the two options (the popup stays as it is, so
+# Cancel still closes it); they arrive with the next state (on_mecas).
+func _on_own_meca_roll(weapon) -> void:
+	_send_intent("meca_roll", RunData.get_player_weapons(you).find(weapon), weapon.my_id)
+
+
+# One of the host's two options, by index; the popup closes like after combine / recycle.
+func _on_own_meca_picked(weapon, index: int) -> void:
+	_send_intent("meca", RunData.get_player_weapons(you).find(weapon), weapon.my_id, index)
 	_shop._on_item_cancel_button_pressed(weapon, you)
 
 

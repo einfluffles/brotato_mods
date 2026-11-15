@@ -16,17 +16,22 @@ extends Reference
 # "endless"    -                    ""            1: on, 0: off
 # "combine"    index in the weapons weapon my_id  -
 # "discard"    index in the weapons weapon my_id  -
+# "meca_roll"  index in the weapons weapon my_id  -
+# "meca"       index in the weapons weapon my_id  option index (0 / 1) of the roll sent
 # "go", "endless" and "lock" say what the player wants to be true: applying them twice changes
 # nothing, so "go" and "endless" need no revision. Everything else is a press on what the
-# sender's panel showed (the revision) and makes that revision stale once applied.
+# sender's panel showed (the revision) and makes that revision stale once applied, except
+# "meca_roll": it only rolls (or finds) the two meca upgrade options the host keeps for that
+# weapon in its copy of the player's popup, sent back with the state (sync/meca_choice.gd).
 
 enum { DROPPED, APPLIED, CHANGED }
 
 const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
+const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const SLOT_KINDS := ["buy", "steal", "lock", "ban", "dismantle"]
-const WEAPON_KINDS := ["combine", "discard"]
+const WEAPON_KINDS := ["combine", "discard", "meca_roll", "meca"]
 
 
 # seq: the current revision of player p's panel. Returns DROPPED, APPLIED (nothing a press
@@ -55,8 +60,19 @@ static func apply(shop: Node, p: int, msg: Dictionary, seq: int) -> int:
 		var weapon = find_weapon(RunData.get_player_weapons(p), slot, id)
 		if weapon == null:
 			return DROPPED
+		var popup = shop._get_item_popup(p)
+		if kind == "meca_roll":
+			return APPLIED if MecaChoice.roll(popup, weapon, p) != null else DROPPED
+		if kind == "meca":
+			# Exactly the remembered roll, by index; the popup's own signal runs the shop's
+			# handler (BaseShop._on_item_meca_upgrade_selected spends the parts).
+			var upgraded = MecaChoice.take(popup, weapon, p, arg)
+			if upgraded == null:
+				return DROPPED
+			popup.emit_signal("item_meca_upgrade_selected", weapon, upgraded)
+			return CHANGED
 		# The popup's own signal: the shop's handler checks what may be combined / recycled.
-		shop._get_item_popup(p).emit_signal("item_%s_button_pressed" % kind, weapon)
+		popup.emit_signal("item_%s_button_pressed" % kind, weapon)
 		return CHANGED
 	return DROPPED
 

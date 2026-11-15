@@ -28,7 +28,8 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
 - **Your own shop panel runs on your machine too:** cursor, pages, item popups, inventory browsing, the
   hold-to-ban bar and a meca item's effect choice are local. Buy, reroll, lock / unlock, steal, ban,
   dismantle, Go, combine and recycle go to the host, which applies them with the game's own rules when
-  they still match your panel. Not yet possible for a remote player: the inventory popup's meca upgrade.
+  they still match your panel. The inventory popup's meca upgrade shows the two options the host rolled
+  and sends the one you pick.
   The shop does not follow the keyboard and mouse yet the way the level-up panel does.
 - **Selection screens / end of run:** the host's selection grid (built from the host's element list,
   so local unlocks/DLC don't matter) with every player's cursor and ready state, plus per-player
