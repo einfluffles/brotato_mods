@@ -291,9 +291,13 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the other sections go on. Only from the host; `lobby_left` drops everything.
   - Tests step it by hand (`step`) and pass `message_for(section, steam_id)` to `receive`
     (`state_stream_tests.gd`). Idle cost, 8 sections checked per frame: about 13 us.
-  - On it: `upgrades` (was UPGRADES_STATE). SHOP_STATE, MENU_STATE (and its grids), RETRY_PROMPT,
-    BATTLE_PAUSE, SHOP_PAUSE and FOCUS move onto it in follow-up changes; until then they still travel as
-    their own messages.
+  - On it: upgrades (`UpgradesSync`, was UPGRADES_STATE), menu + menu_grids (`MenuSync`, was MENU_STATE), retry (`RetrySync`, was RETRY_PROMPT),
+    pause_battle (`BattleHost` / `BattleClient`, was BATTLE_PAUSE and the `paused` of BATTLE_START).
+    `BattleClient` retries the stream on `battle_entered`: retry and pause_battle stay pending until the
+    puppet battle of their `battle_id` is ready (a peer joining gets them before its BATTLE_START; 30 s
+    timeout for the scene load); only an earlier battle's or a malformed body is dropped.
+  - SHOP_STATE, SHOP_PAUSE and FOCUS move onto it in follow-up changes; until then they
+    still travel as their own messages.
 - Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
   version (manifest) must match. Rejections carry a reason that the client shows in the F9 menu. DLC never
   rejects (protocol 5 / 0.2.1).
@@ -612,10 +616,14 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
   run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),
   so they are not run on the client. Instead the host sends its grids (`BaseSelection._get_inventories()`,
-  visible ones: columns + ordered `[my_id, random/special/locked flags]`, only when they change) and each
+  visible ones: columns + ordered `[my_id, random/special/locked flags]`) and each
   cursor as `[inventory, element index]`; `ui/selection_grid.gd` draws them with ids looked up in
   `ItemService` (unknown ids → "?") and per-player colour borders (thicker when `_has_player_selected`),
-  plus `ItemPanelUI` cards for the item under each cursor.
+  plus `ItemPanelUI` cards for the item under each cursor. State stream sections menu (cursors, screen,
+  colours, `you` as the per-peer patch) and menu_grids (only when the grids change), both inactive in
+  battle / shop (null: the client forgets them, the next screen's own message takes over). Both carry
+  `screen` (host scene instance id): the client shows a state only with the grids of its screen, so a new
+  screen never shows with the previous one's grids (its grids follow in the same step).
 - **Co-op character selection UX** (`ui/coop_selection.gd`, `extensions/singletons/coop_service.gd`,
   protocol 9). Found in the game: `CoopJoinPanel1..4` (`coop_join_panel.gd :: update_indicators`) show
   the `COOP_HOLD_TO_JOIN` hint ("Hold {0} or {1} to join", A / Space glyphs) only in the *next* free slot
@@ -632,18 +640,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   remote players send it as a button) cycles to the next free colour; `CoopSelection` restyles what is on
   screen (focus styles, panels, locked panels, join progress). A hint row ("[F] / [Y] Change
   colour", the game's glyphs) is added under the title. Colours travel as palette indices (`colors`) in
-  MENU_STATE, BATTLE_START and SHOP_STATE; the client validates them (one distinct palette index per slot)
+  the menu section, BATTLE_START and SHOP_STATE; the client validates them (one distinct palette index per slot)
   and mirrors them until it leaves the lobby (`bt_clear_remote_colors`). Nothing is saved.
 - **Locked characters**: the host's screen already shows the game's `LockedPanel` (challenge text via
   `ChallengeService.find_challenge_from_reward`, or the item-set requirement) instead of the panel; only
-  the client cards showed the description. MENU_STATE player entries now carry the host LockedPanel text
+  the client cards showed the description. Menu state player entries now carry the host LockedPanel text
   and "locked by a challenge"; the client card shows a `LockedPanel` with its own (localised) challenge
   text, else the host's text. Free slots appear as client cards with the same join hint and the hold
   progress (`join`), the colour hint shows once the client has a slot.
 - **Wave failed** (`sync/retry_sync.gd`): `main.gd :: _on_EndWaveTimer_timeout` shows `UI/RetryWave`, which
-  never runs on the puppet (timer callbacks disconnected). Host sends `RETRY_PROMPT` (visible, its
-  `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's `FocusEmulator` index 0 + name);
-  the client shows its copy with `confirm/cancel_button_pressed = true` (local clicks do nothing) and a
+  never runs on the puppet (timer callbacks disconnected). Host: state stream section retry, active while
+  the prompt is visible (its `settings.retry_wave`, `RunData.retries`, deciding player = the prompt's
+  `FocusEmulator` index 0 + name; null hides the client's copy); pending until the puppet battle is ready.
+  The client shows its copy with `confirm/cancel_button_pressed = true` (local clicks do nothing) and a
   "waiting for Pn" line. FocusSync mirrors the cursor.
 - **Battle → next screen**: on `BATTLE_END` the client keeps the frozen battle (muted) until the shop / next
   battle / menu state replaces it (fallback to the client view after 2 s); the view only says "Waiting for
@@ -731,7 +740,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   extension answers `is_manual_aim` for virtual devices from that flag.
 - Pause (`sync/pause_control.gd`): client puppet battle/shop get `PauseMenu.enabled = false` and lose the
   `game_lost_focus` connection. Host, shop: a remote pause hands the menu to the first local player; the
-  pauser resumes with pause (main page only). `BATTLE_PAUSE` / `SHOP_PAUSE` carry who paused ("Paused by ...").
+  pauser resumes with pause (main page only). Section pause_battle (active while the host's battle is
+  paused, flushed by `BattleHost._physics_process` on the change) / `SHOP_PAUSE` carry who paused
+  ("Paused by ..."); null = resumed.
 - Live menu (protocol 9; `extensions/ui/pause_menu.gd`, see docs/brotato-hooks.md §5): during a wave
   (until `main._end_wave_timer_timedout`) the menu opens without pausing.
   - Host with at least one peer: `PauseControl.host_update` sets `menu.live` every frame and keeps the

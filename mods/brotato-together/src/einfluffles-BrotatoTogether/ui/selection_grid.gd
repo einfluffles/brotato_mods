@@ -48,7 +48,7 @@ func set_grids(grids) -> void:
 		_cells.append(cells)  # one slot per host inventory: cursor indices stay aligned
 
 
-# players: MENU_STATE entries [id, label, is_random, ready, inventory, index].
+# players: menu section entries (sync/menu_sync.gd) [id, label, is_random, ready, inventory, index].
 func set_cursors(players: Array) -> void:
 	var marks := {}  # "inventory:index" -> [player indices]
 	var ready := {}

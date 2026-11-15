@@ -3,7 +3,7 @@ extends Reference
 #  - every empty slot shows "Player N" + the game's hold-to-join hint (host screen), and the
 #    client view shows the free slots with the same hint and the join progress;
 #  - players cycle their colour with ui_info (virtual device = remote player, keyboard F), never
-#    onto another player's colour; the colours travel in MENU_STATE / BATTLE_START / SHOP_STATE
+#    onto another player's colour; the colours travel in the menu state / BATTLE_START / SHOP_STATE
 #    and the game's own colour code (cursors, labels, highlight) reads them;
 #  - a locked character under a cursor shows how to unlock it, on the host and on client cards.
 # Needs the character selection scene with two virtual co-op players (after the menu tests).
@@ -15,6 +15,9 @@ const CoopSelection := preload(
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
+)
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
 
@@ -142,7 +145,7 @@ func _test_color_mirror(together: Node, scene: Node) -> void:
 	menu_sync._scene = scene
 	menu_sync._emulators = ScenePaths.find_focus_emulators(scene)
 	var state: Dictionary = bytes2var(var2bytes(menu_sync._state()), false)
-	t._check(state.get("colors") == host, "colours: in MENU_STATE (%s)" % [state.get("colors")])
+	t._check(state.get("colors") == host, "colours: in the menu state (%s)" % [state.get("colors")])
 	t._check(
 		together.battle_host._battle_start_body().get("colors") == host,
 		"colours: in BATTLE_START"
@@ -152,7 +155,7 @@ func _test_color_mirror(together: Node, scene: Node) -> void:
 	state["colors"] = remote
 	state["you"] = 1
 	state["join"] = [0.5]
-	menu_sync.receive_state(state)
+	menu_sync.apply_state(StateStream.MENU, state, 1)  # the menu section's handler
 	t._check(
 		CoopService.bt_slot_colors == remote
 		and CoopService.player_colors[0] == CoopService.bt_palette[5],
@@ -170,6 +173,7 @@ func _test_color_mirror(together: Node, scene: Node) -> void:
 		"colours: the game's own colour code (CoopPlayerLabel) uses them"
 	)
 	label.free()
+	state["grids"] = bytes2var(var2bytes(menu_sync.grids_state()), false)  # menu_grids section
 	var view = ClientView.new()
 	_tree().root.add_child(view)
 	view.show_menu(state)
@@ -229,7 +233,7 @@ func _test_locked(together: Node, scene: Node):
 	state["you"] = 0
 	t._check(
 		state.players[1][6] == expected and state.players[1][7] == true,
-		"locked: MENU_STATE carries the unlock text"
+		"locked: the menu state carries the unlock text"
 	)
 	var view = ClientView.new()
 	_tree().root.add_child(view)

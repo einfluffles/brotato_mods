@@ -24,13 +24,7 @@ enum Msg {
 	# hash, value, stat key hash, value]], sync/meca_choice.gd), you, colors (see
 	# sync/shop_sync.gd)
 	SHOP_STATE,
-	# host -> client: kind, count, you, colors, max, reward, join (only while joining is open:
-	# hold progress of joining players), players [[id, label, random, ready, inv, idx,
-	# locked text, locked by challenge]], grids (on change; see menu_sync.gd)
-	MENU_STATE,
-	BATTLE_PAUSE,  # host -> client: battle_id, paused, by (name), by_id (steam id, 0: host)
 	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
-	RETRY_PROMPT,  # host -> client: battle_id, visible, retry, retries, player, name
 	SHOP_PAUSE,  # host -> client: paused, by, by_id (like BATTLE_PAUSE, while in the shop)
 	# client -> host: battle_id, seq (of the sender's panel), kind ("choose" | "reroll" |
 	# "take" | "discard" | "ban"), id (upgrade / item my_id, "" for reroll), meca (-1: none).
