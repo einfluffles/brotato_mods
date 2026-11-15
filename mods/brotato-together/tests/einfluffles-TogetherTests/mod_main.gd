@@ -52,6 +52,7 @@ const ShopLoopbackTests := preload(
 const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
+const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -72,6 +73,7 @@ const SUITES := [
 	"cleanup_host",
 	"cleanup_client",
 	"cleanup_misc",
+	"feedback",
 	"selection",
 ]
 const FAKE_PEER := 4242
@@ -290,6 +292,12 @@ func _suite_cleanup_misc(together: Node):
 	coop_run(8)
 	_suite = CleanupTests.new()
 	yield(_suite.run_misc(self, together), "completed")
+
+
+func _suite_feedback(together: Node):
+	coop_run(8)
+	_suite = FeedbackTests.new()
+	yield(_suite.run(self, together), "completed")
 
 
 # Character selection: the menu mirror leaves the scene with two co-op players that the grid and
