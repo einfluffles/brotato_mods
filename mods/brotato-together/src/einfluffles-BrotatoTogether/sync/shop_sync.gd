@@ -1,7 +1,8 @@
 extends Node
 # Co-op shop.
 # Host: owns every decision and the RNG. While coop_shop.tscn runs it provides section RUN_SHOP of
-#   the state stream (sync/state_stream.gd), sent whenever the shop or run state changes. Body:
+#   the state stream (sync/state_stream.gd), sent whenever the shop or run state changes (the
+#   run state is serialized only when it can have changed: sync/shop_run_cache.gd). Body:
 #   shop_id, run (RunStateCodec: the full run state incl. the shop's own save data: offered items,
 #   rerolls, steals), per player slots (the slot layout), go (the Go flag), seqs (a panel
 #   revision), pages (the carousel page) and mecas (the meca upgrade rolls its item popup
@@ -41,6 +42,9 @@ const ShopIntents := preload(
 )
 const ShopLocal := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_local.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const ShopRunCache := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_run_cache.gd"
+)
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const CHECK_INTERVAL := 0.1
@@ -52,8 +56,8 @@ var session: Node = null
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null setget set_input_sync
 var focus_sync: Node = null setget set_focus_sync
-var states_packed := 0  # compressed run states built (tests)
 var local = ShopLocal.new()  # client: this client's own panel
+var run_cache = ShopRunCache.new()  # host: the shop's run state, serialized on change
 
 # host
 var _host_shop: Node = null
@@ -76,6 +80,7 @@ func setup(netplay_session: Node) -> void:
 	session = netplay_session
 	local.session = session
 	session.connect("message", self, "_on_message")
+	session.connect("peer_ready", self, "_on_peer_ready")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
 	var timeout_sec := LOADING_TIMEOUT_MSEC / 1000.0
 	state_stream.register_provider(StateStream.RUN_SHOP, self, CHECK_INTERVAL)
@@ -132,27 +137,32 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 
 
 # State stream provider, section RUN_SHOP: inactive ("") unless the host is in the shop. The key
-# is the run state's JSON text (+ everything else the body and the per-peer part are built from):
-# compressing only happens when something changed.
+# is the run state's revision (run_cache: serialized only when it can have changed, compressed
+# once per change) + everything else the body and the per-peer part are built from.
 func state_key(_section: int) -> String:
 	if _host_shop == null or not is_instance_valid(_host_shop):
+		run_cache.clear()
 		return ""
 	if _host_shop != get_tree().current_scene:
+		run_cache.clear()
 		return ""
+	run_cache.refresh(_host_shop)
 	var parts := _shop_parts()
 	var rest := [
 		_shop_id, parts.slots, parts.go, parts.seqs, parts.pages, parts.mecas, _yous(),
 		CoopService.bt_slot_colors,
 	]
-	return parts.json + var2str(rest)
+	return str(run_cache.rev) + var2str(rest)
 
 
+# Right after state_key in the same check, so refresh finds nothing new and the run is not
+# serialized again; called alone (tests), it still sees a change of the fingerprint.
 func state_body(_section: int) -> Dictionary:
+	run_cache.refresh(_host_shop)
 	var parts := _shop_parts()
-	states_packed += 1
 	return {
 		"shop_id": _shop_id,
-		"run": RunStateCodec.pack(parts.json),
+		"run": run_cache.pack(),
 		"slots": parts.slots,
 		"go": parts.go,
 		"seqs": parts.seqs,
@@ -174,16 +184,9 @@ func _yous() -> Array:
 	return yous
 
 
+# The view parts of the state (the run state is run_cache's).
 func _shop_parts() -> Dictionary:
 	var shop := _host_shop
-	var shop_args := [
-		shop._shop_items,
-		shop._reroll_count,
-		shop._paid_reroll_count,
-		shop._initial_free_rerolls,
-		shop._free_rerolls,
-		shop._item_steals,
-	]
 	_update_seqs(shop)
 	var slots := []
 	var pages := []
@@ -197,13 +200,20 @@ func _shop_parts() -> Dictionary:
 		slots.append(active)
 		pages.append(shop._get_coop_player_container(p).carousel.index)
 	return {
-		"json": RunStateCodec.encode_json(shop_args),
 		"slots": slots,
 		"go": shop._player_pressed_go_button.duplicate(),
 		"seqs": _seqs.duplicate(),
 		"pages": pages,
 		"mecas": mecas,
 	}
+
+
+# A peer that (re)joins must get the true run state: the next check serializes it. That check is
+# the stream's resync for the peer, which runs in its next step, after every peer_ready handler;
+# a difference it finds goes to everyone. (Harmless on a client: only the host's state_key
+# refreshes.)
+func _on_peer_ready(_steam_id: int) -> void:
+	run_cache.force()
 
 
 # A remote player's decision, sent from its own panel (see sync/shop_intents.gd). Only applied
@@ -221,7 +231,8 @@ func host_apply_intent(shop: Node, p: int, msg: Dictionary) -> bool:
 		_seqs[p] += 1
 	# The game connects Buy and Steal deferred: they run at the end of this frame, so the state
 	# goes out in the next one (the stream holds its check until then) instead of once before
-	# and once after.
+	# and once after. That check serializes the run whatever the fingerprint says.
+	run_cache.force(1)
 	state_stream.flush(StateStream.RUN_SHOP, true)
 	call_deferred("_settle_host_cursor", shop, p)
 	return true
@@ -575,6 +586,7 @@ func _on_lobby_left() -> void:
 	_stop_watching_scenes()
 	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_block_remote_buttons(false)
+	run_cache.clear()
 	local.stop()
 	local.set_paused(false)
 	_client_shop = null

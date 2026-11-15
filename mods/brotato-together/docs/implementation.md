@@ -258,8 +258,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   logged one each (30 - 60 per second while a peer is unreachable) and are now limited to one a second.
 - `mod_main._enter_client_view` takes the previous scene out of the tree before the view becomes the
   current scene, like `change_scene` does.
-- Open: the host's shop check serializes the whole run to JSON every 0.1 s (`ShopSync.state_key`),
-  which grows with the items of a long run; not measured yet.
+- The host's shop check serialized the whole run to JSON every 0.1 s (`ShopSync.state_key`): 2.6 ms
+  per check for a small 2-player run, 29 / 58 ms for a late endless run with 2 / 4 players (250 items
+  each; headless container, `shop_change_tests.gd`), i.e. up to 58 % of the host's time in the shop,
+  and twice more per change (key and body). Now 45 / 51 / 92 us per check; the run is serialized only
+  when it can have changed (`sync/shop_run_cache.gd`, see Shop).
 
 ## Session lifecycle
 
@@ -303,8 +306,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     only an earlier battle's or a malformed body is dropped.
   - cursors: `FocusSync` (provider and handler, 0.05 s, 10 s timeout) instead of FOCUS, its poll loop and
     its pending-per-scene table; see Cursors.
-  - shop: `ShopSync` is provider and handler (was SHOP_STATE): key = run JSON + slots, Go, seqs, pages,
-    mecas, `shop_id`, colors and every peer's player index; body packed only on send; `you` is the patch.
+  - shop: `ShopSync` is provider and handler (was SHOP_STATE): key = the run state's revision
+    (`ShopRunCache.rev`, bumped when its JSON changes) + slots, Go, seqs, pages, mecas, `shop_id`, colors
+    and every peer's player index; the run is serialized only when it can have changed and packed once
+    per revision (resends reuse it); `you` is the patch.
     An applied intent flushes: the stream holds the section until the next frame (Buy / Steal
     run deferred). Client: false while the shop it entered loads (`_on_shop_ready` calls `retry()`), so
     "latest state until the shop is ready" is the stream's. pause_shop: `PauseControl` provides
@@ -355,8 +360,23 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (`set_weapons_data/items_data`, `_update_stats`, gold label, reroll price via `ItemService.get_reroll_price`,
   `ShopItem.set_shop_item/activate/deactivate`, `_update_visual_locks`, checkmarks). Client disconnects
   `BaseShop._on_tree_exited` (rolls curses on locked items). State stream section `shop`: the host checks
-  every 0.1 s by comparing the run state's JSON text (+ slots, Go flags, revisions, pages); zstd only runs
-  when something changed.
+  every 0.1 s (slots, Go flags, revisions, pages, meca rolls, colours + the run state's revision).
+  Change detection of the run state (`sync/shop_run_cache.gd`): a fingerprint of cheap values, whose
+  cost does not grow with the item lists, that every mutation the game makes in the shop moves: offered
+  items and locked items by instance + wave value, reroll / steal counters, per player gold, meca parts,
+  health, level, xp, ban tokens, item count + last item's instance, weapon instances, the sizes of the
+  other lists (banned items, upgrades, mutations, sets, effects), and wave / endless / bonus gold / retries
+  / background / challenges. That covers buy, steal, dismantle, reroll (and its goldfish / bone dice),
+  lock, ban, combine, recycle, meca upgrade, endless toggle, DLC mutations; Go, pages, colours, revisions
+  and meca rolls are in the key itself (sent without serializing). The run is serialized (once: the
+  body reuses the JSON, packed once per change) when the fingerprint changed, in the check after an
+  applied intent (`force(1)`, the flush frame) and after `peer_ready` (that check is the stream's queued
+  resync, so the new peer gets the true state; a difference goes to everyone). Safety net: every 1 s (only while a
+  peer is ready) the run is serialized without `JSON.print` and the dictionary's `hash()` compared
+  (1.2 / 8 / 15 ms in the runs above: 1.5 % of the host's time at worst); a different hash prints and
+  compares the text. A change found while the fingerprint stayed the same (a stat or effect written
+  directly, e.g. by another mod; the game's own come with a fingerprint change) is logged as a warning
+  and sent. A change costs one serialization + zstd (2.9 / 30 / 63 ms).
   Since protocol 8 the state also carries per player a panel revision (`seqs`) and the carousel page
   (`pages`), and for each client its own player index (`you`, so the message is sent per peer). The client
   rebuilds per player and per part: `ShopSync.player_keys` cuts the sent run state (before it is

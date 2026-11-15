@@ -48,7 +48,7 @@ func run_host(shop: Node):
 	host.register_provider(StateStream.PAUSE_SHOP, together.pause_control)
 	shop_sync.state_stream = host  # host_apply_intent flushes this one
 
-	var packed: int = shop_sync.states_packed
+	var packed: int = shop_sync.run_cache.packs
 	host.step(1.0)
 	var sent := _take(StateStream.RUN_SHOP)
 	var body = sent[0][2] if sent.size() == 1 else null
@@ -64,15 +64,15 @@ func run_host(shop: Node):
 	host.step(1.0)
 	host.step(1.0)
 	t._check(
-		_take(StateStream.RUN_SHOP).empty() and shop_sync.states_packed == packed + 1,
+		_take(StateStream.RUN_SHOP).empty() and shop_sync.run_cache.packs == packed + 1,
 		"unchanged shop state compressed once, not every check"
 	)
 	session.emit_signal("peer_ready", PEER)
 	host.step(0.0)  # the resync goes out in the stream's next step
 	sent = _take(StateStream.RUN_SHOP)
 	t._check(
-		sent.size() == 1 and sent[0][1] == 1 and shop_sync.states_packed == packed + 2,
-		"shop: a peer that becomes ready gets it again, same revision"
+		sent.size() == 1 and sent[0][1] == 1 and shop_sync.run_cache.packs == packed + 1,
+		"shop: a peer that becomes ready gets it again, same revision, not compressed again"
 	)
 	t._check(_take(StateStream.PAUSE_SHOP).size() == 1, "and the shop pause too")
 	_test_pause(session)
