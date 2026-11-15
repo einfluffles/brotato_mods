@@ -146,6 +146,7 @@ func _spawn_runtime_parts(main: Node) -> Dictionary:
 		EntityType.ENEMY,
 		center + Vector2(-700, 300)
 	)
+	nodes.eel.current_stats.health = int(nodes.eel.max_stats.health * 0.97)  # hit, same phase
 	var charge = nodes.raptor._current_attack_behavior
 	charge.warning_duration = 10.0  # the warning stays up for the whole recording
 	charge.start_warning()  # what its physics_process does when the target is in range
@@ -164,6 +165,7 @@ func _runtime_host_values(nodes: Dictionary) -> Dictionary:
 	var values := {}
 	var ring = nodes.eel.get_node_or_null("Pivots/BulletsFar/Pivot")
 	values["has_ring"] = ring != null
+	values["eel_health"] = nodes.eel.current_stats.health / float(nodes.eel.max_stats.health)
 	if ring != null:
 		values["ring"] = ring.rotation
 		values["bullet"] = ring.get_child(0).position.x
@@ -195,10 +197,14 @@ func _check_runtime_snapshots(early, last, index: Dictionary, host_values: Dicti
 		)
 	)
 	var early_eel := Snapshot.index_of(early, last.ids[index.eel])
-	_t._check(early_eel >= 0 and not early.poses.has(early_eel), "no eel pose before its phase change")
+	var early_pose: PoolRealArray = early.poses.get(early_eel, PoolRealArray())
 	_t._check(
-		host_values.has_ring and sizes[0] == 32,
-		"eel pose after the phase change: 16 pivots + 16 bullets"
+		early_pose.size() == 1 and abs(early_pose[0] - host_values.eel_health) < 0.01,
+		"before its phase change the eel only sends its health %s" % [early_pose]
+	)
+	_t._check(
+		host_values.has_ring and sizes[0] == 33,
+		"eel pose after the phase change: health + 16 pivots + 16 bullets"
 	)
 	var flags: int = Snapshot.get_flags(last.flags, index.dimetrodon)
 	_t._check(
@@ -242,6 +248,13 @@ func _check_runtime_puppets(client: Node, puppets: Dictionary, host_values: Dict
 			"boss ring spins and flies out like on the host (%.2f)" % host_values.ring
 		)
 		_t._check(not ring.get_child(0).is_physics_processing(), "boss ring bullets frozen")
+	var bar = eel.life_bar
+	var shown: bool = ProgressData.settings.hp_bar_on_bosses
+	_t._check(
+		not shown or abs(bar.value - 100.0 * host_values.eel_health) < 0.2,
+		"boss life bar follows the host's health (%.1f)" % bar.value
+	)
+	_t._check(not bar.get_node("Timer").paused, "and its hit tint ends")
 	var dimetrodon: Node = puppets.dimetrodon
 	var jump = dimetrodon._current_attack_behavior
 	_t._check(dimetrodon.sprite.flip_h == host_values.flip_h, "jump flip_h mirrored")

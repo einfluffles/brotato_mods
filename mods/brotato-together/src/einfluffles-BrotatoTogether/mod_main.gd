@@ -201,7 +201,10 @@ func _enter_client_view() -> void:
 	var view: Node = _client_view.new()
 	view.name = "BrotatoTogetherClientView"
 	view.session = session
+	# Out of the tree first, like change_scene does: what is left of a battle (a death animation
+	# returning its puppet to the pool) must not run with the view as the current scene.
+	if previous != null:
+		previous.get_parent().remove_child(previous)
+		previous.queue_free()
 	tree.root.add_child(view)
 	tree.current_scene = view
-	if previous != null:
-		previous.queue_free()

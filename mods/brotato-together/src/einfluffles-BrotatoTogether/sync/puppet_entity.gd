@@ -54,12 +54,13 @@ static func player_died(player: Node) -> void:
 			appearance.hide()
 
 
-# Not the hit flash's: flash() starts it and its timeout only puts the sprite's material back
-# (a paused Timer never fires, the unit would stay white).
+# Not the hit flash's, nor a life bar's: they are started by what the client shows and their
+# timeout only puts a material / a tint back (a paused Timer never fires: the unit, the bar
+# would stay white).
 static func _pause_timers(node: Node) -> void:
 	for child in node.get_children():
 		if child is Timer:
-			child.paused = child.name != FLASH_TIMER
+			child.paused = not (child.name == FLASH_TIMER or node is UIProgressBar)
 		_pause_timers(child)
 
 
@@ -86,6 +87,7 @@ static func birth_tag(birth: Node) -> String:
 static func start_projectile_animation(projectile: Node) -> void:
 	var player = projectile.get("_animation_player")
 	if player != null and player.assigned_animation != "":
+		player.stop(true)  # a pooled puppet starts over, like the game's when it is shot
 		player.play()
 
 

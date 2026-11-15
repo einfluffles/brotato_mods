@@ -55,6 +55,8 @@ const BRACHIOSAURUS_FOOT := (
 )
 const BOSS_PARTS := {BRACHIOSAURUS_FOOT: "Brachiosaurus"}  # scene -> boss node its _ready finds
 const PUPPET_TYPE_META := "brotato_together_puppet_type"
+# After a stall the queued sounds and damage numbers of that time would all fire in one frame.
+const STALE_EVENT_MSEC := 250
 const KIND_UNIT := 1  # its sprite's facing and flip_h come with the flags
 const KIND_PROJECTILE := 2  # faces its motion
 const KIND_BIRTH := 4  # a spawn marker: started when it appears
@@ -549,6 +551,10 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 			var start := from_positions[j]
 			if start != position:
 				if start.distance_to(position) <= max_jump:
+					if kind & KIND_PROJECTILE:  # faces where it flies
+						var angle: float = (position - start).angle()
+						if node.rotation != angle:
+							node.rotation = angle
 					position = start.linear_interpolate(position, alpha)
 				else:
 					# Teleport: no motion, no lerp across the map. A spawn marker the host
@@ -559,8 +565,6 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 		if not placed or position != last:
 			node.global_position = position
 			_last_positions[id] = position
-			if kind & KIND_PROJECTILE and position.distance_squared_to(last) > 0.01:
-				node.rotation = (position - last).angle()
 			if not placed and kind & KIND_BIRTH:
 				PuppetEntity.start_birth(node, str(_type_data.get(types[i])))
 			if fresh:
@@ -576,8 +580,11 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 				sprite.scale.x = -sprite.scale.x
 			if sprite.flip_h != bool(node_flags & Snapshot.FLAG_FLIP_H):
 				sprite.flip_h = not sprite.flip_h
-		if node.visible == bool(node_flags & Snapshot.FLAG_HIDDEN):
-			node.visible = not node.visible
+		# A projectile seen once has no direction yet: it would sit there for a snapshot with
+		# the rotation of the pooled puppet's last flight.
+		var hidden: bool = node_flags & Snapshot.FLAG_HIDDEN or (kind & KIND_PROJECTILE and j < 0)
+		if node.visible == hidden:
+			node.visible = not hidden
 		if kind & KIND_POSE:  # also without values: the host's parts are gone then
 			_pose.apply(node, from_poses.get(j, _no_pose), poses.get(i, _no_pose), alpha)
 	if not new_to:
@@ -742,8 +749,12 @@ func _free_puppet_pool() -> void:
 # together with the hit it belongs to.
 func _fire_events(render_t: float) -> void:
 	while not _events.empty() and _events[0][0] <= render_t:
-		var event = _events.pop_front()[1]
+		var entry: Array = _events.pop_front()
+		var event = entry[1]
 		if typeof(event) != TYPE_ARRAY or event.empty() or typeof(event[0]) != TYPE_INT:
+			continue
+		# Animations are state and still count.
+		if entry[0] < render_t - STALE_EVENT_MSEC and event[0] != Snapshot.EVENT_ANIM:
 			continue
 		if event[0] == Snapshot.EVENT_DAMAGE and event.size() == 6:
 			_show_damage(event)

@@ -186,16 +186,16 @@ func _client_shop(shop_sync: Node, body: Dictionary):
 	yield(_t.get_tree().create_timer(SETTLE_SEC), "timeout")
 
 
-# A scene with nothing in it, so that the counts of two rounds compare.
+# A scene with nothing in it, so that the counts of two rounds compare. Changed to like the game
+# changes scenes: the old one is gone before the new one is the current scene.
 func _blank_scene():
 	var tree := _t.get_tree()
-	var previous := tree.current_scene
 	var blank := Node.new()
 	blank.name = "WaveCleanupBlank"
-	tree.root.add_child(blank)
-	tree.current_scene = blank
-	if previous != null:
-		previous.queue_free()
+	var packed := PackedScene.new()
+	packed.pack(blank)
+	blank.free()
+	tree.change_scene_to(packed)
 	yield(tree.create_timer(SETTLE_SEC), "timeout")
 
 
@@ -386,6 +386,25 @@ func _measure(host: Node, client: Node):
 		% [frame_usec / 28000.0, spawn_usec / 1000.0, parse_usec / 30000.0]
 	)
 	_t._check(client._entities.size() == nodes, "client mirrors the whole late wave")
+	# Everything leaves and comes back: what a spawn costs once the pools are filled.
+	var empty: Dictionary = views[-1].duplicate()
+	empty["ids"] = PoolIntArray()
+	empty["types"] = PoolIntArray()
+	empty["positions"] = PoolVector2Array()
+	empty["flags"] = PoolByteArray()
+	empty["poses"] = {}
+	empty.erase("index")
+	client._apply_entities(views[-1], empty, 1.0)
+	yield(tree.create_timer(2.5), "timeout")
+	var again: Dictionary = views[-1].duplicate()
+	again.erase("index")
+	var respawn_usec := OS.get_ticks_usec()
+	client._apply_entities(again, again, 1.0)
+	respawn_usec = OS.get_ticks_usec() - respawn_usec
+	print(
+		"  info: client respawns %d pooled puppets in %.1f ms (%.0f usec each)"
+		% [client._entities.size(), respawn_usec / 1000.0, respawn_usec / float(nodes)]
+	)
 	client.set_process(true)
 	client._leave_battle()
 
