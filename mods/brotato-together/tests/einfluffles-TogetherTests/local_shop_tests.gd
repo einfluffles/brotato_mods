@@ -29,13 +29,16 @@ const BIT_ACCEPT := 1
 const BIT_INFO := 1 << 3
 const REMOTE := 1  # the remote player's slot on the host
 const ShopMecaTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_meca_tests.gd")
+const ShopStreamTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/shop_stream_tests.gd"
+)
 const PISTOL := "weapon_pistol_1"
 
 var _t: Node = null
 var _sync: Node = null
 var _input: Node = null
 var _shop: Node = null
-var _states := {}  # name -> SHOP_STATE body as a client receives it
+var _states := {}  # name -> RUN_SHOP body as a client receives it
 var _meca = ShopMecaTests.new()  # kept alive across its yields
 
 
@@ -360,7 +363,7 @@ func _client_part(together: Node):
 	var local = _sync.local
 	var focus_sync: Node = together.focus_sync
 	_sync._client_shop_id = 0
-	_sync._on_state(_states.start)
+	_receive(_states.start)
 	yield(_sync, "shop_entered")
 	yield(_frames(2), "completed")
 	var shop: Node = _sync._client_shop
@@ -558,7 +561,7 @@ func _client_states(emulator: Node, node: Node):
 	var element = weapons.get_child(0)
 	var own_data = RunData.players_data[0]
 	node.effect_choice_selected = 1  # marker: set_shop_item resets it
-	_sync._on_state(_states.remote_changed)
+	_receive(_states.remote_changed)
 	_t._check(
 		node.effect_choice_selected == 1 and weapons.get_child(0) == element,
 		"own panel not rebuilt when only another player's part changed"
@@ -571,7 +574,7 @@ func _client_states(emulator: Node, node: Node):
 	_t._check(local.seq == _states.remote_changed.seqs[0], "own revision follows the host")
 
 	emulator.focused_control = element
-	_sync._on_state(_states.own_gear_changed)
+	_receive(_states.own_gear_changed)
 	var cursor = emulator.focused_control
 	_t._check(
 		weapons.get_child_count() == 3 and is_instance_valid(cursor) and cursor.get_parent() == weapons,
@@ -582,7 +585,7 @@ func _client_states(emulator: Node, node: Node):
 	var ready: Dictionary = _states.own_gear_changed.duplicate()
 	ready.go = [true, false]
 	local.last_intent = {}
-	_sync._on_state(ready)
+	_receive(ready)
 	local.process()
 	_t._check(
 		local.last_intent.get("kind") == "go" and local.last_intent.get("arg") == 0,
@@ -590,7 +593,7 @@ func _client_states(emulator: Node, node: Node):
 	)
 	emulator.focused_control = shop._get_go_button(0)
 	local.last_intent = {}
-	_sync._on_state(ready)
+	_receive(ready)
 	local.process()
 	_t._check(
 		shop._player_pressed_go_button[0] and local.last_intent.empty(),
@@ -811,9 +814,14 @@ func _client_popup_mouse(emulator: Node):
 
 
 func _capture(name: String) -> void:
-	var body: Dictionary = bytes2var(var2bytes(_sync._shop_body()), false)
+	var body: Dictionary = _sync.state_body(ShopStreamTests.StateStream.RUN_SHOP)
 	body["you"] = 0
 	_states[name] = body
+
+
+# Through the client's stream, like a state from the host.
+func _receive(body: Dictionary) -> void:
+	ShopStreamTests.deliver(_sync.state_stream, ShopStreamTests.StateStream.RUN_SHOP, body)
 
 
 func _intent(kind: String, slot := -1, id := "", arg := -1, seq_offset := 0) -> Dictionary:

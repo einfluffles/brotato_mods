@@ -16,13 +16,7 @@ enum Msg {
 	BATTLE_END,  # host -> client: battle_id
 	TYPE_DEF,  # host -> client: battle_id, idx, path
 	SNAPSHOT,  # host -> client, unreliable: see sync/snapshot.gd
-	# host -> client: shop_id, run (RunStateCodec incl. shop), slots, go, seqs, pages, mecas
-	# (per player the meca upgrade rolls the host keeps: [[weapon slot, weapon my_id, stat key
-	# hash, value, stat key hash, value]], sync/meca_choice.gd), you, colors (see
-	# sync/shop_sync.gd)
-	SHOP_STATE,
 	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
-	SHOP_PAUSE,  # host -> client: paused, by, by_id (like BATTLE_PAUSE, while in the shop)
 	# client -> host: battle_id, seq (of the sender's panel), kind ("choose" | "reroll" |
 	# "take" | "discard" | "ban"), id (upgrade / item my_id, "" for reroll), meca (-1: none).
 	# Crate weapon popup: kind "weapon_combine" | "weapon_discard" | "weapon_meca_roll" (the
@@ -39,7 +33,8 @@ enum Msg {
 	# client -> host: shop_id, page, target (like UPGRADE_FOCUS, inside the sender's shop panel)
 	SHOP_FOCUS,
 	# host -> client: [section, revision, body or null (the section has no state now)], see
-	# sync/state_stream.gd
+	# sync/state_stream.gd; each section's body is described where it is built (shop:
+	# sync/shop_sync.gd, pause_shop: sync/pause_control.gd)
 	STATE,
 }
 

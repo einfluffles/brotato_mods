@@ -1,16 +1,13 @@
 extends Reference
 # Suite shop_loopback: the host opens the real co-op shop (rolls items) and buys slot 1; the
-# client mirrors both states, the host's cursor and the shop's sounds. Plays on mod_main's
-# two-player run (coop_run); checks go through its _check.
+# client mirrors both states (host provider -> STATE -> client handler, shop_stream_tests.gd),
+# the host's cursor and the shop's sounds. Plays on mod_main's two-player run (coop_run); checks
+# go through its _check.
 
-const RunStateCodec := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
-)
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
-const PerfTests := preload("res://mods-unpacked/einfluffles-TogetherTests/battle_perf_tests.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -25,14 +22,16 @@ const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync
 const HOST := 2
 const PEER := 11
 const KEY_CHECKS := 200
+const ShopStreamTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/shop_stream_tests.gd"
+)
 
 var t: Node  # the test mod: _check, helpers, scene tree
-var _perf = null
+var _stream_tests = null  # kept alive across its yields
 
 
 func _init(test_mod: Node) -> void:
 	t = test_mod
-	_perf = PerfTests.new(test_mod)
 
 
 func run(together: Node):
@@ -50,8 +49,9 @@ func run(together: Node):
 	t._check(host_shop.filename == shop_sync.SHOP_SCENE, "host co-op shop loaded")
 	shop_sync._host_shop = host_shop
 	shop_sync._shop_id = 7
-	_perf.test_shop_compare(shop_sync)
-	var before: Dictionary = bytes2var(var2bytes(shop_sync._shop_body()), false)
+	_stream_tests = ShopStreamTests.new(t, together)
+	yield(_stream_tests.run_host(host_shop), "completed")
+	var before: Array = bytes2var(var2bytes(_stream_tests.send_shop()), false)
 	var host_before: Array = t._shop_slots(host_shop, 0)
 
 	var container = host_shop._get_shop_items_container(0)
@@ -59,7 +59,8 @@ func run(together: Node):
 	var bought_id: String = bought.item_data.my_id
 	var gold_before: int = RunData.get_player_gold(0)
 	var host_sounds: Dictionary = yield(_ui_sounds_host_buy(together, bought), "completed")
-	var after: Dictionary = bytes2var(var2bytes(shop_sync._shop_body()), false)
+	var after: Array = bytes2var(var2bytes(_stream_tests.send_shop()), false)
+	_stream_tests.end_host()
 
 	# Host cursor for player 0 on shop slot 2 (focus mirroring, another mod's nodes on the host).
 	var focus_sync: Node = together.focus_sync
@@ -71,13 +72,14 @@ func run(together: Node):
 	t._check(host_gold_after < gold_before, "host bought %s" % bought_id)
 	print("  info: shop state %d B on the wire" % var2bytes(after).size())
 
-	# --- client ---
+	# --- client: the host stream's messages into the mod's own stream ---
+	var stream: Node = together.state_stream
 	shop_sync._client_shop_id = 0
-	var state := RunStateCodec.decode(before.run)
-	shop_sync._pending = {"state": state, "slots": before.slots, "go": before.go}
-	shop_sync._client_shop_id = before.shop_id
-	shop_sync._enter_shop(state)
+	stream._revs.erase(StateStream.RUN_SHOP)  # the revisions of the host stream above
+	stream.receive(before)
+	t._check(stream.is_pending(StateStream.RUN_SHOP), "shop state waits for the shop it loads")
 	yield(shop_sync, "shop_entered")
+	t._check(not stream.is_pending(StateStream.RUN_SHOP), "and is applied once it is ready")
 	var client_shop: Node = shop_sync._client_shop
 	t._check(client_shop != host_shop, "client loaded its own shop")
 	t._check(not client_shop._pause_menu.enabled, "client shop can't pause locally")
@@ -87,15 +89,19 @@ func run(together: Node):
 	)
 
 	var dropped_before: int = t._hold_sounds(true)
-	shop_sync._pending = {
-		"state": RunStateCodec.decode(after.run), "slots": after.slots, "go": after.go
-	}
-	shop_sync._apply_pending()
+	stream.receive(after)
 	t._check(
 		t._shop_slots(client_shop, 0) == host_after,
 		"client mirrors purchase %s == %s" % [t._shop_slots(client_shop, 0), host_after]
 	)
 	t._check(RunData.get_player_gold(0) == host_gold_after, "client gold matches host")
+	var shown = RunData.players_data[0]
+	stream.receive(after)  # a resync: the same revision again
+	t._check(
+		RunData.players_data[0] == shown and t._shop_slots(client_shop, 0) == host_after,
+		"the same state again (resync) rebuilds nothing"
+	)
+	_stream_tests.run_client(client_shop)
 	yield(t.get_tree(), "idle_frame")
 	_client_cursors(focus_sync, client_shop, cursor_messages)
 	_test_ui_sounds_client(together, host_sounds, dropped_before)

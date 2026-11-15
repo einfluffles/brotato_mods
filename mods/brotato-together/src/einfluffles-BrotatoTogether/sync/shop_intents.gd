@@ -91,7 +91,7 @@ static func revision_key(shop: Node, p: int) -> String:
 
 
 # A remote player's own cursor and page, for the host's screen and (through FocusSync and
-# SHOP_STATE) the other clients'. Cosmetic: decisions never depend on it.
+# the shop state) the other clients'. Cosmetic: decisions never depend on it.
 # target: a ui/focus_targets.gd target naming one of p's own shop parts.
 static func apply_focus(shop: Node, p: int, page, target) -> void:
 	var emulator = Utils.get_focus_emulator(p, shop)
