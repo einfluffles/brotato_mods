@@ -15,6 +15,9 @@ const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
 const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
+)
 const CursorTargetTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursor_target_tests.gd"
 )
@@ -533,14 +536,17 @@ func _client_view(together: Node, emulator: Node, node: Node):
 	)
 	var focus_sync: Node = together.focus_sync
 	var own_cursor = emulator.focused_control
-	focus_sync._scene = shop
 	var cursor := FocusSync.cursor_of(emulator, shop._get_go_button(0), shop)
 	_t._check(
 		cursor.size() == 3 and FocusSync.find_emulator(shop, cursor[0], cursor[1]) == emulator,
 		"host cursor names the own emulator by player (%s)" % [cursor]
 	)
-	focus_sync._apply({"scene": shop.filename, "cursors": [cursor]})
-	_t._check(emulator.focused_control == own_cursor, "host cursor never moves the own shop cursor")
+	var body := {"scene": shop.filename, "cursors": [cursor]}
+	var done: bool = focus_sync.apply_state(StateStream.CURSORS, body, 0)
+	_t._check(
+		done and emulator.focused_control == own_cursor,
+		"host cursor never moves the own shop cursor (handler done with it: %s)" % done
+	)
 
 
 # Only what changed is rebuilt; Go is the host's flag, kept while the cursor rests on it.

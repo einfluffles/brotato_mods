@@ -6,6 +6,9 @@ extends Reference
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
+)
 const CursorTargetTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursor_target_tests.gd"
 )
@@ -14,9 +17,6 @@ const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
-const StateStream := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
-)
 const StateStreamTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/state_stream_tests.gd"
 )
@@ -214,7 +214,6 @@ static func _texts(buttons: Array) -> Array:
 func _test_retry_prompt(together: Node):
 	var host: Node = together.battle_host
 	var client: Node = together.battle_client
-	var focus_sync: Node = together.focus_sync
 	var retry_sync: Node = together.retry_sync
 	var stream: Node = together.state_stream
 	host.set_process(false)
@@ -278,8 +277,14 @@ func _test_retry_prompt(together: Node):
 	t._check(not client_retry.visible, "retry: hidden when the host's is (section inactive)")
 	yield(_frames(1), "completed")  # FocusSync picks up the new scene
 	# The cursor arrives first: its button is hidden until the prompt shows -> kept and retried.
-	focus_sync.receive(focus_body)
-	t._check(focus_sync.is_pending(scene_path), "focus: unresolvable cursor kept")
+	# As STATE section cursors, with the revision the host's stream would send now.
+	var focus_message: Array = stream.message_for(StateStream.CURSORS, 0)
+	focus_message[2] = focus_body
+	stream.receive(focus_message)
+	t._check(
+		stream.is_pending(StateStream.CURSORS) and puppet.filename == scene_path,
+		"focus: unresolvable cursor kept"
+	)
 	stream.receive(message)  # the prompt again, same revision (a resync)
 	t._check(client_retry.visible, "retry: client shows the prompt")
 	var label = client_retry.get_node_or_null(retry_sync.WAITING_LABEL)
@@ -288,14 +293,14 @@ func _test_retry_prompt(together: Node):
 	var expected = puppet.get_node_or_null(focus_path) if not focus_path.is_empty() else null
 	var next_to := [expected] if expected != null else []
 	var extras := CursorTargetTests.add_mod_nodes(client._main, next_to)
-	focus_sync._retry_pending()  # what FocusSync._process does every frame on a client
+	stream.retry()  # what the stream does every frame while a section is pending
 	var client_focus = client_retry.get_node("FocusEmulator").focused_control
 	t._check(
 		client_focus != null and client_focus == expected,
 		"focus: cursor applied once the prompt is visible, extra nodes on the client"
 	)
 	CursorTargetTests.remove_nodes(extras)
-	t._check(not focus_sync.is_pending(scene_path), "focus: resolved message cleared")
+	t._check(not stream.is_pending(StateStream.CURSORS), "focus: resolved message cleared")
 	client_retry.get_node("%ConfirmButton").emit_signal("pressed")
 	client_retry.get_node("%OkButton").emit_signal("pressed")
 	yield(_frames(3), "completed")

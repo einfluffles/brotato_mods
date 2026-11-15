@@ -442,7 +442,7 @@ func _test_malformed() -> void:
 	t._check(probe.tries == 0, "malformed STATE messages ignored")
 	var session: Node = stream.session
 	session.emit_signal("message", P1, Protocol.Msg.STATE, [StateStream.MENU, 1, {}])
-	session.emit_signal("message", HOST, Protocol.Msg.FOCUS, [StateStream.MENU, 1, {}])
+	session.emit_signal("message", HOST, Protocol.Msg.SHOP_FOCUS, [StateStream.MENU, 1, {}])
 	t._check(probe.tries == 0, "only STATE from the host")
 	session.host = true
 	session.emit_signal("message", HOST, Protocol.Msg.STATE, [StateStream.MENU, 1, {}])

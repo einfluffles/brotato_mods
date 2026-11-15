@@ -16,9 +16,6 @@ enum Msg {
 	BATTLE_END,  # host -> client: battle_id
 	TYPE_DEF,  # host -> client: battle_id, idx, path
 	SNAPSHOT,  # host -> client, unreliable: see sync/snapshot.gd
-	# host -> client: scene, cursors [[player, menu, control]] (menu: the emulator's parent; menu
-	# and control as ui/focus_targets.gd targets, see sync/focus_sync.gd)
-	FOCUS,
 	# host -> client: shop_id, run (RunStateCodec incl. shop), slots, go, seqs, pages, mecas
 	# (per player the meca upgrade rolls the host keeps: [[weapon slot, weapon my_id, stat key
 	# hash, value, stat key hash, value]], sync/meca_choice.gd), you, colors (see

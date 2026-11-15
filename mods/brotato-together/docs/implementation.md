@@ -296,8 +296,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `BattleClient` retries the stream on `battle_entered`: retry and pause_battle stay pending until the
     puppet battle of their `battle_id` is ready (a peer joining gets them before its BATTLE_START; 30 s
     timeout for the scene load); only an earlier battle's or a malformed body is dropped.
-  - SHOP_STATE, SHOP_PAUSE and FOCUS move onto it in follow-up changes; until then they
+  - SHOP_STATE and SHOP_PAUSE move onto it in follow-up changes; until then they
     still travel as their own messages.
+  - cursors: `FocusSync` (provider and handler, 0.05 s, 10 s timeout) instead of FOCUS, its poll loop and
+    its pending-per-scene table; see Cursors.
 - Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
   version (manifest) must match. Rejections carry a reason that the client shows in the F9 menu. DLC never
   rejects (protocol 5 / 0.2.1).
@@ -586,8 +588,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     two real machines yet (headless tests only: no real mouse, keyboard or pad; the crate weapon
     popup's combine, recycle hold, cancel and meca upgrade are driven through its real buttons by
     synthetic clicks).
-- **Cursors** (`sync/focus_sync.gd`, `ui/focus_targets.gd`; protocol 10): every `FocusEmulator` in the
-  scene; `FOCUS` = `scene, cursors [[player, menu, control]]`, applied through the `focused_control` setter.
+- **Cursors** (`sync/focus_sync.gd`, `ui/focus_targets.gd`; protocol 10, state stream section `cursors`
+  since 14): every `FocusEmulator` in the scene; body `scene, cursors [[player, menu, control]]`, applied
+  through the `focused_control` setter. Last section, so the shop, level-up panels and retry prompt are
+  applied before the cursors on them. Inactive (null) while the host's scene has no emulators; no
+  `clear_state` (the cursors go with the client's scene). The key is not the description: describing
+  builds `FocusTargets`' anchor table twice per cursor (about 380 us in a two-player shop, 20 checks a
+  second), so the key is each cursor's control and emulator by instance id and child indices up to the
+  scene, plus the player count and the scene instance (about 15 us); the anchors are fixed nodes, so a
+  description changes only with those. One pending body: one for the next scene replaces one still
+  waiting for the previous scene, which only drops cursors on a screen the host has left.
   Until protocol 9 emulator and control were child-index paths from the scene root, which broke as soon as
   the trees differed: Damage Meter adds a summary button next to the shop's reroll button, and with it on
   one machine only every later index was off by one. Now nothing visible travels as a tree position:
@@ -609,9 +619,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     inventory element). The own-panel messages only accept that player's anchors, never `scene`.
   - Network data is checked (types, anchor names, player 0..3, index and step counts, name lengths;
     steps match child names, never parse paths). A target that does not resolve (a control only one side
-    has) is ignored, as before: the latest message per scene stays pending (10 s) until every cursor
-    resolves to a visible control (scene still loading, retry prompt not shown yet) and is retried every
-    frame. `ui/scene_paths.gd` only finds the emulators now (FocusSync, MenuSync, CoopSelection).
+    has) is ignored, as before: `apply_state` (only while mirroring and on the scene the body names;
+    `local_emulators` are skipped) returns false until every cursor resolves to a visible control (scene
+    still loading, retry prompt not shown yet), and the stream retries it every frame for up to 10 s. `ui/scene_paths.gd` only finds the emulators now (FocusSync, MenuSync, CoopSelection).
 - **Selection screens / end of run** (`sync/menu_sync.gd` + `ui/client_view.gd`): grids depend on local
   unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
   run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),

@@ -70,15 +70,6 @@ static func add_mod_nodes(root: Node, controls: Array, next_to: Node = null) -> 
 	return extras
 
 
-# FocusSync's cursors on a host shop that has what another mod would add there on the host
-# only: a node first in the scene and a Damage-Meter-like button before player 0's reroll.
-static func host_cursors(focus_sync: Node, shop: Node) -> Array:
-	var extras := add_mod_nodes(shop, [], shop._get_reroll_button(0))
-	var cursors: Array = focus_sync._cursors()
-	remove_nodes(extras)
-	return bytes2var(var2bytes(cursors), false)  # as a client receives them
-
-
 static func remove_nodes(extras: Array) -> void:
 	for extra in extras:
 		if extra.get_parent() != null:
