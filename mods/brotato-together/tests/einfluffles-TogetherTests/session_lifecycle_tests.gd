@@ -53,6 +53,17 @@ class FakeSteam:
 	func getLocalTimestamp() -> int:
 		return OS.get_ticks_usec() + 5000000000
 
+	func getSessionConnectionInfo(_steam_id: int, _connection: bool, _status: bool) -> Dictionary:
+		return {
+			"ping": 21,
+			"queue_time": 9000,
+			"pending_reliable": 3000,
+			"pending_unreliable": 40,
+			"sent_unacknowledged_reliable": 0,
+			"send_rate": 262144,
+			"local_quality": 0.5,
+		}
+
 	func sendMessageToUser(steam_id: int, data: PoolByteArray, _flags: int, channel: int) -> int:
 		sent.append([steam_id, channel, data])
 		return send_result
@@ -366,6 +377,7 @@ func _test_ping(transport: Node, session: Node) -> void:
 	var peer: Dictionary = session._add_peer(CLIENT)
 	peer.ready = true
 	var unreliable: int = transport.CHANNEL_UNRELIABLE
+	var logged: int = session.slow_answers
 	# Answering: the PING waits in Steam's queue for this game's frame.
 	_steam.sent.clear()
 	_steam.queue(CLIENT, unreliable, Protocol.encode(Protocol.Msg.PING, {"t": 7}))
@@ -402,6 +414,23 @@ func _test_ping(transport: Node, session: Node) -> void:
 		"without Steam's receive time the ping holds the frames (%d ms)" % peer.rtt_ms
 	)
 	_t._check(_steam.inbox.empty(), "every queued message was read")
+	_t._check(session.slow_answers == logged, "answers under the limit are not logged")
+	# A late answer is logged with where its time went and what Steam says about the connection.
+	_ask(session)
+	ping = _last_body(Protocol.Msg.PING)
+	var late := {"t": ping.get("t") - session.SLOW_ANSWER_MSEC, "held": 100}
+	_steam.queue(CLIENT, unreliable, Protocol.encode(Protocol.Msg.PONG, late))
+	transport._process(0.0)
+	var text: String = session.slow_answer_text(CLIENT, 100, 0)
+	_t._check(
+		(
+			session.slow_answers == logged + 1
+			and "+ its frame 100 +" in text
+			and "ping 21 ms, send queue 9000 us, pending 3000 + 40 B" in text
+			and "quality 0.5 / ?" in text
+		),
+		"a late answer is logged with the frames and Steam's numbers (%s)" % text
+	)
 	session.peers.erase(CLIENT)
 
 

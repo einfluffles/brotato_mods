@@ -173,6 +173,15 @@ func held_msec(received_usec: int) -> int:
 	return held if held >= 0 and held < MAX_HELD_MSEC else 0
 
 
+# Steam's own numbers for the connection to a peer (ping, queue_time in usec, pending_reliable,
+# pending_unreliable, send_rate, ...), {} when unavailable. For the log.
+func connection_status(steam_id: int) -> Dictionary:
+	if steam == null or not steam.has_method("getSessionConnectionInfo"):
+		return {}
+	var status = steam.getSessionConnectionInfo(steam_id, false, true)
+	return status if typeof(status) == TYPE_DICTIONARY else {}
+
+
 func _message_sender(msg: Dictionary) -> int:
 	for key in ["remote_steam_id", "identity", "steam_id"]:
 		if msg.has(key):

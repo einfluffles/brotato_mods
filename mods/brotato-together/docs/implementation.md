@@ -287,7 +287,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   GodotSteam's `time_received` against `getLocalTimestamp()` when the message is handled
   (`Transport.held_msec`); the PONG carries the PING's wait (`held`). What is left is the network and Steam's
   send queue. The whole time stays in `answer_ms` (F9 panel: "with frame time"). Without a receive time
-  (0 or implausible) nothing is taken off, as before.
+  (0 or implausible) nothing is taken off, as before. An answer later than 150 ms is logged ("Slow answer
+  from ...": network, the other game's frame, this one's, the time since this game's last frame, the scene,
+  and Steam's own numbers from `getSessionConnectionInfo`: its ping, send queue time, pending and unacked
+  bytes, send rate, quality), at most once a second per peer: it tells a stalled frame on either side from
+  the network and from a full send queue.
 - **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
   ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
   menu_grids, retry, pause_battle, pause_shop, cursors (state that builds controls before the cursors on

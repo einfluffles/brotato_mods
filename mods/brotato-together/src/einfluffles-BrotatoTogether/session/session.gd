@@ -25,11 +25,23 @@ const PEER_STALE_MSEC := 5000
 const HOST_TIMEOUT_MSEC := 15000  # client gives up on a silent host (crash, network loss)
 const HELLO_INTERVAL_MSEC := 1000
 const RESYNC_INTERVAL_MSEC := 1000  # at most one full resync per peer and interval
+const SLOW_ANSWER_MSEC := 150  # a PONG this late is logged with where the time went
+# Transport.connection_status: what Steam measures itself, and what waits in its send queue.
+const STEAM_STATUS_KEYS := [
+	"ping", "queue_time", "pending_reliable", "pending_unreliable", "sent_unacknowledged_reliable",
+	"send_rate", "local_quality", "remote_quality",
+]
+const STEAM_STATUS_TEXT := (
+	"; Steam: ping %s ms, send queue %s us, pending %s + %s B, unacked %s B, rate %s B/s,"
+	+ " quality %s / %s"
+)
 
 var transport: Node = null
 # steam_id -> {name, ready, rtt_ms, answer_ms, last_seen_msec, resync, last_resync_msec}
 var peers := {}
+var slow_answers := 0  # logged so far (tests)
 
+var _frame_msec := 0  # when _process ran last
 var _next_ping_msec := 0
 var _next_send_warning_msec := 0
 var _next_hello_msec := -1  # client: next HELLO (re)send, -1 when not waiting for WELCOME
@@ -89,6 +101,7 @@ func _process(_delta: float) -> void:
 	if not transport.is_active():
 		return
 	var now := OS.get_ticks_msec()
+	_frame_msec = now
 	if is_client() and _host_timed_out(now):
 		ModLoaderLog.warning("No messages from the host for a while; leaving", LOG_NAME)
 		transport.emit_signal("lobby_failed", "Connection to the host lost")
@@ -223,7 +236,7 @@ func _on_message_received(
 		Protocol.Msg.PING:
 			send_unreliable(steam_id, Protocol.Msg.PONG, _pong(body, received_usec))
 		Protocol.Msg.PONG:
-			_handle_pong(peer, body, received_usec)
+			_handle_pong(steam_id, body, received_usec)
 		_:
 			if peer.ready:
 				emit_signal("message", steam_id, msg_type, body)
@@ -238,18 +251,44 @@ func _pong(body, received_usec: int):
 	return pong
 
 
-func _handle_pong(peer: Dictionary, body, received_usec: int) -> void:
+func _handle_pong(steam_id: int, body, received_usec: int) -> void:
 	if typeof(body) != TYPE_DICTIONARY or typeof(body.get("t")) != TYPE_INT:
 		return
 	var answer := OS.get_ticks_msec() - int(body.t)
 	if answer < 0:
 		return
 	var held = body.get("held")
-	var waited: int = transport.held_msec(received_usec)
-	if typeof(held) == TYPE_INT and held > 0:
-		waited += held
+	var held_there: int = held if typeof(held) == TYPE_INT and held > 0 else 0
+	var held_here: int = transport.held_msec(received_usec)
+	var peer: Dictionary = peers[steam_id]
 	peer.answer_ms = answer
-	peer.rtt_ms = int(max(0, answer - waited))
+	peer.rtt_ms = int(max(0, answer - held_there - held_here))
+	if answer >= SLOW_ANSWER_MSEC:
+		slow_answers += 1
+		ModLoaderLog.info(slow_answer_text(steam_id, held_there, held_here), LOG_NAME)
+
+
+# Where a late answer's time went: the network, the other game's frame, this one's (0 and 0
+# without Steam's receive times; the time since this game's last frame shows its stall then),
+# the screen, and Steam's own numbers for the connection. At most one a second per peer.
+func slow_answer_text(steam_id: int, held_there: int, held_here: int) -> String:
+	var peer: Dictionary = peers[steam_id]
+	var scene := get_tree().current_scene
+	var text := (
+		"Slow answer from %s: %d ms = network %d + its frame %d + this frame %d"
+		% [peer.name, peer.answer_ms, peer.rtt_ms, held_there, held_here]
+	)
+	text += (
+		" (%d ms since the last frame, %s)"
+		% [OS.get_ticks_msec() - _frame_msec, scene.filename.get_file() if scene != null else "-"]
+	)
+	var status: Dictionary = transport.connection_status(steam_id)
+	if status.empty():
+		return text
+	var values := []
+	for key in STEAM_STATUS_KEYS:
+		values.append(status.get(key, "?"))
+	return text + STEAM_STATUS_TEXT % values
 
 
 # Idempotent: answered every time (the client resends until it sees WELCOME).
