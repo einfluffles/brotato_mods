@@ -16,16 +16,22 @@ extends Reference
 # "endless"    -                    ""            1: on, 0: off
 # "combine"    index in the weapons weapon my_id  -
 # "discard"    index in the weapons weapon my_id  -
+# "meca_roll"  index in the weapons weapon my_id  -
+# "meca"       index in the weapons weapon my_id  option index (0 / 1) of the roll sent
 # "go", "endless" and "lock" say what the player wants to be true: applying them twice changes
 # nothing, so "go" and "endless" need no revision. Everything else is a press on what the
-# sender's panel showed (the revision) and makes that revision stale once applied.
+# sender's panel showed (the revision) and makes that revision stale once applied, except
+# "meca_roll": it only rolls (or finds) the two meca upgrade options the host keeps for that
+# weapon in its copy of the player's popup, sent back with the state (sync/meca_choice.gd).
 
 enum { DROPPED, APPLIED, CHANGED }
 
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
+const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const SLOT_KINDS := ["buy", "steal", "lock", "ban", "dismantle"]
-const WEAPON_KINDS := ["combine", "discard"]
-const PATH_TYPES := [TYPE_INT_ARRAY, TYPE_ARRAY]
+const WEAPON_KINDS := ["combine", "discard", "meca_roll", "meca"]
 
 
 # seq: the current revision of player p's panel. Returns DROPPED, APPLIED (nothing a press
@@ -54,8 +60,19 @@ static func apply(shop: Node, p: int, msg: Dictionary, seq: int) -> int:
 		var weapon = find_weapon(RunData.get_player_weapons(p), slot, id)
 		if weapon == null:
 			return DROPPED
+		var popup = shop._get_item_popup(p)
+		if kind == "meca_roll":
+			return APPLIED if MecaChoice.roll(popup, weapon, p) != null else DROPPED
+		if kind == "meca":
+			# Exactly the remembered roll, by index; the popup's own signal runs the shop's
+			# handler (BaseShop._on_item_meca_upgrade_selected spends the parts).
+			var upgraded = MecaChoice.take(popup, weapon, p, arg)
+			if upgraded == null:
+				return DROPPED
+			popup.emit_signal("item_meca_upgrade_selected", weapon, upgraded)
+			return CHANGED
 		# The popup's own signal: the shop's handler checks what may be combined / recycled.
-		shop._get_item_popup(p).emit_signal("item_%s_button_pressed" % kind, weapon)
+		popup.emit_signal("item_%s_button_pressed" % kind, weapon)
 		return CHANGED
 	return DROPPED
 
@@ -75,17 +92,15 @@ static func revision_key(shop: Node, p: int) -> String:
 
 # A remote player's own cursor and page, for the host's screen and (through FocusSync and
 # SHOP_STATE) the other clients'. Cosmetic: decisions never depend on it.
-static func apply_focus(shop: Node, p: int, page, path) -> void:
+# target: a ui/focus_targets.gd target naming one of p's own shop parts.
+static func apply_focus(shop: Node, p: int, page, target) -> void:
 	var emulator = Utils.get_focus_emulator(p, shop)
 	if emulator == null:
 		return
 	var panel = shop._get_coop_player_container(p)
 	if typeof(page) == TYPE_INT and page >= 0 and page != panel.carousel.index:
 		panel.carousel.index = page  # the setter clamps and shows that page
-	var indices := int_path(path)
-	if indices.empty():
-		return
-	var control = ScenePaths.resolve(panel, indices)
+	var control = FocusTargets.resolve(target, shop, p)
 	if control is Control and control.is_visible_in_tree() and emulator.focused_control != control:
 		emulator.focused_control = control
 
@@ -109,18 +124,6 @@ static func find_weapon(weapons: Array, slot: int, id: String):
 		if weapon.my_id == id:
 			return weapon
 	return null
-
-
-# A child-index path from the network: empty unless it is a list of ints.
-static func int_path(value) -> PoolIntArray:
-	var path := PoolIntArray()
-	if not (typeof(value) in PATH_TYPES):
-		return path
-	for index in value:
-		if typeof(index) != TYPE_INT:
-			return PoolIntArray()
-		path.append(index)
-	return path
 
 
 static func _offers(node: Node, id: String) -> bool:

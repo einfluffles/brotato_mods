@@ -10,10 +10,17 @@ extends Reference
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
+const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const CursorTargetTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/cursor_target_tests.gd"
+)
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
+const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const MECA_DLC := "primal_dread"
 const PISTOL := "weapon_pistol_1"
 const BIT_ACCEPT := 1
@@ -76,12 +83,24 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 
 	# A remote player's own cursor and page, shown on the host.
 	var second_button: Control = container._get_upgrade_uis()[1].button
-	panels.host_apply_focus(ui, 0, 0, ScenePaths.path_of(second_button, container))
+	var target := FocusTargets.describe(second_button, ui, 0)
+	var extra := Control.new()  # another mod's node on the host only
+	container.add_child(extra)
+	container.move_child(extra, 0)
+	panels.host_apply_focus(ui, 0, 0, target)
 	t._check(container.focus_emulator.focused_control == second_button, "host shows a remote cursor")
-	panels.host_apply_focus(ui, 0, 1, PoolIntArray())
+	container.remove_child(extra)
+	extra.free()
+	panels.host_apply_focus(ui, 1, 0, target)
+	t._check(
+		ui._get_player_container(1).focus_emulator.focused_control != second_button,
+		"a target in another player's panel ignored"
+	)
+	panels.host_apply_focus(ui, 0, 1, [])
 	t._check(container.carousel.index == 1, "host shows a remote player's page")
 	panels.host_apply_focus(ui, 0, 0, ["junk"])
-	t._check(container.carousel.index == 0, "page back, junk path ignored")
+	t._check(container.carousel.index == 0, "page back, junk target ignored")
+	_panel_targets(t, ui)
 
 	_host_weapons(t, panels, ui, msg.battle_id)
 
@@ -103,6 +122,41 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 	}
 	t._check(panels.host_apply_intent(ui, 1, discard), "crate item discarded by intent")
 	t._check(panels.capture(ui)[1][0] != "item", "crate panel moved on")
+
+
+# Every kind of level-up / crate cursor target, by meaning, with extra nodes on one side only:
+# from the UpgradesUI (UPGRADE_FOCUS) and from the scene (FocusSync, through main's
+# _coop_upgrades_ui), plus the emulators by player.
+func _panel_targets(t: Node, ui: Node) -> void:
+	var level_up = ui._get_player_container(0)
+	var crate = ui._get_player_container(1)
+	var options: Array = level_up._get_upgrade_uis()
+	var own := [
+		options[0].button,
+		options[1].button,
+		level_up._reroll_button,
+		level_up.carousel.arrow_right,
+		level_up.item_popup._discard_button,
+	]
+	CursorTargetTests.check_robust(t, "level-up (own panel)", ui, own, 0, level_up._reroll_button)
+	var weapons = crate.crate_weapons_container
+	var controls := own + [crate._take_button, crate._ban_button]
+	if weapons.get_element_count() > 1:
+		controls.append(weapons.get_element(1))
+	var main: Node = ui.get_tree().current_scene
+	CursorTargetTests.check_robust(t, "level-up (FocusSync)", main, controls, -1, crate._take_button)
+	var option: Array = FocusTargets.describe(options[1].button, main)
+	t._check(
+		option.size() == 4 and option[0] == "up_option" and option[1] == 0 and option[2] == 1,
+		"a level-up option is named by its player and place (%s)" % [option]
+	)
+	var found := true
+	for p in 2:
+		var emulator = ui._get_player_container(p).focus_emulator
+		var cursor := FocusSync.cursor_of(emulator, options[0].button, main)
+		found = found and cursor.size() == 3
+		found = found and FocusSync.find_emulator(main, cursor[0], cursor[1]) == emulator
+	t._check(found, "the panels' emulators are found by player")
 
 
 # Crate weapon popup intents (player 1, whose crate panel shows an item): the host applies
@@ -166,9 +220,10 @@ func _host_weapons(t: Node, panels: Node, ui: Node, battle_id: int) -> void:
 	_host_meca(t, panels, ui, battle_id)
 
 
-# Meca upgrade (primal_dread): the client names the stat, the host builds the upgrade.
-# Headless the game owns no DLC, so it is switched on for these checks only (the upgrade
-# itself needs none of the DLC content), and the meca weapon is gone again afterwards.
+# Meca upgrade (primal_dread): the client asks, the host rolls the two options with the game's
+# code and remembers them (sent in the state), the pick names one by index. Headless the game
+# owns no DLC, so it is switched on for these checks only, and the meca weapon is gone again
+# afterwards.
 func _host_meca(t: Node, panels: Node, ui: Node, battle_id: int) -> void:
 	var dlc = ItemService.get_dlc_data_by_id(MECA_DLC)
 	if dlc == null:
@@ -176,35 +231,84 @@ func _host_meca(t: Node, panels: Node, ui: Node, battle_id: int) -> void:
 		return
 	var weapon = RunData.get_player_weapons(1)[0]
 	var cost: int = dlc.get_meca_upgrade_cost(weapon)
-	var stat: int = dlc._get_allowed_meca_stats(1).values()[0][0]
-	var meca := {
-		"battle_id": battle_id,
-		"seq": panels._seqs[1],
-		"kind": "weapon_meca",
-		"id": weapon.my_id,
-		"weapon": 0,
-		"stat": stat,
+	var seq: int = panels._seqs[1]
+	var roll := {
+		"battle_id": battle_id, "seq": seq, "kind": "weapon_meca_roll", "id": weapon.my_id, "weapon": 0
 	}
 	RunData.players_data[1].meca_parts = cost + 1
 	var was_active: bool = MECA_DLC in ProgressData.active_update_data
 	if not was_active:
-		t._check(not panels.host_apply_intent(ui, 1, meca), "meca upgrade without the DLC dropped")
+		t._check(not panels.host_apply_intent(ui, 1, roll), "meca roll without the DLC dropped")
 		ProgressData.active_update_data.push_back(MECA_DLC)
 	RunData.players_data[1].meca_parts = 0
-	t._check(not panels.host_apply_intent(ui, 1, meca), "meca upgrade without parts dropped")
+	t._check(not panels.host_apply_intent(ui, 1, roll), "meca roll without parts dropped")
 	RunData.players_data[1].meca_parts = cost + 1
-	var junk := meca.duplicate()
-	junk.stat = 12345
-	t._check(not panels.host_apply_intent(ui, 1, junk), "meca upgrade with an unknown stat dropped")
-	t._check(_weapon_ids(1) == [weapon.my_id] and not weapon.is_meca, "nothing upgraded so far")
-	t._check(panels.host_apply_intent(ui, 1, meca), "meca upgrade applied")
+	var stale := roll.duplicate()
+	stale.seq -= 1
+	t._check(not panels.host_apply_intent(ui, 1, stale), "meca roll: stale revision dropped")
+	var pick := roll.duplicate()
+	pick.kind = "weapon_meca"
+	pick["meca"] = 0
+	t._check(not panels.host_apply_intent(ui, 1, pick), "meca pick without a roll dropped")
+	t._check(panels._mecas(ui) == [[], []], "nothing rolled so far")
+
+	t._check(panels.host_apply_intent(ui, 1, roll), "meca roll applied")
+	var rolls: Array = panels._mecas(ui)[1]
+	var entry: Array = rolls[0] if rolls.size() == 1 else []
+	t._check(
+		entry.size() == 6 and entry[0] == 0 and entry[1] == weapon.my_id,
+		"the host remembers the roll for that weapon (%s)" % [rolls]
+	)
+	if entry.size() != 6:
+		entry = [0, weapon.my_id, 0, 0, 0, 0]
+	t._check(
+		entry[2] != entry[4] and Keys.hash_to_string.has(entry[2]) and typeof(entry[3]) == TYPE_INT,
+		"two different stats with their amounts"
+	)
+	t._check(panels.body(panels.capture(ui)).mecas[1] == rolls, "the roll goes out with the state")
+	t._check(panels._seqs[1] == seq and _weapon_ids(1) == [weapon.my_id], "a roll changes nothing")
+	t._check(panels.host_apply_intent(ui, 1, roll), "asking again")
+	t._check(panels._mecas(ui)[1] == rolls, "shows the same roll: no reroll by asking again")
+
+	for index in [2, -1, "0", null]:
+		var forged := pick.duplicate()
+		forged.meca = index
+		t._check(not panels.host_apply_intent(ui, 1, forged), "meca pick %s dropped" % [index])
+	var other_weapon := pick.duplicate()
+	other_weapon.id = "weapon_smg_1"
+	t._check(not panels.host_apply_intent(ui, 1, other_weapon), "meca pick: another weapon dropped")
+	var stale_pick := pick.duplicate()
+	stale_pick.seq -= 1
+	t._check(not panels.host_apply_intent(ui, 1, stale_pick), "meca pick: stale revision dropped")
+	var not_enabled := pick.duplicate()
+	not_enabled.seq = panels._seqs[0]
+	t._check(not panels.host_apply_intent(ui, 0, not_enabled), "meca pick: feature off dropped")
+	RunData.players_data[1].meca_parts = 0
+	t._check(not panels.host_apply_intent(ui, 1, pick), "meca pick without parts dropped")
+	RunData.players_data[1].meca_parts = cost + 1
+	t._check(
+		_weapon_ids(1) == [weapon.my_id] and not weapon.is_meca and panels._mecas(ui)[1] == rolls,
+		"nothing upgraded so far, the roll still remembered"
+	)
+
+	pick.meca = 1
+	t._check(panels.host_apply_intent(ui, 1, pick), "meca pick applied")
 	var upgraded = RunData.get_player_weapons(1)[0]
-	var has_stat := false
+	var picked_value := 0
 	for effect in upgraded.effects:
-		has_stat = has_stat or effect.key_hash == stat
-	t._check(upgraded != weapon and upgraded.is_meca and has_stat, "weapon is meca with the stat")
-	t._check(RunData.get_player_meca_parts(1) == 1, "meca parts paid")
-	t._check(not panels.host_apply_intent(ui, 1, meca), "the same upgrade twice applies once")
+		if effect.key_hash == entry[4] and not effect is EffectOption:
+			picked_value = effect.value
+	t._check(
+		upgraded != weapon and upgraded.is_meca and picked_value == entry[5],
+		"the weapon got the second option the host rolled (%s)" % [picked_value]
+	)
+	t._check(MecaChoice.options(upgraded).empty(), "no option left on the upgraded weapon")
+	t._check(RunData.get_player_meca_parts(1) == 1, "meca parts paid on the host")
+	t._check(panels._mecas(ui) == [[], []], "the roll is forgotten once picked")
+	t._check(not panels.host_apply_intent(ui, 1, pick), "the same pick twice applies once")
+	var again := pick.duplicate()
+	again.seq = panels._seqs[1]
+	t._check(not panels.host_apply_intent(ui, 1, again), "a pick without a remembered roll dropped")
 	if not was_active:
 		ProgressData.active_update_data.erase(MECA_DLC)
 	RunData.players_data[1].meca_parts = 0
@@ -282,14 +386,21 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	panels._sent_focus = ""
 	panels._report_own_focus()
 	t._check('"page":1' in panels._sent_focus.replace(" ", ""), "own page reported to the host")
+	var target := FocusTargets.describe(emulator.focused_control, panels._guarded_ui, own.player_index)
+	t._check(
+		not target.empty() and var2str(target) in panels._sent_focus,
+		"own cursor reported by meaning (%s)" % [target]
+	)
 
 	# The host's cursor for the own panel is not applied; the others' pages are mirrored.
 	var own_cursor = emulator.focused_control
 	focus_sync._scene = main
-	var reroll_path := ScenePaths.path_of(own._reroll_button, main)
-	focus_sync._apply(
-		{"scene": main.filename, "cursors": [[ScenePaths.path_of(emulator, main), 0, reroll_path]]}
+	var cursor := FocusSync.cursor_of(emulator, own._reroll_button, main)
+	t._check(
+		cursor.size() == 3 and FocusSync.find_emulator(main, cursor[0], cursor[1]) == emulator,
+		"host cursor names the own emulator by player (%s)" % [cursor]
 	)
+	focus_sync._apply({"scene": main.filename, "cursors": [cursor]})
 	t._check(emulator.focused_control == own_cursor, "host cursor never moves the own cursor")
 	var paged := msg.duplicate()
 	paged.pages = [0, 2]
@@ -383,15 +494,16 @@ func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
 	t._check(
 		sent.get("kind") == "weapon_discard" and sent.get("weapon") == 2, "recycle sends an intent"
 	)
-	# Meca upgrade: the stat comes from the options the popup showed, by the button pressed.
-	panels._meca_stats = [111, 222]
+	# Meca upgrade: the popup's selection alone (no effect button pressed) sends nothing.
 	popup.emit_signal("item_meca_upgrade_selected", weapons[0], weapons[0])
 	t._check(panels.last_intent.get("kind") == "weapon_discard", "no meca intent before the choice")
-	panels._on_own_meca_choice(1)
-	sent = panels.last_intent
 	t._check(
-		sent.get("kind") == "weapon_meca" and sent.get("weapon") == 0 and sent.get("stat") == 222,
-		"meca upgrade sends the stat picked (%s)" % [sent]
+		(
+			_meca_cut(ui._get_player_container(0).item_popup)
+			and _meca_cut(popup)
+			and popup._upgrade_button.is_connected("pressed", panels._meca, "_on_upgrade_pressed")
+		),
+		"no popup rolls meca options on a client; the own one asks the host"
 	)
 	t._check(
 		RunData.get_player_weapons(1) == weapons and RunData.get_player_gold(1) == gold,
@@ -408,6 +520,7 @@ func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
 	)
 
 	yield(_popup_mouse(panels, own, weapons), "completed")
+	yield(_client_meca(main, msg, panels, own, weapons), "completed")
 
 	# The host's answer (a recycled pistol): the list follows and the cursor keeps its slot.
 	own.focus_emulator.focused_control = list.get_element(2)
@@ -496,6 +609,115 @@ func _popup_mouse(panels: Node, own: Node, weapons: Array):
 		not popup._focused and weapons == RunData.get_player_weapons(1),
 		"a click on cancel closes the popup"
 	)
+
+
+# The meca upgrade on the own crate weapon popup, by mouse (this client is player 1): the
+# button asks the host, the host's two options (from a state) fill the game's own choice, and
+# the pick leaves as an index. Nothing is rolled, upgraded or paid here.
+func _client_meca(main: Node, msg: Dictionary, panels: Node, own: Node, weapons: Array):
+	var t := _t
+	yield(t.get_tree(), "idle_frame")
+	if ItemService.get_dlc_data_by_id(MECA_DLC) == null:
+		print("  info: no %s data, client meca upgrade not tested" % MECA_DLC)
+		return
+	var popup = own.item_popup
+	var list = own.crate_weapons_container
+	var was_active: bool = MECA_DLC in ProgressData.active_update_data
+	if not was_active:
+		ProgressData.active_update_data.push_back(MECA_DLC)
+	var parts: int = RunData.get_player_meca_parts(1)
+	RunData.players_data[1].meca_parts = 5
+	yield(_click(list.get_element(0)), "completed")
+	var weapon = popup._item_data
+	var slot: int = weapons.find(weapon)
+	var id: String = weapon.my_id if weapon != null else ""
+	t._check(
+		popup._focused and slot >= 0 and popup._upgrade_button.visible,
+		"the own popup offers the meca upgrade"
+	)
+	panels.last_intent = {}
+	yield(_click(popup._upgrade_button), "completed")
+	var sent: Dictionary = panels.last_intent
+	t._check(
+		(
+			sent.get("kind") == "weapon_meca_roll"
+			and sent.get("weapon") == slot
+			and sent.get("id") == id
+			and sent.get("seq") == msg.seqs[1]
+		),
+		"the upgrade button asks the host (%s)" % [sent]
+	)
+	t._check(popup._focused and not popup.is_choosing_meca_upgrade(), "nothing rolled here")
+
+	var damage: int = Keys.stat_damage_hash
+	var armor: int = Keys.stat_armor_hash
+	var rolled: Dictionary = msg.duplicate(true)
+	rolled["mecas"] = [[], [[slot, id, damage, 7, armor, 3]]]
+	panels.apply(main, rolled)
+	t._check(
+		_shown_options(popup) == [[damage, 7], [armor, 3]] and popup._effect_choice_container.visible,
+		"the popup shows the host's two options (%s)" % [_shown_options(popup)]
+	)
+	panels.last_intent = {}
+	yield(_click(popup._effect_button_1), "completed")
+	sent = panels.last_intent
+	t._check(
+		(
+			sent.get("kind") == "weapon_meca"
+			and sent.get("meca") == 1
+			and sent.get("weapon") == slot
+			and sent.get("id") == id
+		),
+		"the pick leaves as the option's index (%s)" % [sent]
+	)
+	t._check(not popup._focused and not popup.is_choosing_meca_upgrade(), "the popup closed")
+	t._check(
+		RunData.get_player_weapons(1) == weapons and RunData.get_player_meca_parts(1) == 5,
+		"nothing upgraded or paid here"
+	)
+
+	# Closed while waiting: the roll that arrives then is not shown. Reopened, the popup shows
+	# the host's remembered roll at once (the game shows its own roll again too).
+	panels.apply(main, msg)
+	yield(_click(list.get_element(slot)), "completed")
+	panels.last_intent = {}
+	yield(_click(popup._upgrade_button), "completed")
+	t._check(panels.last_intent.get("kind") == "weapon_meca_roll", "asked again after the pick")
+	yield(_click(popup._cancel_button), "completed")
+	t._check(not popup._focused, "Cancel still closes the popup while waiting for the host")
+	panels.apply(main, rolled)
+	t._check(not popup.is_choosing_meca_upgrade(), "a roll for a closed popup is not shown")
+	yield(_click(list.get_element(slot)), "completed")
+	panels.last_intent = {}
+	yield(_click(popup._upgrade_button), "completed")
+	t._check(
+		panels.last_intent.empty() and _shown_options(popup) == [[damage, 7], [armor, 3]],
+		"reopened: the host's remembered roll, without asking again"
+	)
+	var junk := [
+		[slot, id, 12345, 7, armor, 3], [slot, id, damage, "7", armor, 3], [slot, id], "x", [-1]
+	]
+	t._check(MecaChoice.parse(junk).empty(), "malformed rolls from the network are ignored")
+	yield(_click(popup._effect_button_0), "completed")
+	t._check(panels.last_intent.get("meca") == 0, "the first option picked by index")
+	panels.last_intent = {}  # nothing of the wave may be kept (cleanup_tests.gd)
+	if not was_active:
+		ProgressData.active_update_data.erase(MECA_DLC)
+	RunData.players_data[1].meca_parts = parts
+
+
+# The key hash and value of each option the popup's meca choice shows.
+static func _shown_options(popup: Node) -> Array:
+	var shown := []
+	if popup._pending_upgrade != null:
+		for option in MecaChoice.options(popup._pending_upgrade):
+			shown.append([option.key_hash, option.value])
+	return shown
+
+
+# The popup's own roll on pressing its upgrade button is cut (sync/meca_choice.gd).
+static func _meca_cut(popup: Node) -> bool:
+	return not popup._upgrade_button.is_connected("pressed", popup, "_on_UpgradeButton_pressed")
 
 
 # The own panel runs locally and its slot is typed as a pad, page 1. A key makes it the game's

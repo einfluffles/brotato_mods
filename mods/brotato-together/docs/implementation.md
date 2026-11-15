@@ -258,6 +258,23 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     emulator. The shop scene processes input by itself, so cursor, carousel pages, item popup, inventory
     browsing, the hold-to-ban bar (`ShopItem._on_BanButton_button_down`), the hold-to-recycle bar and a
     meca item's effect choice (`effect_choice_selected`) run locally.
+  - Keyboard and mouse: `ShopLocal.guard` adds a `LocalPanel` (see the level-up panels) as the puppet
+    shop's last child (after `FocusEmulator1..4`), with every `CoopShopPlayerContainer` as `panels`.
+    The own panel is set while the local buttons drive it (`take_over`; unset on stop, leaving, a
+    host pause, and moved on another slot); `blocked` follows the F9 panel in `ShopLocal.process`.
+    After a type change `ShopLocal` calls the container's `_set_focus_neighbours` (the game runs it
+    in `_ready` and on a page change only) and, if the cursor sat on an arrow that became a glyph,
+    puts it where `_set_focus_after_carousel_index_change` would: `_get_default_focus_control` on
+    the shop page, Go on the stats pages. The item popup fits as it is: a focused popup keeps the
+    mouse inside (`_focused`), and its hold-to-recycle ends on the device's `ui_accept` release
+    that LocalPanel sends with the mouse button. Hold-to-ban has no mouse path in co-op (the ban
+    button is hidden; the shortcut is a key). Shop specific: while the own Go flag is set or a
+    "go 1" is on its way, and the cursor rests on Go, hover leaves the cursor there
+    (`LocalPanel.hold_cursor`; a click still moves it): the game clears the flag when the cursor
+    leaves Go, so a drifting mouse would take it back. The slot type survives state updates (only
+    `fill_puppet_slots` at shop entry resets it, before the panel is set), so rebuilt gear and
+    shop items read the right device; `CoopShopHint`s also get the panel's player (the game skips
+    the popup's steal hint, which showed player 0's device).
   - Guard, every client and every player's panel (`ShopLocal.guard`). The cuts sit where the mutation is,
     which is below `BaseShop` in places:
 
@@ -271,12 +288,14 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     | reroll | reroll button `pressed` loses `BaseShop._on_RerollButton_pressed` | presses the reroll button |
     | Go | Go button `pressed` loses `BaseShop._on_GoButton_pressed` (starts the next wave when all are ready) | presses the Go button, or `_clear_go_button_pressed` |
     | combine / recycle | item popup `item_combine_button_pressed` / `item_discard_button_pressed` lose `BaseShop`'s handlers | emits the popup's signal with the host's weapon object |
-    | meca upgrade (popup) | `item_meca_upgrade_selected` loses `BaseShop`'s handler and the upgrade button is taken out (`_upgrade_button = null`, which the popup treats as "no meca upgrade") | not sent: `DLC2Data.meca_item` rolls the two options when the button is pressed, so the client's options would not be the host's |
+    | meca upgrade (popup) | `item_meca_upgrade_selected` loses `BaseShop`'s handler, the upgrade button loses the popup's own roll (`_on_UpgradeButton_pressed`) | "meca_roll": `MecaChoice.roll` into the host's copy of the player's popup, sent back in `SHOP_STATE.mecas`; "meca" (option index): `MecaChoice.take`, then the popup's `item_meca_upgrade_selected` with the remembered roll (see "Meca upgrade" below) |
     | endless (player 1, wave 20) | `EndlessButton.toggled` loses the panel's handler | sets `pressed` on the host's button (its `toggled` sets `RunData.is_endless_run`); mirrored back with `set_pressed_no_signal` |
 
     The own panel's signals go to `SHOP_INTENT`; on the other panels nothing listens, so a mouse click
     there is dead. A control this list does not know (another mod's button, e.g. Damage Meter's summary
     button next to reroll) keeps its own handler and can show things, but every way into the run is cut.
+    A cursor on it is only mirrored where that control exists; the other cursors are not shifted by it
+    (see Cursors).
     The view half of a cut handler is called where the panel needs it: `give_focus_to_mecha_choice` before
     a meca buy without a choice, `BaseShop._on_item_cancel_button_pressed` (close the popup, cursor back on
     the weapon) after combine / recycle.
@@ -302,22 +321,23 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     Go when that player comes back).
   - Host: `InputSync.blocked_by["shop"]` keeps every remote button but pause off the virtual devices while
     the shop runs and the tree is not paused (`blocked_by` is OR-ed with `blocked_buttons`, which
-    `UpgradesSync` resets every frame outside a battle). `SHOP_FOCUS` (`shop_id, page, path` inside the
-    sender's `CoopShopPlayerContainer`) puts the remote cursor and page on the host's copy, from where
-    `FocusSync` and `pages` carry them to the other clients. Cosmetic: a path that does not resolve (a mod
-    added a control on one side only) or is not visible is ignored. Absent players and the pause hand-over
+    `UpgradesSync` resets every frame outside a battle). `SHOP_FOCUS` (`shop_id, page, target`; since
+    protocol 10 the cursor is a cursor target, see Cursors, restricted to the sender's own shop anchors)
+    puts the remote cursor and page on the host's copy, from where `FocusSync` and `pages` carry them to
+    the other clients. Cosmetic: a target that does not resolve (a control only one side has) or is not
+    visible is ignored. Absent players and the pause hand-over
     work as before; while the host is paused (`SHOP_PAUSE`) the client's local buttons are off.
   - Differences from local co-op: with a steal left, the select shortcut steals and locks in one press;
     the host applies the steal, which makes the lock stale (the game itself would lock the stolen item).
     A second press made before the host's answer arrived (two quick buys) is dropped as stale.
-  - Open: the inventory popup's meca upgrade (needs the host's rolled options on the client); the host and
-    the other clients do not see the own panel's focused inventory popup (cursor on its buttons is not
+  - Open: the host and the other clients do not see the own panel's focused inventory popup (cursor on its buttons is not
     visible on the host's copy); the client's hold-to-ban depends on its own `chal_banned_items` unlock
     and the ban animation / press sounds of the own panel are not heard (the puppet shop is muted; the
     host's sounds for the applied decision are); no feedback on the client for a refused buy (the host's
-    gold label shakes); a keyboard client is still typed as a gamepad; dismantle and the meca effect choice
-    are only tested against stand-ins (no meca weapons without the DLC in the headless suite); none of
-    this has run between two real machines yet.
+    gold label shakes); dismantle and the meca effect choice
+    are only tested against stand-ins (no meca weapons without the DLC in the headless suite; the meca
+    upgrade runs on the DLC's data, switched on for its checks, with signal presses in the shop popup);
+    none of this has run between two real machines yet.
 - **Level-up / crate panels** (`sync/upgrades_sync.gd`): per player container state from `_old_upgrades`,
   `_level`, `_reroll_price`, `_item_data`, `_checkmark_group`; client re-implements
   `show_upgrades_for_level` without `ItemService.get_upgrades` and uses `show_item` for crates (item rebuilt
@@ -345,19 +365,44 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     before the scene loads), but only the host's `_show_next_player_options` fills the list, so the client
     calls `_refresh_weapons_inventory` for every panel it rebuilds and whenever the run state changed (new
     weapon objects). A cursor in the list keeps its slot. The own popup's combine / recycle / meca upgrade
-    leave as `UPGRADE_INTENT` kinds `weapon_combine` / `weapon_discard` / `weapon_meca` with `weapon` (slot
-    in `RunData.get_player_weapons`) and `id` (its `my_id`); the popup then closes like after a cancel
-    (`_on_weapon_cancel_button_pressed`) and the weapons change when the host answers. The host checks
-    revision, `_weapons_inventory_enabled`, slot and id, calls the game's handler
-    (`UpgradesUI._on_weapon_combine_button_pressed` / `_on_weapon_discard_button_pressed`) and counts the
-    intent as applied only if the weapons changed (the game refuses locked weapons or a missing partner
-    itself). The player's weapons are part of the panel revision, so a second press is stale. Meca
-    upgrade: the popup rolls its two stat options where it runs (`DLC2Data.meca_item`), so the client sends the stat it picked (`stat`, key hash; read from the popup
-    on `meca_upgrade_choice_toggled`, picked by the effect button pressed). The host takes it only if it is
-    in `_get_allowed_meca_stats` for that player and the parts suffice, sets it on a freshly rolled
-    `meca_item` option with `get_meca_stat_value` and hands the result to
-    `_on_weapon_meca_upgrade_selected`. So a modified client could pick any stat the game allows that
-    player, not only the two it was shown; amount and cost are the host's.
+    leave as `UPGRADE_INTENT` kinds `weapon_combine` / `weapon_discard` / `weapon_meca_roll` /
+    `weapon_meca` with `weapon` (slot in `RunData.get_player_weapons`) and `id` (its `my_id`); after
+    combine / recycle / meca pick the popup closes like after a cancel (`_on_weapon_cancel_button_pressed`)
+    and the weapons change when the host answers. The host checks revision, `_weapons_inventory_enabled`,
+    slot and id, calls the game's handler (`UpgradesUI._on_weapon_combine_button_pressed` /
+    `_on_weapon_discard_button_pressed` / `_on_weapon_meca_upgrade_selected`) and counts the intent as
+    applied only if the weapons changed (the game refuses locked weapons or a missing partner itself). The
+    player's weapons are part of the panel revision, so a second press is stale. Meca upgrade: see below.
+  - Meca upgrade (protocol 10; `sync/meca_choice.gd`, the same for the crate weapon popup and the shop's
+    item popup). Game rule: `ItemPopup._get_upgrade_preview` rolls the two stat options
+    (`DLC2Data.meca_item`) when the upgrade button is hovered or pressed and keeps that roll per weapon
+    object in `_upgrade_preview_cache` for the popup's lifetime (the scene); it is never cleared, so
+    closing and reopening the popup shows the same two options, and while choosing there is no cancel
+    (`_on_CancelButton_pressed` returns, `CoopItemPopup._input` has none). Now:
+    - Client: every popup's upgrade button loses `_on_UpgradeButton_pressed` (no local roll to pick from);
+      the own popup's goes to `MecaChoice` instead: when `can_meca_upgrade` it sends `weapon_meca_roll` /
+      shop "meca_roll" (slot + `my_id`, panel revision) and the popup keeps its normal buttons (Cancel
+      closes it). The host's rolls arrive in the state (`mecas`); if the popup is still open on that
+      weapon, the preview is built like `meca_item` builds it without rolling (`do_not_add_effect`) plus
+      two `EffectOption`s from the host's key hashes and values, put into the popup's cache, and the
+      game's own `_on_UpgradeButton_pressed` shows it (preview, icons, "+n", focus on the first option).
+      A roll already in the state is shown at once without asking. The pick (effect button + the popup's
+      `item_meca_upgrade_selected`, in either order) leaves as `weapon_meca` (`meca`: 0 / 1) / shop
+      "meca" (`arg`: 0 / 1). The hover preview still rolls locally (display only: the options are not
+      drawn there).
+    - Host: the roll goes into the host's copy of that player's popup cache, the game's own memory, with
+      the game's code (`MecaChoice.roll`: an existing roll is returned, so asking again or reopening never
+      rerolls, as in the local game). Checks: the player's weapon by slot + id, DLC active,
+      `has_meca_upgrade_ui`, `can_weapon_be_mechanized`, cost > 0 and the parts, the revision, not paused
+      (shop) and `_weapons_inventory_enabled` (crate). A roll does not change the revision. An unpicked
+      roll stays remembered until the scene ends. The state sends per player
+      `[[weapon slot, my_id, stat key hash, value, stat key hash, value]]` (also on `peer_ready`, part of
+      the change key). A pick needs a remembered roll for that weapon, an int index 0 / 1, a matching
+      revision and the parts; the roll is then forgotten and
+      `change_effect_option_to_modular_effect(roll, index)` goes to the game's handler (crate:
+      `UpgradesUI._on_weapon_meca_upgrade_selected`; shop: the popup's `item_meca_upgrade_selected` ->
+      `BaseShop._on_item_meca_upgrade_selected`), which spends the parts. Anything else is dropped, so a
+      client can only get one of the two options the host rolled and showed it.
   - Host: `UPGRADES_STATE` carries a revision per player (`seqs`: bumped when the panel shows something
     new, keyed on the entry, the option being processed, the item instance and the reroll count, so the same
     crate item twice still counts) and the carousel page (`pages`). `host_apply_intent` drops an intent whose
@@ -367,14 +412,15 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     are visible (and the game isn't paused: the pause menu is the host's) `InputSync.blocked_buttons` keeps
     every remote button but pause off the virtual devices, so a remote accept can't also press the host's
     copy.
-  - Presence: the client reports its page and cursor (`UPGRADE_FOCUS`, child-index path inside its own
-    container, on change); the host applies them to its copy, from where `FocusSync` and `pages` carry them
+  - Presence: the client reports its page and cursor (`UPGRADE_FOCUS`, `battle_id, page, target`: a
+    cursor target restricted to its own panel's anchors since protocol 10, see Cursors; on change); the
+    host applies them to its copy, from where `FocusSync` and `pages` carry them
     to the other clients. Cosmetic: decisions never depend on it.
   - The client rebuilds a panel only when its revision or entry changed, and re-applies the run state only
     when its bytes changed (a rebuild of the own panel would fight the local cursor).
   - Keyboard and mouse (`sync/local_panel.gd`, a node `UpgradesSync` adds as the puppet `UpgradesUI`'s
-    last child; written against "the own panel + its emulator", so another client-run screen can use
-    it). Why a node there: a `FocusEmulator` with a cursor marks every event that is not a co-op action
+    last child; written against "the own panel + its emulator", the shop uses it too, see above).
+    Why a node there: a `FocusEmulator` with a cursor marks every event that is not a co-op action
     as handled, so on a co-op screen the mouse never reaches the GUI and `InputService` (an autoload,
     last in `_input` order) never sees which device is in use. `_input` runs in reverse tree order, so
     a node after the emulators sees every event first.
@@ -398,7 +444,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     - Host: unchanged, a remote player stays a gamepad there (stick aim and `Utils.is_manual_aim` depend
       on it) and its type is not sent. The host and the other clients therefore draw a keyboard
       player's page arrows as trigger glyphs, and show its cursor on one when it is there
-      (`UPGRADE_FOCUS` paths are child indices, the same in both layouts). Cosmetic only.
+      (the arrows are named scene nodes, the same in both layouts). Cosmetic only.
     - Mouse: motion over a focusable control of the own panel sets the own emulator's
       `focused_control` (once per frame; the setter emits the focus signals as that player, so popups
       follow); a left click runs the emulator's own accept on it (`_handle_input` with an
@@ -427,12 +473,34 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     key tap shorter than a physics frame is lost while a panel is up (the emulators handle the event
     before `InputSync._input` can count it; held state is polled), and none of this has run between
     two real machines yet (headless tests only: no real mouse, keyboard or pad; the crate weapon
-    popup's combine, recycle hold and cancel are driven through its real buttons by synthetic clicks,
-    its meca upgrade only through its signals).
-- **Cursors** (`sync/focus_sync.gd`): every `FocusEmulator` in the scene; emulator + focused control sent as
-  child-index paths from the scene root (`ui/scene_paths.gd`), applied through the `focused_control` setter.
-  The latest message per scene stays pending (10 s) until every cursor resolves to a visible control
-  (scene still loading, retry prompt not shown yet) and is retried every frame.
+    popup's combine, recycle hold, cancel and meca upgrade are driven through its real buttons by
+    synthetic clicks).
+- **Cursors** (`sync/focus_sync.gd`, `ui/focus_targets.gd`; protocol 10): every `FocusEmulator` in the
+  scene; `FOCUS` = `scene, cursors [[player, menu, control]]`, applied through the `focused_control` setter.
+  Until protocol 9 emulator and control were child-index paths from the scene root, which broke as soon as
+  the trees differed: Damage Meter adds a summary button next to the shop's reroll button, and with it on
+  one machine only every later index was off by one. Now nothing visible travels as a tree position:
+  - Emulator: its `player_index` among the `FocusEmulator` children of its menu (the node they hang
+    under: the shop scene root, `UpgradesUI`, `PauseMenu`, `RetryWave`, ...; `menu` is that node's
+    target). A menu with a single emulator takes it whatever its index (who holds the pause menu or the
+    retry prompt is mirrored elsewhere).
+  - Control (also `SHOP_FOCUS` / `UPGRADE_FOCUS`): a cursor target `[anchor, player, index, steps]`.
+    `anchor` is the nearest of the player's parts the game hands out through its own accessors:
+    `shop_item` (k in `_get_shop_items_container(p)._shop_items`), `shop_reroll`, `shop_go`, `shop_popup`,
+    `shop_gear`, `shop_panel` (`CoopShop._get_*`), `up_option` (k in `_get_upgrade_uis()`), `up_reroll`,
+    `up_popup`, `up_weapons` (crate weapons list), `up_gear`, `up_panel` (`UpgradesUI._get_player_container`,
+    from main through `_coop_upgrades_ui`); else `scene` (the generic fallback: pause menu, retry prompt,
+    end of run, any screen not special-cased). `steps` lead from the anchor to the control: a node from a
+    scene file (it has an `owner`) by its name, a node added by code (no owner, generated "@Name@123"
+    names differ between machines: inventory elements, other mods' nodes) as `[script path or class, k]`,
+    the k-th such sibling of that type, nodes queued for deletion not counted. So an extra node only one
+    side has shifts nothing unless it is added by code into a list of nodes of its own type (another
+    inventory element). The own-panel messages only accept that player's anchors, never `scene`.
+  - Network data is checked (types, anchor names, player 0..3, index and step counts, name lengths;
+    steps match child names, never parse paths). A target that does not resolve (a control only one side
+    has) is ignored, as before: the latest message per scene stays pending (10 s) until every cursor
+    resolves to a visible control (scene still loading, retry prompt not shown yet) and is retried every
+    frame. `ui/scene_paths.gd` only finds the emulators now (FocusSync, MenuSync, CoopSelection).
 - **Selection screens / end of run** (`sync/menu_sync.gd` + `ui/client_view.gd`): grids depend on local
   unlocks/DLC (`ProgressData.characters_unlocked`, `available_dlc_ids`, weapon unlock filtering) and the scenes
   run join/selection logic (`CoopService.listening_for_inputs`, `_selections_completed_timer` → `change_scene`),

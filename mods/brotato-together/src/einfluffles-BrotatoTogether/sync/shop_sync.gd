@@ -3,8 +3,9 @@ extends Node
 # Host: owns every decision and the RNG. While coop_shop.tscn runs it sends SHOP_STATE (reliable)
 #   whenever the shop or run state changes: full run state incl. the shop's own save data
 #   (offered items, rerolls, steals) via RunStateCodec, plus per player the slot layout, the Go
-#   flag, a panel revision (seqs) and the carousel page (pages), and for each client which
-#   player it is (you). Remote players' decisions arrive as SHOP_INTENT and are applied by the
+#   flag, a panel revision (seqs), the carousel page (pages) and the meca upgrade rolls its
+#   item popup remembers (mecas, sync/meca_choice.gd), and for each client which player it is
+#   (you). Remote players' decisions arrive as SHOP_INTENT and are applied by the
 #   game's own code when they still match the sender's panel (sync/shop_intents.gd); their raw
 #   buttons, except pause, are kept off the virtual devices meanwhile.
 # Client: loads the real shop through the game's resume path (RunData.resumed_from_state_in_shop),
@@ -32,6 +33,7 @@ const ShopIntents := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_intents.gd"
 )
 const ShopLocal := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_local.gd")
+const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const CHECK_INTERVAL := 0.1
@@ -130,7 +132,7 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 			var shop = _host_shop_for(body)
 			var p := _player_index_of(steam_id)
 			if shop != null and p >= 0 and p < RunData.get_player_count():
-				ShopIntents.apply_focus(shop, p, body.get("page"), body.get("path"))
+				ShopIntents.apply_focus(shop, p, body.get("page"), body.get("target"))
 
 
 # --- host ---
@@ -149,6 +151,7 @@ func _body_from(parts: Dictionary) -> Dictionary:
 		"go": parts.go,
 		"seqs": parts.seqs,
 		"pages": parts.pages,
+		"mecas": parts.mecas,
 		"colors": CoopService.bt_slot_colors.duplicate(),
 	}
 
@@ -166,7 +169,9 @@ func _shop_parts() -> Dictionary:
 	_update_seqs(shop)
 	var slots := []
 	var pages := []
+	var mecas := []
 	for p in RunData.get_player_count():
+		mecas.append(MecaChoice.entries(shop._get_item_popup(p), p))
 		var active := []
 		var container = shop._get_shop_items_container(p)
 		for i in container._shop_items.size():
@@ -179,13 +184,17 @@ func _shop_parts() -> Dictionary:
 		"go": shop._player_pressed_go_button.duplicate(),
 		"seqs": _seqs.duplicate(),
 		"pages": pages,
+		"mecas": mecas,
 	}
 
 
 # Compares the JSON text: compressing only happens when something changed.
 func _send_if_changed() -> void:
 	var parts := _shop_parts()
-	var key: String = parts.json + var2str([parts.slots, parts.go, parts.seqs, parts.pages])
+	var key: String = (
+		parts.json
+		+ var2str([parts.slots, parts.go, parts.seqs, parts.pages, parts.mecas])
+	)
 	if key == _last_sent_key:
 		return
 	_last_sent_key = key
@@ -327,6 +336,7 @@ func _on_state(body) -> void:
 		"go": body.go,
 		"seqs": body.get("seqs"),
 		"pages": body.get("pages"),
+		"mecas": body.get("mecas"),
 		"you": body.get("you"),
 	}
 	if entering:
@@ -445,6 +455,7 @@ func _apply_pending() -> void:
 	if you >= 0 and you < RunData.get_player_count():
 		local.take_over(you)
 		local.on_state(_int_at(_pending.get("seqs"), you), shop._player_pressed_go_button[you])
+		local.on_mecas(_list_at(_pending.get("mecas"), you))
 	else:
 		local.stop()
 	_pending = {}

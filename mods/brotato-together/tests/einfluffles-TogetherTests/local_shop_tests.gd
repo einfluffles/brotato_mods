@@ -11,7 +11,13 @@ extends Reference
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
-const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
+const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const CursorTargetTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/cursor_target_tests.gd"
+)
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const ShopIntents := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_intents.gd"
@@ -19,6 +25,7 @@ const ShopIntents := preload(
 const BIT_ACCEPT := 1
 const BIT_INFO := 1 << 3
 const REMOTE := 1  # the remote player's slot on the host
+const ShopMecaTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_meca_tests.gd")
 const PISTOL := "weapon_pistol_1"
 
 var _t: Node = null
@@ -26,6 +33,7 @@ var _sync: Node = null
 var _input: Node = null
 var _shop: Node = null
 var _states := {}  # name -> SHOP_STATE body as a client receives it
+var _meca = ShopMecaTests.new()  # kept alive across its yields
 
 
 func run(t: Node, together: Node):
@@ -122,13 +130,63 @@ func _host_focus() -> void:
 	var panel = _shop._get_coop_player_container(REMOTE)
 	var emulator = Utils.get_focus_emulator(REMOTE, _shop)
 	var node = _node(REMOTE, 2)
-	ShopIntents.apply_focus(_shop, REMOTE, 0, ScenePaths.path_of(node._button, panel))
+	# Described on the sender, a Damage-Meter-like button next to reroll on the host only.
+	var target := FocusTargets.describe(node._button, _shop, REMOTE)
+	var reroll: Node = _shop._get_reroll_button(REMOTE)
+	var extra := Button.new()
+	reroll.get_parent().add_child(extra)
+	reroll.get_parent().move_child(extra, reroll.get_index())
+	ShopIntents.apply_focus(_shop, REMOTE, 0, target)
 	_t._check(emulator.focused_control == node._button, "host shows a remote shop cursor")
 	_t._check(_shop._focused_shop_item[REMOTE] == node, "and the game follows it (focused item)")
-	ShopIntents.apply_focus(_shop, REMOTE, 1, PoolIntArray())
+	ShopIntents.apply_focus(_shop, REMOTE, 0, FocusTargets.describe(reroll, _shop, REMOTE))
+	_t._check(emulator.focused_control == reroll, "remote cursor on reroll, next to another mod's")
+	extra.get_parent().remove_child(extra)
+	extra.free()
+	var own_target := FocusTargets.describe(_shop._get_reroll_button(0), _shop)
+	ShopIntents.apply_focus(_shop, REMOTE, 0, own_target)
+	_t._check(emulator.focused_control == reroll, "a target in another player's panel ignored")
+	_t._check(
+		FocusTargets.describe(_shop._get_reroll_button(0), _shop, REMOTE).empty(),
+		"a client reports nothing outside its own panel"
+	)
+	ShopIntents.apply_focus(_shop, REMOTE, 0, target)
+	ShopIntents.apply_focus(_shop, REMOTE, 1, [])
 	_t._check(panel.carousel.index == 1, "host shows a remote player's shop page")
 	ShopIntents.apply_focus(_shop, REMOTE, 0, ["junk"])
-	_t._check(panel.carousel.index == 0, "page back, junk path ignored")
+	_t._check(panel.carousel.index == 0, "page back, junk target ignored")
+	_shop_targets()
+
+
+# Every kind of shop cursor target, by meaning, with extra nodes on one side only.
+func _shop_targets() -> void:
+	var panel = _shop._get_coop_player_container(REMOTE)
+	var reroll: Node = _shop._get_reroll_button(REMOTE)
+	var gear = _shop._get_gear_container(REMOTE)
+	var popup = _shop._get_item_popup(REMOTE)
+	var weapon_element = gear.weapons_container.get_element(1)  # the second of three pistols
+	_t._check(weapon_element != null, "remote player's gear shows its second weapon")
+	var controls := [
+		reroll,
+		_shop._get_go_button(REMOTE),
+		_node(REMOTE, 2)._button,
+		popup._combine_button,
+		panel.carousel.arrow_right,
+		panel.get("_endless_button"),
+	]
+	if weapon_element != null:
+		controls.append(weapon_element)
+	CursorTargetTests.check_robust(_t, "shop (own panel)", _shop, controls, REMOTE, reroll)
+	var pause_button = CursorTargetTests.first_button(_shop._pause_menu)
+	if pause_button != null:
+		controls.append(pause_button)  # outside the panels: the generic path from the scene
+	CursorTargetTests.check_robust(_t, "shop (FocusSync)", _shop, controls, -1, reroll)
+	var element: Array = FocusTargets.describe(weapon_element, _shop)
+	_t._check(
+		element.size() == 4 and element[0] == "shop_gear" and element[1] == REMOTE,
+		"a gear element is named from the player's gear container (%s)" % [element]
+	)
+	CursorTargetTests.check_junk(_t, _shop)
 
 
 func _host_rejections() -> void:
@@ -273,6 +331,7 @@ func _host_weapon_intents():
 		not (PISTOL in _weapon_ids(REMOTE)) and RunData.get_player_gold(REMOTE) > gold,
 		"host recycled the weapon"
 	)
+	yield(_meca.host(self), "completed")
 
 
 func _host_ready_intents() -> void:
@@ -347,20 +406,32 @@ func _client_part(together: Node):
 	_t._check(local.last_intent.get("kind") == "dismantle", "dismantle sends an intent")
 	yield(_client_ban(node, before), "completed")
 	_client_popup(shop, before)
+	yield(_meca.client(self, shop, emulator, before), "completed")
 	_client_other_panel(shop, before)
 	yield(_client_view(together, emulator, node), "completed")
 	yield(_client_states(emulator, node), "completed")
+	yield(_client_keyboard_mouse(emulator), "completed")
 
 	# The host pauses: nothing runs here meanwhile. Leaving the shop ends local control.
+	var local_panel: Node = local.local_panel
 	local.set_paused(true)
 	_t._check(_input._local_buttons == null, "local buttons off while the host is paused")
+	_t._check(not local_panel.has_own(), "and the mouse drives no shop panel")
 	local.set_paused(false)
 	_t._check(_input._local_buttons != null, "and back on afterwards")
+	_t._check(local_panel.has_own(), "the mouse too")
+	local.take_over(REMOTE)
+	_t._check(
+		local_panel._own == shop._get_coop_player_container(REMOTE) and local_panel.has_own(),
+		"another slot: LocalPanel follows to its panel"
+	)
+	local.take_over(0)
 	local.leave(shop)
 	_t._check(
 		not local.active and _input._local_buttons == null and focus_sync.local_emulators.empty(),
 		"local control ends with the shop"
 	)
+	_t._check(not local_panel.has_own(), "and LocalPanel lets go of the own panel")
 
 
 # Hold-to-ban keeps its local bar and sends the intent when the hold completes.
@@ -402,9 +473,20 @@ func _client_popup(shop: Node, before: String) -> void:
 	_t._check(local.last_intent.get("kind") == "discard", "recycling sends an intent")
 	local.last_intent = {}
 	popup.emit_signal("item_meca_upgrade_selected", weapon, weapon)
+	_t._check(local.last_intent.empty(), "a meca selection without an effect pressed sends nothing")
+	var own_button = popup._upgrade_button
+	var other_popup = shop._get_item_popup(REMOTE)
+	var other_button = other_popup._upgrade_button
 	_t._check(
-		local.last_intent.empty() and popup._upgrade_button == null,
-		"the popup's meca upgrade fails closed"
+		(
+			own_button != null
+			and other_button != null
+			and not own_button.is_connected("pressed", popup, "_on_UpgradeButton_pressed")
+			and own_button.is_connected("pressed", local.meca, "_on_upgrade_pressed")
+			and not other_button.is_connected("pressed", other_popup, "_on_UpgradeButton_pressed")
+			and not other_button.is_connected("pressed", local.meca, "_on_upgrade_pressed")
+		),
+		"the own popup's meca upgrade asks the host, another player's is dead"
 	)
 	_t._check(_run_view(shop) == before, "no weapon changed locally")
 
@@ -439,17 +521,24 @@ func _client_view(together: Node, emulator: Node, node: Node):
 	_t._check(emulator.focused_control != node._button, "own shop cursor moves locally")
 	local._sent_focus = ""
 	local.process()
-	var path := ScenePaths.path_of(emulator.focused_control, shop._get_coop_player_container(0))
+	var target := FocusTargets.describe(emulator.focused_control, shop, 0)
 	_t._check(
-		not path.empty() and var2str(path) in local._sent_focus, "own shop cursor reported to the host"
+		not target.empty() and var2str(target) in local._sent_focus,
+		"own shop cursor reported to the host (%s)" % [target]
+	)
+	_t._check(
+		FocusTargets.resolve(target, shop, 0) == emulator.focused_control,
+		"and the report names that control"
 	)
 	var focus_sync: Node = together.focus_sync
 	var own_cursor = emulator.focused_control
 	focus_sync._scene = shop
-	var go_path := ScenePaths.path_of(shop._get_go_button(0), shop)
-	focus_sync._apply(
-		{"scene": shop.filename, "cursors": [[ScenePaths.path_of(emulator, shop), 0, go_path]]}
+	var cursor := FocusSync.cursor_of(emulator, shop._get_go_button(0), shop)
+	_t._check(
+		cursor.size() == 3 and FocusSync.find_emulator(shop, cursor[0], cursor[1]) == emulator,
+		"host cursor names the own emulator by player (%s)" % [cursor]
 	)
+	focus_sync._apply({"scene": shop.filename, "cursors": [cursor]})
 	_t._check(emulator.focused_control == own_cursor, "host cursor never moves the own shop cursor")
 
 
@@ -506,6 +595,209 @@ func _client_states(emulator: Node, node: Node):
 		not shop._player_pressed_go_button[0] and local.last_intent.get("arg") == 0,
 		"leaving Go tells the host"
 	)
+
+
+# The own panel's device and mouse (sync/local_panel.gd, added by ShopLocal.guard). A pad
+# button types the own slot as a pad (trigger glyphs), a key as the keyboard (page arrows that
+# take focus, by the panel's own focus neighbours); the mouse moves and presses the own cursor
+# only, stays inside an open popup, and leaves a cursor on Go while ready is on its way.
+func _client_keyboard_mouse(emulator: Node):
+	var local = _sync.local
+	var shop: Node = _shop
+	var own = shop._get_coop_player_container(0)
+	var other = shop._get_coop_player_container(REMOTE)
+	var local_panel: Node = local.local_panel
+	var carousel = own.carousel
+	var arrows := [carousel.arrow_left, carousel.arrow_right]
+	var go: Control = shop._get_go_button(0)
+	var keyboard: int = CoopService.PlayerType.KEYBOARD_AND_MOUSE
+	var pad: int = CoopService.PlayerType.GAMEPAD_XBOX
+	var glyph: Texture = CoopService.gamepad_rtrigger_icon
+	var was_using_gamepad: bool = InputService.using_gamepad
+	_t._check(
+		(
+			is_instance_valid(local_panel)
+			and local_panel.get_parent() == shop
+			and local_panel.get_index() > shop.get_node("FocusEmulator4").get_index()
+		),
+		"LocalPanel sits in the puppet shop after its emulators"
+	)
+	_t._check(
+		local_panel.panels == [own, other] and local_panel.has_own() and local_panel._own == own,
+		"every shop panel is LocalPanel's, the own one local"
+	)
+	_t._check(
+		CoopService.get_player_input_type(0) == VirtualDevices.local_player_type(),
+		"own shop slot typed as the device in use when the shop starts"
+	)
+	_input.local_input_blocked = true
+	local.process()
+	var blocked: bool = local_panel.blocked
+	_input.local_input_blocked = false
+	local.process()
+	_t._check(blocked and not local_panel.blocked, "LocalPanel stands back while the F9 panel is open")
+
+	# Pad on the stats page: trigger glyphs, Go leads down to the first stat.
+	yield(_pad_button(), "completed")
+	_t._check(
+		(
+			CoopService.get_player_input_type(0) == pad
+			and carousel.are_trigger_buttons_active()
+			and arrows[1].disabled
+			and arrows[1].texture_hover == glyph
+		),
+		"a pad button types the own shop slot as a pad (trigger glyphs)"
+	)
+	carousel._on_ArrowRight_pressed()  # what the right trigger calls
+	yield(_frames(2), "completed")
+	_t._check(carousel.index == 1, "pad: own shop panel on the stats page")
+
+	# Keyboard: arrows, and the panel's focus neighbours lead to them.
+	yield(_t._tap_key(KEY_SHIFT), "completed")
+	_t._check(
+		CoopService.get_player_input_type(0) == keyboard and not InputService.using_gamepad,
+		"a key types the own shop slot as keyboard"
+	)
+	_t._check(
+		CoopService.get_player_input_type(REMOTE) == pad and other.carousel.are_trigger_buttons_active(),
+		"another player's shop panel keeps its triggers"
+	)
+	_t._check(
+		(
+			not carousel.are_trigger_buttons_active()
+			and not arrows[0].disabled
+			and arrows[0].focus_mode == Control.FOCUS_ALL
+			and arrows[1].texture_hover != null
+			and arrows[1].texture_hover != glyph
+		),
+		"keyboard: the shop's page arrows are arrows again and take focus"
+	)
+	emulator.focused_control = go
+	yield(_tap("ui_down"), "completed")
+	_t._check(
+		emulator.focused_control == arrows[0],
+		"keyboard: down from Go reaches the page arrow (neighbours redone)"
+	)
+	yield(_tap("ui_accept"), "completed")
+	_t._check(carousel.index == 0, "keyboard: accept on the arrow pages the shop panel")
+	yield(_frames(2), "completed")
+
+	# Mouse: hover and click on the own panel; another player's panel never reacts.
+	var hovered: Control = null
+	var hovered_slot := -1
+	for i in 4:
+		var candidate = _node(0, i)
+		if candidate.active and candidate._button != emulator.focused_control:
+			hovered = candidate._button
+			hovered_slot = i
+			break
+	yield(_mouse(hovered, "move"), "completed")
+	_t._check(emulator.focused_control == hovered, "mouse hover moves the own shop cursor")
+	var other_emulator = Utils.get_focus_emulator(REMOTE, shop)
+	var other_cursor = other_emulator.focused_control
+	var other_button: Control = _node(REMOTE, _pick(REMOTE))._button
+	local.last_intent = {}
+	yield(_mouse(other_button, "move"), "completed")
+	yield(_click(other_button), "completed")
+	_t._check(
+		(
+			emulator.focused_control == hovered
+			and other_emulator.focused_control == other_cursor
+			and local.last_intent.empty()
+		),
+		"the mouse does nothing on another player's shop panel"
+	)
+	yield(_click(hovered), "completed")
+	var sent: Dictionary = local.last_intent
+	_t._check(
+		sent.get("kind") == "buy" and sent.get("slot") == hovered_slot,
+		"a click on an own shop item sends its buy (%s)" % [sent]
+	)
+
+	# Ready only lasts while the cursor rests on Go: a drifting mouse leaves it there.
+	yield(_click(go), "completed")
+	sent = local.last_intent
+	_t._check(
+		sent.get("kind") == "go" and sent.get("arg") == 1 and emulator.focused_control == go,
+		"a click on Go sends ready (%s)" % [sent]
+	)
+	local.process()
+	yield(_mouse(hovered, "move"), "completed")
+	_t._check(emulator.focused_control == go, "hover leaves the cursor on Go while ready is sent")
+	yield(_click(hovered), "completed")
+	local.process()
+	_t._check(
+		emulator.focused_control == hovered and not local_panel.hold_cursor,
+		"a click still moves it, and hover is free again"
+	)
+
+	yield(_client_popup_mouse(emulator), "completed")
+
+	# A cursor on a page arrow when the arrows become trigger glyphs again.
+	yield(_click(arrows[1]), "completed")
+	_t._check(
+		carousel.index == 1 and emulator.focused_control == arrows[1],
+		"a click on the own page arrow pages the shop panel"
+	)
+	yield(_pad_button(), "completed")
+	var first_stat: Control = own.primary_stats_container.first_primary_stat
+	_t._check(
+		CoopService.get_player_input_type(0) == pad and arrows[1].disabled,
+		"pad again: trigger glyphs"
+	)
+	_t._check(emulator.focused_control == go, "pad: a cursor on a page arrow goes to Go")
+	_t._check(
+		go.focus_neighbour_bottom == go.get_path_to(first_stat),
+		"pad: the shop panel's focus neighbours are redone"
+	)
+	carousel._on_ArrowLeft_pressed()
+	yield(_frames(2), "completed")
+	InputService.using_gamepad = was_using_gamepad
+
+
+# The mouse in the own inventory popup: a click on a weapon opens it with the cursor inside,
+# the mouse stays inside, a held recycle ends with the mouse button, cancel closes it.
+func _client_popup_mouse(emulator: Node):
+	var local = _sync.local
+	var shop: Node = _shop
+	var popup = shop._get_item_popup(0)
+	var element: Control = shop._get_gear_container(0).weapons_container._elements.get_child(0)
+	yield(_click(element), "completed")
+	_t._check(
+		popup._focused and popup.is_a_parent_of(emulator.focused_control),
+		"a click on an own weapon opens its popup with the cursor in it"
+	)
+	var outside: Control = null
+	for control in [shop._get_reroll_button(0), shop._get_go_button(0)]:
+		var middle: Vector2 = control.get_global_rect().position + control.rect_size / 2.0
+		if control.is_visible_in_tree() and not popup.get_global_rect().has_point(middle):
+			outside = control
+			break
+	if outside != null:
+		local.last_intent = {}
+		yield(_mouse(outside, "move"), "completed")
+		yield(_click(outside), "completed")
+		_t._check(
+			popup._focused and popup.is_a_parent_of(emulator.focused_control) and local.last_intent.empty(),
+			"the mouse stays inside the open shop popup (%s)" % outside.name
+		)
+	else:
+		print("  info: the shop popup covers reroll and Go, mouse outside it not tested")
+
+	ProgressData.settings.holding_button = true
+	local.last_intent = {}
+	if popup._focused and popup._requires_recycle_hold() and popup._discard_button.visible:
+		yield(_mouse(popup._discard_button, "down"), "completed")
+		_t._check(popup._recycle_button_held, "mouse down on recycle starts the shop popup's hold")
+		yield(_mouse(popup._discard_button, "up"), "completed")
+		_t._check(
+			not popup._recycle_button_held and local.last_intent.empty(),
+			"mouse up ends the hold: a short click recycles nothing"
+		)
+	else:
+		print("  info: no hold-to-recycle in the shop popup, mouse hold not tested")
+	yield(_click(popup._cancel_button), "completed")
+	_t._check(not popup._focused, "a click on cancel closes the shop popup")
 
 
 # --- helpers ---
@@ -607,3 +899,39 @@ func _tap(action: String):
 		VirtualDevices.press_button("%s_%s" % [action, _t.DEVICE], _t.DEVICE, pressed)
 		yield(_t.get_tree(), "idle_frame")
 	yield(_t.get_tree(), "idle_frame")
+
+
+# A button of a real pad: the local player picked the pad up.
+func _pad_button():
+	for pressed in [true, false]:
+		var button := InputEventJoypadButton.new()
+		button.button_index = JOY_L3
+		button.pressed = pressed
+		Input.parse_input_event(button)
+		yield(_t.get_tree(), "idle_frame")
+	yield(_t.get_tree(), "idle_frame")
+
+
+func _click(control: Control):
+	yield(_mouse(control, "down"), "completed")
+	yield(_mouse(control, "up"), "completed")
+
+
+# A mouse event at the middle of a control, in window coordinates like a real one.
+func _mouse(control: Control, kind: String):
+	var canvas_pos: Vector2 = control.get_global_transform_with_canvas().xform(
+		control.rect_size / 2.0
+	)
+	var pos: Vector2 = control.get_viewport().get_final_transform().xform(canvas_pos)
+	var event = null  # InputEventMouseMotion or InputEventMouseButton
+	if kind == "move":
+		event = InputEventMouseMotion.new()
+	else:
+		event = InputEventMouseButton.new()
+		event.button_index = BUTTON_LEFT
+		event.pressed = kind == "down"
+	event.position = pos
+	event.global_position = pos
+	Input.parse_input_event(event)
+	for _i in 3:  # flushed by the test mod, then resolved by LocalPanel in its _process
+		yield(_t.get_tree(), "idle_frame")
