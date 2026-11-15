@@ -86,7 +86,54 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   Projectile puppets play their autoplay animation without method tracks too (`AnimMirror.strip_projectile`):
   the enemy pillar's (abyss enemies, colossus) "shoot" ends in `stop()`, which pooled it by a `pool_id` meta
   clients don't have (script errors).
-- Not mirrored yet: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
+- Snapshot time (protocol 9): `t` follows the simulation, 1/60 s per physics step
+  (`BattleHost.advance_clock`), not the wall clock. Below 60 fps the engine runs several physics steps in
+  one frame; stamped with `OS.get_ticks_msec()` two snapshots of one frame were a few ms apart and the
+  next a whole frame later, so clients played the wave fast, slow, fast (and a second snapshot within the
+  same ms was dropped as a duplicate, with its events). The clock is set back onto the wall clock when
+  they differ by more than 250 ms (pause, long hitch). The client's side is unchanged (min-filtered
+  offset).
+- Per-node records: the host keeps `[net id, type idx, kind bits, node, quantized x / y, still count]`
+  per mirrored node from the snapshot it first appears in (`BattleHost._record`), the client the kind
+  bits of each puppet (`BattleClient._kind_of`). The per-snapshot and per-frame loops read those instead
+  of asking every node what it is (`is` checks, type key strings, layout lookups by scene path, a sort
+  with a script comparator: ids are sorted natively per type). A record is dropped when its node leaves
+  the tree or is respawned, so a pooled node that comes back is a new entity as before. A puppet that
+  did not move is not moved, and a plain unit's `update_animation` (facing by motion) is skipped: the
+  host's facing flag decides. Measured in `cleanup_tests.gd` for a late endless wave (400 enemies, 200
+  projectiles, 50 gold, 2 players): host 10.3 -> 3.7 ms per snapshot, client 4.1 -> 1.4 ms per frame;
+  2.7 KB per snapshot. A fresh puppet costs ~1 ms (instancing), a pooled one ~0.1 ms.
+- One net id per spawn: the id a `*_respawned` signal assigns is kept by the entity's first snapshot
+  (`_fresh_ids`). Before, the first snapshot assigned a second one, so a hit landed before it targeted an
+  id no client ever saw, and ids wrapped twice as fast.
+- Spawn markers (`EntityBirth` / `EntityGroupBirth`, protocol 9): the visible children of
+  `main._births_container` are mirrored like gold (static, so mostly `FLAG_REST`), type key
+  `<scene>#birth_enemy|neutral|structure|charmed` (colour and sprite, `PuppetEntity.birth_tag`). The
+  client calls the marker's own `start()` with a matching `SpawnRequest`, so it flickers and hides
+  itself after the same time as the host's; with no collision layers it never finds a player on it (the
+  host then moves its marker, which arrives as a teleport and restarts the puppet). Its begin / end
+  sounds are the host's.
+- Boss and elite health (protocol 9): `Pose.Kind.HEALTH`, one value (fraction) at the end of the base
+  parts of every `Boss` scene; the client hands it to the puppet's own `on_health_updated` (which
+  follows this client's "life bars on bosses" option) and builds the brachiosaurus' full-screen bar like
+  `Boss.init` does. Before, every elite showed a full bar for the whole fight.
+- Puppet timers: all paused, except a unit's `FlashTimer` and a `UIProgressBar`'s timer, whose timeouts
+  only put the sprite's material / the bar's tint back. Paused, a hit unit stayed white until it died.
+- Projectile puppets face the direction between the two snapshots around render time (not the motion
+  of the last frame), stay hidden until they have two samples (a pooled puppet would sit one snapshot
+  long with the rotation of its last flight) and restart their animation when reused.
+- Bullet-hell waves: `main._ready` adds its own generator (a random pattern) on the client too;
+  `BattleClient._freeze` frees it. The host's bullets arrive as puppets.
+- One-shot events older than 250 ms when their turn comes (a stall, a scene load) are dropped, except
+  animations (state).
+- Not mirrored yet (found by the audit for protocol 9, most visible first): player explosions
+  (`WeaponService.explode` -> `main._explosions`: rockets, grenades, mines; needs an event), burning /
+  cursed / charmed / boosted looks of enemies and the acid / petrol / fire puddles (`gpe_spawner.gd`;
+  charmed enemies look hostile, puddles are invisible), screen shake and the texts the client could
+  derive itself (level up, heals, gold pickup, wave cleared / dim / bonus gold bag), weapon breaks
+  mid-wave (weapons shift by index), hole layouts of jungle waves 4 / 10 / 16 (picked at random on each
+  machine), own-player prediction with the speed from wave start (petrol, speed changes: ~10-30 px
+  correction). Also: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
   game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
   respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
 - Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
@@ -95,6 +142,48 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (`session/puppet.gd`) — the shop resume path overwrites `saved_run_state` with the host's run. Unlocks /
   difficulties only change in host-only paths (run won, `complete_challenge`); `active_update_data` is reset
   by the title screen's `RunData.reset()`.
+
+## Wave lifetime (endless runs)
+
+- Nothing a wave allocated may outlive it. `cleanup_tests.gd` plays six waves as the host and replays
+  six as a client (battle -> shop -> battle), with the next scene replacing the battle like in a session,
+  and compares `Performance` object / node / orphan node / resource counts at the same point of every
+  round: after two warm-up rounds they must not move at all. It also walks the script variables of every
+  mod node for references to freed objects.
+- Host: the battle ends when its scene leaves the tree (`tree_exited` on `main`, `_battle_live`). The
+  old check compared scenes in the next `_process`, when `_main` was already freed and `is_in_battle()`
+  false: `BATTLE_END` was never sent after a normal wave, and the client's cleanup only ran when the
+  next battle started. `_end_battle` drops the type table, records, ids, stats and events.
+- Client: `_leave_battle` (frees the puppet pool, clears buffers and tables, `RunData.wave_in_progress`
+  / `wave_timer`, emits `battle_left`) runs on `BATTLE_END`, when the puppet scene leaves the tree
+  without one (`_main_id`), and when another battle's start replaces a live one. `UpgradesSync` drops
+  its references to the scene's panels on `battle_left`.
+- References to per-wave nodes are not kept across waves, or kept as instance ids
+  (`ShopSync._seq_shop_id`, `UpgradesSync._seq_ui_id`, pause banners found by name in their scene): in
+  the game's release build `is_instance_valid()` says yes again once the freed address is reused, and
+  `ui == _guarded_ui` would have skipped the guard of a new wave's panels.
+- `main.clean_up_room` frees `_enemy_projectiles` while the scene lives on: `BattleHost._tracked_nodes`
+  checks the container with `is_instance_valid` (it called `get_children()` on the freed node 30 times
+  a second until the scene changed).
+- Two reliable messages can arrive in one frame after a hitch, and `change_scene` instances at once but
+  swaps deferred. A `BATTLE_START` for the battle the client is in or is loading only adopts the type
+  table, slot and pause (a resync mid-wave no longer reloads the scene); one for another battle while a
+  scene loads is queued until that scene is ready and frozen; a scene that becomes ready after its
+  battle ended is frozen all the same. Before, the second scene had no hook and ran as a real local
+  battle. The shop had the same race (a second `SHOP_STATE` before the puppet shop is ready
+  entered it again, unguarded and rolling its own items); a state for the shop that is loading now waits
+  for it.
+- Client run state: `RunStateCodec.apply` resets `RunData`'s item-count caches before
+  `resume_from_state` (the game only refreshes them in add / remove item; `LinkedStats` reads them).
+- No per-node hooks: `PauseControl` finds the pause menu when the current scene changes instead of a
+  permanent `SceneTree.node_added` handler (one script call per spawned or pooled node, also in solo
+  play).
+- Logs: the Mod Loader keeps every log entry in memory. Per wave that is three lines; failed sends
+  logged one each (30 - 60 per second while a peer is unreachable) and are now limited to one a second.
+- `mod_main._enter_client_view` takes the previous scene out of the tree before the view becomes the
+  current scene, like `change_scene` does.
+- Open: the host's shop check serializes the whole run to JSON every 0.1 s (`ShopSync._send_if_changed`),
+  which grows with the items of a long run; not measured yet.
 
 ## Session lifecycle
 
@@ -410,8 +499,27 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   mouse users send the direction from their predicted player to the mouse as the stick. Host: `Utils`
   extension answers `is_manual_aim` for virtual devices from that flag.
 - Pause (`sync/pause_control.gd`): client puppet battle/shop get `PauseMenu.enabled = false` and lose the
-  `game_lost_focus` connection. Host: a remote pause hands the menu to the first local player; the pauser
-  resumes with pause (main page only). `BATTLE_PAUSE` / `SHOP_PAUSE` carry who paused ("Paused by …").
+  `game_lost_focus` connection. Host, shop: a remote pause hands the menu to the first local player; the
+  pauser resumes with pause (main page only). `BATTLE_PAUSE` / `SHOP_PAUSE` carry who paused ("Paused by ...").
+- Live menu (protocol 9; `extensions/ui/pause_menu.gd`, see docs/brotato-hooks.md §5): during a wave
+  (until `main._end_wave_timer_timedout`) the menu opens without pausing.
+  - Host with at least one peer: `PauseControl.host_update` sets `menu.live` every frame and keeps the
+    pause bit off the remote devices for the whole battle scene (`InputSync.blocked_by["battle"]`), so
+    only a local player opens it, through the game's own polling. The owner's
+    `PlayerMovementBehavior.device` is parked on `VirtualDevices.IDLE` (a device nobody presses) while
+    the menu is open: its buttons move the cursor, not the character; weapons go on firing. Focus loss
+    does nothing in live mode. Restart / end run / quit work as in the game.
+  - Client: `PauseControl.client_update` polls the release of its own `ui_pause` (armed by a press that
+    was the game's: the F9 panel releases the actions of the keys it takes) and opens the puppet scene's
+    menu for its own slot (`open_live`). `InputSync.set_local_menu` feeds the local buttons into the own
+    slot's device through a second `RemoteButtons` / `PressCounter` and sends the host a neutral `INPUT`
+    (no move, no aim, no buttons, counters unchanged; when the menu closes the counters resume from
+    what is held, so nothing counts as a press). Restart / end run are disabled, Quit closes the menu
+    and opens the F9 panel's leave confirmation.
+  - The menu closes when the wave ends on that machine (level-up panels, retry prompt, `BATTLE_END`).
+  - Open: the client's menu is keyboard / pad only (the emulator takes the mouse, as on every co-op
+    screen); a spectator has none; options changed by a client are only written to disk after the
+    session (saves are blocked while puppeting); none of this has run between two real machines yet.
 - Absent players (`sync/absent_players.gd`): after 20 s without messages (stale or left), the host makes the
   player's pending choice the game's way: first level-up option, crate take (recycle if it can't be taken),
   shop Go. Listed in the F9 panel / pill; a returning player just plays on.

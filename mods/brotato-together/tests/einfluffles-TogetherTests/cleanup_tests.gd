@@ -99,6 +99,7 @@ func run(test_mod: Node, together: Node):
 	_t._check(kept.empty(), "client: nothing of the wave is kept %s" % [kept])
 	_t._check(_dangling().empty(), "client: no reference to a freed node %s" % [_dangling()])
 	yield(_test_starts(client, recording), "completed")
+	yield(_test_shop_states(shop_sync, shop), "completed")
 	yield(_measure(host, client), "completed")
 
 	ModLoaderStore.ml_options.ignored_mod_names_in_log = ignored
@@ -408,3 +409,18 @@ func _measure(host: Node, client: Node):
 	client.set_process(true)
 	client._leave_battle()
 
+
+
+# The same for the shop: two states in one frame enter it once.
+func _test_shop_states(shop_sync: Node, body: Dictionary):
+	var tree := _t.get_tree()
+	shop_sync._client_shop_id = 0
+	shop_sync._on_state(body)
+	shop_sync._on_state(body)
+	yield(shop_sync, "shop_entered")
+	yield(tree, "idle_frame")
+	yield(tree, "idle_frame")
+	_t._check(
+		shop_sync.is_in_shop() and tree.current_scene == shop_sync._client_shop,
+		"two shop states in one frame: one guarded shop"
+	)

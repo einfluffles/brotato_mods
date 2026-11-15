@@ -73,8 +73,19 @@ decompiled sources at the time of writing and will drift between game versions â
 - Local pause triggers: `ui_pause_<dev>` (above), `InputService.game_lost_focus` (window focus out, pad
   disconnect) â†’ `main.gd :: _on_game_lost_focus` (connected in `_ready`) and `coop_shop.gd` (only while paused,
   to hand the menu to player 0). Default `settings.pause_on_focus_lost = true`.
-- Policy (brotato:together): remote players can pause; the menu goes to the host's first local player (no
-  blind quit/restart); the remote player who paused resumes with pause. Clients never pause locally.
+- Policy (brotato:together): a wave of an online session never pauses. `PauseMenu` gets a script
+  extension with a live mode (opens / closes without touching `get_tree().paused`); the game's own
+  callers (`main._check_for_pause`, the base `_input`, which Godot 3 runs next to the extension's) end
+  in `pause()`, which toggles the live menu. A real pause is left for the shop (remote players can
+  pause; the menu goes to the host's first local player, no blind quit/restart; the remote player who
+  paused resumes with pause), the level-up panels (host's local players) and a host without peers.
+  Clients never pause locally.
+- A live menu's `FocusEmulator` marks every event that is not its owner's UI action as handled, like on
+  any co-op screen: fine during a wave (movement and `main._check_for_pause` poll `Input`), not while
+  the level-up panels run, so the live menu closes when `main._end_wave_timer_timedout` is set.
+- The confirm pages (`MenuRestart`, `MenuEndRun`, `MenuConfirm`) and the codex go back on the plain
+  `ui_cancel`, and Esc is `ui_pause` and `ui_cancel` at once: without the tree paused the same key press
+  reaches a page, the pause menu and main's polling. The extension allows one step back per 200 ms.
 
 ### Menu echo
 
