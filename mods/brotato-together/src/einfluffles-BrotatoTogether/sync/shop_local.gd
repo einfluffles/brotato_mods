@@ -41,6 +41,7 @@ const POPUP_HANDLERS := {
 	"item_discard_button_pressed": "_on_item_discard_button_pressed",
 	"item_meca_upgrade_selected": "_on_item_meca_upgrade_selected",
 }
+const LOCK_WAIT_MSEC := 1000  # how long an own lock press shows without the host's answer
 
 var session: Node = null
 var input_sync: Node = null
@@ -62,6 +63,9 @@ var _unready_sent := false
 var _go_sent := false  # "go 1" left and the host's ready flag is not here yet
 var _sent_focus := ""
 var _panel_player := -1  # whose panel LocalPanel drives (-1: none)
+# Own lock presses the host has not answered yet:
+# slot node id -> [wanted, msec, the host's lock, item my_id].
+var _locks := {}
 
 
 func _init() -> void:
@@ -116,6 +120,7 @@ func stop() -> void:
 	_unready_sent = false
 	_go_sent = false
 	_sent_focus = ""
+	_locks = {}
 	if not active:
 		return
 	active = false
@@ -164,6 +169,7 @@ func process() -> void:
 	if not is_instance_valid(_shop) or not _shop.is_inside_tree():
 		stop()
 		return
+	_expire_locks()
 	_report_focus()
 	# Ready only lasts while the cursor rests on Go: the game clears the flag itself when the
 	# cursor leaves, on cancel and on the triggers. A press that reached the host after the
@@ -322,8 +328,61 @@ func _on_own_slot(node: Node, kind: String) -> void:
 	_send_slot_intent(kind, node)
 
 
+# The lock shows at once (view only: the run is the host's) and the host's states are not
+# allowed to take it back until one agrees or LOCK_WAIT_MSEC passed (a refused press).
 func _on_own_lock(node: Node, locked: bool) -> void:
+	var item = node.item_data
+	if item == null or not node.active or not item.is_lockable:
+		return
+	# With a steal left the same press steals the item (BaseShop._input): nothing to lock.
+	if _shop._item_steals[you] > 0:
+		return
+	if RunData.get_player_effect_bool(Keys.disable_item_locking_hash, you):
+		return
+	var id := node.get_instance_id()
+	var host_locked: bool = _locks[id][2] if _locks.has(id) else node.locked
+	_locks[id] = [locked, OS.get_ticks_msec(), host_locked, item.my_id]
+	show_lock(node, locked)
 	_send_slot_intent("lock", node, int(locked))
+
+
+# What a slot shows: the host's lock, or the own press on it that the host has not answered.
+func lock_shown(node: Node, host_locked: bool) -> bool:
+	var pending = _locks.get(node.get_instance_id())
+	if pending == null:
+		return host_locked
+	if pending[0] == host_locked or node.item_data.my_id != pending[3]:
+		_locks.erase(node.get_instance_id())
+		return host_locked
+	pending[2] = host_locked
+	return pending[0]
+
+
+static func show_lock(node: Node, locked: bool) -> void:
+	if locked:
+		node.lock_visually()
+	else:
+		node.unlock_visually()
+
+
+# A press the host did not apply (no state came, or none that agrees): back to the host's.
+func _expire_locks() -> void:
+	if _locks.empty():
+		return
+	var now := OS.get_ticks_msec()
+	for id in _locks.keys():
+		var pending: Array = _locks[id]
+		if now - pending[1] < LOCK_WAIT_MSEC:
+			continue
+		_locks.erase(id)
+		var node = instance_from_id(id)
+		if not is_instance_valid(node) or not node.active or node.item_data == null:
+			continue
+		if node.item_data.my_id == pending[3] and node.locked != pending[2]:
+			show_lock(node, pending[2])
+			var popup = _shop._get_item_popup(you)
+			if popup.shop_item == node:
+				popup.show_shop_hints(node)
 
 
 func _on_own_reroll() -> void:

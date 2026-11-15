@@ -84,7 +84,7 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 ## Tests
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
-run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the own shop
+run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
 panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring (also with another mod's extra controls on one machine only), character-selection cards and grid, shop UI sounds, F9 panel
 keyboard/pad input, the wave-failed prompt and the battle -> shop transition on clients, the Esc menu
