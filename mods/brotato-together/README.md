@@ -14,7 +14,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   (stats, shop, waves) runs unchanged on the host.
 - **Battles:** clients load the real battle scene with its simulation frozen and render the host's 30 Hz
   snapshots with interpolation (~100 ms behind); your own character is predicted locally and reconciled.
-  Spawn markers (where the next enemies appear) and the life bars of bosses and elites are mirrored too.
+  Spawn markers (where the next enemies appear) and the life bars of bosses and elites are mirrored too,
+  and so are explosions, screen shake, level-up / heal / material texts and the end of the wave
+  (dimmed screen, "wave completed", the bonus material bag).
 - **Esc during a wave opens the menu without pausing:** the wave runs on for everybody. The host
   gets the game's menu (its character stands still meanwhile), a client its own copy for options and
   the codex; restart / end run stay with the host, and a client's *Quit* asks to leave the lobby.

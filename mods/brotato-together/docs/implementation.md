@@ -26,7 +26,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle); u16 entity count, types as runs
   [varint type, varint length], u16 net ids, 4-bit flags, i16 x/y per entity not resting; poses as
   [varint index, u8 count, f32 values]; u8 event count + events (damage 7-8 B, sound 5-10 B, anim
-  8 B + name). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
+  8 B + name; protocol 10: explosion 9 B, bonus gold 3-5 B, wave end 2 B, gold boost 6 B). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
   Sparse data: `FLAG_REST` entities (unmoved for 4 snapshots: gold, structures, idle units) leave out their
   position except every 15th snapshot (staggered by id); player HUD stats only for 4 snapshots after a
   change and every 10th. The client fills both from earlier snapshots (`Snapshot.resolve`, which also builds
@@ -126,11 +126,13 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `BattleClient._freeze` frees it. The host's bullets arrive as puppets.
 - One-shot events older than 250 ms when their turn comes (a stall, a scene load) are dropped, except
   animations (state).
-- Not mirrored yet (found by the audit for protocol 9, most visible first): player explosions
-  (`WeaponService.explode` -> `main._explosions`: rockets, grenades, mines; needs an event), burning /
+- Not mirrored yet (found by the audit for protocol 9, most visible first): burning /
   cursed / charmed / boosted looks of enemies and the acid / petrol / fire puddles (`gpe_spawner.gd`;
-  charmed enemies look hostile, puddles are invisible), screen shake and the texts the client could
-  derive itself (level up, heals, gold pickup, wave cleared / dim / bonus gold bag), weapon breaks
+  charmed enemies look hostile, puddles are invisible; a fire explosion's puddle too), stat texts
+  (`RunData.stat_added`: stats on level up, harvesting at the wave's end, turret stats), the
+  bigger sprite of a bonus-boosted gold, the music dip and the won-run animation at the wave's end
+  (protocol 10 mirrors explosions, screen shake, level-up / heal / gold texts, dim screen, label
+  and bonus gold bag: see "One-shot feedback"), weapon breaks
   mid-wave (weapons shift by index), hole layouts of jungle waves 4 / 10 / 16 (picked at random on each
   machine), own-player prediction with the speed from wave start (petrol, speed changes: ~10-30 px
   correction). Also: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
@@ -567,6 +569,38 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `_last_played` only when it passes). Clients replay `playSingle` sounds as `playSingle` (cooldown minus
   0.1 s for snapshot timing) and pass `always_play` on. A client in a battle drops locally triggered sounds
   (e.g. step sounds from puppet walk animations, which are method tracks) and plays only replays.
+- Protocol 10 (`sync/feedback_mirror.gd`, one instance per battle on each side, no node references):
+  - Explosions (`WeaponService.explode`: rockets, grenades, landmines, exploding melee hits, bonk
+    dog; two scenes, `explosion.tscn` is announced with BATTLE_START): the host finds new ones among
+    the children of `main._explosions` at each snapshot (the pool takes finished ones out; a node
+    whose "explode" restarted was pooled and reused in between) and sends `EVENT_EXPLOSION` [scene
+    type, position, scale (incl. the explosion size stat), smoke amount]. The client takes a node
+    from main's pool like the game, puppetizes it (no physics: its first physics frame would play
+    the sound; hitbox areas off and disabled: the hits arrive as damage events), sets this player's
+    `explosion_opacity` and plays "explode" from the start (the flash lasts 0.05 s, so not from the
+    host's position); its method tracks (smoke, hitbox off) are harmless, and `end_explosion` pools
+    it when the animation ends. Fog waves get their light (`FogViewport._on_spawn_explosion`).
+  - State, sent on change, repeated for 4 snapshots and every 15th, ranked like animations and kept
+    after a stall; an older copy arriving late is ignored: `EVENT_BONUS_GOLD` [`RunData.bonus_gold`,
+    label visible] (it shrinks during the wave as bonus-boosted gold drops, grows at the end) and,
+    once `main._cleaning_up`, `EVENT_WAVE_END` [failed / lost / won, label showing]. The client dims
+    (`UIDimScreen.dim`), stops the floating texts' and effects' gold feedback (their own
+    `clean_up_room`), fades the ambient sound, and starts / hides `WaveClearedLabel` with the host's
+    (it starts late on a won run and is hidden before the level-up panels). Its typing sounds are
+    the host's.
+  - `EVENT_GOLD_BOOST` [position, boost]: the "x2" `FloatingTextManager.on_gold_picked_up` shows for
+    gold dropped while bonus gold is left or doubled by the metal detector. The host hooks
+    `picked_up` of mirrored gold and reads `boosted` in its handler: Godot 3 calls a signal's
+    targets in order of instance id and the per-battle helper is made after main, so main's
+    handler has doubled it already, and `Gold.pickup` resets it right after the signal.
+  - Derived on the client, no bytes: screen shake (`Screenshaker._on_player_took_damage` for
+    players, `_on_unit_took_damage` for enemies and neutrals, called with each damage event, which
+    already leaves out `hide_feedback` hits; this client's screenshake option applies); level-up
+    and heal texts from the host's player stats compared with its previous ones (a heal and a hit
+    within one snapshot show as their sum, a heal that also raised max health shows nothing; they
+    follow the newest snapshot, ~100 ms before the interpolated world); the gold pickup sparkle where
+    a gold puppet vanished from the snapshots (`main.on_gold_picked_up` is the only way out of
+    `_active_golds`), not after the wave's end.
 - Outside battle (shop, selection screens, end of run) `sync/ui_sounds.gd` is the host's sink instead: sounds
   are batched per frame and sent as `UI_SOUNDS` (reliable; `res://` path, volume, pitch, position). The
   level-up/crate panels live in `main.tscn`, so their sounds already travel with the battle snapshots. The
