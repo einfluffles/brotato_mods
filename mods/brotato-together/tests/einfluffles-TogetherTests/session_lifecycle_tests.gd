@@ -3,8 +3,8 @@ extends Reference
 # Synchronous on purpose: no frame passes while the fake lobby is up, so the sync modules'
 # _process (which would act on the fake host/client role) never runs.
 #  - leaving as a client restores the client's own saved run / stats (session/puppet.gd)
-#  - host leaving mid-run keeps the co-op slots; pre-run it frees them; F9 leave confirmation;
-#    Steam invite while mid-run waits for confirmation
+#  - host leaving mid-run keeps the co-op slots; pre-run it frees them; the lobby page's leave
+#    confirmation; Steam invite while mid-run waits for confirmation
 #  - HELLO resend until WELCOME, duplicate HELLO -> WELCOME again + resync, failed reliable
 #    send -> resync, member join accepts the session
 #  - join compatibility (game / mod version; DLC never rejects) with the reason shown on the client
@@ -36,6 +36,7 @@ class FakeSteam:
 	var joined := []
 	var lobby_members := []
 	var created := 0
+	var invited := []  # lobby ids the invite dialog was opened for
 	var presence := {}
 
 	func sendMessageToUser(steam_id: int, data: PoolByteArray, _flags: int, channel: int) -> int:
@@ -76,6 +77,9 @@ class FakeSteam:
 
 	func createLobby(_lobby_type: int, _max_members: int) -> void:
 		created += 1
+
+	func activateGameOverlayInviteDialog(lobby_id: int) -> void:
+		invited.append(lobby_id)
 
 	func setLobbyData(_lobby_id: int, _key: String, _value: String) -> bool:
 		return true
@@ -134,11 +138,19 @@ func run(t: Node, together: Node) -> void:
 	ProgressData.saved_run_state = saved.run_state
 	ProgressData.last_saved_run_state = saved.last_run_state
 	together._client_active = saved.client_active
-	together.get_node("TogetherMenu").close()
+	close_page(together.get_node("LobbyMenu"))
 
 
 func _on_peer_ready(_steam_id: int) -> void:
 	_peer_ready_count += 1
+
+
+# The lobby page (popup, or in the current scene's menu) closed again, whatever it shows.
+static func close_page(lobby: Node) -> void:
+	for _step in 2:  # the question, then the page
+		var page = lobby.open_page()
+		if page != null:
+			page.back()
 
 
 func _enter_lobby(transport: Node, host_id: int, members: Array) -> void:
@@ -208,36 +220,38 @@ func _test_host_leave(transport: Node, input_sync: Node) -> void:
 	input_sync.devices = {}
 
 
+# Wherever the page shows here (the scene's menu or the popup): lobby_menu_tests.gd has the places.
 func _test_leave_confirmation(transport: Node) -> void:
-	var menu: Node = _together.get_node("TogetherMenu")
+	var lobby: Node = _together.get_node("LobbyMenu")
 	_enter_lobby(transport, HOST, [HOST])
 	Puppet.set_active(true)
-	menu.open()
-	_t._check(menu.is_mid_run(), "puppet run counts as mid-run")
-	menu._on_leave_pressed()
-	_t._check(transport.is_active(), "first Leave click mid-run only asks")
-	_t._check(
-		menu._confirm_box.visible and "Leave the lobby?" in menu._confirm_label.text,
-		"leave confirmation shown"
-	)
-	menu._on_confirm_yes()
+	_t._check(lobby.is_mid_run(), "puppet run counts as mid-run")
+	lobby.ask_leave()
+	var page = lobby.open_page()
+	_t._check(page != null and transport.is_active(), "Leave mid-run opens the page and only asks")
+	if page == null:
+		return
+	var question: String = page._confirm.get_node("Buttons/Label").text
+	_t._check(page.is_asking() and "Leave the lobby?" in question, "leave confirmation shown")
+	page._on_confirm_yes()
 	_t._check(not transport.is_active(), "confirming leaves")
-	menu.close()
+	close_page(lobby)
 
 	# Steam invite while mid-run: nothing happens until the player confirms.
 	_enter_lobby(transport, HOST, [HOST])
 	Puppet.set_active(true)
 	_steam.joined.clear()
 	transport._on_join_requested(555, 9)
+	page = lobby.open_page()
 	_t._check(
-		transport.is_active() and _steam.joined.empty() and menu.is_open(),
-		"invite mid-run waits for confirmation"
+		transport.is_active() and _steam.joined.empty() and page != null,
+		"invite mid-run waits for confirmation, on the lobby page"
 	)
-	_t._check(menu._join_button.visible, "join invite button shown")
-	menu._on_join_pressed()
+	_t._check(page._join_button.visible, "join invite button shown")
+	page._on_join_pressed()
 	_t._check(not transport.is_active() and _steam.joined == [555], "confirmed invite joins")
 	_t._check(not Puppet.is_active(), "joining elsewhere ends puppet mode")
-	menu.close()
+	close_page(lobby)
 
 	# Outside a run an invite is taken right away (as before).
 	_enter_lobby(transport, LOCAL, [])
@@ -271,19 +285,19 @@ func _test_client_handshake(transport: Node, session: Node) -> void:
 	_t._check(_count_sent(Protocol.Msg.HELLO) == 2, "no HELLO after WELCOME")
 	_together._client_active = false  # else leaving would switch to the title screen
 
-	# Rejected: the reason reaches the F9 menu and the client leaves.
-	var menu: Node = _together.get_node("TogetherMenu")
+	# Rejected: the client leaves, the reason is kept for the lobby page and the status lines.
+	var lobby: Node = _together.get_node("LobbyMenu")
 	_enter_lobby(transport, HOST, [HOST])
 	session._on_peer_joined(HOST)
 	var rejected := {"version": Protocol.VERSION, "accepted": false, "reason": "game version x"}
 	_deliver(session, HOST, Protocol.Msg.WELCOME, rejected)
 	_t._check(not transport.is_active(), "rejected client leaves the lobby")
 	_t._check(
-		"game version x" in menu._last_error and menu.is_open(),
-		"rejection reason shown in the F9 menu (%s)" % menu._last_error
+		"game version x" in lobby.last_error and "! The host rejected" in lobby.details_text(),
+		"rejection reason in the lobby page's details (%s)" % lobby.last_error
 	)
-	menu._last_error = ""
-	menu.close()
+	_t._check(lobby.open_page() == null, "an error opens nothing by itself")
+	lobby.last_error = ""
 
 
 func _test_host_handshake(transport: Node, session: Node, input_sync: Node) -> void:

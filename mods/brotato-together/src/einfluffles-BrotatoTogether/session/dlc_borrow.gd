@@ -118,7 +118,7 @@ static func revert() -> void:
 	_invalidate_item_lists()
 
 
-# Line for the F9 menu details ("" when nothing is borrowed).
+# Line for the lobby page's details ("" when nothing is borrowed).
 static func note() -> String:
 	var names := []
 	for dlc_id in borrowed_ids():

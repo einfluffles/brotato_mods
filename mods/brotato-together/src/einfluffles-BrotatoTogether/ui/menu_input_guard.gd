@@ -1,19 +1,19 @@
 extends Node
-# While the F9 panel is open: the last child of the root viewport, so its _input runs before
-# every other node's (_input is dispatched in reverse tree order, then GUI, then unhandled).
-# Keyboard/gamepad events go to the panel only and are marked handled, so the game's scene,
-# FocusEmulators, CoopService (hold-to-join) and GUI focus never see them. Mouse events pass:
-# the panel's buttons are GUI controls.
+# While the lobby popup (ui/lobby_popup.gd) is open: the last child of the root viewport, so its
+# _input runs before every other node's (_input is dispatched in reverse tree order, then GUI,
+# then unhandled). Keyboard/gamepad events go to the popup only and are marked handled, so the
+# game's scene, FocusEmulators, CoopService (hold-to-join) and GUI focus never see them. Mouse
+# events pass: the popup's buttons are GUI controls.
 # Input state is updated before events are dispatched, so the actions an event pressed are
 # released again: code that polls Input (player movement, InputSync on clients) stays neutral.
-# After the panel closes, the releases of keys/buttons pressed while it was open are swallowed
+# After the popup closes, the releases of keys/buttons pressed while it was open are swallowed
 # too (closing with Esc / B must not reach the game: it pauses / goes back on *release*).
 
 const DRAIN_TIMEOUT_SEC := 2.0
 
 var handler: Object = null  # handler.handle_panel_input(event)
 
-var _held := {}  # key / pad button id -> true, pressed while the panel was open
+var _held := {}  # key / pad button id -> true, pressed while the popup was open
 var _closing := false
 
 
@@ -51,7 +51,7 @@ func _input(event: InputEvent) -> void:
 		handler.handle_panel_input(event)
 
 
-# The panel closed: stop routing, wait for the held keys/buttons to come up, then go away.
+# The popup closed: stop routing, wait for the held keys/buttons to come up, then go away.
 func finish() -> void:
 	_closing = true
 	handler = null

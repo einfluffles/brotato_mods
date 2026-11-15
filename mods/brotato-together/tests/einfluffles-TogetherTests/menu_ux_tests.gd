@@ -1,8 +1,7 @@
 extends Reference
-# F9 panel input (keyboard/pad navigation, input kept away from the game), the wave-failed retry
-# prompt and its cursor on clients (incl. cursors that arrive before their controls are
-# visible, and the cursors' key on the prompt), the battle -> next screen transition, and the
-# client's copy of the selection grid.
+# The wave-failed retry prompt and its cursor on clients (incl. cursors that arrive before their
+# controls are visible, and the cursors' key on the prompt), the battle -> next screen
+# transition, and the client's copy of the selection grid.
 
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
@@ -27,26 +26,12 @@ const PauseControl := preload(
 const CursorKeyTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursor_key_tests.gd"
 )
-const GUARD_NAME := "BrotatoTogetherMenuInputGuard"
 const HOST := 2  # fake steam ids of the streams of its own
 const P1 := 11
 const P2 := 12
 
 
 var t: Node = null  # the test mod: _check()
-
-
-class Probe:
-	extends Node
-	# Stands in for the game: records every key/pad event that reaches a normal node.
-	var events := []
-
-	func _ready() -> void:
-		pause_mode = PAUSE_MODE_PROCESS
-
-	func _input(event: InputEvent) -> void:
-		if not (event is InputEventMouse):
-			events.append(event)
 
 
 # Calls BattleHost's peer_ready handler from a newer object (see _test_join_order).
@@ -61,7 +46,6 @@ class PeerReadyRelay:
 # In a battle-capable state (run from the battle tests); leaves no scene of its own behind.
 func run_battle_tests(test_mod: Node, together: Node):
 	t = test_mod
-	yield(_test_panel_input(together), "completed")
 	yield(_test_retry_prompt(together), "completed")
 
 
@@ -115,109 +99,6 @@ static func _sections(messages: Array) -> Array:
 func _frames(count: int):
 	for _i in count:
 		yield(_tree(), "idle_frame")
-
-
-func _key(scancode: int, pressed: bool) -> void:
-	var event := InputEventKey.new()
-	event.scancode = scancode
-	event.physical_scancode = scancode  # the game binds arrows/WASD by physical key
-	event.pressed = pressed
-	Input.parse_input_event(event)
-
-
-func _pad(button: int, pressed: bool) -> void:
-	var event := InputEventJoypadButton.new()
-	event.device = 0
-	event.button_index = button
-	event.pressed = pressed
-	Input.parse_input_event(event)
-
-
-func _tap_key(scancode: int):
-	_key(scancode, true)
-	yield(_frames(1), "completed")
-	_key(scancode, false)
-	yield(_frames(2), "completed")
-
-
-func _tap_pad(button: int):
-	_pad(button, true)
-	yield(_frames(1), "completed")
-	_pad(button, false)
-	yield(_frames(2), "completed")
-
-
-func _test_panel_input(together: Node):
-	var menu: CanvasLayer = together.get_node("TogetherMenu")
-	var root := _tree().root
-	var probe := Probe.new()
-	root.add_child(probe)
-	yield(_tap_key(KEY_F9), "completed")
-	t._check(menu.is_open(), "panel: F9 opens")
-	var guard := root.get_node_or_null(GUARD_NAME)
-	t._check(guard != null and guard.get_index() == root.get_child_count() - 1, "panel: guard last")
-	t._check(together.input_sync.local_input_blocked, "panel: client input to host neutral")
-	t._check(menu.selected_button() != null, "panel: a button is selected")
-	probe.events.clear()
-
-	# Held arrow: the game neither gets the event nor sees the action pressed when polling.
-	_key(KEY_RIGHT, true)
-	yield(_frames(1), "completed")
-	t._check(probe.events.empty(), "panel: game gets no key events")
-	t._check(not Input.is_action_pressed("ui_right"), "panel: polled action released")
-	_key(KEY_RIGHT, false)
-	yield(_frames(1), "completed")
-
-	# Confirm sub-state: keyboard to No, accept -> back to the main row.
-	menu.ask_confirm("Really?", "close")
-	t._check(_texts(menu.nav_buttons()) == ["Yes", "No"], "confirm: Yes / No")
-	yield(_tap_key(KEY_RIGHT), "completed")
-	t._check(menu.selected_button().text == "No", "confirm: arrow moves the selection")
-	yield(_tap_key(KEY_ENTER), "completed")
-	t._check(menu.is_open() and not menu._confirm_box.visible, "confirm: No returns")
-	t._check("Close" in _texts(menu.nav_buttons()), "confirm: main row back")
-	# Gamepad: B leaves the sub-state, A on Yes runs the action (here: close).
-	menu.ask_confirm("Really?", "close")
-	yield(_tap_pad(JOY_BUTTON_1), "completed")
-	t._check(menu.is_open() and not menu._confirm_box.visible, "confirm: B backs out")
-	menu.ask_confirm("Really?", "close")
-	yield(_tap_pad(JOY_BUTTON_0), "completed")
-	t._check(not menu.is_open(), "confirm: A on Yes runs it")
-	t._check(probe.events.empty(), "panel: game got none of it (incl. A release)")
-	t._check(not together.input_sync.local_input_blocked, "panel: client input back")
-
-	# Esc closes; its release (the game pauses / goes back on release) is swallowed too.
-	yield(_tap_key(KEY_F9), "completed")
-	probe.events.clear()  # the F9 press itself is seen: the panel was closed
-	_key(KEY_ESCAPE, true)
-	yield(_frames(1), "completed")
-	t._check(not menu.is_open(), "panel: Esc closes")
-	_key(KEY_ESCAPE, false)
-	yield(_frames(2), "completed")
-	t._check(probe.events.empty(), "panel: Esc release swallowed %s" % [probe.events])
-	t._check(root.get_node_or_null(GUARD_NAME) == null, "panel: guard gone after close")
-	yield(_tap_key(KEY_RIGHT), "completed")
-	t._check(probe.events.size() == 2, "panel: game gets keys again (%d)" % probe.events.size())
-
-	# Gamepad: hold Select to open (a short press does nothing), B closes.
-	_pad(JOY_SELECT, true)
-	yield(_tree().create_timer(0.25), "timeout")
-	t._check(not menu.is_open(), "pad: short Select press does nothing")
-	yield(_tree().create_timer(0.4), "timeout")
-	t._check(menu.is_open(), "pad: holding Select opens")
-	_pad(JOY_SELECT, false)
-	yield(_frames(2), "completed")
-	t._check(menu.is_open(), "pad: releasing Select keeps it open")
-	yield(_tap_pad(JOY_BUTTON_1), "completed")
-	t._check(not menu.is_open(), "pad: B closes")
-	probe.queue_free()
-
-
-static func _texts(buttons: Array) -> Array:
-	var texts := []
-	for button in buttons:
-		texts.append(button.text)
-	return texts
 
 
 # Host fails a wave: the retry prompt and its cursor reach the client's puppet battle; clicking

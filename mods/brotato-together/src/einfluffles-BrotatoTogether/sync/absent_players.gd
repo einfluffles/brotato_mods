@@ -5,7 +5,8 @@ extends Node
 # - level-up: the first offered upgrade (UpgradesUIPlayerContainer._on_choose_button_pressed)
 # - crate: take the item, or recycle it when it can't be taken (no weapon slot, meca choice)
 # - shop: Go (BaseShop._on_GoButton_pressed)
-# A player who answers again is simply back: nothing else changes. Shown in the F9 menu / pill.
+# A player who answers again is simply back: nothing else changes. Shown in the lobby page's
+# details.
 
 const LOG_NAME := "einfluffles-BrotatoTogether:AbsentPlayers"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
@@ -39,7 +40,7 @@ func display_name(steam_id: int) -> String:
 	return _names.get(steam_id, str(steam_id))
 
 
-# "Name (away 12 s, auto in 8 s)" per absent player, for the F9 menu.
+# "Name (away 12 s, auto in 8 s)" per absent player, for the lobby page.
 func describe() -> Array:
 	var lines := []
 	for steam_id in absent:

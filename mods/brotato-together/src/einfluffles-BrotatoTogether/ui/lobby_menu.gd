@@ -1,0 +1,346 @@
+extends Node
+# Online co-op in the game's own menus; the mod has no overlay and no hotkey of its own.
+#  - The "Online co-op" page (ui/lobby_page.gd) is put into the page stack of the title screen and
+#    of every pause menu, behind a button added to their main page next to the game's own
+#    (found when the scene changes: no script extension of the menus).
+#  - A client on a screen without a pause menu (the waiting screen, the mirrored selection
+#    screens) has no game menu to open: releasing pause there opens the page as a popup
+#    (ui/lobby_popup.gd). open() falls back to it too.
+# This node is what those talk to: the lobby actions, the texts, the last error.
+#  - Leaving mid-run (also by accepting another Steam invite) asks first; a failed lobby shows in
+#    the page's details and the main menu's error label.
+
+signal open_changed(is_open)  # the popup: it takes keyboard and pad while open
+
+const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/dlc_borrow.gd")
+const LobbyPage := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_page.gd")
+const LobbyPopup := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_popup.gd")
+const RUN_SCENE_PREFIXES := ["res://main.tscn", "res://ui/menus/shop/"]
+const PAGE_NAME := "BrotatoTogetherLobbyPage"
+const ENTRY_NAME := "BrotatoTogetherLobbyButton"
+const NOTICE_MAX_AGE_MSEC := 15000  # an error older than this is no news on the title screen
+
+var transport: Node = null
+var session: Node = null
+var battle_host: Node = null
+var battle_client: Node = null
+var absent_players: Node = null  # host: players away mid-run (sync/absent_players.gd)
+var pause_control: Node = null  # opens the scene's pause menu for the local player
+
+var last_error := ""
+var creating := false  # Host lobby asked, Steam has not answered yet
+
+var _scene_id := 0
+var _page: Control = null  # the page in the current scene's Menus
+var _popup: CanvasLayer = null
+var _pause_armed := false  # own pause went down while the buttons were the game's
+var _pause_down := false
+var _notice := ""  # error not yet shown on the title screen
+var _notice_msec := 0
+
+
+func setup(
+	steam_transport: Node, netplay_session: Node, host_battle: Node, client_battle: Node
+) -> void:
+	transport = steam_transport
+	session = netplay_session
+	battle_host = host_battle
+	battle_client = client_battle
+	transport.connect("lobby_failed", self, "_on_lobby_failed")
+	transport.connect("lobby_ready", self, "_on_lobby_ready")
+	transport.connect("lobby_left", self, "_on_lobby_left")
+	transport.connect("join_invite", self, "_on_join_invite")
+
+
+func _ready() -> void:
+	pause_mode = PAUSE_MODE_PROCESS
+	var page: Control = LobbyPage.new()
+	page.lobby = self
+	page.framed = true
+	_popup = LobbyPopup.new()
+	_popup.name = "Popup"
+	_popup.page = page
+	_popup.connect("open_changed", self, "_on_popup_open_changed")
+	add_child(_popup)
+
+
+func _process(_delta: float) -> void:
+	var scene := get_tree().current_scene
+	var scene_id := scene.get_instance_id() if scene != null and scene.is_inside_tree() else 0
+	if scene_id != _scene_id:
+		_scene_id = scene_id
+		_page = null
+		if scene_id != 0:
+			_enter_scene(scene)
+	_poll_pause(scene)
+
+
+# --- lobby actions ---
+
+
+func steam_available() -> bool:
+	return transport.steam != null
+
+
+func host() -> void:
+	if not steam_available():
+		return
+	last_error = ""
+	creating = true
+	transport.host_lobby()
+
+
+func invite() -> void:
+	transport.open_invite_dialog()
+
+
+func leave() -> void:
+	transport.leave_lobby()
+
+
+func join_invite() -> void:
+	transport.accept_pending_join()
+
+
+func decline_invite() -> void:
+	transport.pending_join_id = 0
+
+
+# A run is in progress on this machine (host) or mirrored from the host (client).
+func is_mid_run() -> bool:
+	if not transport.is_active():
+		return false
+	if Puppet.is_active() or battle_host.is_in_battle() or battle_client.is_in_battle():
+		return true
+	var scene := get_tree().current_scene
+	if scene == null:
+		return false
+	for prefix in RUN_SCENE_PREFIXES:
+		if scene.filename.begins_with(prefix):
+			return true
+	return false
+
+
+# --- texts ---
+
+
+func details_text() -> String:
+	var lines := []
+	if not steam_available():
+		lines.append("Steam is unavailable — online play needs the Steam version of the game.")
+	elif not transport.is_active():
+		lines.append("Not in a lobby. Host one, then invite friends via Steam.")
+	else:
+		var role := "Hosting" if transport.is_host() else "Connected as client"
+		lines.append("%s · lobby %s" % [role, transport.lobby_id])
+		if DlcBorrow.is_active():
+			lines.append(DlcBorrow.note())
+		for steam_id in session.peers:
+			var peer: Dictionary = session.peers[steam_id]
+			var state := "ready" if peer.ready else "connecting"
+			if session.is_peer_stale(steam_id):
+				state = "no response"
+			var rtt: String = ("%d ms" % peer.rtt_ms) if peer.rtt_ms >= 0 else "-"
+			lines.append("  %s — %s — %s" % [peer.name, state, rtt])
+	if absent_players != null:
+		lines += absent_players.describe()
+	if battle_host.is_in_battle():
+		lines.append(
+			"Battle: %d B snapshots at %d Hz" % [battle_host.snapshot_bytes, battle_host.SNAPSHOT_HZ]
+		)
+	if battle_client.is_in_battle():
+		lines.append("Battle: render lag %d ms" % battle_client.interp_lag_msec)
+	if last_error != "":
+		lines.append("! " + last_error)
+	if transport.pending_join_id != 0:
+		lines.append(leave_question())
+	return PoolStringArray(lines).join("\n")
+
+
+func leave_question() -> String:
+	var what: String = (
+		"A friend's invite is waiting. Joining leaves this lobby."
+		if transport.pending_join_id != 0
+		else "Leave the lobby?"
+	)
+	if not is_mid_run():
+		return what
+	if transport.is_host():
+		return (
+			what
+			+ " Your run goes on, but the remote players' characters stay idle (the shop and"
+			+ " level-ups wait for them) until they rejoin a lobby you host."
+		)
+	return what + " You leave the host's run; your own saved run is kept."
+
+
+# --- the page, wherever it can be shown ---
+
+
+# The page that is on screen, or null.
+func open_page() -> Control:
+	if _popup.is_open():
+		return _popup.page
+	if is_instance_valid(_page) and _page.is_visible_in_tree():
+		return _page
+	return null
+
+
+# Shows the page: in the scene's menu (the pause menu opens for it) or, without one, as the
+# popup. Returns it.
+func open() -> Control:
+	if open_page() != null:
+		return open_page()
+	if is_instance_valid(_page) and _menus_on_screen(_page.menus):
+		if _page.menus._current_page != _page:
+			_page.menus.switch(_page.menus._current_page, _page)
+		return _page
+	_popup.open()
+	return _popup.page
+
+
+# From outside the page (a client's Quit in its own Esc menu).
+func ask_leave() -> void:
+	if transport.is_active():
+		open().ask_leave()
+
+
+func close_popup() -> void:
+	_popup.close()
+
+
+func _menus_on_screen(menus: Node) -> bool:
+	if not menus.is_visible_in_tree() and pause_control != null:
+		pause_control.open_menu()
+	return menus.is_visible_in_tree()
+
+
+# Client without a pause menu in the scene: its pause (released, like the game's own check)
+# opens the popup. Only after a press that was the game's: the guard releases what it takes.
+# Polled: a co-op screen's FocusEmulators keep the event of a key that is nobody's from _input.
+func _poll_pause(scene: Node) -> void:
+	var down := Input.is_action_pressed("ui_pause")
+	if _popup.is_open():
+		_pause_armed = false
+	elif down and not _pause_down:
+		_pause_armed = true
+	elif _pause_down and not down:
+		if _pause_armed and popup_on_pause(scene):
+			_popup.open()
+		_pause_armed = false
+	_pause_down = down
+
+
+func popup_on_pause(scene: Node) -> bool:
+	return session.is_client() and scene != null and scene.get("_pause_menu") == null
+
+
+func _on_popup_open_changed(is_open: bool) -> void:
+	emit_signal("open_changed", is_open)
+
+
+# --- the game's menus ---
+
+
+func _enter_scene(scene: Node) -> void:
+	if scene.filename == MenuData.title_screen_scene:
+		var menus = scene.get("_menus")
+		var main_menu = menus.get("_main_menu") if menus != null else null
+		if main_menu != null:
+			_page = _add_page(menus, main_menu.get("start_button"))
+			_show_notice()
+	else:
+		var pause_menu = scene.get("_pause_menu")
+		var menus = pause_menu.get("_menus") if pause_menu != null else null
+		var main_menu = menus.get("_main_menu") if menus != null else null
+		if main_menu != null:
+			_page = _add_page(menus, main_menu.get_node_or_null("%OptionsButton"))
+			var listed = main_menu.get("_buttons_array")  # which buttons keep the cursor on init
+			if _page != null and listed is Array:
+				listed.append(_page.entry_button)
+
+
+# The page into a Menus, and below `neighbour` on its main page a button like it that opens the
+# page the way the Options button does.
+func _add_page(menus: Node, neighbour) -> Control:
+	if not (neighbour is Button):
+		return null
+	var page: Control = LobbyPage.new()
+	page.name = PAGE_NAME
+	page.lobby = self
+	page.menus = menus
+	page.visible = false
+	menus.add_child(page)
+	var button := Button.new()
+	button.set_script(neighbour.get_script())
+	button.name = ENTRY_NAME
+	button.text = LobbyPage.TITLE
+	for property in [
+		"align", "expand_icon", "rect_min_size", "size_flags_horizontal", "theme",
+		"focus_neighbour_left", "focus_neighbour_right",
+	]:
+		button.set(property, neighbour.get(property))
+	if neighbour.has_font_override("font"):
+		button.add_font_override("font", neighbour.get_font("font"))
+	neighbour.get_parent().add_child_below_node(neighbour, button)
+	button.connect("pressed", self, "_on_entry_pressed", [page])
+	page.connect("back_button_pressed", self, "_on_page_back", [page])
+	page.entry_button = button
+	return page
+
+
+func _on_entry_pressed(page: Control) -> void:
+	page.menus.switch(page.menus._main_menu, page)
+
+
+func _on_page_back(page: Control) -> void:
+	page.menus.switch(page, page.menus._main_menu)
+	if page.entry_button.is_visible_in_tree():
+		page.entry_button.grab_focus()
+
+
+# --- errors and invites ---
+
+
+func _on_lobby_ready(_lobby_id: int, _is_host: bool) -> void:
+	creating = false
+
+
+func _on_lobby_left() -> void:
+	creating = false
+	_popup.close()
+
+
+# Lobby not created, join refused (with the host's reason), host gone, connection lost.
+func _on_lobby_failed(reason: String) -> void:
+	creating = false
+	last_error = reason
+	_notice = reason
+	_notice_msec = OS.get_ticks_msec()
+	_show_notice()
+
+
+# In the main menu's error label, where the game reports a broken save: now if the title screen
+# is up, else when it loads (a client drops back to it when its lobby ends).
+func _show_notice() -> void:
+	if _notice == "":
+		return
+	var scene := get_tree().current_scene
+	if scene == null or scene.filename != MenuData.title_screen_scene:
+		return
+	var main_menu = scene.get("_main_menu")
+	var label = main_menu.get("error_label") if main_menu != null else null
+	if label is Label and OS.get_ticks_msec() - _notice_msec <= NOTICE_MAX_AGE_MSEC:
+		var text := "(!) " + _notice
+		label.text = label.text + "\n" + text if label.visible and label.text != "" else text
+		label.show()
+	_notice = ""
+
+
+# Steam invite accepted while in a lobby: join right away unless that would end a run here.
+func _on_join_invite(_lobby_id: int) -> void:
+	if not is_mid_run():
+		transport.accept_pending_join()
+		return
+	open()
