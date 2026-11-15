@@ -26,7 +26,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle); u16 entity count, types as runs
   [varint type, varint length], u16 net ids, 4-bit flags, i16 x/y per entity not resting; poses as
   [varint index, u8 count, f32 values]; u8 event count + events (damage 7-8 B, sound 5-10 B, anim
-  8 B + name; protocol 10: explosion 9 B, bonus gold 3-5 B, wave end 2 B, gold boost 6 B). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
+  8 B + name; protocol 11: explosion 9 B, bonus gold 3-5 B, wave end 2 B, gold boost 6 B). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
   Sparse data: `FLAG_REST` entities (unmoved for 4 snapshots: gold, structures, idle units) leave out their
   position except every 15th snapshot (staggered by id); player HUD stats only for 4 snapshots after a
   change and every 10th. The client fills both from earlier snapshots (`Snapshot.resolve`, which also builds
@@ -131,7 +131,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   charmed enemies look hostile, puddles are invisible; a fire explosion's puddle too), stat texts
   (`RunData.stat_added`: stats on level up, harvesting at the wave's end, turret stats), the
   bigger sprite of a bonus-boosted gold, the music dip and the won-run animation at the wave's end
-  (protocol 10 mirrors explosions, screen shake, level-up / heal / gold texts, dim screen, label
+  (protocol 11 mirrors explosions, screen shake, level-up / heal / gold texts, dim screen, label
   and bonus gold bag: see "One-shot feedback"), weapon breaks
   mid-wave (weapons shift by index), hole layouts of jungle waves 4 / 10 / 16 (picked at random on each
   machine), own-player prediction with the speed from wave start (petrol, speed changes: ~10-30 px
@@ -569,7 +569,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `_last_played` only when it passes). Clients replay `playSingle` sounds as `playSingle` (cooldown minus
   0.1 s for snapshot timing) and pass `always_play` on. A client in a battle drops locally triggered sounds
   (e.g. step sounds from puppet walk animations, which are method tracks) and plays only replays.
-- Protocol 10 (`sync/feedback_mirror.gd`, one instance per battle on each side, no node references):
+- Protocol 11 (`sync/feedback_mirror.gd`, one instance per battle on each side, no node references):
   - Explosions (`WeaponService.explode`: rockets, grenades, landmines, exploding melee hits, bonk
     dog; two scenes, `explosion.tscn` is announced with BATTLE_START): the host finds new ones among
     the children of `main._explosions` at each snapshot (the pool takes finished ones out; a node

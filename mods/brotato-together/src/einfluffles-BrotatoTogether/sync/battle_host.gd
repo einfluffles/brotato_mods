@@ -68,7 +68,7 @@ var _paused := false
 var _events := []  # one-shot feedback since the last snapshot
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
-var _feedback = FeedbackMirror.new()  # explosions, bonus gold, wave end (protocol 10)
+var _feedback = FeedbackMirror.new()  # explosions, bonus gold, wave end (protocol 11)
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:

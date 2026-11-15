@@ -101,7 +101,7 @@ var _pause_text := ""
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
-var _feedback = FeedbackMirror.new()  # explosions, texts, shake, wave end (protocol 10)
+var _feedback = FeedbackMirror.new()  # explosions, texts, shake, wave end (protocol 11)
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:

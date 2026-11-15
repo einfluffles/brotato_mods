@@ -1,5 +1,5 @@
 extends Reference
-# One-shot feedback that needs no game logic on the client (protocol 10). One instance per battle
+# One-shot feedback that needs no game logic on the client (protocol 11). One instance per battle
 # on each side (BattleHost / BattleClient replace it), holding no node references.
 #
 # Sent (sync/snapshot.gd events):
@@ -133,7 +133,7 @@ func _on_gold_picked_up(gold: Node, player_index: int) -> void:
 # --- client ---
 
 
-# Protocol 10 events at render time (t: host time of their snapshot; types: BattleClient._types).
+# Protocol 11 events at render time (t: host time of their snapshot; types: BattleClient._types).
 func fire(main: Node, types: Dictionary, t: int, event: Array) -> void:
 	match event[0]:
 		Snapshot.EVENT_EXPLOSION:

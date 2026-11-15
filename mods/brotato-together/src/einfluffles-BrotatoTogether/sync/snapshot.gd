@@ -14,7 +14,7 @@ extends Reference
 #     [EVENT_SOUND, type idx of the stream, position: Vector2 or null, volume, pitch_rand,
 #      always_play: bool, single cooldown (s, 0: SoundManager.play)]
 #     [EVENT_ANIM, net id, animation name, position (s), speed] (see sync/anim_mirror.gd)
-#     protocol 10 (see sync/feedback_mirror.gd):
+#     protocol 11 (see sync/feedback_mirror.gd):
 #     [EVENT_EXPLOSION, type idx of the scene, position: Vector2, scale, smoke amount]
 #     [EVENT_BONUS_GOLD, value, label visible: bool] (state, repeated)
 #     [EVENT_WAVE_END, WAVE_* flags] (state, repeated)
@@ -237,7 +237,7 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 			_put_feedback_event(buf, event)
 
 
-# Protocol 10 kinds, after the kind byte:
+# Protocol 11 kinds, after the kind byte:
 #   EXPLOSION: varint type idx, i16 x, i16 y, u16 scale (1/100, >= 1), u8 smoke amount
 #   BONUS_GOLD: u8 BONUS_VISIBLE bit, varint value
 #   WAVE_END: u8 WAVE_* flags

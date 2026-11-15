@@ -1,5 +1,5 @@
 extends Reference
-# Feedback the client shows without game logic (sync/feedback_mirror.gd, protocol 10): the wire
+# Feedback the client shows without game logic (sync/feedback_mirror.gd, protocol 11): the wire
 # format of its events and their size, then a host battle that explodes (once a pooled
 # explosion reused between two snapshots), pays out bonus gold, heals, levels up and ends its
 # wave, replayed on a client. Driven from mod_main.gd (late suites); checks go through its _check.
