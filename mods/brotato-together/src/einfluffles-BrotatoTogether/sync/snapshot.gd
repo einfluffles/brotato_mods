@@ -19,6 +19,8 @@ extends Reference
 #     [EVENT_BONUS_GOLD, value, label visible: bool] (state, repeated)
 #     [EVENT_WAVE_END, WAVE_* flags] (state, repeated)
 #     [EVENT_GOLD_BOOST, position: Vector2, boost]
+#   looks: {entity index: look bits} (since protocol 11, see sync/looks.gd; indices of the parsed
+#     entity order: Looks.resolve reads them before resolve() may drop entities)
 #
 # Wire layout:
 #   u32 battle_id, u32 t, u16 wave time left (1/100 s)
@@ -31,6 +33,7 @@ extends Reference
 #     by id: mostly 1 byte); flags; i16 x, i16 y per entity without FLAG_REST
 #   varint pose count; per pose: varint entity index (ascending), u8 value count, f32 values
 #   u8 event count; per event: u8 kind + payload (see _put_event)
+#   varint look count; per look: varint gap to the previous entity index + 1 (ascending), u8 bits
 # Nothing may follow. Angles are i16 over [-PI, PI].
 #
 # Rarely changing data is sparse; the client fills the gaps from earlier snapshots (resolve()):
@@ -79,6 +82,7 @@ const FLAG_FLIP_H := 4  # jump attacks turn the sprite with flip_h, not scale.x
 const FLAG_REST := 8  # position not sent: unchanged (see resolve)
 const FLAG_BITS := 4
 const MAX_POSE_VALUES := 48  # see sync/pose.gd
+const LOOK_BITS := 63  # every bit sync/looks.gd defines; parse rejects others
 const MAX_PLAYERS := 8
 const MAX_WEAPONS := 32
 const MAX_ENTITIES := 8192
@@ -153,7 +157,20 @@ static func encode(view: Dictionary) -> PoolByteArray:
 	buf.put_u8(view.events.size())
 	for event in view.events:
 		_put_event(buf, event)
+	_put_looks(buf, view.get("looks", {}))
 	return buf.data_array
+
+
+# Sparse: only entities whose look the host sends this time (sync/looks.gd).
+static func _put_looks(buf: StreamPeerBuffer, looks: Dictionary) -> void:
+	var indices: Array = looks.keys()
+	indices.sort()
+	_put_varint(buf, indices.size())
+	var next := 0
+	for index in indices:
+		_put_varint(buf, index - next)
+		buf.put_u8(looks[index] & LOOK_BITS)
+		next = index + 1
 
 
 static func _put_player(buf: StreamPeerBuffer, entry: Array) -> void:
@@ -334,9 +351,29 @@ static func parse(body) -> Dictionary:
 		if event == null:
 			return {}
 		view.events.append(event)
-	if buf.get_available_bytes() != 0:
+	if not _get_looks(buf, view) or buf.get_available_bytes() != 0:
 		return {}
 	return view
+
+
+static func _get_looks(buf: StreamPeerBuffer, view: Dictionary) -> bool:
+	var count := _get_varint(buf)
+	var entity_count: int = view.ids.size()
+	if count < 0 or count > entity_count:
+		return false
+	var looks := {}
+	var next := 0
+	for _i in count:
+		var gap := _get_varint(buf)
+		if gap < 0 or next + gap >= entity_count or buf.get_available_bytes() < 1:
+			return false
+		var look := buf.get_u8()
+		if look & ~LOOK_BITS:
+			return false
+		looks[next + gap] = look
+		next += gap + 1
+	view["looks"] = looks
+	return true
 
 
 static func _get_player(buf: StreamPeerBuffer):

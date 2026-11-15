@@ -31,6 +31,8 @@ const PauseControl := preload(
 const FeedbackMirror := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
 )
+const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
+const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -102,6 +104,7 @@ var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
 var _feedback = FeedbackMirror.new()  # explosions, texts, shake, wave end (protocol 11)
+var _looks = Looks.new()
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -236,6 +239,7 @@ func _reset_battle_state() -> void:
 	_entity_kinds.clear()
 	_applied_to = {}
 	_resolve_cache = {}
+	_looks = Looks.new()
 	_newest_rx_msec = 0
 	_free_puppet_pool()
 	if not _loading:  # a scene still loading must be frozen when it is ready, battle or not
@@ -352,7 +356,9 @@ func _define_type(idx, key) -> void:
 		return
 	_types[idx] = load(path)
 	_type_data[idx] = null
-	if parts.size() > 1:
+	if parts.size() > 1 and Puddles.is_tag(parts[1]):
+		_type_data[idx] = Puddles.parse_tag(parts[1])
+	elif parts.size() > 1:
 		var tag: String = parts[1]
 		var plain: bool = tag == CURSED_TAG or PuppetEntity.BIRTH_TAGS.has(tag)
 		_type_data[idx] = tag if plain else _find_consumable(tag)
@@ -393,6 +399,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		return
 	if i == _buffer.size():
 		_newest_rx_msec = OS.get_ticks_msec()
+	Looks.resolve(snapshot, _resolve_cache)  # first: it reads the entity indices as parsed
 	Snapshot.resolve(snapshot, _resolve_cache)
 	_buffer.insert(i, snapshot)
 	for event in snapshot.events:
@@ -612,6 +619,7 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 	for id in _despawned.keys():
 		if now > _despawned[id][1]:
 			_despawned.erase(id)
+	_looks.apply(_entities, to.get("looks_by_id", {}))
 
 
 # What a puppet needs every frame, decided once when it spawns.
@@ -690,6 +698,8 @@ func _spawn(type_idx: int) -> Node:
 		elif not cursed and is_instance_valid(particles):
 			particles.queue_free()
 			node.curse_particle_instance = null
+	if Puddles.is_puddle(node):
+		Puddles.start(node, data)
 	PuppetEntity.puppetize(node)
 	AnimMirror.detach_game_handlers(node)
 	return node
@@ -717,6 +727,8 @@ func _container_for(node: Node) -> Node:
 		return _main.get("_enemy_projectiles")
 	if node is EntityBirth:
 		return _main.get("_births_container")
+	if Puddles.is_puddle(node):
+		return Puddles.container(_main, node)
 	if node.get_script() != null and node.get_script().resource_path.begins_with("res://items/"):
 		return _main.get("_materials_container")
 	return _main.get("_entities_container")
@@ -734,6 +746,26 @@ func _despawn(node) -> void:
 			args.enemy_killed_by_player = false
 			node.die(args)
 		return
+	if Puddles.is_puddle(node) and not node._is_dying:
+		var fade := Puddles.fade_out(node)
+		var timer := get_tree().create_timer(fade, false)
+		timer.connect("timeout", self, "_on_puddle_faded", [node, _battle_id])
+		return
+	_pool_puppet(node)
+
+
+# The fade ran on (the puddle's own despawn timer is paused on a puppet); a puppet of a battle
+# that is over goes with its scene, never into the next battle's pool.
+func _on_puddle_faded(node, battle_id: int) -> void:
+	if not is_instance_valid(node):
+		return
+	if battle_id != _battle_id:
+		node.queue_free()
+		return
+	_pool_puppet(node)
+
+
+func _pool_puppet(node: Node) -> void:
 	var type_idx = node.get_meta(PUPPET_TYPE_META) if node.has_meta(PUPPET_TYPE_META) else null
 	var pool: Array = _puppet_pool.get(type_idx, [])
 	if type_idx == null or pool.size() >= MAX_POOLED_PER_TYPE or node.get_parent() == null:

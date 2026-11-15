@@ -24,6 +24,8 @@ const PuppetEntity := preload(
 const FeedbackMirror := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
 )
+const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
+const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleHost"
 const BATTLE_SCENE := "res://main.tscn"
 const SNAPSHOT_HZ := 30
@@ -43,6 +45,7 @@ const MAX_EVENTS := 48  # per snapshot; Snapshot.select_events drops the least v
 const KIND_ENTITY := 1  # has `dead` and an AnimationPlayer worth watching
 const KIND_UNIT := 2  # has a sprite whose facing is host state
 const KIND_POSE := 4  # its scene has parts that sync/pose.gd captures
+const KIND_LOOK := 8  # can show a lasting look (sync/looks.gd)
 # Snapshot time runs with the simulation; it is set back onto the wall clock when they part
 # (a pause, a long hitch, a host that cannot keep 8 physics steps per frame).
 const MAX_CLOCK_DRIFT_MSEC := 250.0
@@ -69,6 +72,7 @@ var _events := []  # one-shot feedback since the last snapshot
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
 var _feedback = FeedbackMirror.new()  # explosions, bonus gold, wave end (protocol 11)
+var _looks = Looks.new()
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -150,6 +154,7 @@ func _start_battle(main: Node) -> void:
 	_events.clear()
 	_anim_mirror = AnimMirror.new()
 	_feedback = FeedbackMirror.new()
+	_looks = Looks.new()
 	SoundRelay.set_sink(self)
 	var main_players: Array = main.get("_players")
 	for i in main_players.size():
@@ -189,6 +194,7 @@ func _end_battle() -> void:
 	_events.clear()
 	_anim_mirror = AnimMirror.new()
 	_feedback = FeedbackMirror.new()
+	_looks = Looks.new()
 	SoundRelay.set_sink(null)
 	if session.is_host():
 		session.broadcast_reliable(Protocol.Msg.BATTLE_END, {"battle_id": _battle_id})
@@ -361,6 +367,10 @@ func _build_snapshot() -> Array:
 						node_flags |= Snapshot.FLAG_FLIP_H
 			if kind & KIND_ENTITY:
 				_anim_mirror.capture(node, net_id, _events)
+			if kind & KIND_LOOK:
+				var entity: bool = kind & KIND_ENTITY
+				var unit: bool = kind & KIND_UNIT
+				_looks.capture(node, net_id, ids.size() - 1, _snapshot_count, entity, unit)
 			var posed := false
 			if kind & KIND_POSE:
 				var pose: PoolRealArray = _pose.capture(node)
@@ -394,6 +404,7 @@ func _build_snapshot() -> Array:
 	view.flags = Snapshot.pack_flags(flags)
 	_feedback.capture(_main, _events, _snapshot_count, funcref(self, "_type_idx"))
 	view["events"] = Snapshot.select_events(_events, MAX_EVENTS)
+	view["looks"] = _looks.end_snapshot()
 	_events = []
 	_snapshot_count += 1
 	return [Protocol.Msg.SNAPSHOT, Snapshot.encode(view)]
@@ -415,6 +426,8 @@ func _record(node: Node, key: int) -> Array:
 	var layout: Dictionary = _pose.layout(node)
 	if not layout.parts.empty() or layout.group != Pose.Group.NONE:
 		kind |= KIND_POSE
+	if Looks.can_have_look(node):
+		kind |= KIND_LOOK
 	# X / Y: no position yet (out of the wire's range), so the first snapshot never rests.
 	return [node.get_meta(NET_ID_META), _type_idx(_type_key(node)), kind, node, 1 << 20, 0, 0]
 
@@ -511,6 +524,7 @@ func _tracked_nodes() -> Array:
 		for child in births.get_children():
 			if child is EntityBirth and child.visible:
 				nodes.append(child)
+	nodes += Puddles.tracked(_main)  # acid, petrol, fire: static like gold
 	# Pooled projectiles are removed from the tree, so container children are the live ones.
 	for container_name in ["_player_projectiles", "_enemy_projectiles"]:
 		var container = _main.get(container_name)
@@ -531,6 +545,8 @@ func _type_key(node: Node) -> String:
 		return "%s#%s" % [node.filename, CURSED_TAG]
 	if node is EntityBirth:
 		return "%s#%s" % [node.filename, PuppetEntity.birth_tag(node)]
+	if Puddles.is_puddle(node):  # sprite and size (sync/puddles.gd)
+		return "%s#%s" % [node.filename, Puddles.tag(node)]
 	return node.filename
 
 
