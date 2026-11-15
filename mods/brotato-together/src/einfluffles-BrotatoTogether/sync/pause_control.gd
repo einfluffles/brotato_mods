@@ -177,16 +177,34 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.action != VirtualDevices.action("ui_pause", _pauser_device):
 		return
+	if _pauser_may_resume():
+		get_tree().set_input_as_handled()
+		_resume_for_pauser()
+
+
+# The menu's FocusEmulator (the host's local player by now) eats the events of every other
+# player's device before _input above runs, unless the game is listening for joining players
+# (it is not in the shop). The release still reaches the action state, so it is polled too.
+func _poll_pauser_release() -> void:
+	if _pauser_device < 0 or not _pauser_may_resume():
+		return
+	if Input.is_action_just_released(VirtualDevices.action("ui_pause", _pauser_device)):
+		_resume_for_pauser()
+
+
+func _pauser_may_resume() -> bool:
 	if not is_instance_valid(_menu) or not get_tree().paused:
-		return
-	if Engine.get_idle_frames() == _paused_frame:
-		return
-	get_tree().set_input_as_handled()
+		return false
+	return Engine.get_idle_frames() != _paused_frame
+
+
+func _resume_for_pauser() -> void:
 	if _menu._main_menu.visible and not _menu.codex_is_opened:
 		_menu.unpause()
 
 
 func _process(_delta: float) -> void:
+	_poll_pauser_release()
 	_watch_scene(get_tree().current_scene)
 	_update_live_menu()
 	if not session.is_host():

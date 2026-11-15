@@ -259,10 +259,10 @@ func _suite_local_shop(together: Node):
 
 func _suite_pause_input(together: Node):
 	coop_run(2)
-	# As the core suite leaves it (and as these checks always ran): with it off, the pause menu's
-	# FocusEmulator swallows the remote ui_pause release before PauseControl._input sees it.
+	# Like a real shop or battle: the game is not listening for joining players (with it on, the
+	# pause menu's FocusEmulator lets every device's events through).
 	var listening: bool = CoopService.listening_for_inputs
-	CoopService.listening_for_inputs = true
+	CoopService.listening_for_inputs = false
 	_suite = PauseInputTests.new(self, together)
 	yield(_suite.run(), "completed")
 	CoopService.listening_for_inputs = listening
