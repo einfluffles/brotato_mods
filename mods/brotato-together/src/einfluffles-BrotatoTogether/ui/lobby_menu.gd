@@ -3,12 +3,13 @@ extends Node
 #  - The "Online co-op" page (ui/lobby_page.gd) is put into the page stack of the title screen and
 #    of every pause menu, behind a button added to their main page next to the game's own
 #    (found when the scene changes: no script extension of the menus).
+#  - Character selection gets the Online toggle in its run options (ui/online_options.gd).
 #  - A client on a screen without a pause menu (the waiting screen, the mirrored selection
 #    screens) has no game menu to open: releasing pause there opens the page as a popup
 #    (ui/lobby_popup.gd). open() falls back to it too.
 # This node is what those talk to: the lobby actions, the texts, the last error.
 #  - Leaving mid-run (also by accepting another Steam invite) asks first; a failed lobby shows in
-#    the page's details and the main menu's error label.
+#    the page's details, the run options' status line and the main menu's error label.
 
 signal open_changed(is_open)  # the popup: it takes keyboard and pad while open
 
@@ -16,6 +17,9 @@ const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session
 const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/dlc_borrow.gd")
 const LobbyPage := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_page.gd")
 const LobbyPopup := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_popup.gd")
+const OnlineOptions := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/online_options.gd"
+)
 const RUN_SCENE_PREFIXES := ["res://main.tscn", "res://ui/menus/shop/"]
 const PAGE_NAME := "BrotatoTogetherLobbyPage"
 const ENTRY_NAME := "BrotatoTogetherLobbyButton"
@@ -158,6 +162,18 @@ func details_text() -> String:
 	return PoolStringArray(lines).join("\n")
 
 
+# One line for the run options box of character selection ("": nothing to say).
+func status_text() -> String:
+	if not steam_available():
+		return "Online: needs Steam"
+	if creating:
+		return "Online: creating the lobby…"
+	if transport.is_host():
+		var players: int = session.peers.size() + 1
+		return "Online: %d player%s" % [players, "" if players == 1 else "s"]
+	return "! " + last_error if last_error != "" else ""
+
+
 func leave_question() -> String:
 	var what: String = (
 		"A friend's invite is waiting. Joining leaves this lobby."
@@ -250,6 +266,8 @@ func _enter_scene(scene: Node) -> void:
 		if main_menu != null:
 			_page = _add_page(menus, main_menu.get("start_button"))
 			_show_notice()
+	elif scene.filename == MenuData.character_selection_scene:
+		OnlineOptions.add_to(scene, self)
 	else:
 		var pause_menu = scene.get("_pause_menu")
 		var menus = pause_menu.get("_menus") if pause_menu != null else null

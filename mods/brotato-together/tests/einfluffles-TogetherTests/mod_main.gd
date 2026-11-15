@@ -366,8 +366,8 @@ func _suite_upgrades_change(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
-# The lobby in the game's menus (lobby_menu_tests.gd): title screen, the client's popup, the
-# pause menu. Sets up its own scenes and run.
+# The lobby in the game's menus (lobby_menu_tests.gd): title screen, character selection, the
+# client's popup, the pause menu. Sets up its own scenes and run.
 func _suite_lobby_menu(together: Node):
 	_suite = LobbyMenuTests.new()
 	yield(_suite.run(self, together), "completed")
@@ -399,6 +399,7 @@ func _suite_core(together: Node):
 	var lobby: Node = together.get_node("LobbyMenu")
 	_check(lobby.open_page() == null, "lobby page starts closed")
 	_check("Steam is unavailable" in lobby.details_text(), "lobby details without Steam")
+	_check(lobby.status_text() == "Online: needs Steam", "lobby status line without Steam")
 
 	# Remote player joins via hold-to-join and is typed as a gamepad.
 	RunData.set_coop_run(true)
