@@ -507,6 +507,18 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the other clients. Cosmetic: a target that does not resolve (a control only one side has) or is not
     visible is ignored. Absent players and the pause hand-over
     work as before; while the host is paused (section `pause_shop`) the client's local buttons are off.
+  - Other mods' decisions (protocol 16; `ShopSync.register_intent`, `send_intent`): a mod that adds
+    a button to a shop panel registers a kind of its own (namespaced, e.g. brotato:trade's
+    `trade.item` / `trade.weapon`; `slot`, `id`, `arg` are the mod's to define). Host: a remote
+    player's press runs `handler(shop, player, slot, id, arg) -> bool` after the checks every press
+    gets (the sender's own player, the panel revision, not paused); true counts like an applied
+    press of the game (revision bumped, run serialized, state flushed), so the same message twice is
+    applied once. A game kind cannot be registered. The state names the host's kinds (`kinds`, in the
+    key). Client: `is_puppet_shop(shop)` tells the mod it must not change the run,
+    `host_handles(kind)` whether the host has the mod, `own_player()` whose panel is local, and
+    `send_intent(shop, player, kind, slot, id, arg)` sends a press of the own panel (false: not
+    sent). A local player's decision on the host needs nothing: the changed run is found by the
+    fingerprint (item / weapon lists) and sent at the next check.
   - Differences from local co-op: with a steal left, the select shortcut steals and locks in one press;
     the client only sends the steal (the game itself would lock the stolen item).
     A second press made before the host's answer arrived (two quick buys) is dropped as stale.

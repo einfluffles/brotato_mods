@@ -8,7 +8,8 @@ extends Node
 #   flag), seqs (a panel revision), pages (the carousel page) and mecas (the meca upgrade rolls
 #   its item popup remembers:
 #   [[weapon slot, weapon my_id, stat key hash, value, stat key hash, value]],
-#   sync/meca_choice.gd), colors (palette index per slot), and per peer you (which player it is,
+#   sync/meca_choice.gd), colors (palette index per slot), kinds (other mods' intent kinds the
+#   host handles: register_intent), and per peer you (which player it is,
 #   -1: none). Remote players' decisions arrive as SHOP_INTENT and are applied by the
 #   game's own code when they still match the sender's panel (sync/shop_intents.gd); their raw
 #   buttons, except pause, are kept off the virtual devices meanwhile.
@@ -64,6 +65,7 @@ var _shop_id := 0
 var _seq_shop_id := 0  # instance id of the shop the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel offers something new
 var _seq_keys := []
+var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method]
 
 # client
 var _client_shop: Node = null
@@ -73,6 +75,7 @@ var _state := {}  # the run state RunData has, with the bytes it came from
 var _run_bytes := PoolByteArray()
 var _state_keys := []
 var _applied := {}  # player index -> what its panel shows (player_keys entry + "slots")
+var _host_kinds := []  # other mods' intent kinds the host handles (its last state)
 
 
 func setup(netplay_session: Node) -> void:
@@ -119,6 +122,44 @@ func _process(_delta: float) -> void:
 	_block_remote_buttons(not get_tree().paused)
 
 
+# --- for other mods: a decision of their own on a player's shop panel (a button they add) ---
+# Host: register_intent(kind, target, method). method(shop, player, slot, id, arg) -> bool runs
+#   for a remote player's press with the checks every intent gets (the sender's own player, its
+#   panel's revision, not paused) and returns whether it changed the run; the state then goes
+#   out like after the game's own decisions. Local players' presses never come here.
+# Client: the run is the host's, so the mod changes nothing in a puppet shop (is_puppet_shop).
+#   It sends the press of this client's own player (send_intent) when the host has the kind
+#   (host_handles), and the result arrives with the host's next state.
+
+
+# kind: namespaced by the mod ("trade.item"); slot, id and arg are the mod's to define.
+func register_intent(kind: String, target: Object, method: String) -> bool:
+	if kind == "" or kind in ShopIntents.OWN_KINDS or target == null:
+		return false
+	_mod_kinds[kind] = [target, method]
+	return true
+
+
+func is_puppet_shop(shop: Node) -> bool:
+	return Puppet.is_active() and is_instance_valid(shop) and shop.filename == SHOP_SCENE
+
+
+func host_handles(kind: String) -> bool:
+	return kind in _host_kinds
+
+
+# The player whose panel runs on this client (-1: none).
+func own_player() -> int:
+	return local.you if local.active else -1
+
+
+# False: not sent (not this client's own panel, or the host does not know the kind).
+func send_intent(shop: Node, player: int, kind: String, slot: int, id: String, arg: int) -> bool:
+	if shop != _client_shop or player != own_player() or not host_handles(kind):
+		return false
+	return local.send_mod_intent(kind, slot, id, arg)
+
+
 func _on_message(steam_id: int, msg_type: int, body) -> void:
 	match msg_type:
 		Protocol.Msg.SHOP_INTENT:
@@ -149,7 +190,7 @@ func state_key(_section: int) -> String:
 	var parts := _shop_parts()
 	var rest := [
 		_shop_id, parts.slots, parts.locks, parts.go, parts.seqs, parts.pages, parts.mecas,
-		_yous(), CoopService.bt_slot_colors,
+		_yous(), CoopService.bt_slot_colors, _kinds(),
 	]
 	return str(run_cache.rev) + var2str(rest)
 
@@ -169,7 +210,14 @@ func state_body(_section: int) -> Dictionary:
 		"pages": parts.pages,
 		"mecas": parts.mecas,
 		"colors": CoopService.bt_slot_colors.duplicate(),
+		"kinds": _kinds(),
 	}
+
+
+func _kinds() -> Array:
+	var kinds := _mod_kinds.keys()
+	kinds.sort()
+	return kinds
 
 
 # Each client also learns which player's panel is its own (-1: none).
@@ -250,7 +298,7 @@ func host_apply_intent(shop: Node, p: int, msg: Dictionary) -> bool:
 	if p < 0 or p >= RunData.get_player_count() or get_tree().paused:
 		return false
 	_update_seqs(shop)
-	var result: int = ShopIntents.apply(shop, p, msg, _seqs[p])
+	var result: int = ShopIntents.apply(shop, p, msg, _seqs[p], _mod_kinds)
 	if result == ShopIntents.DROPPED:
 		return false
 	if result == ShopIntents.CHANGED:
@@ -494,6 +542,11 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 		_refresh_player(shop, state, p, changed, body)
 		_applied[p] = fresh if keyed else {}
 	_apply_locks(shop, body.get("locks"))
+	_host_kinds = []
+	var kinds = body.get("kinds")
+	for kind in kinds if typeof(kinds) == TYPE_ARRAY else []:
+		if typeof(kind) == TYPE_STRING:
+			_host_kinds.append(kind)
 	shop.update_go_next_button_text()
 	var you: int = body.you if typeof(body.get("you")) == TYPE_INT else -1
 	_mirror_view(shop, you, body.get("pages"))
@@ -647,6 +700,7 @@ func _on_lobby_left() -> void:
 	_run_bytes = PoolByteArray()
 	_state_keys = []
 	_applied = {}
+	_host_kinds = []
 
 
 # values[index] when values is a list that long, else null (network data).

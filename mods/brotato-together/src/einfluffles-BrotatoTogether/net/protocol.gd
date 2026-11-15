@@ -28,7 +28,7 @@ enum Msg {
 	# ui/focus_targets.gd target inside its own panel, []: none). Cosmetic: what the others see.
 	UPGRADE_FOCUS,
 	# client -> host: shop_id, seq (of the sender's panel), kind, slot, id, arg (the kinds are
-	# listed in sync/shop_intents.gd)
+	# listed in sync/shop_intents.gd; other mods add their own: ShopSync.register_intent)
 	SHOP_INTENT,
 	# client -> host: shop_id, page, target (like UPGRADE_FOCUS, inside the sender's shop panel)
 	SHOP_FOCUS,
@@ -38,7 +38,7 @@ enum Msg {
 	STATE,
 }
 
-const VERSION := 15
+const VERSION := 16
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:
