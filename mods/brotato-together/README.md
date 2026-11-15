@@ -84,3 +84,6 @@ keyboard/pad input, the wave-failed prompt and the battle -> shop transition on 
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave
 costs per snapshot and per frame.
+
+The tests are named suites (`SUITES` in `mod_main.gd`), each passing on its own: `tools/check.sh -s <suite>`
+runs one, and `shards.txt` groups them into the game processes a full check runs side by side.

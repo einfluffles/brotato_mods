@@ -4,6 +4,7 @@ extends Reference
 # engine's object counts at the same point of every round. The first rounds still load scenes
 # and fill caches; after them the counts must stand still. The waves end the way they do in a
 # session: the next scene replaces the battle, nobody calls the cleanup.
+# Three suites (run_host, run_client, run_misc); each records the host wave it needs itself.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const RunStateCodec := preload(
@@ -17,6 +18,7 @@ const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/
 const TREE := "res://entities/units/neutral/tree.tscn"
 const ENEMY := "res://entities/units/enemies/crash_zone/basic/baby_alien/baby_alien.tscn"
 const BULLET := "res://projectiles/bullet/bullet_projectile.tscn"
+const SOUND := "res://entities/units/player/step_sounds/Step 1.mp3"
 const LOAD := {"enemies": 400, "bullets": 200, "gold": 50}  # a late endless wave
 const ROUNDS := 6
 const WARM_UP := 2
@@ -37,25 +39,13 @@ var _t: Node
 var _together: Node
 var _markers_seen := 0
 var _flash_ended := false
+var _ignored_logs := []
 
 
-func run(test_mod: Node, together: Node):
-	_t = test_mod
-	_together = together
+# Suite cleanup_host: the host plays ROUNDS waves.
+func run_host(test_mod: Node, together: Node):
+	yield(_begin(test_mod, together), "completed")
 	var host: Node = together.battle_host
-	var client: Node = together.battle_client
-	var shop_sync: Node = together.shop_sync
-	host.set_process(false)
-	shop_sync.set_process(false)
-	_t.get_tree().paused = false
-	CoopService.connected_players.clear()
-	for i in 2:
-		CoopService.connected_players.push_back([i, CoopService.PlayerType.GAMEPAD_XBOX])
-	RunData.current_wave = 8
-	# Log lines are the one thing that is kept on purpose (3 per wave): out of the counts.
-	var ignored: Array = ModLoaderStore.ml_options.ignored_mod_names_in_log
-	ModLoaderStore.ml_options.ignored_mod_names_in_log = ignored + [MOD_LOGS]
-
 	var host_counts := []
 	var recording := {}
 	for _round in ROUNDS:
@@ -80,7 +70,16 @@ func run(test_mod: Node, together: Node):
 	)
 	_t._check(_kept([host]).empty(), "host: nothing of the wave is kept %s" % [_kept([host])])
 	_t._check(_dangling().empty(), "host: no reference to a freed node %s" % [_dangling()])
+	yield(_end(), "completed")
 
+
+# Suite cleanup_client: the client replays one host wave ROUNDS times, with the shop in between.
+func run_client(test_mod: Node, together: Node):
+	yield(_begin(test_mod, together), "completed")
+	var client: Node = together.battle_client
+	var shop_sync: Node = together.shop_sync
+	var recording: Dictionary = yield(_host_wave(together.battle_host), "completed")
+	yield(_blank_scene(), "completed")
 	var shop: Dictionary = yield(_host_shop_body(shop_sync), "completed")
 	var client_counts := []
 	for _round in ROUNDS:
@@ -98,15 +97,59 @@ func run(test_mod: Node, together: Node):
 	var kept := _kept([client, together.upgrades_sync])
 	_t._check(kept.empty(), "client: nothing of the wave is kept %s" % [kept])
 	_t._check(_dangling().empty(), "client: no reference to a freed node %s" % [_dangling()])
+	yield(_end(), "completed")
+
+
+# Suite cleanup_misc: battle starts and shop states that arrive together, and what a late
+# endless wave costs.
+func run_misc(test_mod: Node, together: Node):
+	yield(_begin(test_mod, together), "completed")
+	var host: Node = together.battle_host
+	var client: Node = together.battle_client
+	var shop_sync: Node = together.shop_sync
+	var recording: Dictionary = yield(_host_wave(host), "completed")
+	yield(_blank_scene(), "completed")
+	var shop: Dictionary = yield(_host_shop_body(shop_sync), "completed")
 	yield(_test_starts(client, recording), "completed")
 	yield(_test_shop_states(shop_sync, shop), "completed")
 	yield(_measure(host, client), "completed")
+	yield(_end(), "completed")
 
-	ModLoaderStore.ml_options.ignored_mod_names_in_log = ignored
+
+func _begin(test_mod: Node, together: Node):
+	_t = test_mod
+	_together = together
+	together.battle_host.set_process(false)
+	together.shop_sync.set_process(false)
+	_t.get_tree().paused = false
+	CoopService.connected_players.clear()
+	for i in 2:
+		CoopService.connected_players.push_back([i, CoopService.PlayerType.GAMEPAD_XBOX])
+	RunData.current_wave = 8
+	# Log lines are the one thing that is kept on purpose (3 per wave): out of the counts.
+	_ignored_logs = ModLoaderStore.ml_options.ignored_mod_names_in_log
+	ModLoaderStore.ml_options.ignored_mod_names_in_log = _ignored_logs + [MOD_LOGS]
+	_load_every_sound_player()
+	yield(_t.get_tree(), "idle_frame")
+
+
+# The game's sound players (12 per sound manager, used in turn) keep a playback object from the
+# first stream they get on: until each has had one, a wave leaves one more of them behind. Bounded
+# and not the mod's; in the full sequence the suites before had used every player.
+func _load_every_sound_player() -> void:
+	var sound: AudioStream = load(SOUND)
+	for manager in [SoundManager, SoundManager2D]:
+		for player in manager.get_children():
+			if player.stream == null:
+				player.stream = sound
+
+
+func _end():
+	ModLoaderStore.ml_options.ignored_mod_names_in_log = _ignored_logs
 	Puppet.set_active(false)
 	yield(_blank_scene(), "completed")
-	host.set_process(true)
-	shop_sync.set_process(true)
+	_together.battle_host.set_process(true)
+	_together.shop_sync.set_process(true)
 
 
 # One wave on the host with the mod's hooks, recorded like BattleHost sends it.
