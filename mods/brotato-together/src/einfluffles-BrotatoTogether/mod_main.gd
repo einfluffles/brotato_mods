@@ -20,6 +20,7 @@ const EXTENSIONS := [
 	"extensions/entities/brachiosaurus_foot.gd",
 	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
 	"extensions/ui/shop_item.gd",
+	"extensions/ui/pause_menu.gd",
 ]
 
 var transport: Node = null
@@ -106,6 +107,7 @@ func _ready() -> void:
 	menu.setup(transport, session, battle_host, battle_client)
 	menu.absent_players = absent_players
 	add_child(menu)
+	pause_control.together_menu = menu
 	menu.connect("open_changed", self, "_on_menu_open_changed")
 
 	session.connect("peer_ready", self, "_on_peer_ready")
@@ -130,6 +132,7 @@ func _add_player_control() -> void:
 	input_sync.battle_client = battle_client
 	pause_control = _add("sync/pause_control.gd", "PauseControl")
 	pause_control.setup(session, input_sync)
+	pause_control.battle_client = battle_client
 	battle_host.pause_control = pause_control
 	absent_players = _add("sync/absent_players.gd", "AbsentPlayers")
 	absent_players.setup(session, input_sync, battle_host)

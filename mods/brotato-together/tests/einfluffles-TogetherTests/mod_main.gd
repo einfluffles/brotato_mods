@@ -36,6 +36,7 @@ const LocalPanelTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/local_panel_tests.gd"
 )
 const LocalShopTests := preload("res://mods-unpacked/einfluffles-TogetherTests/local_shop_tests.gd")
+const LiveMenuTests := preload("res://mods-unpacked/einfluffles-TogetherTests/live_menu_tests.gd")
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 170.0
 const DEVICE := VirtualDevices.FIRST
@@ -50,6 +51,7 @@ var _runtime_parts = null  # kept alive across its coroutines
 var _perf = null  # kept alive across its coroutines
 var _local_panel = LocalPanelTests.new()  # kept alive across its yields
 var _local_shop = LocalShopTests.new()  # kept alive across its yields
+var _live_menu = LiveMenuTests.new()  # kept alive across its yields
 
 
 func _ready() -> void:
@@ -165,6 +167,7 @@ func _run() -> void:
 	yield(_local_shop.run(self, together), "completed")
 	_pause_input = PauseInputTests.new(self, together)
 	yield(_pause_input.run(), "completed")  # needs the run state
+	yield(_live_menu.run(self, together), "completed")
 	yield(_test_menu_mirror(together), "completed")
 	yield(menu_ux.run_menu_tests(self, together), "completed")
 	_finish()

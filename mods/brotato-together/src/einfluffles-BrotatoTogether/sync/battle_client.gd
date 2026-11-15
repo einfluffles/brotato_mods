@@ -210,8 +210,9 @@ func _stop_watching_scenes() -> void:
 func _on_battle_scene_ready(main: Node) -> void:
 	_stop_watching_scenes()
 	_main = main
-	# Local pause/aim handling off; pause goes to the host via input. main._physics_process stays
-	# on: it only recolors life bars. Focus loss / pad disconnect would open the local pause menu.
+	# Local pause/aim handling off (PauseControl opens the menu for this client's own pause).
+	# main._physics_process stays on: it only recolors life bars. Focus loss / pad disconnect
+	# would open the local pause menu.
 	main.set_process(false)
 	PauseControl.disable_local_pause(main)
 	for node_name in ["_wave_manager", "_entity_spawner", "_effect_behaviors", "_stats_manager"]:

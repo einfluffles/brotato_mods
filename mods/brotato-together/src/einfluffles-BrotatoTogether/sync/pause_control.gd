@@ -1,10 +1,17 @@
 extends Node
-# Who may pause, and who operates the pause menu.
-# Host: any player can pause (the game opens PauseMenu for the player who pressed pause). When
-#   that is a remote player, the menu goes to the host's first local player (the game's own
-#   "change pause ownership" steps from PauseMenu.on_game_lost_focus): the remote player can't
-#   see the menu, and must not quit or restart the run blind. The remote player who paused can
-#   resume with pause again (while the menu shows its main page). Clients learn who paused
+# Who may pause, who operates the pause menu, and when the menu does not pause at all.
+# Wave of an online session (host with a peer, or client): the menu is live
+#   (extensions/ui/pause_menu.gd), the game runs on behind it.
+#   Host: opened by a local player's pause as always; that player's character stands still
+#   meanwhile. Remote pause presses never arrive during a battle scene.
+#   Client: its own pause opens the puppet scene's menu for its own slot; its buttons stay
+#   here, the host gets neutral input. Restart / end run are the host's, Quit asks to leave.
+#   The menu closes when the wave ends: the level-up panels need the same buttons.
+# Everything else is a real pause. Level-up panels: the host's local players only. Shop: any
+#   player; when that is a remote player, the menu goes to the host's first local player (the
+#   game's own "change pause ownership" steps from PauseMenu.on_game_lost_focus), since the
+#   remote player can't see it and must not quit or restart blind. The remote player who paused
+#   resumes with pause again (while the menu shows its main page). Clients learn who paused
 #   (BATTLE_PAUSE via BattleHost, SHOP_PAUSE from here).
 # Client: puppet scenes never pause locally (focus loss, pad disconnect, pause button).
 
@@ -13,20 +20,29 @@ const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
+const BATTLE_SCENE := "res://main.tscn"
 const REMOTE_PRESS_WINDOW_MSEC := 1000  # a remote pause press this recent caused the pause
+const BLOCK_KEY := "battle"  # InputSync.blocked_by
+const CLIENT_MENU_META := "brotato_together_client_menu"
+const HOST_ONLY_BUTTONS := ["%RestartButton", "%EndRunButton"]
 
 var session: Node = null
 var input_sync: Node = null
+var battle_client: Node = null
+var together_menu: Node = null  # client: Quit asks there
 
 # host
 var _menu: Node = null  # PauseMenu that is open
 var _pauser_device := -1  # virtual device that paused (-1: the host or nobody)
 var _paused_frame := -1  # the shop pauses on the release event that is still propagating
 var _last_shop_pause := []
+var _held_behavior: Node = null  # movement of the live menu's owner, parked on the idle device
+var _held_device := -1
 
 # client
 var _shop_banner: CanvasLayer = null
 var _shop: Node = null
+var _pause_armed := false  # own pause went down while the buttons were the game's
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -150,6 +166,7 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(_delta: float) -> void:
+	_update_live_menu()
 	if not session.is_host():
 		_last_shop_pause = []
 		return
@@ -171,6 +188,117 @@ func _shop_pause_state() -> Array:
 func _on_peer_ready(steam_id: int) -> void:
 	if session.is_host() and not _last_shop_pause.empty():
 		session.send_reliable(steam_id, Protocol.Msg.SHOP_PAUSE, _last_shop_pause)
+
+
+# --- live menu ---
+
+
+func _update_live_menu() -> void:
+	var scene := get_tree().current_scene
+	var main: Node = scene if scene != null and scene.filename == BATTLE_SCENE else null
+	if main != null and session.is_host():
+		host_update(main)
+		return
+	input_sync.blocked_by.erase(BLOCK_KEY)
+	_hold_player(null)
+	if main != null and is_client_battle(main):
+		client_update(main, battle_client._you)
+	else:
+		input_sync.set_local_menu(-1)
+		_pause_armed = false
+
+
+func is_client_battle(main: Node) -> bool:
+	return (
+		session.is_client()
+		and battle_client != null
+		and battle_client.is_in_battle()
+		and battle_client._main == main
+	)
+
+
+# Host, every frame of a battle scene.
+func host_update(main: Node) -> void:
+	input_sync.blocked_by[BLOCK_KEY] = 1 << VirtualDevices.PAUSE_INDEX
+	var menu = main.get("_pause_menu")
+	if menu == null:
+		return
+	var wave_on: bool = not main._end_wave_timer_timedout
+	menu.live = wave_on and not session.peers.empty()
+	if menu.live_open and not wave_on:
+		menu.unpause()
+	_hold_player(main._players[menu._live_owner] if menu.live_open else null)
+
+
+# The menu owner's buttons and stick move its cursor: its character reads a device nobody
+# presses meanwhile. Weapons go on aiming and firing by themselves.
+func _hold_player(player) -> void:
+	var behavior = null
+	if player != null and is_instance_valid(player):
+		behavior = player._movement_behavior
+	if behavior == _held_behavior:
+		return
+	if is_instance_valid(_held_behavior):
+		_held_behavior.device = _held_device
+	_held_behavior = behavior
+	if behavior != null:
+		_held_device = behavior.device
+		behavior.device = VirtualDevices.IDLE
+
+
+# Client, every frame of its puppet battle. you: its player slot (-1: spectator, no menu).
+func client_update(main: Node, you: int) -> void:
+	var menu = main.get("_pause_menu")
+	if menu == null:
+		return
+	_prepare_client_menu(menu)
+	var wave_on := you >= 0
+	for ui_name in ["_coop_upgrades_ui", "_retry_wave"]:
+		var ui = main.get(ui_name)
+		wave_on = wave_on and not (ui != null and ui.visible)
+	menu.live = wave_on
+	if menu.live_open and not wave_on:
+		menu.unpause()
+	# Released like the game's own check, but only after a press that was the game's: the F9
+	# panel releases the actions of the keys it takes.
+	var blocked: bool = input_sync.local_input_blocked
+	if Input.is_action_just_pressed("ui_pause"):
+		_pause_armed = not blocked
+	elif Input.is_action_just_released("ui_pause"):
+		if _pause_armed and not blocked:
+			toggle_client_menu(menu, you)
+		_pause_armed = false
+	var device: int = CoopService.get_remapped_player_device(you) if menu.live_open else -1
+	input_sync.set_local_menu(device)
+
+
+func toggle_client_menu(menu: Node, you: int) -> void:
+	if menu.live_open:
+		menu.pause(you)
+	elif menu.live:
+		menu.open_live(you)
+
+
+# Once per puppet battle: what only the host may decide is off, Quit means leaving the lobby.
+func _prepare_client_menu(menu: Node) -> void:
+	if menu.has_meta(CLIENT_MENU_META):
+		return
+	menu.set_meta(CLIENT_MENU_META, true)
+	var main_menu = menu._main_menu
+	for path in HOST_ONLY_BUTTONS:
+		var button = main_menu.get_node_or_null(path)
+		if button is BaseButton:
+			button.disabled = true
+	if main_menu.is_connected("quit_button_pressed", menu._menus, "on_quit_button_pressed"):
+		main_menu.disconnect("quit_button_pressed", menu._menus, "on_quit_button_pressed")
+	main_menu.connect("quit_button_pressed", self, "_on_client_quit", [menu])
+
+
+func _on_client_quit(menu: Node) -> void:
+	menu.unpause()
+	if together_menu != null:
+		together_menu.open()
+		together_menu.ask_leave()
 
 
 # --- client ---

@@ -42,3 +42,10 @@ func sample(held: int) -> int:
 	_prev = held
 	_latched = 0
 	return counts
+
+
+# The buttons went elsewhere for a while (this client's own menu): what is held now was not
+# pressed for the host.
+func resume(held: int) -> void:
+	_prev = held
+	_latched = 0

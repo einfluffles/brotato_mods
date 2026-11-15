@@ -43,6 +43,10 @@ var _seq := 0
 var _presses = PressCounter.new()
 # client: this player's own slot device while a screen runs locally (see set_local_device)
 var _local_buttons = null
+# client: the same for its own Esc menu during a wave (see set_local_menu); the host gets
+# neutral input meanwhile
+var _menu_buttons = null
+var _menu_presses = PressCounter.new()
 
 # host: steam_id -> {seq, last_msec, released, buttons: RemoteButtons}
 var _remote := {}
@@ -75,6 +79,8 @@ func _physics_process(_delta: float) -> void:
 func _process(delta: float) -> void:
 	if _local_buttons != null:
 		_local_buttons.process_echo(delta, true)
+	if _menu_buttons != null:
+		_menu_buttons.process_echo(delta, true)
 	if not session.is_host():
 		return
 	var echo: bool = InputService.is_virtual_echo_enabled()
@@ -84,7 +90,7 @@ func _process(delta: float) -> void:
 
 func _input(event: InputEvent) -> void:
 	if session.is_client() and not local_input_blocked:
-		_presses.on_event(event)
+		(_menu_presses if _menu_buttons != null else _presses).on_event(event)
 
 
 # --- client ---
@@ -104,27 +110,53 @@ func set_local_device(device: int) -> void:
 		_local_buttons.blocked = 1 << VirtualDevices.PAUSE_INDEX
 
 
+# This client's own Esc menu is open (sync/pause_control.gd): the local buttons drive its slot
+# device and nothing else; the host sees a player who lets go of everything. -1 turns it off.
+func set_local_menu(device: int) -> void:
+	if menu_device() == device:
+		return
+	if _menu_buttons != null:
+		_menu_buttons.release_held()
+		_presses.resume(local_buttons())
+	_menu_buttons = null
+	if device >= 0:
+		_menu_buttons = RemoteButtons.new(device)
+		_menu_buttons.blocked = 1 << VirtualDevices.PAUSE_INDEX  # PauseControl polls pause
+		_menu_presses = PressCounter.new()
+
+
+func menu_device() -> int:
+	return _menu_buttons.device if _menu_buttons != null else -1
+
+
 func _send_local_input() -> void:
 	var host_id: int = session.transport.host_id
 	if not session.peers.has(host_id) or not session.peers[host_id].ready:
 		return
+	session.send_unreliable(host_id, Protocol.Msg.INPUT, sample_local())
+
+
+# One INPUT body from what the local player holds now; also feeds the screens that run here.
+func sample_local() -> Array:
 	_seq += 1
 	var buttons := 0
 	var move := Vector2.ZERO
 	var aim := [0, Vector2.ZERO]
 	if not local_input_blocked:
 		buttons = local_buttons()
+	if _menu_buttons != null:
+		_menu_buttons.apply(buttons, _menu_presses.sample(buttons))
+		buttons = 0
+	elif not local_input_blocked:
 		move = _local_movement()
 		aim = LocalAim.sample(LocalAim.own_player(battle_client), InputService.using_gamepad)
 	var counts: int = _presses.sample(buttons)
 	if _local_buttons != null:
 		_local_buttons.apply(buttons, counts)
-	session.send_unreliable(
-		host_id, Protocol.Msg.INPUT, [_seq, move, aim[1], buttons, counts, aim[0]]
-	)
 	history.append([_seq, move])
 	if history.size() > HISTORY_SIZE:
 		history.pop_front()
+	return [_seq, move, aim[1], buttons, counts, aim[0]]
 
 
 # Mirrors PlayerMovementBehavior.get_movement(): the stronger of analog and digital input.
@@ -212,6 +244,7 @@ func _on_lobby_left() -> void:
 	history.clear()
 	_remote.clear()
 	set_local_device(-1)
+	set_local_menu(-1)
 	blocked_buttons = 0
 	blocked_by.clear()
 	var was_host: bool = session.transport.was_host
