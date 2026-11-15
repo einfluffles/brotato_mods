@@ -2,7 +2,7 @@ extends Node
 # Co-op shop.
 # Host: owns every decision and the RNG. While coop_shop.tscn runs it provides section RUN_SHOP of
 #   the state stream (sync/state_stream.gd), sent whenever the shop or run state changes (the
-#   run state is serialized only when it can have changed: sync/shop_run_cache.gd). Body:
+#   run state is serialized only when it can have changed: sync/run_cache.gd). Body:
 #   shop_id, run (RunStateCodec: the full run state incl. the shop's own save data: offered items,
 #   rerolls, steals), per player slots (the slot layout), go (the Go flag), seqs (a panel
 #   revision), pages (the carousel page) and mecas (the meca upgrade rolls its item popup
@@ -42,9 +42,7 @@ const ShopIntents := preload(
 )
 const ShopLocal := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_local.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
-const ShopRunCache := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_run_cache.gd"
-)
+const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const CHECK_INTERVAL := 0.1
@@ -57,7 +55,7 @@ var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null setget set_input_sync
 var focus_sync: Node = null setget set_focus_sync
 var local = ShopLocal.new()  # client: this client's own panel
-var run_cache = ShopRunCache.new()  # host: the shop's run state, serialized on change
+var run_cache = RunCache.new("shop")  # host: the shop's run state, serialized on change
 
 # host
 var _host_shop: Node = null
@@ -146,7 +144,7 @@ func state_key(_section: int) -> String:
 	if _host_shop != get_tree().current_scene:
 		run_cache.clear()
 		return ""
-	run_cache.refresh(_host_shop)
+	run_cache.refresh(_host_shop, shop_args(_host_shop))
 	var parts := _shop_parts()
 	var rest := [
 		_shop_id, parts.slots, parts.go, parts.seqs, parts.pages, parts.mecas, _yous(),
@@ -158,7 +156,7 @@ func state_key(_section: int) -> String:
 # Right after state_key in the same check, so refresh finds nothing new and the run is not
 # serialized again; called alone (tests), it still sees a change of the fingerprint.
 func state_body(_section: int) -> Dictionary:
-	run_cache.refresh(_host_shop)
+	run_cache.refresh(_host_shop, shop_args(_host_shop))
 	var parts := _shop_parts()
 	return {
 		"shop_id": _shop_id,
@@ -182,6 +180,29 @@ func _yous() -> Array:
 	for steam_id in session.peers:
 		yous.append([steam_id, _player_index_of(steam_id)])
 	return yous
+
+
+# BaseShop.save_run_state's arguments: the shop's own part of the run state, and its part of
+# run_cache's fingerprint (sync/run_cache.gd has the shared part). What moves what in the shop:
+# - buy / steal / dismantle (BaseShop.on_shop_item_bought / _stolen / _dismantled): offered
+#   items and steals here; gold, items or weapons, meca parts in the shared part
+# - reroll (_on_RerollButton_pressed): reroll counters, offered items, gold; its goldfish item
+#   (fill_shop_items) and bone dice stats come with them
+# - lock / unlock (ShopItem.change_lock_status -> RunData.lock_player_shop_item), ban
+#   (ShopItem.ban_item), combine / recycle / meca upgrade (RunData.combine_weapon,
+#   recycle_weapon, meca_upgrade_weapon), the endless toggle
+#   (CoopShopPlayerContainer._on_EndlessButton_toggled: is_endless_run), DLC mutations on
+#   equip (try_mutate_item_on_equip): all in the shared part
+# Go, pages, colours, panel revisions and meca rolls are not run state: the key has them.
+static func shop_args(shop: Node) -> Array:
+	return [
+		shop._shop_items,
+		shop._reroll_count,
+		shop._paid_reroll_count,
+		shop._initial_free_rerolls,
+		shop._free_rerolls,
+		shop._item_steals,
+	]
 
 
 # The view parts of the state (the run state is run_cache's).

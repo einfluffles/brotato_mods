@@ -21,7 +21,7 @@ static func encode_json(shop_args := []) -> String:
 
 
 # The run state as the save file has it before JSON.print (plain data, about a quarter of the
-# cost of the text: sync/shop_run_cache.gd compares its hash() first).
+# cost of the text: sync/run_cache.gd compares its hash() first).
 static func serialize(shop_args := []) -> Dictionary:
 	var state: Dictionary = ProgressData.callv("get_run_state", shop_args)
 	return ProgressDataLoaderV3.new().serialize_run_state(state)
