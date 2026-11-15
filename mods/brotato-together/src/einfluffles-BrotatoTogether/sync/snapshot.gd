@@ -77,8 +77,8 @@ const WAVE_WON := 4
 const WAVE_LABEL := 8  # the "wave completed" label is showing
 const WAVE_FLAGS := 15
 const EXPLOSION_SCALE := 100.0
-const PLAYER_WEAPON_SLOTS := 2  # wire only (protocol 12, sync/battle_scene.gd)
-const PLAYER_SPEED := 4  # wire only (protocol 12)
+const PLAYER_WEAPON_SLOTS := 2  # wire only (protocol 13, sync/battle_scene.gd)
+const PLAYER_SPEED := 4  # wire only (protocol 13)
 const MAX_SPEED := 1 << 20  # px/s; parse rejects more
 const STAT_FIELDS := [
 	PlayerField.HEALTH, PlayerField.MAX_HEALTH, PlayerField.GOLD, PlayerField.LEVEL, PlayerField.XP
@@ -214,7 +214,7 @@ static func _put_player(buf: StreamPeerBuffer, entry: Array) -> void:
 	_put_scene_fields(buf, entry)
 
 
-# Protocol 12: [weapon slots: u8 bit count, mask (1 bit per wave-start weapon still held)],
+# Protocol 13: [weapon slots: u8 bit count, mask (1 bit per wave-start weapon still held)],
 # [speed: varint px/s], after the weapons and only when their flag bit is set.
 static func _scene_flags(entry: Array) -> int:
 	var flags := 0

@@ -1,5 +1,5 @@
 extends Reference
-# Battle state that changes the scene itself rather than moving something in it (protocol 12):
+# Battle state that changes the scene itself rather than moving something in it (protocol 13):
 # - the jungle waves' hole layout, picked at random by every machine's main._ready
 #   (GPESpawner.spawn_holes_full_scene): BATTLE_START carries the host's, the client swaps its own;
 # - weapons that leave a player during a wave (Player.on_weapon_wanted_to_break, the only path in

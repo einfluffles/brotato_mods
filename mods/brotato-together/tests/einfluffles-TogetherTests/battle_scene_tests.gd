@@ -1,5 +1,5 @@
 extends Reference
-# Battle state that changes the scene itself (sync/battle_scene.gd, protocol 12): the wire fields
+# Battle state that changes the scene itself (sync/battle_scene.gd, protocol 13): the wire fields
 # (weapon slots, sparse speed: round trip, strict parsing, sizes, resolve), then one real host
 # battle with the hole layout forced on (the jungle waves' flag, on a base-game wave: the
 # headless game owns no jungle zone) in which a weapon breaks and a player is slowed, replayed on
@@ -57,7 +57,7 @@ func _test_wire() -> void:
 	for size in bytes.size():
 		var prefix: PoolByteArray = bytes.subarray(0, size - 1) if size > 0 else PoolByteArray()
 		truncated_rejected = truncated_rejected and Snapshot.parse(prefix).empty()
-	_t._check(truncated_rejected, "every truncation rejected (with the protocol 12 fields)")
+	_t._check(truncated_rejected, "every truncation rejected (with the protocol 13 fields)")
 	var mismatch := view.duplicate(true)
 	mismatch.players[0][PF.WEAPON_SLOTS] = PoolIntArray([0, 2])
 	_t._check(

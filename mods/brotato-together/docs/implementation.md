@@ -125,7 +125,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   long with the rotation of its last flight) and restart their animation when reused.
 - Bullet-hell waves: `main._ready` adds its own generator (a random pattern) on the client too;
   `BattleClient._freeze` frees it. The host's bullets arrive as puppets.
-- Scene state (protocol 12, `sync/battle_scene.gd`, one instance per battle on each side):
+- Scene state (protocol 13, `sync/battle_scene.gd`, one instance per battle on each side):
   - Hole layouts: `main._ready` calls `GPESpawner.spawn_holes_full_scene` when the wave's
     `spawn_holes` is set (jungle waves 4 / 10 / 16), which instances one of five layout scenes
     (`holes_scene`; `holes_old_scene` / `holes_explorer_scene` with a map size effect) picked at random
@@ -208,7 +208,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (protocol 11 mirrors explosions, screen shake, level-up / heal / gold texts, dim screen, label
   and bonus gold bag: see "One-shot feedback"), the holes the brachiosaurus foot stomps into the
   ground (`BrachiosaurusFoot._stomp` -> `GPESpawner.spawn_single_hole_at_position`, from physics
-  code puppets never run; protocol 12 mirrors weapon breaks, hole layouts and the speed: see "Scene
+  code puppets never run; protocol 13 mirrors weapon breaks, hole layouts and the speed: see "Scene
   state"). Also: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
   game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
   respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
