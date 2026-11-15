@@ -23,7 +23,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Snapshot wire format (`sync/snapshot.gd`, since protocol 4): hand-packed bytes, little endian. u32 battle id,
   u32 host msec, u16 wave time (1/100 s); per player u8 flags, i16 x/y (0.5 px), varint input ack,
   [zigzag varints health/max health/gold, varint level, f32 xp], u8 weapon count + "sprite moved" bitmask,
-  i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle); u16 entity count, types as runs
+  i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle) [+ weapon slots, speed: see Scene
+  state]; u16 entity count, types as runs
   [varint type, varint length], u16 net ids, 4-bit flags, i16 x/y per entity not resting; poses as
   [varint index, u8 count, f32 values]; u8 event count + events (damage 7-8 B, sound 5-10 B, anim
   8 B + name; protocol 11: explosion 9 B, bonus gold 3-5 B, wave end 2 B, gold boost 6 B). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
@@ -124,6 +125,37 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   long with the rotation of its last flight) and restart their animation when reused.
 - Bullet-hell waves: `main._ready` adds its own generator (a random pattern) on the client too;
   `BattleClient._freeze` frees it. The host's bullets arrive as puppets.
+- Scene state (protocol 12, `sync/battle_scene.gd`, one instance per battle on each side):
+  - Hole layouts: `main._ready` calls `GPESpawner.spawn_holes_full_scene` when the wave's
+    `spawn_holes` is set (jungle waves 4 / 10 / 16), which instances one of five layout scenes
+    (`holes_scene`; `holes_old_scene` / `holes_explorer_scene` with a map size effect) picked at random
+    at `Vector2.ONE` in `_gpe_container`. `BATTLE_START` carries the host's scene path (`holes`, ""
+    for none); right after the client's `_ready` its own layout is freed and the host's instanced, if
+    the path is in its spawner's three lists. `ZoneService.forbidden_circles` is cleared before:
+    `Hole._ready` is the only thing that adds circles and only the layout exists at that point. A
+    mid-wave resync keeps the layout of the scene it has.
+  - Weapons during a wave: the only way the game changes a player's weapon nodes is
+    `Player.on_weapon_wanted_to_break` (the brick's `break_on_hit`, `Weapon.on_weapon_hit_something`;
+    abyssal_terrors), which erases the weapon from `current_weapons` and `RunData`. Crate weapons
+    and the shop add to `RunData` only, after the wave. The host remembers the instance ids of each
+    player's weapons at wave start; once a player has fewer, every snapshot carries its weapons'
+    wave-start slots (`PLAYER_WEAPON_SLOTS`: u8 bit count + bitmask after the weapons, popcount must
+    equal the weapon count). At render time the client drops the puppet weapons whose slot is gone
+    (`current_weapons`, `weapon_pos` and the client's `RunData` weapon list like the game; stats and
+    effects stay the host's) before the per-weapon data is applied by index. `BATTLE_START` carries
+    every player's current slots (`weapon_slots`), so a client that joins after a break, whose
+    puppet is built from the shorter run, maps the same way.
+  - Speed: `Player.get_move_speed()` (stats incl. temporary ones, `bonus_speed`, the decaying slow
+    after hits, petrol halves it) in whole px/s as a varint after the weapons (`PLAYER_SPEED`), sent
+    for 4 snapshots after it changes and every 10th otherwise, filled from the newest one by
+    `Snapshot.resolve`. The client sets it as the puppet's `current_stats.speed` (bonus, slow and
+    petrol zeroed), so own-player prediction and the walk animation's playback speed follow it.
+  - Wire cost: nothing while no weapon broke and no speed is due (both flags live in the player
+    byte); 2 B per player and speed sent (speeds below 16384 px/s), 2 B per player after a break
+    (up to 8 weapons). The synthetic waves of `snapshot_tests.gd` / `looks_tests.gd` do not grow.
+  - The layout shares `_gpe_container` with puddle puppets (`sync/puddles.gd`): the swap only takes
+    a child whose scene is one of the spawner's layouts, and it runs before any puddle puppet
+    exists; the host's puddle scan takes only `AcidPuddle` / `PetrolPuddle` / `FirePuddle`.
 - One-shot events older than 250 ms when their turn comes (a stall, a scene load) are dropped, except
   animations (state).
 - Lasting looks (`sync/looks.gd`, protocol 12): states the game shows for seconds or for an entity's
@@ -174,10 +206,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (`RunData.stat_added`: stats on level up, harvesting at the wave's end, turret stats), the
   bigger sprite of a bonus-boosted gold, the music dip and the won-run animation at the wave's end
   (protocol 11 mirrors explosions, screen shake, level-up / heal / gold texts, dim screen, label
-  and bonus gold bag: see "One-shot feedback"), weapon breaks
-  mid-wave (weapons shift by index), hole layouts of jungle waves 4 / 10 / 16 (picked at random on each
-  machine), own-player prediction with the speed from wave start (petrol, speed changes: ~10-30 px
-  correction). Also: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
+  and bonus gold bag: see "One-shot feedback"), the holes the brachiosaurus foot stomps into the
+  ground (`BrachiosaurusFoot._stomp` -> `GPESpawner.spawn_single_hole_at_position`, from physics
+  code puppets never run; protocol 12 mirrors weapon breaks, hole layouts and the speed: see "Scene
+  state"). Also: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
   game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
   respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
 - Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).

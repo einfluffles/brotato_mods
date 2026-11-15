@@ -155,6 +155,12 @@ RNG is unseeded (`Utils._rng.randomize()`), so shops/upgrades **must** be rolled
   add_stat/remove_stat/temp/linked changes only.
 - Weapon nodes are created once per wave in `Player.apply_items_effects()` (`entities/units/player/player.gd`)
   → a mid-wave weapon change needs an explicit re-apply on the client (this is the "7th slot only next wave" bug).
+  The only mid-wave change of the weapon nodes is a removal: `Player.on_weapon_wanted_to_break` (signal
+  `Weapon.wanted_to_break`, `break_on_hit` effect, abyssal_terrors' brick) erases the node from
+  `current_weapons` and calls `RunData.remove_weapon_by_index`. Crates add to `RunData` after the wave.
+- Move speed: `Player.get_move_speed()` = (`current_stats.speed` + `bonus_speed` + `decaying_bonus_speed`)
+  / (1 + `petrol_malus`); petrol is set per physics frame (`update_petrol_effect`), the slow decays in
+  `Unit._physics_process`.
 
 ## 11. Battlefield entities
 
@@ -166,6 +172,10 @@ RNG is unseeded (`Utils._rng.randomize()`), so shops/upgrades **must** be rolled
 - `main.gd` containers: `%Entities` (YSort), `%PlayerProjectiles`, `%EnemyProjectiles`, `%Materials`
   (`_active_golds`, `spawn_gold`, `on_gold_picked_up`), `%Consumables` (`_consumables`), `%Births`.
 - Players spawned in `EntitySpawner.init()`; `main.gd :: _on_EntitySpawner_players_spawned` stores `_players`.
+- Holes (`global/gpe_spawner.gd`, children of `main._gpe_container`): `main._ready` →
+  `spawn_holes_full_scene()` when the wave data's `spawn_holes` is set (a random layout scene from
+  `holes_scene` / `holes_old_scene` / `holes_explorer_scene`, by map size); `Hole._ready` adds a
+  `ZoneService` forbidden circle. Mid-wave: `BrachiosaurusFoot._stomp` → `spawn_single_hole_at_position`.
 
 ## 12. Battle lifecycle and puppet-mode switches (client)
 
