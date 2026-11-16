@@ -148,7 +148,10 @@ func sample_local() -> Array:
 		_menu_buttons.apply(buttons, _menu_presses.sample(buttons))
 		buttons = 0
 	elif not local_input_blocked:
-		move = _local_movement()
+		# A screen running here (level-up panels, shop) moves its cursor with the same keys and
+		# stick: the character stands still, on the host and in this client's prediction.
+		if _local_buttons == null:
+			move = _local_movement()
 		aim = LocalAim.sample(LocalAim.own_player(battle_client), InputService.using_gamepad)
 	var counts: int = _presses.sample(buttons)
 	if _local_buttons != null:
