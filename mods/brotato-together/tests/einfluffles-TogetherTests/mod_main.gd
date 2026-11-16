@@ -479,7 +479,7 @@ func _suite_core(together: Node):
 	_check(not Input.is_action_pressed("ui_accept_%s" % DEVICE), "button released")
 
 	# Input timeout releases everything.
-	yield(get_tree().create_timer(0.4), "timeout")
+	yield(get_tree().create_timer((input_sync.INPUT_TIMEOUT_MSEC + 100) / 1000.0), "timeout")
 	input_sync._release_timed_out()
 	_check(
 		Input.get_action_strength("analog_move_right_%s" % DEVICE) == 0.0, "timeout releases move"
@@ -622,7 +622,8 @@ func _find_by_id(elements: Array, my_id: String):
 
 func _send(input_sync: Node, move: Vector2, aim: Vector2, buttons: int) -> void:
 	_seq += 1
-	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons, _presses.sample(buttons), 0])
+	var counts: int = _presses.sample(buttons)
+	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons, counts, 0, PoolVector2Array()])
 
 
 func _tap_key(scancode: int) -> void:
