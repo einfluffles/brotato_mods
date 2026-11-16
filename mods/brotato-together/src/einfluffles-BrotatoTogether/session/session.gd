@@ -45,6 +45,7 @@ var _frame_msec := 0  # when _process ran last
 var _next_ping_msec := 0
 var _next_send_warning_msec := 0
 var _next_hello_msec := -1  # client: next HELLO (re)send, -1 when not waiting for WELCOME
+var _received_usec := 0  # Steam's receive time of the message being handled (see arrival_msec)
 
 
 func setup(steam_transport: Node) -> void:
@@ -239,7 +240,15 @@ func _on_message_received(
 			_handle_pong(steam_id, body, received_usec)
 		_:
 			if peer.ready:
+				_received_usec = received_usec
 				emit_signal("message", steam_id, msg_type, body)
+				_received_usec = 0
+
+
+# During a "message" handler: when Steam received that message, in OS.get_ticks_msec() time (now
+# when unknown). Unlike the handler's own time it leaves out how long this game's frame took.
+func arrival_msec() -> int:
+	return OS.get_ticks_msec() - transport.held_msec(_received_usec)
 
 
 # The PING's body and how long the PING waited here for this frame.
@@ -282,13 +291,23 @@ func slow_answer_text(steam_id: int, held_there: int, held_here: int) -> String:
 		" (%d ms since the last frame, %s)"
 		% [OS.get_ticks_msec() - _frame_msec, scene.filename.get_file() if scene != null else "-"]
 	)
+	return text + steam_status_text(steam_id)
+
+
+# For log lines about a peer: Steam's numbers for the connection and its path (direct / relayed,
+# net/link_watch.gd); "" when neither is known.
+func steam_status_text(steam_id: int) -> String:
+	var text := ""
 	var status: Dictionary = transport.connection_status(steam_id)
-	if status.empty():
-		return text
-	var values := []
-	for key in STEAM_STATUS_KEYS:
-		values.append(status.get(key, "?"))
-	return text + STEAM_STATUS_TEXT % values
+	if not status.empty():
+		var values := []
+		for key in STEAM_STATUS_KEYS:
+			values.append(status.get(key, "?"))
+		text = STEAM_STATUS_TEXT % values
+	var path: String = transport.link_watch.paths.get(steam_id, "")
+	if path != "":
+		text += "; path: %s" % path
+	return text
 
 
 # Idempotent: answered every time (the client resends until it sees WELCOME).

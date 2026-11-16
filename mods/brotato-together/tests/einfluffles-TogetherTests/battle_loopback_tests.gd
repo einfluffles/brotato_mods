@@ -21,12 +21,16 @@ const StateStream := preload(
 const CursorKeyTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursor_key_tests.gd"
 )
+const NetworkStallTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
+)
 
 var t: Node  # the test mod: _check, helpers, scene tree
 var _local_panel = LocalPanelTests.new()  # kept alive across its yields
 var _cursor_key = null  # kept alive across its yields
 var _perf = null
 var _upgrades_stream = UpgradesStreamTests.new()
+var _stalls = null  # kept alive across its yields
 
 
 func _init(test_mod: Node) -> void:
@@ -224,6 +228,8 @@ func run(together: Node):
 	)
 	yield(_perf.test_own_animation(client, input_sync, player), "completed")
 	input_sync.history = []
+	_stalls = NetworkStallTests.new(t)  # a 400 ms snapshot gap
+	yield(_stalls.test_client_stall(client, input_sync, player, recorded[-1]), "completed")
 
 	# Death: a vanished unit plays its death animation, then returns to main's pool.
 	client.set_process(false)

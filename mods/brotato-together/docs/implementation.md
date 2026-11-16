@@ -37,8 +37,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `snapshot_tests.gd`; protocol 3 → 4): small, 45 entities + 8 events 1676 → 448 B; mid, 136 entities +
   11 events 3512 → 968 B; late, 300 entities + 44 events 8300 → 2184 B (still 2 Steam fragments). The
   real 6 s wave-3 loopback: largest snapshot 768 → 192 B.
-- Own-player prediction replays at most the last 30 un-acked inputs (0.5 s) and none while the host paused
-  or when the newest snapshot arrived more than 250 ms ago (stall): the player stays with the frozen world.
+- Own-player prediction replays at most the last 45 un-acked inputs (0.75 s) and none while the host paused
+  or when the newest snapshot arrived more than 600 ms ago (an outage, not a stall): the player stays with
+  the frozen world. Up to 250 ms it was: on a connection with 300 to 500 ms network stalls every 20 to 50 s
+  (Steam's own ping 25 ms meanwhile) the player snapped back to the host's last position and jumped ahead
+  again. During a stall of the snapshots alone the host still gets the inputs, so the prediction is right.
+- Render delay (`sync/render_delay.gd`): 100 ms behind the newest snapshot on a good connection (room for
+  ~67 ms of lateness; nothing changes there). When the newest snapshot is all there is, render time holds on
+  it (the delay grows by as long as the stall lasts, up to 500 ms) instead of running past it: the world
+  freezes the same, but carries on from there when the late snapshots arrive instead of jumping ahead by the
+  whole stall, and catches up by playing 15% faster (a 400 ms hold is gone after ~2 s). A longer stall or a
+  host pause is not held: past 500 ms the delay drops back and the world jumps as before, with no lag left
+  behind. Two holds within 5 s (recurring lateness) keep the delay at the longest of them (at most 250 ms)
+  until it has been calm for 5 s. Render time never runs backwards.
 - Client puppets of non-Entity scenes (projectiles, gold, consumables) are pooled per type like the game's
   Entity pool (out of the tree; freed when the battle state resets).
 - Boss parts: clients spawn in snapshot order and the host lists `bosses` first; a `BrachiosaurusFoot` waits
@@ -292,6 +303,23 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   and Steam's own numbers from `getSessionConnectionInfo`: its ping, send queue time, pending and unacked
   bytes, send rate, quality), at most once a second per peer: it tells a stalled frame on either side from
   the network and from a full send queue.
+- Stall diagnostics, for the log only (a PING a second only sees stalls longer than a second's share):
+  - Gaps (`sync/stream_gaps.gd`): a client logs when the host's snapshots stop for 200 ms or more, the host
+    when a client's INPUT stream does (per client). Timed by Steam's receive time (`Session.arrival_msec`), so
+    this game's own long frames are no gap. The sender's clock for the message (snapshot time; INPUT seq in
+    physics steps) tells "held up on the way" (sent at the usual pace, arriving together after the gap) from
+    "not sent or lost" (sent that far apart: the sender's frame stalled, or the messages were lost). With
+    Steam's numbers, the session's path and the scene; the client's line also has the render delay. At most
+    one line per 5 s per stream, the next one counts the gaps left out. A host pause is no gap.
+  - Session path (`net/link_watch.gd`): once a second the transport asks GodotSteam's
+    `getSessionConnectionInfo` for each lobby member and logs when the path changes: "connecting",
+    "direct", "relayed via <POP> (peer's POP <POP>)" (`pop_relay` / `remote_pop` as data center codes, or
+    the Relayed flag), "closed: <reason>". The peer's IP address is not logged. Slow answer and gap lines
+    end with the current path.
+  - `network_messages_session_failed` (GodotSteam 3.31: reason, steam id, state, debug message) is logged
+    with the reason in words (5008: P2P rendezvous failed, ...). Sends use
+    `SEND_AUTO_RESTART_BROKEN_SESSION`, so the next message opens a new session; a follow-up line says when
+    it was up again and over which path, or that it still was not after 15 s.
 - **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
   ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
   menu_grids, retry, pause_battle, pause_shop, cursors (state that builds controls before the cursors on

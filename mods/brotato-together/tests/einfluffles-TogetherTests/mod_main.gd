@@ -78,6 +78,9 @@ const LocalDeviceTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/local_device_tests.gd"
 )
 const InputAckTests := preload("res://mods-unpacked/einfluffles-TogetherTests/input_ack_tests.gd")
+const NetworkStallTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
+)
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -109,6 +112,7 @@ const SUITES := [
 	"cursor_key",
 	"upgrades_change",
 	"lobby_menu",
+	"network_stalls",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -391,6 +395,12 @@ func _suite_upgrades_change(together: Node):
 func _suite_lobby_menu(together: Node):
 	_suite = LobbyMenuTests.new()
 	yield(_suite.run(self, together), "completed")
+
+
+# Render delay, gap log lines and session paths; the client side of a stall in a puppet battle
+# runs in battle_loopback.
+func _suite_network_stalls(together: Node) -> void:
+	NetworkStallTests.new(self).run(together)
 
 
 # Character selection: the menu mirror leaves the scene with two co-op players that the grid and

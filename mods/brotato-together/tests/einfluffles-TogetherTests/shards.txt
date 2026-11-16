@@ -6,4 +6,4 @@ core,battle_loopback,input_ack,shop_loopback,local_shop,pause_input,selection
 cleanup_host,menu_ux,live_menu,local_device
 cleanup_misc,anim_mirror,runtime_parts,battle_perf
 pose_mirror,bullet_hell_left,bullet_hell_top,bullet_hell_bottom
-feedback,looks,battle_scene,state_stream,shop_change,cursor_key,upgrades_change,lobby_menu
+feedback,looks,battle_scene,state_stream,shop_change,cursor_key,upgrades_change,lobby_menu,network_stalls

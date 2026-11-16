@@ -22,6 +22,7 @@ const RemoteButtons := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/remote_buttons.gd"
 )
 const LocalAim := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_aim.gd")
+const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:InputSync"
 const INPUT_TIMEOUT_MSEC := 300
 # host: queued inputs beyond the one the next tick takes. Each one delays this player on the host
@@ -65,6 +66,8 @@ var _menu_presses = PressCounter.new()
 # host: steam_id -> {seq, last_msec, released, buttons: RemoteButtons, queue: [[seq, move]...],
 # applied, ack, move} (see _apply_input, _tick_movement)
 var _remote := {}
+# host: steam_id -> StreamGaps of its INPUT stream (logs the stalls)
+var _input_gaps := {}
 
 
 func setup(netplay_session: Node) -> void:
@@ -318,6 +321,7 @@ func _on_peer_removed(steam_id: int) -> void:
 	VirtualDevices.release_all(device)
 	VirtualDevices.set_manual_aim(device, false)
 	_remote.erase(steam_id)
+	_input_gaps.erase(steam_id)
 	# Free the co-op slot only while players can still join; mid-run the slot waits for a rejoin.
 	if CoopService.listening_for_inputs and CoopService.is_device_assigned(device):
 		CoopService._remove_player(device)
@@ -330,6 +334,7 @@ func _on_peer_removed(steam_id: int) -> void:
 func _on_lobby_left() -> void:
 	history.clear()
 	_remote.clear()
+	_input_gaps.clear()
 	_local_claims.clear()
 	_apply_local_claims("lobby left")
 	set_local_menu(-1)
@@ -350,6 +355,7 @@ func _on_lobby_left() -> void:
 
 func _on_message(steam_id: int, msg_type: int, body) -> void:
 	if msg_type == Protocol.Msg.INPUT and session.is_host() and devices.has(steam_id):
+		note_input_gap(steam_id, body)
 		_apply_input(steam_id, body)
 
 
@@ -469,6 +475,17 @@ func _release_timed_out() -> void:
 			state.queue.clear()
 			state.move = Vector2.ZERO
 			state.released = true
+
+
+# Host: a stall in a client's INPUT stream is logged (sync/stream_gaps.gd); the seq counts the
+# client's physics steps, which gives the time it sent them at.
+func note_input_gap(steam_id: int, body) -> void:
+	if typeof(body) != TYPE_ARRAY or body.empty() or typeof(body[0]) != TYPE_INT:
+		return
+	if not _input_gaps.has(steam_id):
+		_input_gaps[steam_id] = StreamGaps.new("input from %s" % steam_id)
+	var sent_msec: int = body[0] * 1000 / Engine.iterations_per_second
+	_input_gaps[steam_id].note(session, steam_id, sent_msec, LOG_NAME)
 
 
 # Mappings kept from an earlier lobby (see _on_lobby_left) only matter while their slot exists.
