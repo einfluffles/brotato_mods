@@ -141,11 +141,14 @@ func _test_battle(together: Node):
 			for name in nodes:
 				ids[name] = nodes[name].get_meta(host.NET_ID_META)
 	var host_values := _host_values(nodes)
-	var first := Snapshot.parse(recorded[0][1])
-	var third := Snapshot.parse(recorded[3][1])
+	# 3 times after it appears, then only its refresh (every 15th snapshot, staggered by id).
+	var carried := []
+	for i in recorded.size():
+		if Snapshot.parse(recorded[i][1]).angles.has(ids.slash):
+			carried.append(i)
 	_t._check(
-		first.angles.has(ids.slash) and first.angles.has(ids.askew) and third.angles.empty(),
-		"a new shot's angle goes out with its first snapshots only %s" % [first.angles]
+		carried.slice(0, 2) == [0, 1, 2] and carried.size() <= 4 and recorded.size() >= 10,
+		"a new shot's angle goes out with its first snapshots, then rarely %s" % [carried]
 	)
 	start.types = {}
 	for path in host._types:
