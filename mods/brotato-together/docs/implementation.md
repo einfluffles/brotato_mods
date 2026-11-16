@@ -373,7 +373,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     it was up again and over which path, or that it still was not after 15 s.
 - **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
   ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
-  menu_grids, retry, pause_battle, pause_shop, pickups, cursors (state that builds controls before the cursors on
+  menu_grids, retry, pause_battle, pause_shop, pickups, damage, cursors (state that builds controls before the cursors on
   them). Replaces the copy of the same machinery each module had (poll loop + change key, key forgotten on
   `peer_ready`, per-peer sends, "keep the latest until the scene is ready").
   - Host: a provider per section answers `state_key(section)` (text, "" = inactive; checked every interval,
@@ -1202,6 +1202,44 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   loads) until it leaves the tree (mirrored state and cursors would replay e.g. button focus sounds); ClientView isn't mirrored and
   stays audible. Sounds played while the host's tree is paused (pause menu) aren't recorded. UI pages that
   play their own `AudioStreamPlayer` (profile, codex, item sets) bypass SoundManager; they're host-only.
+
+## Damage meter
+
+- `sync/damage_meter.gd` (the numbers), `ui/damage_views.gd` (where they show). Built in after
+  the Damage Meter mod by Oudstand (its README: "Feel free to modify and share"), written anew:
+  that mod reads each machine's own counters, which stand still on a client during a puppet
+  battle (no values on clients), and its shop summary is one popup for every player that pauses
+  the tree and takes every device's input (online: the host's pause for everybody).
+- Numbers: the game's own counters, no hook into the fight. `WeaponData.dmg_dealt_last_wave`
+  (reset in `main` when a wave starts, counted by `Weapon`), and for items
+  `RunData.tracked_item_effects` where the item's `tracking_text` is `DAMAGE_DEALT` /
+  `EXPLOSION_DAMAGE_DEALT`: counted for the whole run, so the wave's part is the difference to a
+  copy taken when the battle scene appears. Every tracked key that gained counts, in the
+  inventory or not (a turret a weapon built: count 0). A list value's first entry is the
+  damage (the bonk dog's two both are). Equal ids are one source with their number. Per player
+  `[total, top 10 sources as [my_id, count, damage]]`.
+- Who measures: the machine that runs the wave (the host; any machine outside a session, so it
+  works offline), every 0.5 s while the battle scene is the current one and once more when it
+  leaves the tree. The board then stands through the shop until the next battle starts.
+- State stream section `damage` (protocol 19, before cursors), checked every 0.5 s, sent when
+  the board changed; a peer that joins gets it with the resync. The client checks the body
+  strictly (`DamageMeter.clean`: at most 4 players, 10 sources, ids up to 96 characters, no
+  negative numbers) and resolves ids against `ItemService.items / weapons / characters`.
+- HUD: an `HBoxContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
+  bars sit at the bottom; right-aligned for players 2 and 4): icon and total, then icon and
+  number of the two strongest sources. Hidden while the total is 0; mouse ignored.
+- Shop (co-op shop): a `Button` after each player's reroll button (reached with right from
+  reroll; up / down lead where they do from reroll) and a `PanelContainer` in the panel that
+  holds the player's `ShopItemsContainer`, so it fills the place of the shop items. The board is
+  visible while that player's `FocusEmulator` rests on the button (polled each frame): no press,
+  no modal state, no pause. `ui/focus_targets.gd` knows the button as `shop_damage`, so the
+  cursor on it travels like every other (`SHOP_FOCUS` to the host, the cursors section to the
+  other clients) and every machine shows the board in that player's panel.
+- Not taken over from the mod: options (opacity, number of sources, ungrouped weapons), damage
+  per second, the "charmed enemies" entry (it extends `Enemy.take_damage`), dart traps (the game
+  ships them without a tracking key), the solo shop.
+- Open: the row and the board are checked as nodes, texts and rects in the headless tests
+  (`damage_meter_tests.gd`), not seen on a real screen; the mouse on the button is untested.
 
 ## Remote input, pause, absent players
 

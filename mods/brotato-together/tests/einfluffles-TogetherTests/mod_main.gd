@@ -68,6 +68,9 @@ const CoopSelectionTests := preload(
 )
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
 const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks_tests.gd")
+const DamageMeterTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/damage_meter_tests.gd"
+)
 const BattleSceneTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/battle_scene_tests.gd"
 )
@@ -108,6 +111,7 @@ const SUITES := [
 	"cleanup_misc",
 	"feedback",
 	"looks",
+	"damage",
 	"battle_scene",
 	"selection",
 	"state_stream",
@@ -357,6 +361,12 @@ func _suite_looks(together: Node):
 	coop_run(8)
 	_suite = LooksTests.new()
 	yield(_suite.run(self, together), "completed")
+
+
+func _suite_damage(together: Node):
+	coop_run(3)
+	_suite = DamageMeterTests.new(self)
+	yield(_suite.run(together), "completed")
 
 
 func _suite_battle_scene(together: Node):

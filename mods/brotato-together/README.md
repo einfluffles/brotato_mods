@@ -56,6 +56,15 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   Each of these screens claims your slot's input for itself, so a level-up panel that stops late
   never switches off your shop panel, and the shop panel takes its input back if anything else did
   (both written to the log).
+- **Damage meter:** during a wave, a row at each player's life bar shows what that player has
+  dealt in the wave and the two strongest weapons or items. In the shop, a button next to each
+  reroll button puts up the board of the wave before over that player's shop items for as long
+  as the cursor rests on it: total, and every source with name, number and share. Nothing pauses
+  and nobody else is held up; the others see whose board is up, like any other cursor. The host
+  measures (from the game's own counters) and every client shows the host's numbers. It also
+  works offline. After the [Damage Meter](https://steamcommunity.com/sharedfiles/filedetails/?id=3578347192)
+  mod by Oudstand, which is no longer needed next to this mod (with both, each shows its own).
+  Not taken over: its options, damage per second, and the separate entry for charmed enemies.
 - **Selection screens / end of run:** clients see the game's own character, weapon and difficulty
   selection and end-of-run screens, showing what the host's show: the host's grid (so local
   unlocks/DLC don't matter), every player's cursor, panel and ready state, the zone, the join
