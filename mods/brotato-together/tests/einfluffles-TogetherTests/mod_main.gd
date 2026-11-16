@@ -77,6 +77,9 @@ const StateStreamTests := preload(
 const CursorKeyTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursor_key_tests.gd"
 )
+const LocalDeviceTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/local_device_tests.gd"
+)
 const InputAckTests := preload("res://mods-unpacked/einfluffles-TogetherTests/input_ack_tests.gd")
 const NetworkStallTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
@@ -97,6 +100,7 @@ const SUITES := [
 	"menu_ux",
 	"shop_loopback",
 	"local_shop",
+	"local_device",
 	"pause_input",
 	"live_menu",
 	"cleanup_host",
@@ -299,6 +303,12 @@ func _suite_shop_loopback(together: Node):
 func _suite_local_shop(together: Node):
 	coop_run(2)
 	_suite = LocalShopTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_local_device(together: Node):
+	coop_run(2)
+	_suite = LocalDeviceTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

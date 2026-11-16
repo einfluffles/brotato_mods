@@ -48,12 +48,16 @@ var blocked_buttons := 0
 # host: more masks of that kind, one per screen (key: its name), so that two screens never
 # overwrite each other's block (the shop, sync/shop_sync.gd). OR-ed with blocked_buttons.
 var blocked_by := {}
+# client: what last switched the local buttons ("owner: reason"), for the logs
+var last_local_change := ""
 
 # client
 var _seq := 0
 var _presses = PressCounter.new()
 # client: this player's own slot device while a screen runs locally (see set_local_device)
 var _local_buttons = null
+# client: [owner, device] of each screen that wants the local buttons now, oldest first
+var _local_claims := []
 # client: the same for its own Esc menu during a wave (see set_local_menu); the host gets
 # neutral input meanwhile
 var _menu_buttons = null
@@ -115,17 +119,56 @@ func _input(event: InputEvent) -> void:
 
 # A screen that runs on this client itself (its own cursor, pages, popups): the local buttons
 # also drive this player's slot device here, exactly as the host applies a remote player's
-# (RemoteButtons: counted edges, menu echo). -1 turns it off. Pause always goes to the host.
-func set_local_device(device: int) -> void:
+# (RemoteButtons: counted edges, menu echo). Pause always goes to the host.
+# owner names the screen ("shop", "upgrades"). Each one claims the device for itself, and -1
+# gives up only its own claim: one screen never switches off another screen's input (the level-up
+# panels' late stop used to turn off the shop's). The newest claim drives; claiming again, also
+# with the same device, makes it the newest. reason goes to the log.
+func set_local_device(owner: String, device: int, reason := "") -> void:
+	var index := _claim_index(owner)
+	var old: int = _local_claims[index][1] if index >= 0 else -1
+	if index >= 0:
+		_local_claims.remove(index)
+	if device >= 0:
+		_local_claims.append([owner, device])
+	if old != device:
+		var what: String = "takes device %d" % device if device >= 0 else "gives up device %d" % old
+		ModLoaderLog.info("Local device: %s %s (%s)" % [owner, what, reason], LOG_NAME)
+	_apply_local_claims("%s: %s" % [owner, reason])
+
+
+# The device the local buttons drive now (-1: none).
+func local_device() -> int:
+	return _local_buttons.device if _local_buttons != null else -1
+
+
+# The screen whose claim drives the local device ("" for none).
+func local_device_owner() -> String:
+	return _local_claims[-1][0] if not _local_claims.empty() else ""
+
+
+func _claim_index(owner: String) -> int:
+	for i in _local_claims.size():
+		if _local_claims[i][0] == owner:
+			return i
+	return -1
+
+
+# The local buttons follow the newest claim (also when something else had cleared them).
+func _apply_local_claims(why: String) -> void:
+	var device: int = _local_claims[-1][1] if not _local_claims.empty() else -1
+	if local_device() == device:
+		return
 	if _local_buttons != null:
-		if _local_buttons.device == device:
-			return
 		_local_buttons.release_held()
 		VirtualDevices.release_analog(_local_buttons.device)
 		_local_buttons = null
 	if device >= 0:
 		_local_buttons = RemoteButtons.new(device)
 		_local_buttons.blocked = 1 << VirtualDevices.PAUSE_INDEX
+	last_local_change = why
+	var live: String = "device %d" % device if device >= 0 else "nothing"
+	ModLoaderLog.info("Local buttons drive %s (%s)" % [live, why], LOG_NAME)
 
 
 # This client's own Esc menu is open (sync/pause_control.gd): the local buttons drive its slot
@@ -133,6 +176,7 @@ func set_local_device(device: int) -> void:
 func set_local_menu(device: int) -> void:
 	if menu_device() == device:
 		return
+	ModLoaderLog.info("Esc menu device %d -> %d" % [menu_device(), device], LOG_NAME)
 	if _menu_buttons != null:
 		_menu_buttons.release_held()
 		VirtualDevices.release_analog(_menu_buttons.device)
@@ -291,7 +335,8 @@ func _on_lobby_left() -> void:
 	history.clear()
 	_remote.clear()
 	_input_gaps.clear()
-	set_local_device(-1)
+	_local_claims.clear()
+	_apply_local_claims("lobby left")
 	set_local_menu(-1)
 	blocked_buttons = 0
 	blocked_by.clear()

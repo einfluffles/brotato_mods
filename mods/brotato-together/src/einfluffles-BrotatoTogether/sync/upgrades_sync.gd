@@ -60,6 +60,9 @@ const WEAPON_POPUP_HANDLERS := {
 }
 # weapon_meca_roll: the host rolls (or finds) the two meca options; weapon_meca: picks one.
 const WEAPON_KINDS := ["weapon_combine", "weapon_discard", "weapon_meca_roll", "weapon_meca"]
+const MAX_HELD := 8  # intents held while the host is paused (a few presses per player)
+const LOG_NAME := "einfluffles-BrotatoTogether:UpgradesSync"
+const DEVICE_OWNER := "upgrades"  # InputSync.set_local_device
 
 var session: Node = null
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
@@ -74,6 +77,9 @@ var run_cache = RunCache.new("upgrades")  # host: the run state, serialized on c
 var _seq_ui_id := 0  # instance id of the UpgradesUI the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel shows something new
 var _seq_keys := []
+# Intents that came while the host was paused: [UpgradesUI instance id, player, msg], applied in
+# order once it resumes (see host_apply_intent).
+var _held := []
 
 # client
 var _guarded_ui: Node = null  # the puppet UpgradesUI whose decision signals are rewired
@@ -117,6 +123,7 @@ func _process(_delta: float) -> void:
 		# Panels closed or battle over (also without peers, when the stream asks nothing): the
 		# run's text does not outlive the wave.
 		run_cache.clear()
+	_apply_held(ui)
 	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
 	var showing: bool = session.is_host() and ui != null
 	_block_remote_buttons(showing and not get_tree().paused)
@@ -264,8 +271,20 @@ static func _options(ui: Node) -> Array:
 # A player's decision, sent from its own panel. Only applied to what that panel shows right
 # now: the revision catches a press that was made on options the host has since replaced, the
 # id a mismatch in content. Returns whether a handler ran.
+# While the host is paused nothing runs: the intent is held and applied once it resumes. The
+# panels run on in a pause (pause_mode process), so the last decision would end them there and
+# main.gd would load the shop with the tree still paused: a shop nobody can use, whose pause
+# state turned every client's own panel off until the host paused and resumed again.
 func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 	if p < 0 or p >= RunData.get_player_count() or p >= _seqs.size():
+		return false
+	if get_tree().paused:
+		if _held.size() < MAX_HELD:
+			_held.append([ui.get_instance_id(), p, msg])
+			ModLoaderLog.info(
+				"Level-up intent of player %d held: the host is paused (%s)" % [p, msg.get("kind")],
+				LOG_NAME
+			)
 		return false
 	var kind = msg.get("kind")
 	var id = msg.get("id")
@@ -393,6 +412,7 @@ func _on_peer_ready(_steam_id: int) -> void:
 
 func _on_lobby_left() -> void:
 	run_cache.clear()
+	_held = []
 
 
 # The revision changes with what the panel shows, even when two options in a row look the same
@@ -422,6 +442,25 @@ func _update_seqs(ui: Node, players: Array) -> void:
 		if key != _seq_keys[p]:
 			_seq_keys[p] = key
 			_seqs[p] += 1
+
+
+# Every frame: the intents held during a pause, once the host resumed, in the order they came,
+# on the panels they were sent for (gone panels drop them). The revision check still applies.
+func _apply_held(ui) -> void:
+	if _held.empty() or get_tree().paused:
+		return
+	var held := _held
+	_held = []
+	for entry in held:
+		var applied := false
+		if ui != null and ui.get_instance_id() == entry[0]:
+			applied = host_apply_intent(ui, entry[1], entry[2])
+		var outcome: String = "applied" if applied else "dropped"
+		ModLoaderLog.info(
+			"Held level-up intent of player %d %s after the pause" % [entry[1], outcome], LOG_NAME
+		)
+		if applied:
+			state_stream.flush(StateStream.UPGRADES)
 
 
 func _block_remote_buttons(block: bool) -> void:
@@ -459,7 +498,7 @@ func apply_state(_section: int, state, _revision: int) -> bool:
 # input (its intents would name a revision the host no longer has), and a later state
 # rebuilds every panel.
 func clear_state(_section: int) -> void:
-	stop_local()
+	stop_local("host's panels closed")
 	_applied = {}
 	_own_seq = -1
 	_own_item_id = ""
@@ -516,7 +555,7 @@ func apply(main: Node, msg: Dictionary) -> void:
 
 # The puppet scene goes with its wave: keep nothing of it (a freed node's address is reused).
 func _on_battle_left() -> void:
-	stop_local()
+	stop_local("battle left")
 	_guarded_ui = null
 	_own = null
 	_local_panel = null  # a child of the scene's UpgradesUI
@@ -525,15 +564,18 @@ func _on_battle_left() -> void:
 	_run_key = []
 
 
-func stop_local() -> void:
+# The own panel stops taking local input. Gives up only this screen's device and cursor: a stop
+# that comes late (the shop already took over) leaves the shop's alone.
+func stop_local(reason := "stopped") -> void:
 	if not _local_active:
 		return
+	ModLoaderLog.info("Own level-up panel stops (%s)" % reason, LOG_NAME)
 	_local_active = false
 	_sent_focus = ""
 	if input_sync != null:
-		input_sync.set_local_device(-1)
+		input_sync.set_local_device(DEVICE_OWNER, -1, reason)
 	if focus_sync != null:
-		focus_sync.local_emulators = []
+		focus_sync.set_local_emulator(DEVICE_OWNER, null)
 	if is_instance_valid(_local_panel):
 		_local_panel.set_own(null, null, -1)
 
@@ -614,7 +656,7 @@ func _guard(ui: Node, you: int) -> void:
 	_own_seq = -1
 	_own_item_id = ""
 	_meca.detach()
-	stop_local()
+	stop_local("new panels")
 	var containers := []
 	for p in RunData.get_player_count():
 		var container = ui._get_player_container(p)
@@ -656,18 +698,23 @@ static func _disconnect(source: Object, signal_name: String, target: Object, met
 # on_weapon: the cursor kept its place in the crate weapons list (see _refresh_weapons).
 func _on_own_panel_changed(ui: Node, container: Node, kind: String, on_weapon := false) -> void:
 	if kind != "upgrades" and kind != "item":
-		stop_local()
+		stop_local("own panel shows %s" % kind)
 		return
 	if not _local_active:
 		_local_active = true
+		ModLoaderLog.info(
+			"Own level-up panel runs here (player %d, %s)" % [container.player_index, kind], LOG_NAME
+		)
 		# main._on_EndWaveTimer_timeout does this on the host; it never runs on a puppet.
 		Utils.set_process_input_where_defined(ui, true)
 		if input_sync != null:
 			input_sync.set_local_device(
-				CoopService.get_remapped_player_device(container.player_index)
+				DEVICE_OWNER,
+				CoopService.get_remapped_player_device(container.player_index),
+				"own panel shows %s" % kind
 			)
 		if focus_sync != null:
-			focus_sync.local_emulators = [container.focus_emulator]
+			focus_sync.set_local_emulator(DEVICE_OWNER, container.focus_emulator)
 		if is_instance_valid(_local_panel):
 			_local_panel.set_own(container, container.focus_emulator, container.player_index)
 	if not on_weapon:
@@ -686,7 +733,7 @@ func _on_own_type_changed(_player_type: int, cursor_lost: bool) -> void:
 
 func _report_own_focus() -> void:
 	if not battle_client.is_in_battle() or not is_instance_valid(_own):
-		stop_local()
+		stop_local("battle over or own panel gone")
 		return
 	var control = _own.focus_emulator.focused_control
 	var target := []

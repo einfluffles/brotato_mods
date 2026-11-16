@@ -45,6 +45,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   they still match your panel. The inventory popup's meca upgrade shows the two options the host rolled
   and sends the one you pick.
   The shop does not follow the keyboard and mouse yet the way the level-up panel does.
+  Each of these screens claims your slot's input for itself, so a level-up panel that stops late
+  never switches off your shop panel, and the shop panel takes its input back if anything else did
+  (both written to the log).
 - **Selection screens / end of run:** clients see the game's own character, weapon and difficulty
   selection and end-of-run screens, showing what the host's show: the host's grid (so local
   unlocks/DLC don't matter), every player's cursor, panel and ready state, the zone, the join
@@ -97,7 +100,10 @@ the game's colours. A locked character under a cursor shows how to unlock it (on
 A wave never pauses while friends are connected (Esc opens the menu over the running game, see
 above; losing window focus pauses nothing either). In the shop anyone can pause: the host operates
 the pause menu, and whoever paused can resume with pause again. During the level-up / crate panels
-only the host's own players can pause. A host with nobody connected pauses as always.
+only the host's own players can pause; a client's own panel keeps running meanwhile, and a choice
+made there waits on the host until it resumes (it used to end the panels inside the pause, and the
+shop then came up paused with no menu, so every client's own shop panel stayed dead until the host
+paused and resumed again). A host with nobody connected pauses as always.
 Aiming follows each player's own manual-aim setting (mouse or right stick). If a player drops and
 doesn't come back within 20 s, the host makes their level-up / crate / shop choices so the run goes on.
 
@@ -108,7 +114,8 @@ run-state round trip, a client borrowing the host's DLC (and giving it back exac
 panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
 panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), "Player N" above the join hint, shop UI sounds, the lobby
 in the game's menus (title screen and pause menu page, the Online toggle of character selection, the
-client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam), the wave-failed prompt and the battle -> shop transition on clients, the Esc menu
+client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam), the wave-failed prompt and the battle -> shop transition on clients, which screen drives a client's own
+input from the level-up panels to the shop (a host pause across the change, late level-up stops, a lost device, a shop pause that ended with its shop), the Esc menu
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave
 costs per snapshot and per frame; a weapon breaking mid-wave, the hole layout and the host's speed in
