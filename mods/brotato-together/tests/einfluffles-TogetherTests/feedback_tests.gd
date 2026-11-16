@@ -14,12 +14,16 @@ const FeedbackMirror := preload(
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
+const WeaponAnimTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/weapon_anim_tests.gd"
+)
 const ROCKET_EFFECT := "res://weapons/ranged/rocket_launcher/rocket_launcher_effect.tres"
 const SNAPSHOTS := 30  # 1 s of battle
 const HEAL := 3
 const BONUS := 12
 
 var t: Node  # the test mod: _check, scene tree
+var _weapon_anims = null  # WeaponAnimTests, kept alive across its yields
 
 
 func run(test_mod: Node, mod: Node):
@@ -29,6 +33,8 @@ func run(test_mod: Node, mod: Node):
 	ProgressData.settings.screenshake = true
 	ProgressData.settings.visual_effects = true
 	yield(_test_battle(mod), "completed")
+	_weapon_anims = WeaponAnimTests.new(t)
+	yield(_weapon_anims.run(mod), "completed")
 	ProgressData.settings = saved
 	RunData.bonus_gold = 0
 

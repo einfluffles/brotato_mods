@@ -22,6 +22,7 @@ extends Reference
 #     [EVENT_WAVE_END, WAVE_* flags] (state, repeated)
 #     [EVENT_GOLD_BOOST, position: Vector2, boost]
 #     [EVENT_STAT, player index, stat (Keys hash), value] (the icon and number over a player)
+#     [EVENT_WEAPON_ANIM, player index, weapon index, position (s)] (a whip's or flail's lash)
 #   looks: {entity index: look bits} (since protocol 12, see sync/looks.gd; indices of the parsed
 #     entity order: Looks.resolve reads them before resolve() may drop entities)
 #   angles: the rotation of projectiles (protocol 18, see sync/facing.gd); encode() takes
@@ -64,6 +65,7 @@ const EVENT_BONUS_GOLD := 4
 const EVENT_WAVE_END := 5
 const EVENT_GOLD_BOOST := 6
 const EVENT_STAT := 7
+const EVENT_WEAPON_ANIM := 8
 const DAMAGE_CRIT := 1
 const DAMAGE_DODGE := 2
 const DAMAGE_PROTECTED := 4
@@ -336,7 +338,9 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 				buf.put_data(name)
 			buf.put_u16(int(clamp(round(event[3] * ANIM_TIME_SCALE), 0, 65535)))
 			buf.put_u16(int(clamp(round(event[4] * ANIM_TIME_SCALE), 0, 65535)))
-		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST, EVENT_STAT:
+		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
+			_put_feedback_event(buf, event)
+		EVENT_STAT, EVENT_WEAPON_ANIM:
 			_put_feedback_event(buf, event)
 
 
@@ -346,8 +350,13 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 #   WAVE_END: u8 WAVE_* flags
 #   GOLD_BOOST: i16 x, i16 y, u8 boost
 #   STAT (protocol 18): u8 player index, u32 stat hash, zigzag varint value
+#   WEAPON_ANIM (protocol 18): u8 player index, u8 weapon index, u16 position (ms)
 static func _put_feedback_event(buf: StreamPeerBuffer, event: Array) -> void:
 	match event[0]:
+		EVENT_WEAPON_ANIM:
+			buf.put_u8(int(clamp(event[1], 0, 255)))
+			buf.put_u8(int(clamp(event[2], 0, 255)))
+			buf.put_u16(int(clamp(round(event[3] * ANIM_TIME_SCALE), 0, 65535)))
 		EVENT_STAT:
 			buf.put_u8(int(clamp(event[1], 0, 255)))
 			buf.put_u32(event[2])
@@ -665,13 +674,23 @@ static func _get_event(buf: StreamPeerBuffer):
 				name = bytes.get_string_from_ascii()
 			var position := buf.get_u16() / ANIM_TIME_SCALE
 			return [EVENT_ANIM, id, name, position, buf.get_u16() / ANIM_TIME_SCALE]
-		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST, EVENT_STAT:
+		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
+			return _get_feedback_event(buf, kind)
+		EVENT_STAT, EVENT_WEAPON_ANIM:
 			return _get_feedback_event(buf, kind)
 	return null
 
 
 static func _get_feedback_event(buf: StreamPeerBuffer, kind: int):
 	match kind:
+		EVENT_WEAPON_ANIM:
+			if buf.get_available_bytes() < 4:
+				return null
+			var player := buf.get_u8()
+			var weapon := buf.get_u8()
+			if player >= MAX_PLAYERS or weapon >= MAX_WEAPONS:
+				return null
+			return [EVENT_WEAPON_ANIM, player, weapon, buf.get_u16() / ANIM_TIME_SCALE]
 		EVENT_STAT:
 			if buf.get_available_bytes() < 6:
 				return null

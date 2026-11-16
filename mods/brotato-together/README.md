@@ -22,6 +22,7 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   a character whose stat changed (evolution, a mutation fruit, an item's gain), the crates a player
   has picked up (the icons next to the level-ups in the HUD) and the end of the wave
   (dimmed screen, "wave completed", the bonus material bag).
+  The whip and the flail lash out on clients like on the host.
   In the shop, the stat a reroll gives (bone dice) shows over that player's reroll button.
   Charmed, burning, cursed, boosted, meca and mutant enemies look like they do on the host (a
   charmed enemy and its shots in the charm colour, an evolved one with its outline and sprite),

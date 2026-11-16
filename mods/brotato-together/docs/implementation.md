@@ -1186,6 +1186,15 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `ItemService.get_consumable_for_tier` sets it), pending until the puppet battle of that
     battle is ready; ids it does not know are left out. A player joining mid-wave gets the
     lists with the resync.
+  - `EVENT_WEAPON_ANIM` [player, weapon index, position] (protocol 18, 5 B): the whip and the
+    flail attack with an `AnimationPlayer` of their own (`AnimatedHitboxShootingBehavior.shoot`
+    plays "lash": the sprite's frames, the `Lash` sprite and the `Tail`), where other melee
+    weapons only tween the sprite, which `Snapshot.pack_weapons` carries. Clients saw the handle
+    move and nothing else. The host sends one event when a weapon's attack animation starts (not
+    playing at the last capture, or its position went back). The client plays the puppet weapon's
+    own animation from that position, as a copy without the method track (`open_hitbox` /
+    `close_hitbox`: the sound and the hits are the host's). Lost with its snapshot like every
+    one-shot event: that lash is missing, the next one shows.
   - Derived on the client, no bytes: screen shake (`Screenshaker._on_player_took_damage` for
     players, `_on_unit_took_damage` for enemies and neutrals, called with each damage event, which
     already leaves out `hide_feedback` hits; this client's screenshake option applies); level-up
