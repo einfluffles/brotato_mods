@@ -4,7 +4,7 @@
 # tests/<test_id> mounted as mods-unpacked/. A test mod prints "MOD-TESTS: START", "  ok   ...",
 # "  FAIL ...", "  info: ..." and finally "MOD-TESTS: PASS" / "MOD-TESTS: FAIL ...", then quits.
 # Fails on: any script error in mod code, any game-script error while tests run (except the
-# missing-Steam ones), a missing PASS.
+# missing-Steam ones), a get_meta / get_child engine error while tests run, a missing PASS.
 #
 # The tests mostly wait in real time, so a test mod can split itself into suites: it runs the ones
 # named in MOD_TEST_SUITES (comma-separated, empty: all), and its shards.txt lists one group of
@@ -84,12 +84,17 @@ run_game() {
 
 # report <log>: print the test lines and errors of one process; status 1 if it failed.
 report() {
-  local log="$1" own_errors runtime_errors
+  local log="$1" own_errors runtime_errors engine_errors
   own_errors=$(grep -A2 "SCRIPT ERROR" "$log" | grep -v -F "$KNOWN_ARTIFACTS" | grep -B1 "mods-unpacked" \
     | grep -v -F "apply_settings (res://mods-unpacked" || true)
   runtime_errors=$(awk '/MOD-TESTS: START/{f=1} f' "$log" | grep -A1 "SCRIPT ERROR" \
     | grep -v -e "in base 'Nil'" -e "SteamPlatform" -e "^--" -F -e "$KNOWN_ARTIFACTS" \
     | grep -B1 "  at: " | sort -u || true)
+  # Engine errors that always mean a script bug (a script carries on after them, so they are no
+  # SCRIPT ERROR): get_meta of a missing key (also with a default), get_child out of range.
+  engine_errors=$(awk '/MOD-TESTS: START/{f=1} f' "$log" \
+    | grep -E "^ERROR: (The object does not have any 'meta' values|Index p_index = .* is out of bounds \(data\.children)" \
+    | sort -u || true)
   if [ "$quiet" = 1 ]; then
     grep -E "^  (FAIL|info:) |MOD-TESTS: (PASS|FAIL)" "$log"
   else
@@ -97,7 +102,9 @@ report() {
   fi
   if [ -n "$own_errors" ]; then echo "Script errors in mod code:"; echo "$own_errors"; fi
   if [ -n "$runtime_errors" ]; then echo "Game script errors during tests:"; echo "$runtime_errors"; fi
-  [ -z "$own_errors" ] && [ -z "$runtime_errors" ] && grep -q "MOD-TESTS: PASS" "$log"
+  if [ -n "$engine_errors" ]; then echo "Engine errors during tests:"; echo "$engine_errors"; fi
+  [ -z "$own_errors" ] && [ -z "$runtime_errors" ] && [ -z "$engine_errors" ] \
+    && grep -q "MOD-TESTS: PASS" "$log"
 }
 
 if [ $# -gt 0 ]; then folders=("$@"); else folders=("$ROOT"/mods/*/); fi

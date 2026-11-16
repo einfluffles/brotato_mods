@@ -1,6 +1,6 @@
 extends Reference
 # Co-op character selection UX (ui/coop_selection.gd, CoopService extension, client view):
-#  - every empty slot shows "Player N" + the game's hold-to-join hint;
+#  - every empty slot shows "Player N" (above it) + the game's hold-to-join hint;
 #  - players cycle their colour with ui_info (virtual device = remote player, keyboard F), never
 #    onto another player's colour; the colours travel in the menu state, BATTLE_START and the
 #    shop state
@@ -66,6 +66,13 @@ func _test_join_hints(scene: Node) -> void:
 		ok = ok and panels[i].visible == empty and panels[i].instructions_visible == empty
 		ok = ok and label != null and label.text != ""
 	t._check(ok, "join hints: every empty slot (3 and 4) shows the hold-to-join hint")
+	var apart := true
+	for i in range(count, panels.size()):
+		var label: Control = panels[i].get_node_or_null(CoopSelection.SLOT_LABEL)
+		var hint: Rect2 = panels[i]._coop_join_instructions.get_global_rect()
+		apart = apart and label != null and not label.get_global_rect().intersects(hint)
+		apart = apart and label.get_global_rect().end.y <= hint.position.y
+	t._check(apart, "join hints: \"Player N\" sits above the hint, not over it")
 	var hint: Control = scene.get_node_or_null(
 		"MarginContainer/VBoxContainer/" + CoopSelection.COLOR_HINT
 	)
