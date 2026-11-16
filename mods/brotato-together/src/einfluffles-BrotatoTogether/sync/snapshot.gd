@@ -21,8 +21,12 @@ extends Reference
 #     [EVENT_BONUS_GOLD, value, label visible: bool] (state, repeated)
 #     [EVENT_WAVE_END, WAVE_* flags] (state, repeated)
 #     [EVENT_GOLD_BOOST, position: Vector2, boost]
+#     [EVENT_STAT, player index, stat (Keys hash), value] (the icon and number over a player)
+#     [EVENT_WEAPON_ANIM, player index, weapon index, position (s)] (a whip's or flail's lash)
 #   looks: {entity index: look bits} (since protocol 12, see sync/looks.gd; indices of the parsed
 #     entity order: Looks.resolve reads them before resolve() may drop entities)
+#   angles: the rotation of projectiles (protocol 18, see sync/facing.gd); encode() takes
+#     {entity index: radians}, parse() returns {net id: radians}
 #
 # Wire layout:
 #   u32 battle_id, u32 t, u16 wave time left (1/100 s)
@@ -37,6 +41,7 @@ extends Reference
 #   varint pose count; per pose: varint entity index (ascending), u8 value count, f32 values
 #   u8 event count; per event: u8 kind + payload (see _put_event)
 #   varint look count; per look: varint gap to the previous entity index + 1 (ascending), u8 bits
+#   varint angle count; per angle: varint gap like the looks', i16 angle
 # Nothing may follow. Angles are i16 over [-PI, PI].
 #
 # Rarely changing data is sparse; the client fills the gaps from earlier snapshots (resolve()):
@@ -59,6 +64,8 @@ const EVENT_EXPLOSION := 3
 const EVENT_BONUS_GOLD := 4
 const EVENT_WAVE_END := 5
 const EVENT_GOLD_BOOST := 6
+const EVENT_STAT := 7
+const EVENT_WEAPON_ANIM := 8
 const DAMAGE_CRIT := 1
 const DAMAGE_DODGE := 2
 const DAMAGE_PROTECTED := 4
@@ -90,7 +97,7 @@ const FLAG_FLIP_H := 4  # jump attacks turn the sprite with flip_h, not scale.x
 const FLAG_REST := 8  # position not sent: unchanged (see resolve)
 const FLAG_BITS := 4
 const MAX_POSE_VALUES := 48  # see sync/pose.gd
-const LOOK_BITS := 63  # every bit sync/looks.gd defines; parse rejects others
+const LOOK_BITS := 255  # every bit sync/looks.gd defines; parse rejects others
 const MAX_PLAYERS := 8
 const MAX_WEAPONS := 32
 const MAX_ENTITIES := 8192
@@ -166,7 +173,20 @@ static func encode(view: Dictionary) -> PoolByteArray:
 	for event in view.events:
 		_put_event(buf, event)
 	_put_looks(buf, view.get("looks", {}))
+	_put_angles(buf, view.get("angles", {}))
 	return buf.data_array
+
+
+# Sparse like the looks: only the projectiles whose rotation the host sends this time.
+static func _put_angles(buf: StreamPeerBuffer, angles: Dictionary) -> void:
+	var indices: Array = angles.keys()
+	indices.sort()
+	_put_varint(buf, indices.size())
+	var next := 0
+	for index in indices:
+		_put_varint(buf, index - next)
+		buf.put_16(_angle(angles[index]))
+		next = index + 1
 
 
 # Sparse: only entities whose look the host sends this time (sync/looks.gd).
@@ -320,6 +340,8 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 			buf.put_u16(int(clamp(round(event[4] * ANIM_TIME_SCALE), 0, 65535)))
 		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
 			_put_feedback_event(buf, event)
+		EVENT_STAT, EVENT_WEAPON_ANIM:
+			_put_feedback_event(buf, event)
 
 
 # Protocol 11 kinds, after the kind byte:
@@ -327,8 +349,18 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 #   BONUS_GOLD: u8 BONUS_VISIBLE bit, varint value
 #   WAVE_END: u8 WAVE_* flags
 #   GOLD_BOOST: i16 x, i16 y, u8 boost
+#   STAT (protocol 18): u8 player index, u32 stat hash, zigzag varint value
+#   WEAPON_ANIM (protocol 18): u8 player index, u8 weapon index, u16 position (ms)
 static func _put_feedback_event(buf: StreamPeerBuffer, event: Array) -> void:
 	match event[0]:
+		EVENT_WEAPON_ANIM:
+			buf.put_u8(int(clamp(event[1], 0, 255)))
+			buf.put_u8(int(clamp(event[2], 0, 255)))
+			buf.put_u16(int(clamp(round(event[3] * ANIM_TIME_SCALE), 0, 65535)))
+		EVENT_STAT:
+			buf.put_u8(int(clamp(event[1], 0, 255)))
+			buf.put_u32(event[2])
+			_put_varint(buf, _zigzag(event[3]))
 		EVENT_EXPLOSION:
 			_put_varint(buf, event[1])
 			_put_position(buf, event[2])
@@ -378,6 +410,11 @@ static func _zigzag(value: int) -> int:
 	return value * 2 if value >= 0 else -value * 2 - 1
 
 
+# An angle as the wire carries it (the host compares these to see a projectile turn).
+static func quantize_angle(value: float) -> int:
+	return _angle(value)
+
+
 # Snapped like on the wire: the host compares these to detect resting entities.
 static func quantize_position(position: Vector2) -> Vector2:
 	return Vector2(_quantize(position.x, POS_SCALE), _quantize(position.y, POS_SCALE))
@@ -419,9 +456,26 @@ static func parse(body) -> Dictionary:
 		if event == null:
 			return {}
 		view.events.append(event)
-	if not _get_looks(buf, view) or buf.get_available_bytes() != 0:
+	if not _get_looks(buf, view) or not _get_angles(buf, view):
 		return {}
-	return view
+	return view if buf.get_available_bytes() == 0 else {}
+
+
+static func _get_angles(buf: StreamPeerBuffer, view: Dictionary) -> bool:
+	var count := _get_varint(buf)
+	var ids: PoolIntArray = view.ids
+	if count < 0 or count > ids.size():
+		return false
+	var angles := {}
+	var next := 0
+	for _i in count:
+		var gap := _get_varint(buf)
+		if gap < 0 or next + gap >= ids.size() or buf.get_available_bytes() < 2:
+			return false
+		angles[ids[next + gap]] = buf.get_16() / ANGLE_SCALE
+		next += gap + 1
+	view["angles"] = angles
+	return true
 
 
 static func _get_looks(buf: StreamPeerBuffer, view: Dictionary) -> bool:
@@ -622,11 +676,28 @@ static func _get_event(buf: StreamPeerBuffer):
 			return [EVENT_ANIM, id, name, position, buf.get_u16() / ANIM_TIME_SCALE]
 		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
 			return _get_feedback_event(buf, kind)
+		EVENT_STAT, EVENT_WEAPON_ANIM:
+			return _get_feedback_event(buf, kind)
 	return null
 
 
 static func _get_feedback_event(buf: StreamPeerBuffer, kind: int):
 	match kind:
+		EVENT_WEAPON_ANIM:
+			if buf.get_available_bytes() < 4:
+				return null
+			var player := buf.get_u8()
+			var weapon := buf.get_u8()
+			if player >= MAX_PLAYERS or weapon >= MAX_WEAPONS:
+				return null
+			return [EVENT_WEAPON_ANIM, player, weapon, buf.get_u16() / ANIM_TIME_SCALE]
+		EVENT_STAT:
+			if buf.get_available_bytes() < 6:
+				return null
+			var player := buf.get_u8()
+			var stat := buf.get_u32()
+			var value = _unzigzag(_get_varint(buf))
+			return null if value == null or player >= MAX_PLAYERS else [EVENT_STAT, player, stat, value]
 		EVENT_EXPLOSION:
 			var type_idx := _get_varint(buf)
 			if type_idx < 0 or buf.get_available_bytes() < 7:

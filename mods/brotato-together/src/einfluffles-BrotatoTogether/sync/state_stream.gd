@@ -62,9 +62,11 @@ const MENU_GRIDS := 3
 const RETRY := 4
 const PAUSE_BATTLE := 5
 const PAUSE_SHOP := 6
-const CURSORS := 7
+const PICKUPS := 7
+const CURSORS := 8
 const NAMES := [
-	"shop", "upgrades", "menu", "menu_grids", "retry", "pause_battle", "pause_shop", "cursors"
+	"shop", "upgrades", "menu", "menu_grids", "retry", "pause_battle", "pause_shop", "pickups",
+	"cursors",
 ]
 const DEFAULT_INTERVAL := 0.1
 const DEFAULT_TIMEOUT_SEC := 10.0

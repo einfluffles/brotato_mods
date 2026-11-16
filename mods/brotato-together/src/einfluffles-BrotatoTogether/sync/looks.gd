@@ -11,6 +11,9 @@ extends Reference
 #   CURSED: a CURSE_COLOR outline (CurseEnemyEffectBehavior.init, cursed structures and pets); an
 #     enemy also gets the behavior scene's CurseParticles, a pet its curse_particles.
 #   BOOSTED: Entity.boost with show_outline adds a BOOST_COLOR outline (buffers, boosted turrets).
+#   MECA / MUTANT (protocol 18): Meca / MutantEnemyEffectBehavior.init adds a MECA_COLOR /
+#     MUTANT_COLOR outline and swaps the sprite for the enemy's evolution_meca / evolution_mutant
+#     texture (the brachiosaurus foot: its foot sprite).
 # All of them read and write only visuals: a puppet never burns, charms, boosts or pays out.
 #
 # Host: a look is sent for REPEAT snapshots after it changes (also when it becomes plain) and,
@@ -26,9 +29,12 @@ const BURN_BLUE := 4
 const CHARMED := 8
 const CURSED := 16
 const BOOSTED := 32
+const MECA := 64
+const MUTANT := 128
 const ALL := Snapshot.LOOK_BITS
 const BURN_BITS := BURNING | BURN_RED | BURN_BLUE
-const OUTLINE_BITS := CHARMED | CURSED | BOOSTED
+const EVOLUTION_BITS := MECA | MUTANT
+const OUTLINE_BITS := CHARMED | CURSED | BOOSTED | EVOLUTION_BITS
 const REPEAT := 4
 const REFRESH := 10
 const EXPIRE_SNAPSHOTS := 45  # 1.5 s at 30 Hz: four refreshes in a row lost
@@ -41,6 +47,7 @@ const CURSE_NODE := "BrotatoTogetherCurse"
 const LOOK_META := "brotato_together_look"
 const RAMP_META := "brotato_together_ramp"
 const MATERIAL_META := "brotato_together_material"
+const TEXTURE_META := "brotato_together_texture"
 
 # Host: net id -> [look, snapshot count of its last change]; only looks that are not plain or
 # changed within REPEAT snapshots.
@@ -113,6 +120,10 @@ func look_of(node: Node) -> int:
 			look |= CURSED
 		elif color == Utils.BOOST_COLOR:
 			look |= BOOSTED
+		elif color == Utils.MECA_COLOR:
+			look |= MECA
+		elif color == Utils.MUTANT_COLOR:
+			look |= MUTANT
 	if node is Unit and node._is_burning:
 		look |= BURNING
 		var particles = node._burning_particles
@@ -195,6 +206,8 @@ func set_look(node: Node, look: int) -> void:
 		return
 	if not node is Entity:
 		return
+	if changed & EVOLUTION_BITS:
+		_set_evolution(node, look)  # first: the outline shader reads the texture's size
 	if changed & OUTLINE_BITS:
 		_set_outlines(node, look)
 	if changed & CHARMED and look & CHARMED:
@@ -209,9 +222,16 @@ func set_look(node: Node, look: int) -> void:
 # may carry stay. A hit flash keeps its material and gets the new one back when it ends.
 static func _set_outlines(entity: Node, look: int) -> void:
 	var colors := []
+	var look_colors := [
+		Utils.CHARM_COLOR, Utils.CURSE_COLOR, Utils.BOOST_COLOR, Utils.MECA_COLOR, Utils.MUTANT_COLOR
+	]
 	for color in entity._outline_colors:
-		if not color in [Utils.CHARM_COLOR, Utils.CURSE_COLOR, Utils.BOOST_COLOR]:
+		if not color in look_colors:
 			colors.append(color)
+	if look & MECA:
+		colors.append(Utils.MECA_COLOR)
+	if look & MUTANT:
+		colors.append(Utils.MUTANT_COLOR)
 	if look & CURSED:
 		colors.append(Utils.CURSE_COLOR)
 	if look & BOOSTED:
@@ -232,6 +252,29 @@ static func _set_outlines(entity: Node, look: int) -> void:
 		else:
 			entity._non_flash_shield_material = sprite.material
 		sprite.material = flash
+
+
+# The evolved sprite, like Meca / MutantEnemyEffectBehavior.init; the scene's own comes back when
+# the look ends (a pooled puppet is reused for plain enemies). Enemies without such a texture
+# (evolved elites are scenes of their own) only get the outline.
+static func _set_evolution(node: Node, look: int) -> void:
+	if not node is Enemy:
+		return
+	var sprite = node.get("_sprite_foot") if "_sprite_foot" in node else node.sprite
+	if sprite == null:
+		return
+	var texture = null
+	if look & MECA:
+		texture = node.evolution_meca
+	elif look & MUTANT:
+		texture = node.evolution_mutant
+	if texture != null:
+		if not node.has_meta(TEXTURE_META):
+			node.set_meta(TEXTURE_META, [sprite.texture])
+		sprite.texture = texture
+	elif node.has_meta(TEXTURE_META):
+		sprite.texture = node.get_meta(TEXTURE_META)[0]
+		node.remove_meta(TEXTURE_META)
 
 
 # The unit's own BurningParticles, started and stopped like Unit.apply_burning / stop_burning

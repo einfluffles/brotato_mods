@@ -27,7 +27,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   state]; u16 entity count, types as runs
   [varint type, varint length], u16 net ids, 4-bit flags, i16 x/y per entity not resting; poses as
   [varint index, u8 count, f32 values]; u8 event count + events (damage 7-8 B, sound 5-10 B, anim
-  8 B + name; protocol 11: explosion 9 B, bonus gold 3-5 B, wave end 2 B, gold boost 6 B). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
+  8 B + name; protocol 11: explosion 9 B, bonus gold 3-5 B, wave end 2 B, gold boost 6 B); the looks
+  and angles sections (see "Lasting looks", "Projectile angles"). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
   Sparse data: `FLAG_REST` entities (unmoved for 4 snapshots: gold, structures, idle units) leave out their
   position except every 15th snapshot (staggered by id); player HUD stats only for 4 snapshots after a
   change and every 10th. The client fills both from earlier snapshots (`Snapshot.resolve`, which also builds
@@ -135,9 +136,22 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `Boss.init` does. Before, every elite showed a full bar for the whole fight.
 - Puppet timers: all paused, except a unit's `FlashTimer` and a `UIProgressBar`'s timer, whose timeouts
   only put the sprite's material / the bar's tint back. Paused, a hit unit stayed white until it died.
-- Projectile puppets face the direction between the two snapshots around render time (not the motion
-  of the last frame), stay hidden until they have two samples (a pooled puppet would sit one snapshot
-  long with the rotation of its last flight) and restart their animation when reused.
+- Projectile angles (`sync/facing.gd`, protocol 18): a projectile puppet has the host's rotation.
+  Until then it faced the direction between the two snapshots around render time, and positions
+  travel in half pixels: a slow shot's angle wobbled with every snapshot. The red line an enemy
+  slash shows before it strikes (mad slasher, pachyrhinosaurus: 300 px/s, 10 px per snapshot)
+  swung over about 4 degrees 30 times a second (measured: 0.644 to 0.714 rad for a host angle of
+  0.684), and a shot the game does not turn into its flight was turned all the same.
+  Host: every projectile without a pose (a laser's aim is a pose value) sends its rotation for 3
+  snapshots after it changes (a new shot, a bounce; a spinning one every time) and every 15th
+  (staggered by id). Wire: a section after the looks, `varint count` + per entry `varint gap to
+  the previous index + 1, i16 angle`; 3 B per entry, 1 B when there is none. `Snapshot.parse`
+  hands them out by net id, `Facing.resolve` keeps the newest per id while the id is listed (an
+  older snapshot neither turns one back nor drops one), and the client turns a spinning shot
+  between the two snapshots it renders. A puppet whose angle never arrived (every snapshot that
+  carried it lost) faces its motion as before and stays hidden for its first snapshot; one with
+  an angle shows at once. Puppets restart their animation when reused. Not mirrored: a
+  projectile's scale (the baryonyx' lasers are 0.55 on the host).
 - Bullet-hell waves: `main._ready` adds its own generator (a random pattern) on the client too;
   `BattleClient._freeze` frees it. The host's bullets arrive as puppets.
 - Scene state (protocol 13, `sync/battle_scene.gd`, one instance per battle on each side):
@@ -175,7 +189,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   animations (state).
 - Lasting looks (`sync/looks.gd`, protocol 12): states the game shows for seconds or for an entity's
   life, from game logic puppets never run. One byte of bits per entity: `BURNING` (+ `BURN_RED` /
-  `BURN_BLUE`, the gradient `BurningParticles._update_color` picked), `CHARMED`, `CURSED`, `BOOSTED`.
+  `BURN_BLUE`, the gradient `BurningParticles._update_color` picked), `CHARMED`, `CURSED`, `BOOSTED`,
+  and since protocol 18 `MECA` / `MUTANT` (the byte is full).
   The host reads them off what the game shows: the outline colours in `Entity._outline_colors`
   (`Utils.CHARM_COLOR` from `CharmEnemyEffectBehavior.charm`, `CURSE_COLOR` from
   `CurseEnemyEffectBehavior.init` and cursed structures / pets, `BOOST_COLOR` from `Entity.boost`
@@ -199,9 +214,14 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `burning_data`, so nothing spreads; no burning timer), the `CurseParticles` of
   `curse_enemy_effect_behavior.tscn` instanced without its script next to (not among) the effect
   behaviors, a pet's `curse_particles`, the charm material on a shot. A puppet that leaves the
-  snapshots (death, pool reuse) loses its look. Not mirrored: the meca / mutant evolution looks
-  (outline plus a texture swap, `MecaEnemyEffectBehavior.init`), percent-damage-taken outlines (lute,
-  diver), the one-shot boost particles (`stats_boosted` -> `EffectsManager`).
+  snapshots (death, pool reuse) loses its look. An evolved enemy (primal_dread; the outline is
+  `MECA_COLOR` / `MUTANT_COLOR` from `Meca` / `MutantEnemyEffectBehavior.init`) also gets its
+  `evolution_meca` / `evolution_mutant` sprite like that `init` sets it (the brachiosaurus foot:
+  its foot sprite), before the outline (the shader reads the texture's size); the scene's own
+  sprite comes back when the look ends, so a pooled puppet reused for a plain enemy is plain.
+  Until protocol 18 clients saw every evolved enemy as a plain one. Not mirrored:
+  percent-damage-taken outlines (lute, diver), the one-shot boost particles (`stats_boosted` ->
+  `EffectsManager`).
 - Puddles (`sync/puddles.gd`, protocol 12): acid / petrol / fire puddles (`GPESpawner`, children of
   `main._gpe_container` / `_fire_puddles_container`) are tracked like gold: static, so mostly
   `FLAG_REST`. A puddle's sprite (index into `puddle_sprites`) and target scale (`GPESpawner`'s size,
@@ -353,7 +373,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     it was up again and over which path, or that it still was not after 15 s.
 - **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
   ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
-  menu_grids, retry, pause_battle, pause_shop, cursors (state that builds controls before the cursors on
+  menu_grids, retry, pause_battle, pause_shop, pickups, cursors (state that builds controls before the cursors on
   them). Replaces the copy of the same machinery each module had (poll loop + change key, key forgotten on
   `peer_ready`, per-peer sends, "keep the latest until the scene is ready").
   - Host: a provider per section answers `state_key(section)` (text, "" = inactive; checked every interval,
@@ -558,6 +578,15 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     after 1 s without one (`LOCK_WAIT_MSEC`: refused, or the item is gone) the slot shows the
     host's lock again. A press that steals (a steal left) sends no lock. The host refreshes its
     copy of the player's hint after an applied lock, like `BaseShop._input`.
+  - Reroll text (`SHOP_TEXT`, protocol 18): a reroll that gives a stat (bone dice,
+    `gain_stats_on_reroll` in `BaseShop._on_RerollButton_pressed`) floats the stat's icon and number
+    over the player's reroll button. A client's reroll runs on the host, so the client saw
+    nothing. The host hears `RunData.stat_added` in the shop and, deferred, sends the gain when
+    that player's `_reroll_count` went up since (the handler adds the stat before it counts the
+    reroll; the shop's own gains at its start count none). The client shows it through the
+    shop's `FloatingTextManagerShop.stat_added` at the co-op place, without the sound (the
+    host's arrives as `UI_SOUNDS`). Every client gets every player's, like the host's screen.
+    Not mirrored: the elite icon of a caught steal (`display_shop_icon`).
   - Go: the client keeps no flag of its own. Its press sends "go"; the checkmark appears when the host's
     state has it. The game clears the flag itself when the cursor leaves the button, on cancel and on the
     triggers (`_on_GoButton_focus_exited`, `BaseShop._input`): `ShopLocal.process` sends "go 0" when the
@@ -1137,6 +1166,35 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `picked_up` of mirrored gold and reads `boosted` in its handler: Godot 3 calls a signal's
     targets in order of instance id and the per-battle helper is made after main, so main's
     handler has doubled it already, and `Gold.pickup` resets it right after the signal.
+  - `EVENT_STAT` [player, stat hash, value] (protocol 18, 7 B): the icon and number over a player
+    whose stat changed mid-wave (evolution from a meca / mutant fruit, a mutation fruit's stat, the
+    level-up's max HP, an item's gain). The game shows it from `RunData.stat_added` / `stat_removed`
+    (`FloatingTextManager.on_stat_added`), which a client's puppet run never emits. `BattleHost`
+    is connected to both (removed: the negative value) and hands them to the battle's
+    `FeedbackMirror`, at most 16 per snapshot; the client calls its own
+    `FloatingTextManager.on_stat_added` with empty sound lists (which stats it skips, a dead player,
+    the place and the stacking are the game's; the sounds are the host's events). The stat is
+    `Keys.generate_hash`'s `String.hash()`, the same on every machine.
+  - Picked-up crates in the HUD (`sync/pickup_list.gd`, protocol 18, state stream section pickups):
+    `main.on_consumable_picked_up` puts crates (the zone's green one, the red legendary one) and
+    the mutation fruit / meca parts into `_things_to_process_player_containers[p].consumables`;
+    on a client only the level-up icons of that row existed (`BattleClient._show_level_up`).
+    State, not an event: an icon missing for the rest of the wave would be worse than a missed
+    text. Body while the host is in a battle: `{battle_id, players: [[consumable my_id]]}` from
+    the lists' `_elements`; the client makes its lists the same with their own `add_element` /
+    `remove_element` (a copy per entry, with the zone's sprite as
+    `ItemService.get_consumable_for_tier` sets it), pending until the puppet battle of that
+    battle is ready; ids it does not know are left out. A player joining mid-wave gets the
+    lists with the resync.
+  - `EVENT_WEAPON_ANIM` [player, weapon index, position] (protocol 18, 5 B): the whip and the
+    flail attack with an `AnimationPlayer` of their own (`AnimatedHitboxShootingBehavior.shoot`
+    plays "lash": the sprite's frames, the `Lash` sprite and the `Tail`), where other melee
+    weapons only tween the sprite, which `Snapshot.pack_weapons` carries. Clients saw the handle
+    move and nothing else. The host sends one event when a weapon's attack animation starts (not
+    playing at the last capture, or its position went back). The client plays the puppet weapon's
+    own animation from that position, as a copy without the method track (`open_hitbox` /
+    `close_hitbox`: the sound and the hits are the host's). Lost with its snapshot like every
+    one-shot event: that lash is missing, the next one shows.
   - Derived on the client, no bytes: screen shake (`Screenshaker._on_player_took_damage` for
     players, `_on_unit_took_damage` for enemies and neutrals, called with each damage event, which
     already leaves out `hide_feedback` hits; this client's screenshake option applies); level-up
