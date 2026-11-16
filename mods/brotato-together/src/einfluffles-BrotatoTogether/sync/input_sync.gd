@@ -3,6 +3,13 @@ extends Node
 # state-based, so a lost packet only delays; button presses also travel as counters, see
 # press_counter.gd). Host: apply each peer's input to that peer's virtual device
 # (remote_buttons.gd: edges, pause, menu echo).
+#
+# Movement is the one part a client predicts (battle_client.gd _own_target: the host's position
+# plus one physics step per input newer than the snapshot's INPUT_ACK). So the host moves a remote
+# player by exactly one input per physics tick, and the ack names the newest input whose tick has
+# run. Packets don't arrive one per tick (jitter bunches them, or a tick gets none), so the host
+# queues them (see _tick_movement). Aim and buttons are not predicted and stay newest-wins, applied
+# on arrival: no added delay, and the press counters already cover lost or bunched presses.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const VirtualDevices := preload(
@@ -17,6 +24,9 @@ const RemoteButtons := preload(
 const LocalAim := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_aim.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:InputSync"
 const INPUT_TIMEOUT_MSEC := 300
+# host: queued inputs beyond the one the next tick takes. Each one delays this player on the host
+# by a tick; jitter rarely leaves more than one, more only piles up after a stall.
+const MAX_WAITING := 2
 const HISTORY_SIZE := 180  # 3 s at 60 Hz
 const NAV_DEADZONE := 0.5  # InputService.joystick_deadzone (left stick -> menu directions)
 
@@ -52,7 +62,8 @@ var _local_claims := []
 var _menu_buttons = null
 var _menu_presses = PressCounter.new()
 
-# host: steam_id -> {seq, last_msec, released, buttons: RemoteButtons}
+# host: steam_id -> {seq, last_msec, released, buttons: RemoteButtons, queue: [[seq, move]...],
+# applied, ack, move} (see _apply_input, _tick_movement)
 var _remote := {}
 
 
@@ -67,6 +78,9 @@ func setup(netplay_session: Node) -> void:
 func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
 	VirtualDevices.register_actions()
+	# Emitted at the start of every physics tick (also while paused), before any node's
+	# _physics_process: the players read their device after the tick's input is on it.
+	get_tree().connect("physics_frame", self, "_on_physics_frame")
 
 
 func _physics_process(_delta: float) -> void:
@@ -269,8 +283,12 @@ func blocked_mask() -> int:
 	return mask
 
 
+# INPUT_ACK: the newest input whose physics tick has run, so the player's position holds one step
+# for each input up to it and none for later ones. Valid from this tick's _tick_movement up to
+# the player's own _physics_process: battle_host.gd builds snapshots in that window (its node sits
+# under the ModLoader autoload, before the battle scene in the physics order).
 func last_applied_seq(steam_id: int) -> int:
-	return _remote[steam_id].seq if _remote.has(steam_id) else 0
+	return _remote[steam_id].ack if _remote.has(steam_id) else 0
 
 
 # msec timestamp of the last pause press delivered for this device (-1: none).
@@ -350,23 +368,20 @@ func _apply_input(steam_id: int, body) -> void:
 	var device: int = devices[steam_id]
 	if not _remote.has(steam_id):
 		_remote[steam_id] = {
-			"seq": 0, "last_msec": 0, "released": false, "buttons": RemoteButtons.new(device)
+			"seq": 0,
+			"last_msec": 0,
+			"released": false,
+			"buttons": RemoteButtons.new(device),
+			"queue": [],
+			"applied": 0,
+			"ack": 0,
+			"move": Vector2.ZERO,
 		}
 	var state: Dictionary = _remote[steam_id]
+	_queue_movement(state, body[0], body[1].clamped(1.0))
 	if body[0] <= state.seq:
-		return  # stale / reordered
-	var move: Vector2 = body[1].clamped(1.0)
+		return  # stale / reordered: its movement may still be due, its buttons and aim are old
 	var aim: Vector2 = body[2].clamped(1.0)
-	VirtualDevices.set_axis_pair(
-		VirtualDevices.action("analog_move_left", device),
-		VirtualDevices.action("analog_move_right", device),
-		move.x
-	)
-	VirtualDevices.set_axis_pair(
-		VirtualDevices.action("analog_move_up", device),
-		VirtualDevices.action("analog_move_down", device),
-		move.y
-	)
 	VirtualDevices.set_axis_pair(
 		VirtualDevices.action("rjoy_left", device),
 		VirtualDevices.action("rjoy_right", device),
@@ -383,6 +398,66 @@ func _apply_input(steam_id: int, body) -> void:
 	state.released = false
 
 
+# In seq order, so a reordered packet still gets its tick if the next one hasn't taken it yet; a
+# duplicate or an input whose turn went by is dropped. Beyond MAX_WAITING + 1 the oldest goes:
+# the client predicted a step the host then never takes (a one-off correction, as for a lost
+# packet), instead of a lasting delay.
+static func _queue_movement(state: Dictionary, seq: int, move: Vector2) -> void:
+	if seq <= state.applied:
+		return
+	var queue: Array = state.queue
+	var at := queue.size()
+	while at > 0 and queue[at - 1][0] >= seq:
+		if queue[at - 1][0] == seq:
+			return
+		at -= 1
+	queue.insert(at, [seq, move])
+	if queue.size() > MAX_WAITING + 1:
+		queue.pop_front()
+
+
+func _on_physics_frame() -> void:
+	for steam_id in _remote:
+		if devices.has(steam_id):
+			_tick_movement(_remote[steam_id], devices[steam_id])
+
+
+# One remote player's movement for the physics tick that starts now. The input put on the device
+# in the previous tick has been moved with (or the world was paused, then neither side moved for
+# it): it becomes the ack. Then this tick takes the oldest queued input.
+# With none queued, the player stands still for this tick and the ack waits. Repeating the last
+# input instead would look smoother on the host, but the client counts no step for it: when the
+# late input then differs (above all a stop), its own player gets pulled. Standing still keeps
+# the client's replay exact; the late input gets the next tick, and the queue it leaves behind
+# absorbs the next bit of jitter (it drains while the player stands, see below).
+func _tick_movement(state: Dictionary, device: int) -> void:
+	state.ack = state.applied
+	var queue: Array = state.queue
+	# Catching up for free: skipping an input that doesn't move leaves the position the same.
+	while queue.size() > 1 and queue[0][1] == Vector2.ZERO:
+		queue.pop_front()
+	if not queue.empty():
+		var input: Array = queue.pop_front()
+		state.applied = input[0]
+		_set_move(state, device, input[1])
+	elif state.move != Vector2.ZERO:
+		_set_move(state, device, Vector2.ZERO)
+
+
+static func _set_move(state: Dictionary, device: int, move: Vector2) -> void:
+	state.move = move
+	VirtualDevices.set_axis_pair(
+		VirtualDevices.action("analog_move_left", device),
+		VirtualDevices.action("analog_move_right", device),
+		move.x
+	)
+	VirtualDevices.set_axis_pair(
+		VirtualDevices.action("analog_move_up", device),
+		VirtualDevices.action("analog_move_down", device),
+		move.y
+	)
+
+
 # Never leave a remote player running into a wall because their packets stopped.
 func _release_timed_out() -> void:
 	var now := OS.get_ticks_msec()
@@ -391,6 +466,8 @@ func _release_timed_out() -> void:
 		if not state.released and now - state.last_msec > INPUT_TIMEOUT_MSEC:
 			VirtualDevices.release_analog(devices[steam_id])
 			state.buttons.release_held()
+			state.queue.clear()
+			state.move = Vector2.ZERO
 			state.released = true
 
 

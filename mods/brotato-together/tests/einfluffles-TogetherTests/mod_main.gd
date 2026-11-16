@@ -77,11 +77,13 @@ const CursorKeyTests := preload(
 const LocalDeviceTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/local_device_tests.gd"
 )
+const InputAckTests := preload("res://mods-unpacked/einfluffles-TogetherTests/input_ack_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
 	"core",
 	"battle_loopback",
+	"input_ack",
 	"pose_mirror",
 	"anim_mirror",
 	"runtime_parts",
@@ -227,6 +229,12 @@ func _suite_battle_loopback(together: Node):
 	coop_run(3)
 	_suite = BattleLoopbackTests.new(self)
 	yield(_suite.run(together), "completed")
+
+
+func _suite_input_ack(together: Node):
+	coop_run(3)
+	_suite = InputAckTests.new()
+	yield(_suite.run(self, together), "completed")
 
 
 func _suite_pose_mirror(together: Node):

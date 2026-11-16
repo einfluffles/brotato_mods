@@ -256,7 +256,8 @@ func _player_index_of(steam_id: int) -> int:
 	return -1
 
 
-# Last INPUT seq applied for the peer controlling player i (0 for local players).
+# Newest INPUT seq the peer controlling player i has moved with, one physics tick each
+# (input_sync.last_applied_seq; 0 for local players).
 func _input_ack_of(player_index: int) -> int:
 	if player_index >= CoopService.connected_players.size():
 		return 0

@@ -21,6 +21,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   its shots in the charm colour), and acid / petrol / fire puddles appear and fade with the host's.
   Clients see the host's holes on the jungle waves that have them and lose a weapon when it breaks on
   the host; your own character's prediction moves at your speed on the host (petrol, slows).
+  The host moves a remote player by exactly one of their inputs per physics tick (bunched packets
+  wait in a short queue, a tick without one stands still) and acks the input it moved with, so the
+  prediction agrees with the host while running and stopping despite network jitter.
 - **Esc during a wave opens the menu without pausing:** the wave runs on for everybody. The host
   gets the game's menu (its character stands still meanwhile), a client its own copy for options and
   the codex; restart / end run stay with the host, and a client's *Quit* asks to leave the lobby.
@@ -110,7 +113,11 @@ input from the level-up panels to the shop (a host pause across the change, late
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave
 costs per snapshot and per frame; a weapon breaking mid-wave, the hole layout and the host's speed in
-the own-player prediction, also for a client joining mid-wave.
+the own-player prediction, also for a client joining mid-wave; a jittered input stream (bunched
+packets, ticks without one, a late stop, a swapped pair, a duplicate) moving a remote player on the
+host one step per acked input, so the client's prediction never needs a correction.
+the own-player prediction, also for a client joining mid-wave, and the own player running only while its
+keys are held.
 
 The tests are named suites (`SUITES` in `mod_main.gd`), each passing on its own: `tools/check.sh -s <suite>`
 runs one, and `shards.txt` groups them into the game processes a full check runs side by side.

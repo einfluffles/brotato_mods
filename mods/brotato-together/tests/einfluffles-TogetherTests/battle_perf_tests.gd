@@ -64,6 +64,45 @@ func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Arra
 	input_sync.history = saved
 
 
+# Client in a battle, the client processing: the own player runs while its keys are held and is
+# idle on the next frame after they are let go, though a prediction correction is still blending
+# out of its displayed position (that kept it running for about a second). It faces the held keys
+# and stands while the host's world is paused.
+func test_own_animation(client: Node, input_sync: Node, player: Node2D):
+	var saved: Array = input_sync.history
+	var anim: AnimationPlayer = player._animation_player
+	client._newest_rx_msec = OS.get_ticks_msec()
+	input_sync.history = [[1, Vector2.LEFT]]
+	client._own_error = Vector2(20, 0)
+	yield(_t.get_tree(), "idle_frame")
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(
+		anim.current_animation == player.animation_move and player._sprites[0].scale.x < 0,
+		"own player runs and faces the held keys (%s)" % anim.current_animation
+	)
+	input_sync.history.append([2, Vector2.ZERO])
+	client._own_error = Vector2(20, 0)
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(
+		anim.current_animation == player.animation_idle and client._own_error.length() > 1,
+		(
+			"own player idle on the frame the keys are let go, correction still %.1f px (%s)"
+			% [client._own_error.length(), anim.current_animation]
+		)
+	)
+	input_sync.history.append([3, Vector2.RIGHT])
+	yield(_t.get_tree(), "idle_frame")
+	var ran: bool = anim.current_animation == player.animation_move
+	client._paused = true
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(
+		ran and anim.current_animation == player.animation_idle,
+		"own player stands while the host's world is paused, keys held (ran before: %s)" % ran
+	)
+	client._paused = false
+	input_sync.history = saved
+
+
 # Host: types announced up front, pooled nodes, the brachiosaurus and its foot, sounds.
 # Client: the foot's _ready without errors, pooled puppets, teleports and reused ids.
 func test_battle(together: Node):
