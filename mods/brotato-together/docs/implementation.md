@@ -1235,6 +1235,13 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   no modal state, no pause. `ui/focus_targets.gd` knows the button as `shop_damage`, so the
   cursor on it travels like every other (`SHOP_FOCUS` to the host, the cursors section to the
   other clients) and every machine shows the board in that player's panel.
+- Under load (`damage_meter_tests.gd`, crowded wave: 350 enemies, twelve fast pistols, 60 ms
+  added to every frame, about 3 frames a second): the total rises in every second and equals,
+  to the point, the health the enemies lost (kills: their whole health; enemies the game
+  removed at its cap: what they had lost). The counters are written inside the weapon's hit
+  handler, so nothing depends on frame rate, and every measurement reads the lists anew: no
+  cached weapon or item objects, no dependence on the wave timer (the mod builds its source
+  list once per wave and closes the wave's summary when the wave timer reads 0).
 - Not taken over from the mod: options (opacity, number of sources, ungrouped weapons), damage
   per second, the "charmed enemies" entry (it extends `Enemy.take_damage`), dart traps (the game
   ships them without a tracking key), the solo shop.

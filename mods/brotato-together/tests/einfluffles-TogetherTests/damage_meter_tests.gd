@@ -13,9 +13,13 @@ const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const PISTOL := "weapon_pistol_1"
+const CROWD := 350  # enemies in the crowded wave
+const STALL_MSEC := 60  # added to every frame of it: a machine that cannot keep up
 
 var _t: Node
 var _changes := 0
+var _killed := 0  # health the enemies that are gone had lost, in the crowded wave
+var _kills := 0
 
 
 func _init(test_mod: Node) -> void:
@@ -29,6 +33,7 @@ func run(together: Node):
 	_test_board(meter)
 	yield(_test_hud(meter, item), "completed")
 	yield(_test_shop(item), "completed")
+	yield(_test_crowded_wave(meter), "completed")
 	meter.disconnect("changed", self, "_on_changed")
 	meter.clear_state(StateStream.DAMAGE)
 
@@ -196,3 +201,79 @@ func _test_shop(item):
 	yield(_t.get_tree(), "idle_frame")
 	yield(_t.get_tree(), "idle_frame")
 	_t._check(not boards[1].visible, "the board goes when the cursor leaves")
+
+
+# A kill took all of the enemy's health; one the game removed (its cap on enemies) had lost what
+# it had lost.
+func _on_enemy_died(enemy, args) -> void:
+	var health: int = enemy.max_stats.health
+	if args.killed_by_player_index >= 0:
+		_killed += health
+		_kills += 1
+	else:
+		_killed += health - int(clamp(enemy.current_stats.health, 0, health))
+
+
+# A crowded wave on a machine that cannot keep up (350 enemies, twelve fast pistols, a few frames
+# a second): the meter counts on, and its total is the health the enemies lost, to the point.
+func _test_crowded_wave(meter: Node):
+	_t.coop_run(3)
+	var pistol = _t._find_by_id(ItemService.weapons, PISTOL)
+	for p in 2:
+		while RunData.get_player_weapons(p).size() < 6:
+			RunData.add_weapon(pistol, p)
+		RunData.add_stat(Keys.stat_attack_speed_hash, 400, p)
+		RunData.add_stat(Keys.stat_max_hp_hash, 500, p)
+	_t.get_tree().change_scene("res://main.tscn")
+	for _i in 3:
+		yield(_t.get_tree(), "idle_frame")
+	var main := _t.get_tree().current_scene
+	var spawner = main.get("_entity_spawner")
+	var players: Array = main.get("_players")
+	var enemy := "res://entities/units/enemies/crash_zone/basic/baby_alien/baby_alien.tscn"
+	_killed = 0
+	_kills = 0
+	var totals := []
+	var t0 := OS.get_ticks_msec()
+	var next_spawn := 0
+	var frames := 0
+	while OS.get_ticks_msec() - t0 < 5000:
+		yield(_t.get_tree(), "idle_frame")
+		OS.delay_msec(STALL_MSEC)
+		frames += 1
+		var now := OS.get_ticks_msec() - t0
+		for player in players:
+			player.current_stats.health = player.max_stats.health
+		if now >= next_spawn and spawner.enemies.size() < CROWD:
+			next_spawn = now + 200
+			for k in 60:
+				var at: Vector2 = players[k % 2].global_position + Vector2(260, 0).rotated(k * 0.7)
+				var unit = _t._spawn_on_host(spawner, enemy, EntityType.ENEMY, at)
+				if unit != null and not unit.is_connected("died", self, "_on_enemy_died"):
+					unit.connect("died", self, "_on_enemy_died")
+		if now >= 1000 * (totals.size() + 1):
+			totals.append(_total(meter))
+	var lost := _killed
+	var alive := 0
+	for unit in spawner.enemies:
+		if not unit.dead:
+			alive += 1
+			lost += int(unit.max_stats.health - unit.current_stats.health)
+	var total := _total(meter)
+	var rising := totals.size() >= 3
+	for i in range(1, totals.size()):
+		rising = rising and totals[i] > totals[i - 1]
+	print(
+		"  info: crowded wave: %d frames in 5 s, %d enemies alive, %d kills, meter per second %s"
+		% [frames, alive, _kills, totals]
+	)
+	_t._check(rising, "the meter counts on through a crowded wave %s" % [totals])
+	_t._check(_kills > 0 and total == lost, "to the point: %d dealt, %d health lost" % [total, lost])
+
+
+func _total(meter: Node) -> int:
+	meter.measure()
+	var total := 0
+	for entry in meter.board.players:
+		total += entry[0]
+	return total
