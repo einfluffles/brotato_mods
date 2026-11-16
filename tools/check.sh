@@ -4,7 +4,8 @@
 # tests/<test_id> mounted as mods-unpacked/. A test mod prints "MOD-TESTS: START", "  ok   ...",
 # "  FAIL ...", "  info: ..." and finally "MOD-TESTS: PASS" / "MOD-TESTS: FAIL ...", then quits.
 # Fails on: any script error in mod code, any game-script error while tests run (except the
-# missing-Steam ones), a get_meta / get_child engine error while tests run, a missing PASS.
+# missing-Steam ones), a get_meta / get_child / get_node engine error while tests run, a
+# missing PASS.
 #
 # The tests mostly wait in real time, so a test mod can split itself into suites: it runs the ones
 # named in MOD_TEST_SUITES (comma-separated, empty: all), and its shards.txt lists one group of
@@ -91,9 +92,11 @@ report() {
     | grep -v -e "in base 'Nil'" -e "SteamPlatform" -e "^--" -F -e "$KNOWN_ARTIFACTS" \
     | grep -B1 "  at: " | sort -u || true)
   # Engine errors that always mean a script bug (a script carries on after them, so they are no
-  # SCRIPT ERROR): get_meta of a missing key (also with a default), get_child out of range.
+  # SCRIPT ERROR): get_meta of a missing key (also with a default), get_child out of range,
+  # get_node of a path that names nothing (a focus neighbour left on a freed control) and the
+  # get_path_to(null) that follows it.
   engine_errors=$(awk '/MOD-TESTS: START/{f=1} f' "$log" \
-    | grep -E "^ERROR: (The object does not have any 'meta' values|Index p_index = .* is out of bounds \(data\.children)" \
+    | grep -E "^ERROR: (The object does not have any 'meta' values|Index p_index = .* is out of bounds \(data\.children|\(?Node not found: |Parameter \"p_node\" is null)" \
     | sort -u || true)
   if [ "$quiet" = 1 ]; then
     grep -E "^  (FAIL|info:) |MOD-TESTS: (PASS|FAIL)" "$log"

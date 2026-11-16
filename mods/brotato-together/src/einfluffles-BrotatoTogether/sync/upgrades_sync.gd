@@ -523,8 +523,9 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var container = ui._get_player_container(p)
 		var slot := _weapon_slot(ui, container, p)  # before anything is rebuilt
 		var in_popup: bool = ui._popup_manager._elements_pressed[p] != null
+		var gear_cursor := []
 		if run_changed:
-			container.update_inventory()
+			gear_cursor = _rebuild_gear(ui, container, p)
 			container.update_stats()
 			container._update_gold_label()
 		var seq: int = _int_at(seqs, p)
@@ -538,12 +539,22 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var on_weapon := false
 		if rebuilt or run_changed:
 			on_weapon = _refresh_weapons(ui, container, p, slot, p == you)
+		# After the crate list's refresh, which closes a popup opened from the gear.
+		var on_gear: bool = not on_weapon and _put_gear_cursor(container, gear_cursor)
 		if rebuilt and p == you:
 			_own_seq = seq
 			_own_item_id = entry[2] if entry[0] == "item" and entry.size() == 3 else ""
-			_on_own_panel_changed(ui, container, entry[0], on_weapon)
-		elif run_changed and p == you and _local_active and in_popup and not on_weapon:
-			# The refresh closed the popup the cursor was in (opened from the gear page).
+			_on_own_panel_changed(ui, container, entry[0], on_weapon or on_gear)
+		elif (
+			run_changed
+			and p == you
+			and _local_active
+			and not on_weapon
+			and not on_gear
+			and (in_popup or not gear_cursor.empty())
+		):
+			# The refresh closed the popup the cursor was in (opened from the gear page), or
+			# the gear it was in has no element left at its place.
 			container.call_deferred("focus")
 		if p == you:
 			# The host's meca rolls for this player: the one the own popup asked for is shown.
@@ -599,6 +610,10 @@ func _show_entry(container, p: int, entry: Array) -> void:
 static func _refresh_weapons(ui: Node, container: Node, p: int, slot: int, own: bool) -> bool:
 	if not ui._weapons_inventory_enabled[p]:
 		return false
+	var elements = container.crate_weapons_container._elements
+	var emulator = container.focus_emulator
+	if _is_child_of(emulator.focused_control, elements):
+		emulator.focused_control = null  # its element is freed now; slot puts it back
 	ui._refresh_weapons_inventory(p)
 	var list = container.crate_weapons_container
 	var count: int = list.get_element_count()
@@ -622,9 +637,103 @@ static func _weapon_slot(ui: Node, container: Node, p: int) -> int:
 	var elements = container.crate_weapons_container._elements
 	var pressed = ui._popup_manager._elements_pressed[p]
 	for control in [pressed, container.focus_emulator.focused_control]:
-		if is_instance_valid(control) and control.get_parent() == elements:
+		if _is_child_of(control, elements):
 			return control.get_index()
 	return -1
+
+
+# update_inventory frees every element of the gear page (weapons and items) and builds new
+# ones. Nothing may keep an old one: a FocusEmulator whose control was freed crashes a released
+# game (extensions/ui/focus_emulator.gd), and a focus neighbour naming one makes the game's
+# Inventory log "Node not found" for each element it relinks. So the cursor is taken off first
+# (returned: where it was, [] when not in the gear; _put_gear_cursor puts it back), and the
+# game's way back to the gear page (_resume_inventory_control_focus) and the gear's focus
+# neighbours move to the new elements.
+static func _rebuild_gear(ui: Node, container: Node, p: int) -> Array:
+	var emulator = container.focus_emulator
+	var cursor := _gear_place(container, emulator.focused_control)
+	if not cursor.empty():
+		emulator.focused_control = null
+	else:
+		# In the popup opened from a gear element: the crate list's refresh closes it.
+		cursor = _gear_place(container, ui._popup_manager._elements_pressed[p])
+	var resume := _gear_place(container, container._resume_inventory_control_focus)
+	container.update_inventory()
+	if not resume.empty():
+		container._resume_inventory_control_focus = _gear_element(container, resume)
+	_relink_gear(container)
+	return cursor
+
+
+# The cursor back on the rebuilt gear (see _gear_element). Returns whether it is there.
+static func _put_gear_cursor(container: Node, place: Array) -> bool:
+	var element = _gear_element(container, place)
+	if element == null or not element.is_visible_in_tree() or container.item_popup._focused:
+		return false
+	if container.focus_emulator.focused_control != element:
+		container.focus_emulator.focused_control = element
+	return true
+
+
+static func _gear_inventories(container: Node) -> Array:
+	var gear = container.player_gear_container
+	return [gear.weapons_container._elements, gear.items_container._elements]
+
+
+# [inventory (0 weapons, 1 items), element index, item id] of a gear element, else [].
+static func _gear_place(container: Node, control) -> Array:
+	var inventories := _gear_inventories(container)
+	for i in inventories.size():
+		if _is_child_of(control, inventories[i]):
+			var item = control.item
+			return [i, control.get_index(), item.my_id if item != null else ""]
+	return []
+
+
+# The element of the rebuilt gear that stands for place: the same item (the one nearest its
+# old index; items are shown newest first, so a new item moves the others on), else the one at
+# the same index (the last one if there are fewer). null when that inventory is empty.
+static func _gear_element(container: Node, place: Array):
+	if place.empty():
+		return null
+	var inventory: Node = _gear_inventories(container)[place[0]]
+	var best = null
+	var best_distance := 0
+	for element in inventory.get_children():
+		if element.is_queued_for_deletion() or element.item == null:
+			continue
+		var distance := int(abs(element.get_index() - place[1]))
+		if element.item.my_id == place[2] and (best == null or distance < best_distance):
+			best = element
+			best_distance = distance
+	var count: int = inventory.get_child_count()
+	if best == null and count > 0:
+		best = inventory.get_child(int(min(place[1], count - 1)))
+	return best
+
+
+# The gear's focus neighbours after a rebuild. On the gear page the game's own links are redone
+# (CoopUpgradesUIPlayerContainer._set_focus_neighbours, which the game runs on a page change
+# only: weapons to the last item and items to the first weapon, by node path). On another page
+# a path to a freed element is dropped; the page change links it again.
+static func _relink_gear(container: Node) -> void:
+	var gear = container.player_gear_container
+	for inventory in [gear.weapons_container, gear.items_container]:
+		_drop_dead_neighbours(inventory)
+		_drop_dead_neighbours(inventory._elements)
+	if container.carousel.index == 1 and gear.items_container.get_element_count() > 0:
+		container._set_focus_neighbours()
+
+
+static func _drop_dead_neighbours(control: Control) -> void:
+	for margin in [MARGIN_LEFT, MARGIN_TOP, MARGIN_RIGHT, MARGIN_BOTTOM]:
+		var path := control.get_focus_neighbour(margin)
+		if not path.is_empty() and control.get_node_or_null(path) == null:
+			control.set_focus_neighbour(margin, NodePath(""))
+
+
+static func _is_child_of(control, parent: Node) -> bool:
+	return is_instance_valid(control) and control.get_parent() == parent
 
 
 # The run state is only re-applied (and the inventories and stats rebuilt) when it changed.

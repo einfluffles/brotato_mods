@@ -24,11 +24,15 @@ const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const GearRebuildTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/gear_rebuild_tests.gd"
+)
 const MECA_DLC := "primal_dread"
 const PISTOL := "weapon_pistol_1"
 const BIT_ACCEPT := 1
 
 var _t: Node = null
+var _gear = GearRebuildTests.new()  # kept alive across its yields
 
 
 # Before the host's battle scene loads (UpgradesUI reads the effect in _ready): player p's
@@ -431,6 +435,8 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	t._check(other.carousel.index == 2, "another player's page mirrored")
 	t._check(own.carousel.index == 1, "own page stays local")
 	t._check(own._level == 99, "unchanged panel not rebuilt")
+	# The host's run changes while the own panel shows its gear page.
+	yield(_gear.run(t, panels, main, msg), "completed")
 
 	yield(_keyboard_and_mouse(panels, own, other, ui), "completed")
 
