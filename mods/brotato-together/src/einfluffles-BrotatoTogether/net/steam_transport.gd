@@ -34,7 +34,9 @@ const MAX_MESSAGES_PER_POLL := 128
 const MAX_HELD_MSEC := 60000  # a longer wait is a clock that does not fit: unknown
 const KICK_CLOSE_MSEC := 3000  # a kicked member's session stays open this long for the KICK
 const LOBBY_KEY_MOD := "brotato_together"
-# Launch option: sessions only through Steam's relays, never directly between the two machines.
+# Launch options: Steam may connect the two machines directly again (relay-only is the default);
+# the former opt-in to relay-only, still accepted.
+const DIRECT_ARG := "+bt_direct"
 const RELAY_ARG := "+bt_relay"
 # ESteamNetworkingConfigValue P2P_Transport_ICE_Enable and its "disable" value, by GodotSteam's
 # names, with the Steamworks SDK's numbers when the class does not list them.
@@ -56,7 +58,8 @@ var pending_join_id := 0  # invite waiting for confirmation (joining leaves the 
 # Steam's lobby; after that it can join again.
 var kicked := {}
 
-var relay_only := false  # RELAY_ARG took effect (see apply_route)
+var relay_only := false  # Steam's direct route is off (see apply_route)
+var route_note := ""  # what apply_route logged (tests)
 var join_presence := ""  # the "connect" rich presence we advertise ("" = no Join button)
 var _lobby_tag := ""
 var _next_send_warning_msec := 0
@@ -91,27 +94,50 @@ func setup(lobby_tag: String) -> bool:
 
 # Steam keeps two routes to a peer, a direct one (ICE, through both players' NATs) and one
 # through its relays (SDR), uses the better one and keeps probing the other to see whether to
-# switch. With RELAY_ARG among the launch options the direct route is off: one route, nothing
-# to switch between. For telling a route problem from anything else (a stall that comes back on
-# a fixed beat while both lines are fine); the relay costs the detour to Steam's nearest data
-# center. Applies to sessions opened afterwards, so it is set before any lobby. Meant for both
-# players (whether one side alone keeps the direct route from forming is not tested).
+# switch. With both routes, sessions stalled for 0.2 to 3.3 s on a 12 s beat while both lines
+# were clean; relayed only, the same players had none (docs/implementation.md, Route). So the
+# direct route is off by default: one route, nothing to switch between. DIRECT_ARG leaves Steam's
+# default (both routes), for players far from any relay or for testing. It wins over RELAY_ARG
+# (the former opt-in, now the default anyway): it is the only one that asks for a change.
+# Applies to sessions opened afterwards, so it is set before any lobby. Meant for both sides: an
+# older build still offers the direct route, and whether one side alone keeps it from forming is
+# not tested; link_watch warns when a session comes up direct anyway. Without
+# setGlobalConfigValueInt32, or when Steam refuses it, the mod goes on with Steam's default and
+# says so.
 func apply_route(args: Array) -> bool:
 	relay_only = false
-	if not RELAY_ARG in args:
+	link_watch.relay_only = false
+	if DIRECT_ARG in args:
+		var note := "Route: Steam may connect directly (launch option %s)" % DIRECT_ARG
+		if RELAY_ARG in args:
+			note += "; %s ignored, %s wins" % [RELAY_ARG, DIRECT_ARG]
+		_log_route(note)
 		return false
+	var why := "default; launch option %s allows direct connections" % DIRECT_ARG
+	if RELAY_ARG in args:
+		why = "default; launch option %s is no longer needed" % RELAY_ARG
 	if steam == null or not steam.has_method("setGlobalConfigValueInt32"):
-		ModLoaderLog.warning("%s: this GodotSteam cannot set the route" % RELAY_ARG, LOG_NAME)
+		var text := "Route: this GodotSteam cannot switch direct connections off"
+		_log_route(text + "; Steam picks direct or relayed", true)
 		return false
 	var set = steam.setGlobalConfigValueInt32(
 		_steam_constant(CONFIG_ICE_ENABLE), _steam_constant(CONFIG_ICE_DISABLE)
 	)
-	relay_only = set == true
-	if relay_only:
-		ModLoaderLog.info("%s: sessions go through Steam's relays only" % RELAY_ARG, LOG_NAME)
+	if set != true:
+		_log_route("Route: Steam refused relay-only (%s); Steam picks direct or relayed" % [set], true)
+		return false
+	relay_only = true
+	link_watch.relay_only = true
+	_log_route("Route: sessions go through Steam's relays only (%s)" % why)
+	return true
+
+
+func _log_route(text: String, warning := false) -> void:
+	route_note = text
+	if warning:
+		ModLoaderLog.warning(text, LOG_NAME)
 	else:
-		ModLoaderLog.warning("%s: Steam refused the setting (%s)" % [RELAY_ARG, set], LOG_NAME)
-	return relay_only
+		ModLoaderLog.info(text, LOG_NAME)
 
 
 static func _steam_constant(entry: Array) -> int:

@@ -7,6 +7,9 @@ extends Reference
 # what happened next gets a line of its own: sends use SEND_AUTO_RESTART_BROKEN_SESSION, so the
 # next message opens a new session; the follow-up says when it was up again and over which path,
 # or that it still was not after FOLLOW_UP_MSEC.
+# With relay-only on (the default, Transport.apply_route) a direct session means the other side
+# still offered the direct route (an older build, or +bt_direct): one warning per member, until
+# the member leaves the lobby.
 
 const LOG_NAME := "einfluffles-BrotatoTogether:Transport"
 const POLL_MSEC := 1000
@@ -40,7 +43,10 @@ const END_REASONS := {
 var paths := {}  # steam id -> what describe() said at the last poll ("" before a session)
 var lines := 0  # logged so far (tests)
 var last_line := ""
+var relay_only := false  # the transport switched Steam's direct route off (Transport.apply_route)
+var direct_warnings := 0  # logged so far (tests)
 var _failures := {}  # steam id -> msec of a failed session whose outcome is not logged yet
+var _direct_warned := {}  # steam id -> true: its session came up direct under relay-only
 var _next_poll_msec := 0
 
 
@@ -53,12 +59,27 @@ func poll(steam: Object, members: Array, now: int) -> void:
 		if not members.has(steam_id):
 			paths.erase(steam_id)
 			_failures.erase(steam_id)
+			_direct_warned.erase(steam_id)
 	for steam_id in members:
 		var info = steam.getSessionConnectionInfo(steam_id, true, true)
 		_update(steam_id, info if typeof(info) == TYPE_DICTIONARY else {}, now)
 
 
 func _update(steam_id: int, info: Dictionary, now: int) -> void:
+	_update_path(steam_id, info, now)
+	if relay_only and paths.get(steam_id, "") == "direct" and not _direct_warned.has(steam_id):
+		_direct_warned[steam_id] = true
+		direct_warnings += 1
+		_log(
+			(
+				"Connection to %s is direct although relay-only is on here: the other side may run"
+				+ " an older build of the mod or +bt_direct"
+			) % steam_id,
+			true
+		)
+
+
+func _update_path(steam_id: int, info: Dictionary, now: int) -> void:
 	var path := describe(info)
 	var ping := ""
 	if int(info.get("connection_state", 0)) == STATE_CONNECTED and info.has("ping"):
