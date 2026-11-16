@@ -94,8 +94,8 @@ func setup(lobby_tag: String) -> bool:
 # switch. With RELAY_ARG among the launch options the direct route is off: one route, nothing
 # to switch between. For telling a route problem from anything else (a stall that comes back on
 # a fixed beat while both lines are fine); the relay costs the detour to Steam's nearest data
-# center. Applies to sessions opened afterwards, so it is set before any lobby. One side is
-# enough to keep the direct route from forming.
+# center. Applies to sessions opened afterwards, so it is set before any lobby. Meant for both
+# players (whether one side alone keeps the direct route from forming is not tested).
 func apply_route(args: Array) -> bool:
 	relay_only = false
 	if not RELAY_ARG in args:
