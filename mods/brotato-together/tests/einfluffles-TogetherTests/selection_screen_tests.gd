@@ -7,6 +7,8 @@ extends Reference
 #  - "Player N" sits above the hold-to-join hint of an empty slot on the client's copy too;
 #  - a client's copy entered before anybody joined adds the first player only once the grid has
 #    the host's elements (no get_child(0) on an empty grid) and the player gets a cursor;
+#  - the wheel and the right stick scroll a player's own panel only, the copy follows the host
+#    (wheel_scroll_tests.gd);
 #  - weapon selection: a player holding ui_info (F / Y) on the host sees their character in their
 #    panel on the client's copy too, the weapon again on release, and stays selected.
 # Last in the selection suite: sets up its own scenes and leaves no run behind.
@@ -26,12 +28,17 @@ const CoopSelection := preload(
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
+const WheelScrollTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/wheel_scroll_tests.gd"
+)
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
 const INFO := "ui_info"  # CoopShowCharacterHint.UI_ACTION
 
 var t: Node = null  # the test mod: _check()
 var _menus: Node = null  # MenuPuppet
 var _menu_sync: Node = null
+var _input_sync: Node = null
+var _wheel = null  # WheelScrollTests, kept alive across its yields
 # [players, elements the copy builds its grid from] at each connected_players_updated. Not the
 # grid itself: Godot 3 calls the handlers of a signal in no fixed order.
 var _updates := []
@@ -41,6 +48,8 @@ func run(test_mod: Node, together: Node):
 	t = test_mod
 	_menus = together.menu_puppet
 	_menu_sync = together.menu_sync
+	_input_sync = together.input_sync
+	_wheel = WheelScrollTests.new(t)
 	_menu_sync.set_process(false)
 	var players: Array = CoopService.connected_players.duplicate(true)
 	var host: Dictionary = yield(_host_characters(), "completed")
@@ -172,6 +181,7 @@ func _host_characters():
 		"scroll: a remote player's cursor deep in the grid does not scroll the host's screen"
 	)
 	t._check(_scrolls(scene, 2), "scroll: the host's own player's cursor does")
+	yield(_wheel.host_selection(scene, funcref(self, "_capture")), "completed")
 	# Local co-op without a lobby: every player is on this screen, every cursor scrolls.
 	var online: Array = CoopService.connected_players.duplicate(true)
 	CoopService.connected_players = [
@@ -202,6 +212,8 @@ func _client_characters(host: Dictionary):
 		"scroll: a mirrored cursor deep in the grid does not scroll the client's screen"
 	)
 	t._check(_scrolls(scene, 1), "scroll: the client's own player's cursor does")
+	var copy_state: Dictionary = host.state.duplicate(true)
+	yield(_wheel.client_selection(scene, _menus, _input_sync, copy_state), "completed")
 	# "Player N" of the empty slots 3 and 4 sits above the hold-to-join hint.
 	yield(_frames(2), "completed")
 	var apart := true

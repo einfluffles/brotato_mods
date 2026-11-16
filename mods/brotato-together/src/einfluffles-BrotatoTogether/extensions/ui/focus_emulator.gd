@@ -2,6 +2,8 @@ extends "res://ui/menus/global/focus_emulator.gd"
 # Online, a grid several cursors share scrolls after this machine's own players only
 # (ui/shared_scroll.gd); every other scroll is the game's.
 #
+# The mouse wheel on a co-op screen scrolls the mouse player's own panel (ui/wheel_scroll.gd).
+#
 # A control freed while it holds the cursor (an inventory rebuilt under it) is dropped here
 # before the game's code touches it. The game reads focused_control in _draw, _input, the
 # setter and on a player change (disconnect, restyle, focus signals): a debug build reads a
@@ -11,6 +13,7 @@ extends "res://ui/menus/global/focus_emulator.gd"
 # its warning (at most one per WARN_INTERVAL_MSEC per emulator) says that one was taken.
 
 const SharedScroll := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/shared_scroll.gd")
+const WheelScroll := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/wheel_scroll.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:FocusEmulator"
 const WARN_INTERVAL_MSEC := 10000
 
@@ -30,9 +33,12 @@ func _ensure_control_visible(control: Control) -> void:
 
 
 # Godot 3 calls _input and _process of every script level, this extension's first: the game's
-# own (input on the cursor, the redraw) then finds a live control or none.
-func _input(_event: InputEvent) -> void:
+# own (input on the cursor, the redraw) then finds a live control or none. A wheel event this
+# handles (a co-op screen) goes no further than the game's _input of this emulator.
+func _input(event: InputEvent) -> void:
 	_drop_freed_control()
+	if WheelScroll.handle(get_parent(), event):
+		get_tree().set_input_as_handled()
 
 
 func _process(_delta: float) -> void:

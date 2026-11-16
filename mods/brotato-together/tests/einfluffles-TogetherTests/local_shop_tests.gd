@@ -34,6 +34,9 @@ const ShopStreamTests := preload(
 )
 const ShopLockTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_lock_tests.gd")
 const PISTOL := "weapon_pistol_1"
+const WheelScrollTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/wheel_scroll_tests.gd"
+)
 
 var _t: Node = null
 var _sync: Node = null
@@ -42,12 +45,14 @@ var _shop: Node = null
 var _states := {}  # name -> RUN_SHOP body as a client receives it
 var _meca = ShopMecaTests.new()  # kept alive across its yields
 var _locks = ShopLockTests.new()
+var _wheel = null  # WheelScrollTests, kept alive across its yields
 
 
 func run(t: Node, together: Node):
 	_t = t
 	_sync = together.shop_sync
 	_input = together.input_sync
+	_wheel = WheelScrollTests.new(t)
 	_sync.set_process(false)  # driven by hand (no Steam session)
 	var saved_players: Array = CoopService.connected_players.duplicate(true)
 	var saved_devices: Dictionary = _input.devices.duplicate()
@@ -92,6 +97,10 @@ func _host_part(together: Node):
 	)
 	yield(_host_blocked_buttons(together), "completed")
 	_host_focus()
+	var players := WheelScrollTests.as_keyboard_player(0)
+	var panels := [_shop._get_coop_player_container(0), _shop._get_coop_player_container(REMOTE)]
+	yield(_wheel.check_wheel("shop, host", panels[0], panels[1]), "completed")
+	CoopService.connected_players = players
 	_host_rejections()
 	yield(_host_slot_intents(), "completed")
 	yield(_host_weapon_intents(), "completed")
@@ -428,6 +437,8 @@ func _client_part(together: Node):
 	yield(_client_view(together, emulator, node), "completed")
 	_locks.client_other(self)
 	yield(_client_states(emulator, node), "completed")
+	var panels := [shop._get_coop_player_container(0), shop._get_coop_player_container(REMOTE)]
+	yield(_wheel.check_wheel("shop, client", panels[0], panels[1]), "completed")
 	yield(_client_keyboard_mouse(emulator), "completed")
 
 	# The host pauses: nothing runs here meanwhile. Leaving the shop ends local control.

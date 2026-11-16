@@ -13,7 +13,10 @@ extends Node
 #   state; the cursors arrive with FocusSync, through the game's own focus code, so the panels
 #   show what each cursor is on;
 # - the character grid, which all cursors share, scrolls after this machine's own player only
-#   (ui/shared_scroll.gd, from the state's `you`).
+#   (ui/shared_scroll.gd, from the state's `you`);
+# - each panel's description: this player's own with its right stick (sync/input_sync.gd drives
+#   its slot device here) and its mouse wheel (ui/wheel_scroll.gd), the others follow the
+#   host's scroll positions (the state's `scrolls`) at the stick's speed.
 # All input still goes to the host (the players are virtual devices nobody presses here).
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -47,6 +50,7 @@ const LOADING_TIMEOUT_MSEC := 10000
 const MAX_PLAYERS := 4
 const MAX_ELEMENTS := 400
 const MAX_ID_LENGTH := 96
+const SCROLL_SPEED := 600.0  # CharacterPanelUI.SCROLL_SPEED: how fast a mirrored scroll follows
 
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 
@@ -57,6 +61,7 @@ var _loading_msec := -LOADING_TIMEOUT_MSEC
 var _state := {}  # the latest state of _screen
 var _grids_key := 0  # hash of the inventories the copy was built from
 var _items := {}  # my_id -> item of this machine
+var _scrolls := []  # per player the host's scroll position of its panel's description (-1: none)
 
 
 func _ready() -> void:
@@ -102,6 +107,7 @@ func forget() -> void:
 	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_state = {}
 	CoopService.bt_remote_progress = null
+	_scrolls = []
 	SharedScroll.clear_own_player()
 
 
@@ -193,10 +199,11 @@ func _on_scene_ready(scene: Node) -> void:
 		state_stream.retry()  # the cursors that waited for this scene
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	var scene := current()
 	if scene == null or _state.empty():
 		return
+	_follow_scrolls(scene, delta)
 	# The scene's own handlers (a cursor arriving, its deferred first focus) clear selections
 	# and turn the join listening back on; the host's state stands.
 	CoopService.listening_for_inputs = false
@@ -220,6 +227,7 @@ func _apply(scene: Node, state: Dictionary) -> void:
 	if grids_changed:
 		_apply_grids(scene, inventories)
 	_apply_selected(scene, state)
+	_apply_scrolls(state.get("scrolls"))
 	if _kind == CHARACTERS:
 		_apply_run_options(scene, state)
 		_apply_join(scene, state.get("join"))
@@ -229,6 +237,31 @@ func _apply(scene: Node, state: Dictionary) -> void:
 		_apply_character_shown(scene, state.get("character_shown"))
 	elif _kind == END_RUN:
 		_apply_pages(scene, state.get("pages"))
+
+
+func _apply_scrolls(scrolls) -> void:
+	_scrolls = []
+	if typeof(scrolls) != TYPE_ARRAY:
+		return
+	for p in min(scrolls.size(), MAX_PLAYERS):
+		var value = scrolls[p]
+		_scrolls.append(int(max(value, 0)) if typeof(value) == TYPE_INT else -1)
+
+
+# The other players' descriptions move toward where the host has them, as fast as a stick
+# scrolls (the state comes ten times a second); this player's own is scrolled here.
+func _follow_scrolls(scene: Node, delta: float) -> void:
+	if _scrolls.empty() or not scene.has_method("_get_panels"):
+		return
+	var panels: Array = scene._get_panels()
+	var own := SharedScroll.own_player()
+	var step := int(max(SCROLL_SPEED * delta, 1.0))
+	for p in min(_scrolls.size(), panels.size()):
+		if p == own or _scrolls[p] < 0 or not panels[p].has_method("get_description_scroll"):
+			continue
+		var scroll = panels[p].get_description_scroll()
+		if scroll is ScrollContainer and scroll.scroll_vertical != _scrolls[p]:
+			scroll.scroll_vertical += int(clamp(_scrolls[p] - scroll.scroll_vertical, -step, step))
 
 
 static func _count(state: Dictionary) -> int:
