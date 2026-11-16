@@ -31,7 +31,7 @@ func test_no_global_hooks(together: Node) -> void:
 	_t._check(hooked.empty(), "no node_added hooks outside a session %s" % [hooked])
 
 
-# Client in a battle (mod_main's loopback): prediction replays at most 0.5 s of un-acked input,
+# Client in a battle (mod_main's loopback): prediction replays at most 0.75 s of un-acked input,
 # and none while paused or when snapshots stopped.
 func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Array) -> void:
 	var host_entry := entry.duplicate()
@@ -50,7 +50,7 @@ func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Arra
 	var lead: float = client._own_target(player, host_entry).distance_to(entry[PF.POSITION])
 	_t._check(
 		abs(lead - client.MAX_REPLAY_INPUTS * step) < 0.5,
-		"prediction capped at 0.5 s of input (%.0f px, uncapped %.0f)" % [lead, history.size() * step]
+		"prediction capped at 0.75 s of input (%.0f px, uncapped %.0f)" % [lead, history.size() * step]
 	)
 	client._paused = true
 	var paused_target: Vector2 = client._own_target(player, host_entry)
