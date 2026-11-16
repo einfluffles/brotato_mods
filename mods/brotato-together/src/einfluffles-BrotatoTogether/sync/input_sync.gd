@@ -10,6 +10,10 @@ extends Node
 # run. Packets don't arrive one per tick (jitter bunches them, or a tick gets none), so the host
 # queues them (see _tick_movement). Aim and buttons are not predicted and stay newest-wins, applied
 # on arrival: no added delay, and the press counters already cover lost or bunched presses.
+# Each INPUT also carries the moves of the REDUNDANCY inputs before it, so a lost packet (or a
+# burst of up to REDUNDANCY) still gets its step, and a late one is in the queue before its
+# successor. After a gap the host catches up on what piled up instead of dropping it (see
+# _tick_movement), so the steps the client predicted meanwhile are taken.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const VirtualDevices := preload(
@@ -24,10 +28,30 @@ const RemoteButtons := preload(
 const LocalAim := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_aim.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:InputSync"
-const INPUT_TIMEOUT_MSEC := 300
+# host: without INPUT for this long a remote player lets go of its buttons, aim and stick. The
+# client's prediction limit (Protocol.STALL_LIMIT_MSEC): at 300 ms every input gap of 300 to 600 ms
+# released a player the client still showed running. Movement doesn't need the timeout to stop:
+# with nothing queued the player stands (_tick_movement), so it never runs on into a wall when the
+# packets stop. Longer than a full backlog takes to drain (about 20 ticks with nothing arriving),
+# so the release never cuts a catch-up short.
+const INPUT_TIMEOUT_MSEC := Protocol.STALL_LIMIT_MSEC
 # host: queued inputs beyond the one the next tick takes. Each one delays this player on the host
-# by a tick; jitter rarely leaves more than one, more only piles up after a stall.
+# by a tick; jitter rarely leaves more than one, more only piles up after a stall (see
+# CATCH_UP_PER_TICK).
 const MAX_WAITING := 2
+# Moves of the inputs right before the current one that ride along in each INPUT (8 bytes each).
+const REDUNDANCY := 4
+# host: queued inputs kept after a gap: STALL_LIMIT_MSEC at 60 Hz, below the client's replay
+# (BattleClient.MAX_REPLAY_INPUTS), so a gap the client predicts through is caught up in full. The
+# oldest beyond it are dropped: the client predicted steps the host never takes and its own player
+# blends back by that much (BattleClient._predict_own).
+const MAX_BACKLOG := 36
+# host: extra inputs taken per tick while more than MAX_WAITING wait, each moved as a physics step
+# of its own (_extra_step), so the ack stays one step per input. 1: the player runs at most twice
+# its speed for at most MAX_BACKLOG ticks, back to where the client already showed it, instead of
+# lagging that far behind on the host for good (or jumping there at once, past enemies).
+const CATCH_UP_PER_TICK := 1
+const RECOVERY_LOG_INTERVAL_MSEC := StreamGaps.LOG_INTERVAL_MSEC
 const HISTORY_SIZE := 180  # 3 s at 60 Hz
 const NAV_DEADZONE := 0.5  # InputService.joystick_deadzone (left stick -> menu directions)
 
@@ -50,6 +74,8 @@ var blocked_buttons := 0
 var blocked_by := {}
 # client: what last switched the local buttons ("owner: reason"), for the logs
 var last_local_change := ""
+# host: the last line about filled-in, caught-up or dropped inputs (tests)
+var last_recovery_line := ""
 
 # client
 var _seq := 0
@@ -64,7 +90,8 @@ var _menu_buttons = null
 var _menu_presses = PressCounter.new()
 
 # host: steam_id -> {seq, last_msec, released, buttons: RemoteButtons, queue: [[seq, move]...],
-# applied, ack, move} (see _apply_input, _tick_movement)
+# applied, ack, move, dropped_to, and for the log: filled, caught_up, dropped, next_log_msec} (see
+# _apply_input, _tick_movement)
 var _remote := {}
 # host: steam_id -> StreamGaps of its INPUT stream (logs the stalls)
 var _input_gaps := {}
@@ -222,10 +249,22 @@ func sample_local() -> Array:
 	var screen = _menu_buttons if _menu_buttons != null else _local_buttons
 	if screen != null:
 		_drive_local_stick(screen.device)
+	var previous := redundant_moves(history, _seq)
 	history.append([_seq, move])
 	if history.size() > HISTORY_SIZE:
 		history.pop_front()
-	return [_seq, move, aim[1], buttons, counts, aim[0]]
+	return [_seq, move, aim[1], buttons, counts, aim[0], previous]
+
+
+# The moves of the up to REDUNDANCY inputs right before seq (oldest first), from [seq, move]
+# pairs; only an unbroken run up to seq - 1, so the host can tell each one's seq by its place.
+static func redundant_moves(inputs: Array, seq: int) -> PoolVector2Array:
+	var moves := []
+	var k := inputs.size() - 1
+	while k >= 0 and moves.size() < REDUNDANCY and inputs[k][0] == seq - 1 - moves.size():
+		moves.push_front(inputs[k][1])
+		k -= 1
+	return PoolVector2Array(moves)
 
 
 # A screen running here scrolls item descriptions, item lists and the stats sheet with its slot
@@ -359,18 +398,26 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 		_apply_input(steam_id, body)
 
 
+# Protocol 16 bodies only (7 fields): compat.gd already turns away other protocols at HELLO, and a
+# body of another shape is dropped whole, like any malformed one.
 func _apply_input(steam_id: int, body) -> void:
 	if (
 		typeof(body) != TYPE_ARRAY
-		or body.size() != 6
+		or body.size() != 7
 		or typeof(body[0]) != TYPE_INT
 		or typeof(body[1]) != TYPE_VECTOR2
 		or typeof(body[2]) != TYPE_VECTOR2
 		or typeof(body[3]) != TYPE_INT
 		or typeof(body[4]) != TYPE_INT
 		or typeof(body[5]) != TYPE_INT
+		or typeof(body[6]) != TYPE_VECTOR2_ARRAY
+		or body[6].size() > REDUNDANCY
+		or not _finite(body[1])
 	):
 		return
+	for move in body[6]:
+		if not _finite(move):
+			return
 	var device: int = devices[steam_id]
 	if not _remote.has(steam_id):
 		_remote[steam_id] = {
@@ -382,8 +429,18 @@ func _apply_input(steam_id: int, body) -> void:
 			"applied": 0,
 			"ack": 0,
 			"move": Vector2.ZERO,
+			"dropped_to": 0,
+			"filled": 0,
+			"caught_up": 0,
+			"dropped": 0,
+			"next_log_msec": 0,
 		}
 	var state: Dictionary = _remote[steam_id]
+	var previous: PoolVector2Array = body[6]
+	for i in previous.size():
+		# Usually already queued from its own packet; else it was lost or is late.
+		if _queue_movement(state, body[0] - previous.size() + i, previous[i].clamped(1.0)):
+			state.filled += 1
 	_queue_movement(state, body[0], body[1].clamped(1.0))
 	if body[0] <= state.seq:
 		return  # stale / reordered: its movement may still be due, its buttons and aim are old
@@ -404,28 +461,36 @@ func _apply_input(steam_id: int, body) -> void:
 	state.released = false
 
 
+static func _finite(v: Vector2) -> bool:
+	return not (is_nan(v.x) or is_nan(v.y) or is_inf(v.x) or is_inf(v.y))
+
+
 # In seq order, so a reordered packet still gets its tick if the next one hasn't taken it yet; a
-# duplicate or an input whose turn went by is dropped. Beyond MAX_WAITING + 1 the oldest goes:
-# the client predicted a step the host then never takes (a one-off correction, as for a lost
-# packet), instead of a lasting delay.
-static func _queue_movement(state: Dictionary, seq: int, move: Vector2) -> void:
-	if seq <= state.applied:
-		return
+# duplicate or an input whose turn went by (taken, or dropped) is ignored. Beyond MAX_BACKLOG the
+# oldest goes: the client predicted a step the host then never takes (a one-off correction).
+# True when the input is new in the queue.
+static func _queue_movement(state: Dictionary, seq: int, move: Vector2) -> bool:
+	if seq <= state.applied or seq <= state.dropped_to:
+		return false
 	var queue: Array = state.queue
 	var at := queue.size()
 	while at > 0 and queue[at - 1][0] >= seq:
 		if queue[at - 1][0] == seq:
-			return
+			return false
 		at -= 1
 	queue.insert(at, [seq, move])
-	if queue.size() > MAX_WAITING + 1:
-		queue.pop_front()
+	if queue.size() > MAX_BACKLOG:
+		state.dropped_to = queue.pop_front()[0]
+		state.dropped += 1
+		return at > 0
+	return true
 
 
 func _on_physics_frame() -> void:
 	for steam_id in _remote:
 		if devices.has(steam_id):
 			_tick_movement(_remote[steam_id], devices[steam_id])
+			_log_recovery(steam_id, _remote[steam_id])
 
 
 # One remote player's movement for the physics tick that starts now. The input put on the device
@@ -436,18 +501,73 @@ func _on_physics_frame() -> void:
 # late input then differs (above all a stop), its own player gets pulled. Standing still keeps
 # the client's replay exact; the late input gets the next tick, and the queue it leaves behind
 # absorbs the next bit of jitter (it drains while the player stands, see below).
+# More than MAX_WAITING waiting only happens after a gap (the packets held up on the way arrive
+# together; redundancy brings the moves of lost ones): the client predicted all of them, so the
+# host takes CATCH_UP_PER_TICK of them as extra steps before the snapshot of this tick, which
+# then acks them too (one step per acked input still holds, the ack just moves faster).
 func _tick_movement(state: Dictionary, device: int) -> void:
 	state.ack = state.applied
 	var queue: Array = state.queue
-	# Catching up for free: skipping an input that doesn't move leaves the position the same.
-	while queue.size() > 1 and queue[0][1] == Vector2.ZERO:
-		queue.pop_front()
+	_skip_standing(queue)
+	var extra := 0
+	while extra < CATCH_UP_PER_TICK and queue.size() > MAX_WAITING + 1:
+		var behind: Array = queue.pop_front()
+		_extra_step(device, behind[1])
+		state.applied = behind[0]
+		state.ack = behind[0]
+		state.caught_up += 1
+		extra += 1
+		_skip_standing(queue)
 	if not queue.empty():
 		var input: Array = queue.pop_front()
 		state.applied = input[0]
 		_set_move(state, device, input[1])
 	elif state.move != Vector2.ZERO:
 		_set_move(state, device, Vector2.ZERO)
+
+
+# Catching up for free: skipping an input that doesn't move leaves the position the same.
+static func _skip_standing(queue: Array) -> void:
+	while queue.size() > 1 and queue[0][1] == Vector2.ZERO:
+		queue.pop_front()
+
+
+# One physics step of a remote player with move, outside its own _physics_process: the way
+# Unit._physics_process moves a kinematic body (test_motion, then a slide along what it hit), at
+# the speed the client predicts with (BattleClient._own_target; knockback is not predicted either).
+# Where that player's own tick wouldn't move it (paused, dead, no battle) it doesn't move here
+# either, and the client predicts no step there.
+func _extra_step(device: int, move: Vector2) -> void:
+	var player = _player_of(device)
+	if player == null or move == Vector2.ZERO or get_tree().paused:
+		return
+	if player.dead or not player._can_move or player.mode != RigidBody2D.MODE_KINEMATIC:
+		return
+	var speed: float = player.get_move_speed() / float(Engine.iterations_per_second)
+	var motion: Vector2 = move.normalized() * speed
+	var result := Physics2DTestMotionResult.new()
+	var colliding: bool = player.test_motion(motion, true, 0.08, result)
+	var moved: Vector2 = result.motion
+	player.global_position += result.motion
+	if colliding:
+		player.test_motion(motion.slide(result.collision_normal), true, 0.08, result)
+		player.global_position += result.motion
+		moved += result.motion
+	player._on_moved(moved)
+
+
+# The battle's player driven by device, else null.
+func _player_of(device: int) -> Node:
+	var scene: Node = get_tree().current_scene
+	var players = scene.get("_players") if scene != null else null
+	if typeof(players) != TYPE_ARRAY:
+		return null
+	for i in min(players.size(), CoopService.connected_players.size()):
+		if CoopService.connected_players[i][0] == device:
+			var player = players[i]
+			if is_instance_valid(player) and player is RigidBody2D and "dead" in player:
+				return player
+	return null
 
 
 static func _set_move(state: Dictionary, device: int, move: Vector2) -> void:
@@ -472,9 +592,34 @@ func _release_timed_out() -> void:
 		if not state.released and now - state.last_msec > INPUT_TIMEOUT_MSEC:
 			VirtualDevices.release_analog(devices[steam_id])
 			state.buttons.release_held()
-			state.queue.clear()
+			if not state.queue.empty():  # normally drained long before
+				state.dropped += state.queue.size()
+				state.dropped_to = int(max(state.dropped_to, state.queue[-1][0]))
+				state.queue.clear()
 			state.move = Vector2.ZERO
 			state.released = true
+
+
+# host: one line when redundancy filled in missing inputs, or a backlog was caught up or dropped
+# (the client's own player then blends back by that many steps): once the queue is back to normal,
+# at most one per RECOVERY_LOG_INTERVAL_MSEC (the counts add up meanwhile). With the input gap
+# line (note_input_gap) it shows what a stall cost.
+func _log_recovery(steam_id: int, state: Dictionary) -> void:
+	if state.filled + state.caught_up + state.dropped == 0:
+		return
+	var now := OS.get_ticks_msec()
+	if state.queue.size() > MAX_WAITING + 1 or now < state.next_log_msec:
+		return
+	state.next_log_msec = now + RECOVERY_LOG_INTERVAL_MSEC
+	last_recovery_line = (
+		"Input from %s: %d missing input(s) filled in from later packets, %d step(s) caught up"
+		% [steam_id, state.filled, state.caught_up]
+		+ ", %d dropped (corrected on the client)" % state.dropped
+	)
+	ModLoaderLog.info(last_recovery_line, LOG_NAME)
+	state.filled = 0
+	state.caught_up = 0
+	state.dropped = 0
 
 
 # Host: a stall in a client's INPUT stream is logged (sync/stream_gaps.gd); the seq counts the

@@ -57,9 +57,11 @@ const DESPAWN_GRACE_MSEC := 1000
 # 250 ms the player snapped back to the host's last position and jumped ahead again when the
 # snapshots came. Inputs still reach the host during a stall of the snapshots alone, so the
 # prediction is right; past 600 ms the connection is gone rather than late, and the player stays
-# with the frozen world. The replay covers that stall plus the round trip (on a good connection the
-# host acks within a few inputs, so the cap changes nothing there).
-const PREDICTION_STALE_MSEC := 600
+# with the frozen world (the same limit as the host's INPUT timeout, Protocol.STALL_LIMIT_MSEC).
+# The replay covers that stall plus the round trip (on a good connection the host acks within a
+# few inputs, so the cap changes nothing there); it is above the host's catch-up backlog
+# (InputSync.MAX_BACKLOG), so whatever the host still catches up on is in the replay.
+const PREDICTION_STALE_MSEC := Protocol.STALL_LIMIT_MSEC
 const MAX_REPLAY_INPUTS := 45
 # Faster than anything moves: a pooled node reused for a new entity under an old id; snap.
 const MAX_INTERP_SPEED := 6000.0  # px/s
@@ -109,6 +111,7 @@ var _you := -1  # player slot this client controls (-1: spectator)
 var _own_base_t := -1
 var _own_error := Vector2.ZERO
 var _own_display := Vector2.ZERO
+var _own_seq := 0  # newest own input the displayed position includes
 var _paused := false
 var _pause_text := ""
 var _events := []  # [host t, event] waiting for render time
@@ -503,17 +506,43 @@ func _apply_players(
 
 
 # Own player: newest host position + replay of inputs the host hasn't applied yet, so movement
-# responds immediately. Corrections (host disagrees) are blended out instead of snapping.
+# responds immediately. Corrections (host disagrees) are blended out instead of snapping. The steps
+# of the inputs sent since the last frame are the player's own motion, not a correction: counted as
+# one, they pulled the display back by the newest step on every snapshot (a lag of a few steps
+# while running, and a glide after the stop).
 func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> void:
 	var predicted := _own_target(player, newest.players[i])
+	var history: Array = input_sync.history
 	if _own_base_t < 0:
 		_own_display = predicted
 	elif newest.t != _own_base_t:
-		_own_error = _own_display - predicted
+		# Clamped like the target: holding into the zone's edge is no correction either.
+		var moved := _in_zone(_own_display + _steps_since(player, _own_seq))
+		_own_error = moved - predicted
 	_own_base_t = newest.t
+	_own_seq = history[-1][0] if not history.empty() else 0
 	_own_error *= exp(-delta * PREDICTION_ERROR_DECAY)
 	_own_display = predicted + _own_error
 	_move(player, "p%s" % i, _own_display)
+
+
+# The own player's motion from the inputs after seq (none while nothing is predicted).
+func _steps_since(player: Node2D, seq: int) -> Vector2:
+	var motion := Vector2.ZERO
+	if not _predicting():
+		return motion
+	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
+	var history: Array = input_sync.history
+	var k := history.size() - 1
+	while k >= 0 and history[k][0] > seq:
+		motion += history[k][1].normalized() * step
+		k -= 1
+	return motion
+
+
+# The host's world moves: not paused, and the newest snapshot is fresh.
+func _predicting() -> bool:
+	return not _paused and OS.get_ticks_msec() - _newest_rx_msec <= PREDICTION_STALE_MSEC
 
 
 # Host position + the last MAX_REPLAY_INPUTS un-acked inputs; just the host position while the
@@ -521,17 +550,21 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 # frozen world and glide back.
 func _own_target(player: Node2D, entry: Array) -> Vector2:
 	var predicted: Vector2 = entry[PF.POSITION]
-	if _paused or OS.get_ticks_msec() - _newest_rx_msec > PREDICTION_STALE_MSEC:
+	if not _predicting():
 		return predicted
 	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
 	var history: Array = input_sync.history
 	for k in range(max(0, history.size() - MAX_REPLAY_INPUTS), history.size()):
 		if history[k][0] > entry[PF.INPUT_ACK]:
 			predicted += history[k][1].normalized() * step
+	return _in_zone(predicted)
+
+
+static func _in_zone(position: Vector2) -> Vector2:
 	var zone: Rect2 = ZoneService.get_current_zone_rect()
-	predicted.x = clamp(predicted.x, zone.position.x, zone.end.x)
-	predicted.y = clamp(predicted.y, zone.position.y, zone.end.y)
-	return predicted
+	position.x = clamp(position.x, zone.position.x, zone.end.x)
+	position.y = clamp(position.y, zone.position.y, zone.end.y)
+	return position
 
 
 # HUD values (the HUD listens to these signals). Level-ups only update visuals here: the game's
@@ -711,11 +744,7 @@ func _move(node: Node, key, position: Vector2) -> void:
 # where _own_target predicts nothing either.
 func _own_motion() -> Vector2:
 	var history: Array = input_sync.history if input_sync != null else []
-	if (
-		history.empty()
-		or _paused
-		or OS.get_ticks_msec() - _newest_rx_msec > PREDICTION_STALE_MSEC
-	):
+	if history.empty() or not _predicting():
 		return Vector2.ZERO
 	return history[-1][1]
 

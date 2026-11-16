@@ -61,7 +61,7 @@ func run():
 func _send(held: int, counts: int, flags := 0) -> void:
 	_seq += 1
 	input_sync._apply_input(
-		FAKE_PEER, [_seq, Vector2.ZERO, Vector2.ZERO, held, counts, flags]
+		FAKE_PEER, [_seq, Vector2.ZERO, Vector2.ZERO, held, counts, flags, PoolVector2Array()]
 	)
 	Input.flush_buffered_events()
 
