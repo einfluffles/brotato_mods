@@ -1,8 +1,11 @@
 extends Node
 # Online co-op in the game's own menus; the mod has no overlay and no hotkey of its own.
-#  - The "Online co-op" page (ui/lobby_page.gd) is put into the page stack of the title screen and
-#    of every pause menu, behind a button added to their main page next to the game's own
-#    (found when the scene changes: no script extension of the menus).
+#  - Title screen: a button below Start hosts a lobby without leaving the main menu, and a small
+#    frame beside the buttons shows who is in it (ui/lobby_frame.gd). A client of a host that is
+#    in its main menu is in its own, with Start and Continue off (mod_main.gd).
+#  - The "Online co-op" page (ui/lobby_page.gd) is put into the page stack of every pause menu,
+#    behind a button added to its main page next to the game's own.
+#    (Both found when the scene changes: no script extension of the menus.)
 #  - Character selection gets the Online toggle in its run options (ui/online_options.gd).
 #  - A client on a screen without a pause menu (the waiting screen, the mirrored selection
 #    screens) has no game menu to open: releasing pause there opens the page as a popup
@@ -16,6 +19,7 @@ signal open_changed(is_open)  # the popup: it takes keyboard and pad while open
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/dlc_borrow.gd")
 const LobbyPage := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_page.gd")
+const LobbyFrame := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_frame.gd")
 const LobbyPopup := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_popup.gd")
 const OnlineOptions := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/online_options.gd"
@@ -24,6 +28,7 @@ const RUN_SCENE_PREFIXES := ["res://main.tscn", "res://ui/menus/shop/"]
 const PAGE_NAME := "BrotatoTogetherLobbyPage"
 const ENTRY_NAME := "BrotatoTogetherLobbyButton"
 const NOTICE_MAX_AGE_MSEC := 15000  # an error older than this is no news on the title screen
+const NO_STEAM_TEXT := "Steam is unavailable — online play needs the Steam version of the game."
 
 var transport: Node = null
 var session: Node = null
@@ -36,6 +41,7 @@ var last_error := ""
 var creating := false  # Host lobby asked, Steam has not answered yet
 
 var _scene_id := 0
+var _scene_file := ""
 var _page: Control = null  # the page in the current scene's Menus
 var _popup: CanvasLayer = null
 var _pause_armed := false  # own pause went down while the buttons were the game's
@@ -76,7 +82,8 @@ func _process(_delta: float) -> void:
 		_scene_id = scene_id
 		_page = null
 		if scene_id != 0:
-			_enter_scene(scene)
+			_enter_scene(scene, _scene_file)
+			_scene_file = scene.filename
 	_poll_pause(scene)
 
 
@@ -89,6 +96,7 @@ func steam_available() -> bool:
 
 func host() -> void:
 	if not steam_available():
+		_on_lobby_failed(NO_STEAM_TEXT)
 		return
 	last_error = ""
 	creating = true
@@ -101,6 +109,11 @@ func invite() -> void:
 
 func leave() -> void:
 	transport.leave_lobby()
+
+
+# Host: out of the lobby (session/session.gd).
+func kick(steam_id: int) -> void:
+	session.kick(steam_id)
 
 
 func join_invite() -> void:
@@ -129,10 +142,67 @@ func is_mid_run() -> bool:
 # --- texts ---
 
 
+# The lobby's players for a list, this game's first when it hosts and the host's first
+# otherwise: [{id, name, note, local}]. A client knows the other clients by name only.
+func players() -> Array:
+	var list := []
+	if not transport.is_active():
+		return list
+	var own_name: String = transport.get_persona_name(transport.local_id)
+	var hosting: bool = transport.is_host()
+	list.append(
+		{"id": transport.local_id, "name": own_name, "note": "host" if hosting else "you", "local": true}
+	)
+	var ids: Array = transport.members.duplicate()
+	for steam_id in session.peers:
+		if not steam_id in ids:
+			ids.append(steam_id)
+	for steam_id in ids:
+		var peer = session.peers.get(steam_id)
+		var player := {
+			"id": steam_id,
+			"name": peer.name if peer != null else transport.get_persona_name(steam_id),
+			"note": _peer_note(steam_id),
+			"local": false,
+		}
+		if steam_id == transport.host_id:
+			player.note = "host" if player.note == "" else "host · " + player.note
+			list.insert(0, player)
+		else:
+			list.append(player)
+	return list
+
+
+func _peer_note(steam_id: int) -> String:
+	if not session.peers.has(steam_id):
+		return ""
+	var peer: Dictionary = session.peers[steam_id]
+	if not peer.ready:
+		return "connecting"
+	if session.is_peer_stale(steam_id):
+		return "no response"
+	return "%d ms" % peer.rtt_ms if peer.rtt_ms >= 0 else ""
+
+
+# What happens next, for the title screen's frame ("": nothing to say).
+func hint_text() -> String:
+	if creating:
+		return "Creating the lobby…"
+	if not transport.is_active():
+		return ""
+	if transport.is_host():
+		if session.peers.empty():
+			return "Invite friends, then start or continue a run."
+		return "Start or continue a run: everybody in the lobby comes along."
+	if not session.is_ready_client():
+		return "Connecting to the host…"
+	return "Waiting for %s to start or continue a run." % session.peers[transport.host_id].name
+
+
 func details_text() -> String:
 	var lines := []
 	if not steam_available():
-		lines.append("Steam is unavailable — online play needs the Steam version of the game.")
+		lines.append(NO_STEAM_TEXT)
 	elif not transport.is_active():
 		lines.append("Not in a lobby. Host one, then invite friends via Steam.")
 	else:
@@ -251,8 +321,11 @@ func _poll_pause(scene: Node) -> void:
 	_pause_down = down
 
 
+# Not on its own title screen: that is this game's menu, with the lobby in its frame.
 func popup_on_pause(scene: Node) -> bool:
-	return session.is_client() and scene != null and scene.get("_pause_menu") == null
+	if not session.is_client() or scene == null or scene.get("_pause_menu") != null:
+		return false
+	return scene.filename != MenuData.title_screen_scene
 
 
 func _on_popup_open_changed(is_open: bool) -> void:
@@ -262,15 +335,20 @@ func _on_popup_open_changed(is_open: bool) -> void:
 # --- the game's menus ---
 
 
-func _enter_scene(scene: Node) -> void:
+func _enter_scene(scene: Node, previous_file: String) -> void:
 	if scene.filename == MenuData.title_screen_scene:
-		var menus = scene.get("_menus")
-		var main_menu = menus.get("_main_menu") if menus != null else null
-		if main_menu != null:
-			_page = _add_page(menus, main_menu.get("start_button"))
+		var main_menu = scene.get("_main_menu")
+		var entry := _add_entry(main_menu.get("start_button") if main_menu != null else null)
+		if entry != null:
+			entry.text = LobbyFrame.HOST_TEXT
+			LobbyFrame.add_to(scene, main_menu, entry, self)
 			_show_notice()
 	elif scene.filename == MenuData.character_selection_scene:
-		OnlineOptions.add_to(scene, self)
+		var options = OnlineOptions.add_to(scene, self)
+		# Start with a lobby open in the main menu: a co-op run, as with the Online toggle.
+		if options != null and previous_file == MenuData.title_screen_scene and transport.is_host():
+			if not options.coop_button.pressed:
+				options.coop_button.pressed = true
 	else:
 		var pause_menu = scene.get("_pause_menu")
 		var menus = pause_menu.get("_menus") if pause_menu != null else null
@@ -282,10 +360,11 @@ func _enter_scene(scene: Node) -> void:
 				listed.append(_page.entry_button)
 
 
-# The page into a Menus, and below `neighbour` on its main page a button like it that opens the
-# page the way the Options button does.
+# The page into a Menus, and below `neighbour` on its main page a button that opens it the way
+# the Options button does.
 func _add_page(menus: Node, neighbour) -> Control:
-	if not (neighbour is Button):
+	var button := _add_entry(neighbour)
+	if button == null:
 		return null
 	var page: Control = LobbyPage.new()
 	page.name = PAGE_NAME
@@ -293,6 +372,16 @@ func _add_page(menus: Node, neighbour) -> Control:
 	page.menus = menus
 	page.visible = false
 	menus.add_child(page)
+	button.connect("pressed", self, "_on_entry_pressed", [page])
+	page.connect("back_button_pressed", self, "_on_page_back", [page])
+	page.entry_button = button
+	return page
+
+
+# A button like `neighbour` below it: one more of the game's menu buttons.
+func _add_entry(neighbour) -> Button:
+	if not (neighbour is Button):
+		return null
 	var button := Button.new()
 	button.set_script(neighbour.get_script())
 	button.name = ENTRY_NAME
@@ -305,10 +394,7 @@ func _add_page(menus: Node, neighbour) -> Control:
 	if neighbour.has_font_override("font"):
 		button.add_font_override("font", neighbour.get_font("font"))
 	neighbour.get_parent().add_child_below_node(neighbour, button)
-	button.connect("pressed", self, "_on_entry_pressed", [page])
-	page.connect("back_button_pressed", self, "_on_page_back", [page])
-	page.entry_button = button
-	return page
+	return button
 
 
 func _on_entry_pressed(page: Control) -> void:

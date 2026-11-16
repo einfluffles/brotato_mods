@@ -1,7 +1,9 @@
 extends Control
 # Client waiting screen: shown while the host is on a screen the client has no copy of (the
-# title screen and its pages), and for the moment between two mirrored screens. The host's
-# selection screens and the end of run are the game's own scenes (sync/menu_puppet.gd).
+# co-op resume screen, a solo run's screens), and for the moment between two mirrored screens.
+# The host's selection screens and the end of run are the game's own scenes
+# (sync/menu_puppet.gd); while the host is in its main menu the client is in its own
+# (mod_main.gd).
 # Replaces the local game scene so the client's own menus don't react to its input (all input
 # goes to the host).
 

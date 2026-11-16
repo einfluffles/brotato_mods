@@ -6,6 +6,7 @@ enum Msg {
 	WELCOME,  # host -> client: version, accepted, reason, dlcs (session/dlc_borrow.gd)
 	PING,  # any -> any: t
 	PONG,  # any -> any: t, held (ms the PING waited for the answering frame, see session.gd)
+	KICK,  # host -> client: the host removed it from the lobby; the client leaves
 	# client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons (held mask),
 	# presses (4-bit counter per button, sync/press_counter.gd), flags (sync/local_aim.gd)]
 	INPUT,
@@ -38,7 +39,7 @@ enum Msg {
 	STATE,
 }
 
-const VERSION := 15
+const VERSION := 16
 
 
 static func encode(msg_type: int, body = null) -> PoolByteArray:

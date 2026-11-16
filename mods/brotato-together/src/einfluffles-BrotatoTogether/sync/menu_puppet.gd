@@ -527,10 +527,16 @@ func _apply_pages(scene: Node, pages) -> void:
 
 
 func _on_lobby_left(transport: Node) -> void:
+	release(not transport.was_host)
+
+
+# Done with the host's screens: the lobby is left, or the host is back in its main menu and a
+# client in its own (mod_main.gd).
+func release(as_client: bool) -> void:
 	var mirrored := _screen != 0
 	forget()
 	PuppetMenu.clear()
-	if mirrored and not transport.was_host:
+	if mirrored and as_client:
 		# What _enter set for the copies; this machine's own character selection starts solo.
 		RunData.play_mode = RunData.PlayMode.SOLO
 		RunData.menu_selection_back = false
