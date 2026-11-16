@@ -317,17 +317,31 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     one line per 5 s per stream, the next one counts the gaps left out. A host pause is no gap. After a
     client's gap the host also logs what its movement queue made of it (inputs filled in from redundancy,
     steps caught up, steps dropped; see "Remote input", Movement).
-  - Route (`Transport.apply_route`, launch option `+bt_relay`): `setGlobalConfigValueInt32(
-    P2P_Transport_ICE_Enable, disable)` before any session, so Steam has the relayed (SDR) route only.
-    Why it exists: in a session of 2026-11-16 (both lines wired / clean, path "direct", Steam ping 15 to
+  - Route (`Transport.apply_route`): relay-only by default. `setGlobalConfigValueInt32(
+    P2P_Transport_ICE_Enable, disable)` at startup, before any session, so Steam has the relayed (SDR)
+    route only. Launch option `+bt_direct` skips that and leaves Steam's default (ICE and SDR, Steam picks);
+    `+bt_relay` (the opt-in of 2026-11-16) is still accepted and only noted as no longer needed; with both,
+    `+bt_direct` wins, being the only one that asks for a change. Startup line: `Route: sessions go through
+    Steam's relays only (default; ...)` or `Route: Steam may connect directly (launch option +bt_direct)`.
+    A GodotSteam without `setGlobalConfigValueInt32`, or Steam refusing the value, is a warning and Steam's
+    default; `Transport.relay_only` (and `link_watch.relay_only`) stay false then, nothing claims relay-only.
+    No protocol change: the setting is local, older and newer builds still connect. Whether one side's
+    relay-only alone keeps a direct route from forming is not tested (the older side still offers ICE), so
+    `net/link_watch.gd` warns once per lobby member when a session comes up "direct" while relay-only is on
+    ("the other side may run an older build of the mod or +bt_direct").
+    Why the default: with `+bt_relay` on both machines, a session of 2026-11-16 ran 8 waves (about 10
+    minutes) relayed via fra (26 to 29 ms Steam ping) without a single network stall, where the same two
+    players had one every 20 to 50 s over the direct route; the relay POP changing during the session
+    ("relayed via fra (peer's POP dfra)" and back) caused none either.
+    Why the option existed first: in a session of 2026-11-16 (both lines wired / clean, path "direct", Steam ping 15 to
     18 ms, the relay via fra 16 ms) every stall of 0.5 to 3.3 s ("not sent or lost", both as host and as
     client, 22 logged in 10 minutes) ended within a second of the same 12 s beat, and in the shop the
     PINGs took 200 ms on that beat. Nothing in the mod or the game has that period, and this machine's line showed none of
     it (ICMP to the router and the internet, the system journal). Steam's P2P code
     (GameNetworkingSockets `steamnetworkingsockets_p2p.cpp`) keeps probing the route it does not use
     ("P2PGrassGreenerCheck", every 10 s) and re-evaluates which one to use every second; with one route
-    left it stops evaluating (`SelectTransport`: "no use evaluating other transports"). Not proven to be
-    the cause: the option is the experiment. If the stalls go on while relayed, it is something else.
+    left it stops evaluating (`SelectTransport`: "no use evaluating other transports"). The relayed session
+    above is the result of that experiment.
   - Session path (`net/link_watch.gd`): once a second the transport asks GodotSteam's
     `getSessionConnectionInfo` for each lobby member and logs when the path changes: "connecting",
     "direct", "relayed via <POP> (peer's POP <POP>)" (`pop_relay` / `remote_pop` as data center codes, or

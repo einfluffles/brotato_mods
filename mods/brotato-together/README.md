@@ -121,27 +121,41 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 
 ## Launch options
 
-Set in Steam: right-click *Brotato* → *Properties…* → *General* → *Launch Options*, then restart the
-game.
+Online traffic goes through Steam's relay servers only, never directly between the players. No
+launch option is needed for that.
+
+To change it, set a launch option in Steam: right-click *Brotato* → *Properties…* → *General* →
+*Launch Options*, then restart the game.
 
 | Option | What it does |
 |---|---|
-| `+bt_relay` | All online traffic goes through Steam's relay servers, never directly between the two players. |
+| `+bt_direct` | Lets Steam connect the players directly again when it finds that better (Steam's own default). |
+| `+bt_relay` | Nothing any more: relay-only is the default. Still accepted, and the log says it is no longer needed. |
 
-**When to use `+bt_relay`:** everybody stands still for a second or three, again and again on a
-fixed beat (about every 12 s, in battle and in the shop), while both internet lines are fine.
+If both are set, `+bt_direct` wins (it is the only one that changes anything).
 
-Steam keeps two routes to the other player, a direct one and one through its relays, uses the
-better one and keeps probing the other to see whether it should switch. When both are about
-equally fast, that weighing is the suspected cause of the stalls. With `+bt_relay` there is only
-the relayed route and nothing to weigh. The price is the detour over Steam's nearest data center
-(for two players near the same one, about the same ping as the direct route).
+**Why relay-only:** Steam keeps two routes to the other player, a direct one and one through its
+relays, uses the better one and keeps probing the other to see whether it should switch. With both
+routes, sessions had stalls of 0.2 to 3.3 s on a fixed beat (about every 12 s, in battle and in the
+shop, both directions) while both internet lines were fine. Through the relay only, the same two
+players played 8 waves (about 10 minutes) without a single network stall, where they had one every
+20 to 50 s before; Steam switching between relay data centers during the session caused no stall
+either. The price is the detour over Steam's nearest data center (for two players near the same
+one, about the same ping as the direct route).
 
-- Both players set it.
-- It took effect when `modloader.log` says `+bt_relay: sessions go through Steam's relays only`
-  and the connection lines read `relayed via …` and never `direct`.
-- This is a test switch: the cause is not confirmed. If the stalls go on while relayed, the route
-  is not it; please report that with both players' `modloader.log`.
+- **Both players should run this version.** An older build still offers Steam the direct route, and
+  whether relay-only on one side alone keeps it from forming is not tested. Older and newer builds
+  still play together. When a connection comes up direct anyway, `modloader.log` warns once per
+  player: `Connection to … is direct although relay-only is on here`.
+- **When to use `+bt_direct`:** a player far from any Steam relay data center (the ping through the
+  relay is much worse than it should be), a connection that never comes up while the log says
+  `no relay reachable from here` (relay-only has no direct route to fall back on), or for testing.
+  Both players set it.
+- `modloader.log` says at startup which mode is on and why:
+  `Route: sessions go through Steam's relays only (default; …)` or
+  `Route: Steam may connect directly (launch option +bt_direct)`. If Steam refuses the setting, or
+  the game's GodotSteam cannot set it, a warning says so and Steam picks the route itself. While
+  relayed, the connection lines read `relayed via …` and never `direct`.
 
 ## Tests
 
