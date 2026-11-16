@@ -32,6 +32,7 @@ const CHAT_MEMBER_ENTERED := 1
 const MAX_LOBBY_MEMBERS := 4
 const MAX_MESSAGES_PER_POLL := 128
 const MAX_HELD_MSEC := 60000  # a longer wait is a clock that does not fit: unknown
+const KICK_CLOSE_MSEC := 3000  # a kicked member's session stays open this long for the KICK
 const LOBBY_KEY_MOD := "brotato_together"
 
 const LinkWatch := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/link_watch.gd")
@@ -45,6 +46,9 @@ var host_id := 0
 var members := []  # steam ids in the lobby, excluding local
 var was_host := false  # role of the lobby left last (valid from lobby_left on)
 var pending_join_id := 0  # invite waiting for confirmation (joining leaves the current lobby)
+# host: steam id -> msec of the kick (-1: session closed). No member for us until it has left
+# Steam's lobby; after that it can join again.
+var kicked := {}
 
 var join_presence := ""  # the "connect" rich presence we advertise ("" = no Join button)
 var _lobby_tag := ""
@@ -121,8 +125,21 @@ func leave_lobby() -> void:
 	lobby_id = 0
 	host_id = 0
 	members.clear()
+	kicked.clear()
 	_clear_join_presence()
 	emit_signal("lobby_left")
+
+
+# Host: the member is out for us at once (its messages are dropped); Steam has no kick, so it
+# stays in Steam's lobby until its game leaves on the KICK the session sent.
+func kick(steam_id: int) -> void:
+	if not is_host() or not members.has(steam_id):
+		return
+	kicked[steam_id] = OS.get_ticks_msec()
+	members.erase(steam_id)
+	_update_join_presence()
+	ModLoaderLog.info("Kicked %s" % steam_id, LOG_NAME)
+	emit_signal("peer_left", steam_id)
 
 
 func send(steam_id: int, channel: int, data: PoolByteArray) -> void:
@@ -166,6 +183,10 @@ func _process(_delta: float) -> void:
 			emit_signal("message_received", sender, channel, payload, received)
 	if is_active() and local_id != 0:
 		link_watch.poll(steam, members, OS.get_ticks_msec())
+	for steam_id in kicked:
+		if kicked[steam_id] >= 0 and OS.get_ticks_msec() - kicked[steam_id] >= KICK_CLOSE_MSEC:
+			kicked[steam_id] = -1
+			steam.closeSessionWithUser(steam_id)
 
 
 # How long a message has waited for the frame that handles it, since Steam received it
@@ -214,7 +235,7 @@ func _refresh_members() -> void:
 	var count: int = steam.getNumLobbyMembers(lobby_id)
 	for i in range(count):
 		var member := int(steam.getLobbyMemberByIndex(lobby_id, i))
-		if member != local_id:
+		if member != local_id and not kicked.has(member):
 			members.append(member)
 
 
@@ -225,6 +246,7 @@ func _on_lobby_created(result: int, new_lobby_id: int) -> void:
 	lobby_id = new_lobby_id
 	host_id = local_id
 	members.clear()
+	kicked.clear()
 	steam.setLobbyData(lobby_id, LOBBY_KEY_MOD, _lobby_tag)
 	steam.setLobbyJoinable(lobby_id, true)
 	_update_join_presence()
@@ -277,6 +299,11 @@ func _on_lobby_chat_update(
 	update_lobby_id: int, changed_id: int, _making_change_id: int, chat_state: int
 ) -> void:
 	if update_lobby_id != lobby_id or changed_id == local_id:
+		return
+	if kicked.has(changed_id):
+		if not chat_state & CHAT_MEMBER_ENTERED:
+			kicked.erase(changed_id)  # gone from Steam's lobby: a new join counts again
+			_update_join_presence()
 		return
 	var was_member := members.has(changed_id)
 	_refresh_members()

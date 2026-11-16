@@ -85,6 +85,7 @@ func run(t: Node, together: Node) -> void:
 	var save_before := save_fingerprint()
 	_test_borrowed_session(transport, host_run, before, save_before)
 	_test_host_while_borrowed(transport, before)
+	_test_own_menus(transport, before)
 	_test_safety_net(before)
 
 	_restore_state(harness_state, was_owned)
@@ -295,6 +296,39 @@ func _test_host_while_borrowed(transport: Node, before: Dictionary) -> void:
 	_t._check(transport.is_host() and not DlcBorrow.is_active(), "host has no borrowed DLC")
 	_t._check(not DLC in Compat.local_info("x").dlcs, "host reports only owned DLC")
 	transport.leave_lobby()
+
+
+# The host is in its main menu and the client in its own (mod_main.gd): this machine's own DLC
+# only, and the host's again before the first message from a screen of the host is read.
+func _test_own_menus(transport: Node, before: Dictionary) -> void:
+	var session: Node = _together.session
+	var stream: Node = _together.state_stream
+	_join(transport, [DLC])
+	_together._own_menus = true
+	session.set_borrow_parked(true)
+	_t._check(not DlcBorrow.is_active() and session.is_ready_client(), "own menus: DLC handed back")
+	_expect_reverted(before, "in the client's own menus")
+	var title := [stream.MENU, 1, {"kind": "title_screen"}]
+	session.emit_signal("host_message", Protocol.Msg.STATE, title)
+	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.MENU_GRIDS, 1, {}])
+	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.RUN_SHOP, 1, null])
+	_t._check(
+		not DlcBorrow.is_active() and _together._own_menus,
+		"own menus: the host's main menu state leaves it handed back"
+	)
+	session.emit_signal("host_message", Protocol.Msg.BATTLE_START, {})
+	_t._check(
+		DlcBorrow.borrowed_ids() == [DLC] and not _together._own_menus and not session.borrow_parked,
+		"own menus: the host's DLC is back before its battle is read"
+	)
+	_together._own_menus = true
+	session.set_borrow_parked(true)
+	var selection := [stream.MENU, 2, {"kind": "character_selection"}]
+	session.emit_signal("host_message", Protocol.Msg.STATE, selection)
+	_t._check(DlcBorrow.borrowed_ids() == [DLC], "own menus: and before its selection screen")
+	transport.leave_lobby()
+	_t._check(not session.borrow_parked and not _together._own_menus, "own menus: over with the lobby")
+	_expect_reverted(before, "after the own menus")
 
 
 # Any way out of client mode that skipped lobby_left: Session reverts on its next frame.

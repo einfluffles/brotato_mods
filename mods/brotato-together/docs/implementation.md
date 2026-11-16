@@ -393,13 +393,15 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `MusicManager.shuffled_tracks`) runs on `lobby_left` (every way out of client mode: Leave, host left /
   timed out, rejection, joining another lobby, *Host lobby*, which leaves first) and `lobby_ready`, before
   the title screen loads; `Session._process` reverts if borrowed DLC exists without a welcomed client
-  role. While borrowed, saves and challenges are blocked like puppet mode (`Puppet.blocks_progress()`);
+  role. A client in its own main menu has it handed back until the host's next screen
+  (`Session.set_borrow_parked`, see Client in its own main menu).
+  While borrowed, saves and challenges are blocked like puppet mode (`Puppet.blocks_progress()`);
   HELLO / WELCOME report only owned DLC. The lobby page's details show "Using the host's DLC for this
   session: …".
   Challenges of a borrowed DLC aren't loaded (the client never completes challenges; the end-of-run view
   is the host's).
 - Leaving is role-aware (`transport.was_host`). Client: puppet mode off (own run restored), puppet slots
-  cleared, title screen. Host mid-run: the run goes on and remote players' co-op slots stay, idle (as with a
+  cleared, title screen (kept if it is already there). Host mid-run: the run goes on and remote players' co-op slots stay, idle (as with a
   local pad unplugged mid-run); their steam id -> device mapping is kept, so they get their own characters
   back when they join the host's next lobby. Shop / level-ups wait for them (game rule). Before the run
   (players can still join) their slots are freed.
@@ -844,8 +846,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     device is not virtual, on a client the state's `you`; while no player of this machine has
     joined, every cursor counts. Per-player grids (weapon selection, shop, level-up) are not
     shared and follow their cursor as before.
-  - A screen without a copy (title screen and its pages, a host choosing for a solo run) shows
+  - A screen without a copy (the co-op resume screen, a host choosing for or playing a solo run) shows
     `ui/client_view.gd`, now only a waiting screen (key art, connection line, where the host is).
+    The host's title screen is not one of them: the client is in its own (see Client in its own
+    main menu).
   - Open: the cursor on these screens still makes the round trip through the host (no local
     panel as in the shop); item-set requirements are evaluated with this machine's sets; the
     end of run shows the host's unlocked rewards; none of this has run between two real machines
@@ -893,6 +897,55 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `LobbyMenu` (a child of the mod node) holds the lobby actions, the texts (`details_text`, `status_text`,
   `leave_question`) and the last error, and puts the controls where the game has its own. It finds the
   places when `current_scene` changes (polled; no script extension of a menu):
+  - Title screen (`ui/lobby_frame.gd`): no page. `_add_entry` puts a `MyMenuButton` below
+    `MainMenu.start_button` (its script, alignment, height and left / right focus neighbours) that does
+    what is next: *Host lobby* (without Steam: the reason in `%ErrorLabel`), *Creating lobby…* (presses
+    ignored), then *Invite friends* as host or *Leave lobby* as client. Its minimum width is that of its
+    widest text, so the column does not change width with it (measured: 250 -> 298 px headless). The
+    main menu and its pages stay as they are; the lobby lives in the transport, so it is still there
+    after a visit to another page or scene.
+    The frame (`panel_style`, 520 px) shows while `transport.is_active()` or `creating`: the players
+    (`LobbyMenu.players()`: the host first; a note per player: host / you / connecting / no response /
+    ping; a client knows the other clients from `transport.members`, by name only), `n / 4`, a hint
+    (`hint_text()`: what Start does, who is waited for), and for the host *Kick* behind every other
+    player and *Leave lobby*. It is a child of the `HBoxContainer` of the two button columns, right
+    after `ButtonsLeft`, with `SIZE_EXPAND` and a stretch ratio of 100: it takes the row's spare width
+    and sits at its start, and the columns keep their rects (checked). Hidden it takes no room.
+    Cursor (Godot focus on this screen): the entry button's `focus_neighbour_right` is the frame's
+    first button while it has one (else the copied neighbour), the frame's buttons lead left to the
+    entry button and wrap among themselves; when the button under the cursor goes away (a kicked
+    player's row, the frame with the lobby) the cursor moves to the next one or to the entry button.
+    A client's `start_button` and `continue_button` get `disabled = true` every frame (not
+    `MyMenuButton.disable()`: `MainMenu.setup_menu` grabs their focus on every return to the main
+    page, which is an engine error on a `FOCUS_NONE` control, and `TitleScreen.update_continue_button`
+    activates Continue again each time); the cursor moves to the entry button when the lock begins.
+    After the lobby Start is enabled and `update_continue_button()` decides about Continue.
+    Character selection entered from the title screen while hosting gets `CoopButton.pressed = true`
+    (the game's own switch), like the Online toggle does.
+  - Kick (protocol 17, `Msg.KICK` among the session messages): Steam lobbies have no kick.
+    `Session.kick` sends KICK (reliable) and `Transport.kick` drops the member at once: out of
+    `members` (and kept out of `_refresh_members` while in `kicked`), `peer_left` -> `peer_removed`
+    like a player who left (slot freed before a run, absent player mid-run), its messages dropped as
+    a non-member's, its session closed 3 s later (`KICK_CLOSE_MSEC`: closing at once could drop the
+    KICK). The client leaves on KICK with `lobby_failed("The host removed you from the lobby")`.
+    `kicked` forgets the id when Steam reports it gone from the lobby, so it can be invited again;
+    a game that ignores the KICK stays in Steam's lobby (taking a slot) but is not listened to.
+  - Client in its own main menu (`mod_main.gd`): while the host is on its title screen (menu state
+    `kind == "title_screen"`, its pages included) there is nothing to mirror, so the client is on its
+    own title screen, not the waiting screen. A client that becomes ready on its title screen stays
+    there; the title state (`_enter_own_menus`) loads the title screen from anywhere else (the host
+    ended a run). Meanwhile this game is its player's own: puppet mode off (own run data and saves),
+    `MenuPuppet.release`, the borrowed DLC handed back (`Session.set_borrow_parked`: profile switch,
+    item sets and options would otherwise read and save the host's DLC), `InputSync.local_input_blocked`
+    (neutral INPUT to the host, and no client mode in `InputService`, so pad echo and stick
+    navigation work), `UiSounds.silent` (the host's menu sounds are not replayed).
+    It ends before the first message from a screen of the host is read: `Session.host_message` is
+    emitted right before `message` (its own signal: Godot 3 calls a signal's targets by object id, not
+    in connection order), and `_is_host_screen` is true for BATTLE_START and for any non-null STATE
+    except MENU with the title kind, MENU_GRIDS and CURSORS (those follow a MENU of the same screen).
+    Then the DLC is borrowed again (before any run state or grid is decoded) and input goes to the
+    host; the screen itself comes from its own module as before. `lobby_left` on the title screen
+    reloads nothing. `LobbyMenu.popup_on_pause` is false on the title screen.
   - Page "Online co-op" (`ui/lobby_page.gd`): built in code like the game's pages (`menu_mods.tscn`: title
     in `font_60_outline`, a `panel_style` panel with the details, 600 px `MyMenuButton`s, Back), with
     `init()` and `back_button_pressed` as `Menus.switch` and its pages use them. Buttons by state: *Host
@@ -903,9 +956,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - It is added to a `Menus` node as one more page, with a button below a neighbour on the main page that
     copies the neighbour's script (`MyMenuButton`), alignment, size and left / right focus neighbours; up /
     down come from Godot's neighbour search in solo play and from the `FocusEmulator`'s in co-op (the pause
-    menu's emulator has `Menus` as a focus base, so every page under it is its player's). Title screen:
-    `TitleScreen._menus`, below `MainMenu.start_button`; the game dims the background for any page but the
-    main one. Pause menu (battle and shop, host and client): `PauseMenu._menus`, below `%OptionsButton`,
+    menu's emulator has `Menus` as a focus base, so every page under it is its player's).
+    Pause menu (battle and shop, host and client): `PauseMenu._menus`, below `%OptionsButton`,
     and appended to `IngameMainMenu._buttons_array` so `init()` leaves the cursor on it. The button calls
     `menus.switch(main, page)` as `Menus.on_options_button_pressed` does; `PauseMenu.manage_back` /
     `_menus.reset()` treat the page like the game's own.
@@ -930,7 +982,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     15 px when not hosting); the character grid below gives that up and scrolls.
   - Popup (`ui/lobby_popup.gd`): the same page (`framed`: a panel on the dimmed screen, CanvasLayer 128)
     for a client on a screen without a pause menu (`popup_on_pause`: `session.is_client()` and the scene
-    has no `_pause_menu`: the waiting screen, mirrored selection screens). `LobbyMenu._poll_pause` opens it
+    has no `_pause_menu` and is not the title screen: the waiting screen, mirrored selection screens). `LobbyMenu._poll_pause` opens it
     when the client's own `ui_pause` comes up after a press that was the game's, from the action state: a
     co-op screen's `FocusEmulator`s mark the event of a key that is nobody's as handled before any mod node
     sees it. `open()` (invite mid-run, a client's Quit) uses it too when the scene's pause menu does not
@@ -944,7 +996,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     button presses it): unless the game listens for joining players, a co-op screen's `FocusEmulator`s
     mark them handled before the GUI gets them. `InputService` hides the cursor in co-op, so the popup
     shows it again every frame. Clients send neutral `INPUT` while it is open (`open_changed` ->
-    `InputSync.local_input_blocked`). The pages in the title screen and the pause menu never use the guard.
+    `InputSync.local_input_blocked`). The page in the pause menu and the title screen's frame never use the guard.
   - `open()`: the page on screen, else the current scene's page (`PauseControl.open_menu` opens the pause
     menu for the local player: `pause(first local player)` on the host, `open_live` in a client's wave),
     else the popup. Used by `ask_leave()` (a client's *Quit*) and by a Steam invite accepted mid-run.
@@ -957,7 +1009,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the host, the panels take none; the wave's Esc menu has it again); on a keyboard Esc is `ui_cancel`
     and `ui_pause`, so the press that opens the popup on a mirrored selection screen reaches the host as
     cancel first (a pad's Start does not); the host on weapon / difficulty selection has no entry (back to
-    character selection or on to the run); none of it has run with a real Steam lobby yet.
+    character selection or on to the run); Kick is in the title screen's frame only, not on the pause
+    menu's page; the frame's place and size are checked as rects in the headless tests, not seen on a
+    real screen; none of it has run with a real Steam lobby yet.
 - Puppet pitfalls found by tests: `Enemy.respawn()` → `update_target()` needs a spawner (use a visual revive);
   `PlayerProjectile.shoot()` needs weapon stats; enemy scenes have internal Timers (pause them).
 

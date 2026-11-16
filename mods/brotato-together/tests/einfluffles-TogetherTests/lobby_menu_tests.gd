@@ -1,8 +1,9 @@
 extends Reference
 # The lobby in the game's own menus (ui/lobby_menu.gd), driven with key / pad / action events and
 # a fake GodotSteam object (session_lifecycle_tests.gd) as the transport's Steam:
-#  - title screen: the button among the game's, the page in its page stack, its buttons calling
-#    the transport, a failed lobby in the main menu's error label;
+#  - title screen: the button among the game's that hosts a lobby behind the main menu, the
+#    frame with the players, Kick, Start leading to co-op; a client in its own main menu while
+#    the host is in its own; a failed lobby in the main menu's error label;
 #  - character selection: the Online toggle and Invite in the run options box, reached by
 #    player 1's FocusEmulator, inert on a client;
 #  - a client on a screen without a pause menu: pause opens the page as a popup, the game and
@@ -17,6 +18,8 @@ const OnlineOptions := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/online_options.gd"
 )
 const LobbyPopup := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_popup.gd")
+const LobbyFrame := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_frame.gd")
+const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const ClientView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const VirtualDevices := preload(
@@ -24,7 +27,9 @@ const VirtualDevices := preload(
 )
 const LOCAL := 1
 const HOST := 2
+const CLIENT := 5
 const LOBBY := 99
+const PRESS_DELAY_SEC := 0.1  # a MyMenuButton is off for 0.05 s after a press
 const KEYBOARD := 7  # the game's remapped device of the keyboard
 const PAD := 0
 
@@ -64,6 +69,7 @@ func run(test_mod: Node, mod: Node):
 	}
 	transport.steam = null
 	yield(_test_title_screen(), "completed")
+	yield(_test_client_title(), "completed")
 	yield(_test_failed_lobby(), "completed")
 	yield(_test_character_selection(), "completed")
 	yield(_test_client_popup(), "completed")
@@ -74,6 +80,7 @@ func run(test_mod: Node, mod: Node):
 	transport.steam = saved.steam
 	transport.local_id = saved.local_id
 	transport.pending_join_id = 0
+	transport.kicked.clear()
 	session.peers.clear()
 	together._client_active = false
 	lobby.last_error = ""
@@ -112,6 +119,38 @@ func _enter_lobby(host_id: int, members: Array) -> void:
 	transport.members = members.duplicate()
 	_steam.lobby_members = [LOCAL] + members
 	session._on_lobby_ready(LOBBY, host_id == LOCAL)
+
+
+# A client the host has welcomed, in a lobby with another client.
+func _join_as_client() -> void:
+	_enter_lobby(HOST, [HOST, CLIENT])
+	session._on_peer_joined(HOST)
+	var welcome := {"version": Protocol.VERSION, "accepted": true, "reason": "", "dlcs": []}
+	_deliver(HOST, Protocol.Msg.WELCOME, welcome)
+
+
+func _deliver(sender: int, msg_type: int, body) -> void:
+	session._on_message_received(sender, 0, Protocol.encode(msg_type, body))
+
+
+# The message types sent to a peer.
+func _sent_to(steam_id: int) -> Array:
+	var types := []
+	for entry in _steam.sent:
+		if entry[0] == steam_id:
+			types.append(Protocol.decode(entry[2])[0])
+	return types
+
+
+static func _row_texts(frame: Control) -> Array:
+	var texts := []
+	for row in frame.rows:
+		texts.append([row.name.text, row.note.text])
+	return texts
+
+
+func _wait(seconds: float):
+	yield(_tree().create_timer(seconds), "timeout")
 
 
 func _key(scancode: int, pressed: bool) -> void:
@@ -192,20 +231,28 @@ func _test_title_screen():
 	var menus: Node = scene._menus
 	var main_menu: Node = scene._main_menu
 	var start: Button = main_menu.start_button
-	var button: Button = start.get_parent().get_node_or_null(lobby.ENTRY_NAME)
-	var page: Control = menus.get_node_or_null(lobby.PAGE_NAME)
-	t._check(button != null and page != null, "title: Online co-op button and page added")
-	if button == null or page == null:
+	var left: Control = start.get_parent()
+	var button: Button = left.get_node_or_null(lobby.ENTRY_NAME)
+	var frame: Control = left.get_parent().get_node_or_null(LobbyFrame.NODE_NAME)
+	t._check(button != null and frame != null, "title: Host lobby button and lobby frame added")
+	if button == null or frame == null:
 		return
 	t._check(
 		button.get_index() == start.get_index() + 1 and button.get_script() == start.get_script()
-		and button.rect_min_size == start.rect_min_size and button.align == start.align,
+		and button.rect_min_size.y == start.rect_min_size.y and button.align == start.align
+		and button.text == "Host lobby",
 		"title: the button is one of the game's menu buttons, below Start"
 	)
-	t._check(not page.visible and lobby.open_page() == null, "title: the page starts hidden")
+	t._check(
+		menus.get_node_or_null(lobby.PAGE_NAME) == null and not frame.visible
+		and lobby.open_page() == null,
+		"title: no page of its own, and no frame without a lobby"
+	)
 	t._check(together.get_node_or_null("TogetherMenu") == null, "the overlay menu is gone")
+	var left_rect := left.get_global_rect()
+	var right_rect: Rect2 = main_menu.right_container.get_global_rect()
 
-	# The game's own focus handling: arrows along the column, accept opens the page.
+	# The game's own focus handling: arrows along the column.
 	start.grab_focus()
 	yield(_tap_key(KEY_DOWN), "completed")
 	t._check(
@@ -214,69 +261,304 @@ func _test_title_screen():
 	yield(_tap_key(KEY_UP), "completed")
 	t._check(scene.get_focus_owner() == start, "title: and up again is Start")
 	yield(_tap_key(KEY_F9), "completed")
-	t._check(lobby.open_page() == null, "F9 is nobody's key")
+	t._check(lobby.open_page() == null and not frame.visible, "F9 is nobody's key")
+
+	# Without Steam: the reason, where the game reports its own errors.
+	button.grab_focus()
+	yield(_tap_key(KEY_ENTER), "completed")
+	var label: Label = main_menu.error_label
+	t._check(
+		label.visible and "Steam is unavailable" in label.text and not frame.visible,
+		"title: without Steam the button says why in the error label (%s)" % label.text
+	)
+	lobby.last_error = ""
+
+	# Hosting: the lobby is made behind the main menu, which stays as it is.
+	_fake_steam()
+	yield(_wait(PRESS_DELAY_SEC), "completed")
+	yield(_tap_key(KEY_ENTER), "completed")
+	t._check(
+		_steam.created == 1 and lobby.creating and button.text == "Creating lobby…"
+		and frame.visible and "Creating" in frame.hint.text,
+		"title: accept hosts a lobby; the frame says it is being made (%s)" % button.text
+	)
+	yield(_wait(PRESS_DELAY_SEC), "completed")
+	yield(_tap_key(KEY_ENTER), "completed")
+	t._check(_steam.created == 1, "title: asked once, however often the button is pressed")
+	transport._on_lobby_created(transport.RESULT_OK, LOBBY)
+	yield(_frames(2), "completed")
+	t._check(
+		main_menu.visible and menus._current_page == main_menu
+		and not scene._attenuate_background.visible and scene.get_focus_owner() == button,
+		"title: the main menu stays, the cursor where it was"
+	)
+	t._check(
+		button.text == "Invite friends" and _row_texts(frame) == [["local", "host"]]
+		and frame.rows[0].kick == null and frame.leave_button.visible,
+		"frame: hosting -> this player as host, Leave lobby %s" % [_row_texts(frame)]
+	)
+	var panel: Rect2 = frame.get_child(0).get_global_rect()
+	t._check(
+		scene.get_viewport_rect().encloses(panel) and panel.position.x >= left_rect.end.x
+		and panel.end.x <= right_rect.position.x and panel.size.x == frame.WIDTH
+		and left.get_global_rect() == left_rect
+		and main_menu.right_container.get_global_rect() == right_rect,
+		"frame: between the button columns, which stay where they are (%s, left %s)"
+		% [panel, left.get_global_rect()]
+	)
+	yield(_wait(PRESS_DELAY_SEC), "completed")
+	yield(_tap_key(KEY_ENTER), "completed")
+	t._check(_steam.invited == [LOBBY], "title: the button now opens Steam's invite dialog")
+	main_menu.options_button.emit_signal("pressed")
+	yield(_frames(2), "completed")
+	t._check(
+		menus._current_page == menus._menu_choose_options and transport.is_host(),
+		"title: the game's pages open while the lobby is up"
+	)
+	menus.on_options_back_button_pressed()
+	yield(_frames(2), "completed")
+	t._check(main_menu.visible and frame.is_visible_in_tree(), "title: and back, the frame is there")
+
+	# A friend joins: a row with Kick, reached with the cursor from the button.
+	_steam.lobby_members = [LOCAL, CLIENT]
+	transport._on_lobby_chat_update(LOBBY, CLIENT, CLIENT, 1)
+	yield(_frames(2), "completed")
+	t._check(
+		_row_texts(frame) == [["local", "host"], ["friend 5", "connecting"]]
+		and frame.rows[1].kick != null and frame._count.text == "2 / 4",
+		"frame: a joining player gets a row with Kick %s" % [_row_texts(frame)]
+	)
+	session.peers[CLIENT].rtt_ms = 34
+	session.peers[CLIENT].ready = true
+	yield(_frames(1), "completed")
+	t._check(frame.rows[1].note.text == "34 ms", "frame: the ping of a connected player")
+	t._check("comes along" in frame.hint.text, "frame: what Start does now (%s)" % frame.hint.text)
+	var kick: Button = frame.rows[1].kick
+	button.grab_focus()
+	yield(_tap_key(KEY_RIGHT), "completed")
+	t._check(scene.get_focus_owner() == kick, "frame: right of the button is Kick")
+	yield(_tap_key(KEY_DOWN), "completed")
+	t._check(scene.get_focus_owner() == frame.leave_button, "frame: below it Leave lobby")
+	yield(_tap_key(KEY_DOWN), "completed")
+	yield(_tap_key(KEY_LEFT), "completed")
+	t._check(scene.get_focus_owner() == button, "frame: around, and left is the button again")
+
+	# Kick: told to leave, gone here at once, and nothing of it is heard any more.
+	yield(_tap_key(KEY_RIGHT), "completed")
+	_steam.sent.clear()
+	yield(_tap_key(KEY_ENTER), "completed")
+	t._check(
+		_sent_to(CLIENT).has(Protocol.Msg.KICK) and not session.peers.has(CLIENT)
+		and not transport.members.has(CLIENT) and _row_texts(frame) == [["local", "host"]],
+		"kick: the player is told and is out of the lobby %s" % [_row_texts(frame)]
+	)
+	t._check(scene.get_focus_owner() == frame.leave_button, "kick: the cursor moves on")
+	_steam.queue(CLIENT, 0, Protocol.encode(Protocol.Msg.HELLO, {}))
+	yield(_frames(2), "completed")
+	t._check(
+		_steam.inbox.empty() and not session.peers.has(CLIENT) and frame.rows.size() == 1,
+		"kick: a game that stays in Steam's lobby is not listened to"
+	)
+	transport.kicked[CLIENT] = OS.get_ticks_msec() - transport.KICK_CLOSE_MSEC
+	yield(_frames(1), "completed")
+	t._check(transport.kicked[CLIENT] == -1, "kick: its session is closed after the message")
+	_steam.lobby_members = [LOCAL]
+	transport._on_lobby_chat_update(LOBBY, CLIENT, CLIENT, 2)
+	_steam.lobby_members = [LOCAL, CLIENT]
+	transport._on_lobby_chat_update(LOBBY, CLIENT, CLIENT, 1)
+	yield(_frames(2), "completed")
+	t._check(
+		transport.kicked.empty() and session.peers.has(CLIENT) and frame.rows.size() == 2,
+		"kick: once it has left it can be invited again"
+	)
+
+	# Start with the lobby up: everybody comes along, so it is a co-op run.
+	RunData.play_mode = RunData.PlayMode.SOLO
+	start.emit_signal("pressed")
+	yield(_frames(4), "completed")
+	var selection := _tree().current_scene
+	var coop = selection.get_node_or_null("%CoopButton")
+	t._check(
+		selection.filename == MenuData.character_selection_scene and coop != null
+		and coop.pressed and RunData.is_coop_run and transport.is_host(),
+		"title: Start with a lobby opens character selection in co-op"
+	)
+
+	# Back in the main menu the lobby is still there; Leave lobby ends it.
+	yield(_change_scene(MenuData.title_screen_scene), "completed")
+	scene = _tree().current_scene
+	main_menu = scene._main_menu
+	button = main_menu.start_button.get_parent().get_node(lobby.ENTRY_NAME)
+	frame = button.get_parent().get_parent().get_node(LobbyFrame.NODE_NAME)
+	t._check(
+		frame.visible and frame.rows.size() == 2 and button.text == "Invite friends",
+		"title: back from a screen the lobby is as it was"
+	)
+	frame.leave_button.grab_focus()
+	yield(_tap_key(KEY_ENTER), "completed")
+	t._check(
+		not transport.is_active() and not frame.visible and button.text == "Host lobby"
+		and scene.get_focus_owner() == button,
+		"frame: Leave lobby ends it; the cursor is on Host lobby"
+	)
+	t._check(
+		button.focus_neighbour_right == main_menu.start_button.focus_neighbour_right,
+		"title: without the frame the button's neighbours are the game's again"
+	)
+	CoopService.clear_coop_players()
+	RunData.play_mode = RunData.PlayMode.SOLO
+
+
+# A client of a host that is in its main menu: in its own, without Start and Continue.
+func _test_client_title():
+	yield(_change_scene(MenuData.title_screen_scene), "completed")
+	var scene := _tree().current_scene
+	var menus: Node = scene._menus
+	var main_menu: Node = scene._main_menu
+	var start: Button = main_menu.start_button
+	var resume: Button = main_menu.continue_button
+	var button: Button = start.get_parent().get_node(lobby.ENTRY_NAME)
+	var frame: Control = button.get_parent().get_parent().get_node(LobbyFrame.NODE_NAME)
+	var input_sync: Node = together.input_sync
+	var stream: Node = together.state_stream
+	var title_state := {"kind": "title_screen", "screen": 1, "count": 0, "selected": [], "grids": {}}
+	var resume_state := {"kind": "coop_resume", "screen": 2, "count": 0, "selected": [], "grids": {}}
+
+	# Joining from the main menu: no waiting screen, the lobby shows in the frame.
+	_join_as_client()
+	yield(_frames(2), "completed")
+	t._check(
+		together._client_active and _tree().current_scene == scene and main_menu.visible,
+		"client: joining from the main menu stays in the main menu"
+	)
+	t._check(
+		_row_texts(frame) == [["friend 2", "host"], ["local", "you"], ["friend 5", ""]]
+		and frame.nav_buttons().empty() and not frame.leave_button.visible,
+		"client: the frame lists the lobby, without Kick or its own Leave %s" % [_row_texts(frame)]
+	)
+	t._check(
+		"Waiting for friend 2" in frame.hint.text, "client: who starts (%s)" % frame.hint.text
+	)
+	t._check(
+		start.disabled and resume.disabled and button.text == "Leave lobby"
+		and scene.get_focus_owner() == button,
+		"client: Start and Continue are off, the cursor is on Leave lobby"
+	)
+	start.grab_focus()
+	yield(_tap_key(KEY_ENTER), "completed")
+	yield(_tap_key(KEY_ESCAPE), "completed")
+	t._check(
+		_tree().current_scene == scene and lobby.open_page() == null,
+		"client: accept on Start starts nothing, pause opens no popup"
+	)
+
+	# The host's state says it is in its main menu: this game is its player's own meanwhile.
+	Puppet.set_active(true)  # as left by a screen of the host
+	together._on_menu_state(title_state)
+	t._check(
+		together._own_menus and _tree().current_scene == scene and not Puppet.is_active()
+		and session.borrow_parked and together.ui_sounds.silent,
+		"client: own menus -> no puppet mode, no borrowed DLC, none of the host's menu sounds"
+	)
+	Input.action_press("ui_accept")
+	var body: Array = input_sync.sample_local()
+	Input.action_release("ui_accept")
+	t._check(
+		input_sync.local_input_blocked and body[3] == 0, "client: the host gets neutral input"
+	)
+	main_menu.options_button.emit_signal("pressed")
+	yield(_frames(2), "completed")
+	t._check(menus._current_page == menus._menu_choose_options, "client: the game's pages open")
+	menus.on_options_back_button_pressed()
+	resume.show()
+	resume.activate()  # as the game does on the way back when a run is saved
+	yield(_frames(2), "completed")
+	t._check(
+		main_menu.visible and start.disabled and resume.disabled,
+		"client: back on the main page Start and Continue are off again"
+	)
+
+	# What the host sends from its main menu changes nothing; its first screen ends it.
+	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.MENU, 2, title_state])
+	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.MENU_GRIDS, 2, {}])
+	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.RUN_SHOP, 2, null])
+	session.emit_signal("host_message", Protocol.Msg.UI_SOUNDS, {})
+	t._check(together._own_menus, "client: the host's main menu state keeps it there")
+	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.MENU, 3, resume_state])
+	t._check(
+		not together._own_menus and not input_sync.local_input_blocked
+		and not session.borrow_parked and not together.ui_sounds.silent,
+		"client: the host's next screen takes input, DLC and sounds back"
+	)
+	together._on_menu_state(resume_state)
+	yield(_frames(2), "completed")
+	var view := _tree().current_scene
+	t._check(
+		view.get_script() == ClientView and lobby.popup_on_pause(view),
+		"client: a host screen without a copy is the waiting screen, as before"
+	)
+
+	# The host returns to its main menu (end of a run): the client's own title screen loads.
+	Puppet.set_active(true)
+	together._on_menu_state(title_state)
+	yield(_frames(3), "completed")
+	scene = _tree().current_scene
+	t._check(
+		scene.filename == MenuData.title_screen_scene and together._own_menus
+		and not Puppet.is_active() and transport.is_active(),
+		"client: the host back in its main menu -> this game's own, still in the lobby"
+	)
+	if scene.filename != MenuData.title_screen_scene:
+		return
+	main_menu = scene._main_menu
+	start = main_menu.start_button
+	button = start.get_parent().get_node(lobby.ENTRY_NAME)
+	frame = button.get_parent().get_parent().get_node(LobbyFrame.NODE_NAME)
+	t._check(
+		start.disabled and frame.visible and button.text == "Leave lobby"
+		and not lobby.popup_on_pause(scene),
+		"client: with the frame and without Start there too"
+	)
+	session.emit_signal("host_message", Protocol.Msg.BATTLE_START, {})
+	t._check(not together._own_menus, "client: a battle of the host ends it as well")
+	together._on_menu_state(title_state)
+
+	# Kicked: out of the lobby, with the reason; the main menu is the player's again.
+	_deliver(HOST, Protocol.Msg.KICK, null)
+	yield(_frames(2), "completed")
+	var label: Label = main_menu.error_label
+	t._check(
+		not transport.is_active() and not together._client_active and not together._own_menus
+		and not input_sync.local_input_blocked,
+		"kicked: the client has left the lobby"
+	)
+	t._check(
+		_tree().current_scene == scene and label.visible and "removed you" in label.text,
+		"kicked: the main menu stays, with the reason in its error label (%s)" % label.text
+	)
+	t._check(
+		not start.disabled and not frame.visible and button.text == "Host lobby",
+		"kicked: Start is back, the frame gone"
+	)
+	lobby.last_error = ""
+
+	# Leave lobby on the button.
+	_join_as_client()
+	yield(_frames(2), "completed")
+	t._check(start.disabled and button.text == "Leave lobby", "(control) a client again")
 	button.grab_focus()
 	yield(_tap_key(KEY_ENTER), "completed")
 	t._check(
-		page.visible and not main_menu.visible and menus._current_page == page
-		and lobby.open_page() == page,
-		"title: accept opens the page in the title screen's page stack"
+		not transport.is_active() and _tree().current_scene == scene and not start.disabled
+		and button.text == "Host lobby" and not together._client_active,
+		"client: Leave lobby leaves; the main menu is the player's again"
 	)
-	t._check(scene._attenuate_background.visible, "title: dimmed like the game's other pages")
-	t._check(
-		page._host_button.disabled and "Steam is unavailable" in page._details.text
-		and scene.get_focus_owner() == page._back_button,
-		"page: without Steam Host lobby is off, with the reason; the cursor is on Back"
-	)
-	t._check(page._back_button.get_script() == start.get_script(), "page: the game's buttons")
-
-	_fake_steam()
-	page.refresh()
-	t._check(
-		_texts(page.nav_buttons()) == ["Host lobby", "MENU_BACK"],
-		"page: not in a lobby -> Host lobby, Back %s" % [_texts(page.nav_buttons())]
-	)
-	yield(_tap_key(KEY_UP), "completed")
-	t._check(scene.get_focus_owner() == page._host_button, "page: arrows move along its buttons")
-	yield(_tap_key(KEY_ENTER), "completed")
-	t._check(_steam.created == 1 and lobby.creating, "page: Host lobby creates a Steam lobby")
-	transport._on_lobby_created(transport.RESULT_OK, LOBBY)
-	page.refresh()
-	yield(_frames(1), "completed")
-	t._check(
-		_texts(page.nav_buttons()) == ["Invite friends", "Leave lobby", "MENU_BACK"]
-		and scene.get_focus_owner() == page._invite_button and not lobby.creating,
-		"page: hosting -> Invite, Leave, Back; the cursor moves on to Invite"
-	)
-	t._check(
-		"Hosting · lobby %s" % LOBBY in page._details.text, "page: details say who hosts what"
-	)
-	var column: Rect2 = page._center.get_child(0).get_global_rect()
-	var screen: Rect2 = scene.get_viewport_rect()
-	t._check(
-		screen.encloses(column) and abs(column.get_center().x - screen.get_center().x) < 2.0
-		and page._invite_button.rect_size.x == 600.0,
-		"page: centred on the screen, buttons as wide as the game's (%s in %s)" % [column, screen]
-	)
-	yield(_tap_key(KEY_ENTER), "completed")
-	t._check(_steam.invited == [LOBBY], "page: Invite friends opens Steam's invite dialog")
-	yield(_tap_key(KEY_DOWN), "completed")
-	yield(_tap_key(KEY_ENTER), "completed")
-	t._check(
-		not transport.is_active() and not page.is_asking(),
-		"page: outside a run Leave lobby leaves at once"
-	)
-	yield(_tap_key(KEY_ESCAPE), "completed")
-	t._check(
-		not page.visible and main_menu.visible and scene.get_focus_owner() == button,
-		"title: cancel goes back to the main menu, the cursor on the button"
-	)
-	t._check(not scene._attenuate_background.visible, "title: background clear again")
 
 
 # The error of a lobby that failed: in the main menu's error label (now, or after the return to
 # the title screen) and in the page's details.
 func _test_failed_lobby():
+	yield(_change_scene(MenuData.title_screen_scene), "completed")
 	var main_menu: Node = _tree().current_scene._main_menu
 	var label: Label = main_menu.error_label
 	t._check(not label.visible, "(control) no error on the title screen")

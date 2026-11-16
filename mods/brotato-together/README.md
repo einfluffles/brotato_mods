@@ -66,7 +66,7 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
 - A client never writes the host's run into its own save file and never unlocks challenges from it.
 - **DLC:** a friend without one of the host's DLCs can still join: like Steam Remote Play Together, the
   host's DLC content is usable in the host's session only (the *Online co-op* page says so) and is gone again as
-  soon as they leave; nothing of it is saved and it never becomes their own.
+  soon as they leave (and while they are in their own main menu); nothing of it is saved and it never becomes their own.
 
 Details: [`docs/implementation.md`](docs/implementation.md).
 
@@ -80,13 +80,22 @@ like them (mouse, keyboard, gamepad).
 - **Character selection:** the run options box has an **Online** toggle under the game's *Co-op*
   toggle. Switching it on hosts a lobby (and switches co-op on); *Invite friends* (Steam overlay)
   appears below it, with the number of players in the lobby. Switching it off leaves the lobby.
-- **Main menu → Online co-op**, and **pause menu → Online co-op** during a run (host and client):
-  a page with *Host lobby*, *Invite friends*, *Leave lobby* and the connection details (role, every
-  player with state and ping, players who are away, the last error). Leaving in the middle of a run
-  asks first.
-- **As a client outside a wave** (waiting for the host, selection screens) there is no pause menu:
-  **Esc / Start** opens the same page as a popup. While it is open the game gets none of your
-  keyboard/gamepad input (the host sees you letting go of everything).
+- **Main menu → Host lobby** (below *Start*) opens a lobby without leaving the main menu: you can
+  still go through options, the codex and the other pages while it is up. A small frame next to the
+  buttons lists who is in the lobby (with ping), and the button becomes *Invite friends*. As the
+  host you have **Kick** behind every other player's name and *Leave lobby* under the list. A
+  kicked player is told so and can join again once invited again.
+- **Joining a lobby whose host is in the main menu** leaves you in your own main menu, with the
+  same frame. *Start* and *Continue* are off for you and the button reads *Leave lobby*: the host
+  starts or continues, and everybody in the lobby is taken into that screen. *Start* with a lobby
+  open leads to a co-op run. When the host returns to its main menu, so do you to yours.
+- **Pause menu → Online co-op** during a run (host and client): a page with *Host lobby*, *Invite
+  friends*, *Leave lobby* and the connection details (role, every player with state and ping,
+  players who are away, the last error). Leaving in the middle of a run asks first.
+- **As a client on the host's screens outside a wave** (selection screens, waiting for the host to
+  resume a run) there is no pause menu: **Esc / Start** opens the same page as a popup. While it
+  is open the game gets none of your keyboard/gamepad input (the host sees you letting go of
+  everything).
 - Friends join through the Steam invite or *Join game* in the friends list. An invite you accept in
   the middle of a run opens the page with *Join invite* instead of dropping your run.
 - If a lobby fails (not created, join refused, host gone), the reason shows in the main menu's
@@ -116,7 +125,8 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
 panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), "Player N" above the join hint, shop UI sounds, the lobby
-in the game's menus (title screen and pause menu page, the Online toggle of character selection, the
+in the game's menus (the title screen's Host lobby button and player frame, kicking, a client in its own main menu
+while the host is in its own, the pause menu page, the Online toggle of character selection, the
 client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam), the wave-failed prompt and the battle -> shop transition on clients, which screen drives a client's own
 input from the level-up panels to the shop (a host pause across the change, late level-up stops, a lost device, a shop pause that ended with its shop), the Esc menu
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and

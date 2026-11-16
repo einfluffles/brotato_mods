@@ -18,6 +18,7 @@ const VOLUME_RANGE := Vector2(-60.0, 12.0)
 const MAX_PITCH_RAND := 0.9  # pitch_scale = 1 +- rand: must stay positive
 
 var session: Node = null
+var silent := false  # client: in its own menus (mod_main.gd), the host's sounds are not played
 
 var _recording := false
 var _batch := []  # host: [[path, volume, pitch, position or null]] since the last send
@@ -81,7 +82,7 @@ func _has_ready_peer() -> bool:
 func _on_message(steam_id: int, msg_type: int, body) -> void:
 	if msg_type != Protocol.Msg.UI_SOUNDS or not session.is_client():
 		return
-	if steam_id != session.transport.host_id:
+	if steam_id != session.transport.host_id or silent:
 		return
 	play_batch(body)
 

@@ -6,6 +6,7 @@ enum Msg {
 	WELCOME,  # host -> client: version, accepted, reason, dlcs (session/dlc_borrow.gd)
 	PING,  # any -> any: t
 	PONG,  # any -> any: t, held (ms the PING waited for the answering frame, see session.gd)
+	KICK,  # host -> client: the host removed it from the lobby; the client leaves
 	# client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons (held mask),
 	# presses (4-bit counter per button, sync/press_counter.gd), flags (sync/local_aim.gd),
 	# previous: PoolVector2Array (the moves of the up to InputSync.REDUNDANCY inputs right before
@@ -40,7 +41,7 @@ enum Msg {
 	STATE,
 }
 
-const VERSION := 16
+const VERSION := 17
 # How long one side carries on without the other's stream (snapshots on a client, INPUT on the
 # host) before it counts as gone rather than late. Both ends share it: a client predicts its own
 # player for that long without snapshots (sync/battle_client.gd PREDICTION_STALE_MSEC), and the

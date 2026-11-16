@@ -8,6 +8,7 @@ const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/p
 
 # Battle over: how long the frozen battle may stay on screen while the next screen loads.
 const TRANSITION_GRACE_SEC := 2.0
+const TITLE_KIND := "title_screen"  # MenuSync.kind_of the title screen and its pages
 
 const EXTENSIONS := [
 	"extensions/singletons/input_service.gd",
@@ -45,7 +46,12 @@ var retry_sync: Node = null
 var coop_selection: Node = null  # join hints + colour picking on the co-op selection screen
 
 var _client_active := false
+# Client: the host is in its main menu, so this game is in its own, as itself (see
+# _enter_own_menus).
+var _own_menus := false
+var _popup_open := false
 var _sound_relay: Script = null
+var _puppet: Script = null
 var _client_view: Script = null
 
 
@@ -67,6 +73,7 @@ func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
 	_sound_relay = _load_script("session/sound_relay.gd")
 	_client_view = _load_script("ui/client_view.gd")
+	_puppet = _load_script("session/puppet.gd")
 
 	transport = _add("net/steam_transport.gd", "Transport")
 	if not transport.setup("%s/p%s" % [MOD_ID, Protocol.VERSION]):
@@ -74,6 +81,7 @@ func _ready() -> void:
 
 	session = _add("session/session.gd", "Session")
 	session.setup(transport)
+	session.connect("host_message", self, "_on_host_message")
 
 	# Before the sync modules, which get it ahead of their setup() (they register sections there)
 	# and process after it in a frame. Its peer_ready resync waits for its next step, so whatever
@@ -165,15 +173,75 @@ func _add_player_control() -> void:
 	absent_players.setup(session, input_sync, battle_host)
 
 
+# A client that joins from its main menu stays there until the host's state says where the host
+# is (its own main menu: _enter_own_menus; a screen: that screen).
 func _on_peer_ready(steam_id: int) -> void:
 	if session.is_client() and steam_id == transport.host_id and not _client_active:
 		_client_active = true
-		_enter_client_view()
+		if not _on_title_screen():
+			_enter_client_view()
 
 
-# While the lobby popup owns the keyboard/pad, the host gets neutral input from us.
+func _on_title_screen() -> bool:
+	var scene := get_tree().current_scene
+	return scene != null and scene.filename == MenuData.title_screen_scene
+
+
 func _on_menu_open_changed(is_open: bool) -> void:
-	input_sync.local_input_blocked = is_open
+	_popup_open = is_open
+	_apply_own_input()
+
+
+# While the lobby popup or the client's own menus have the keyboard/pad, the host gets neutral
+# input from us (and the game's own input handling is the solo one: InputSync's client mode).
+# The host's menu sounds are not ours to hear in our own menus.
+func _apply_own_input() -> void:
+	input_sync.local_input_blocked = _popup_open or _own_menus
+	ui_sounds.silent = _own_menus
+
+
+# The host is in its main menu: nothing to mirror and nothing to wait in front of, so the client
+# is in its own main menu and can use it (ui/lobby_menu.gd keeps Start and Continue off). It is
+# this machine's game meanwhile: its own run data and saves (puppet mode off) and its own DLC
+# only (the host's is handed back until the host's next screen, _on_host_message).
+func _enter_own_menus() -> void:
+	if not _own_menus:
+		_own_menus = true
+		_apply_own_input()
+		menu_puppet.release(true)
+		_puppet.set_active(false)
+		session.set_borrow_parked(true)
+	if _on_title_screen():
+		return
+	get_tree().paused = false
+	_sound_relay.set_muted(false)
+	if get_tree().change_scene(MenuData.title_screen_scene) != OK:
+		ModLoaderLog.error("Could not load the title screen", LOG_NAME)
+
+
+# Before anybody reads a message of the host (Session.host_message): the first one from a
+# screen of the host ends the client's time in its own menus, and the host's DLC is back
+# before that message's run state or grids are decoded.
+func _on_host_message(msg_type: int, body) -> void:
+	if not _own_menus or not _is_host_screen(msg_type, body):
+		return
+	_own_menus = false
+	_apply_own_input()
+	session.set_borrow_parked(false)
+
+
+# Anything but the state of the host's main menu and the sections that name no content.
+func _is_host_screen(msg_type: int, body) -> bool:
+	if msg_type == Protocol.Msg.BATTLE_START:
+		return true
+	if msg_type != Protocol.Msg.STATE or typeof(body) != TYPE_ARRAY or body.size() != 3:
+		return false
+	var state = body[2]
+	if state == null:
+		return false
+	if body[0] == state_stream.MENU:
+		return typeof(state) != TYPE_DICTIONARY or state.get("kind") != TITLE_KIND
+	return not body[0] in [state_stream.MENU_GRIDS, state_stream.CURSORS]
 
 
 # The next screen (shop, next battle, end-of-run menu) follows BATTLE_END closely and replaces
@@ -198,11 +266,17 @@ func _on_transition_grace_over(stale_id: int) -> void:
 		_enter_client_view()
 
 
-# Host is in a menu: its selection screens and the end of run are the game's own scenes here
-# too (sync/menu_puppet.gd); anything else (title screen, its pages) is the waiting screen.
+# Host is in a menu: in its main menu (and its pages) the client is in its own; its selection
+# screens and the end of run are the game's own scenes here too (sync/menu_puppet.gd); anything
+# else is the waiting screen.
 # Also covers leaving the shop/battle for a menu without a dedicated end message.
 func _on_menu_state(state: Dictionary) -> void:
-	if not _client_active or menu_puppet.show(state):
+	if not _client_active:
+		return
+	if state.kind == TITLE_KIND:
+		_enter_own_menus()
+		return
+	if menu_puppet.show(state):
 		return
 	var current := get_tree().current_scene
 	if current == null or current.get_script() != _client_view:
@@ -213,9 +287,13 @@ func _on_menu_state(state: Dictionary) -> void:
 
 func _on_lobby_left() -> void:
 	CoopService.bt_clear_remote_colors()  # a client goes back to its own colours
+	_own_menus = false
+	_apply_own_input()
 	if _client_active:
 		_client_active = false
 		get_tree().paused = false
+		if _on_title_screen():
+			return  # already in its own main menu
 		if get_tree().change_scene(MenuData.title_screen_scene) != OK:
 			ModLoaderLog.error("Could not return to the title screen", LOG_NAME)
 
