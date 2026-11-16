@@ -33,7 +33,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   item popups react at once; only the decision (choose, reroll, take, recycle, ban) goes to the host,
   which checks it against what your panel shows and applies it. It follows the device you use: with a
   pad the triggers switch pages, on the keyboard the page arrows take the cursor, and the mouse moves
-  and clicks your own cursor (other players' panels ignore it).
+  and clicks your own cursor (other players' panels ignore it). Your character stands still meanwhile:
+  the keys and stick that move the cursor are not sent as movement. The right stick scrolls item
+  descriptions and the stats sheet on your own screen (it only scrolled the host's copy before).
 - **Your own shop panel runs on your machine too:** cursor, pages, item popups, inventory browsing, the
   hold-to-ban bar and a meca item's effect choice are local. Buy, reroll, lock / unlock, steal, ban,
   dismantle, Go, combine and recycle go to the host, which applies them with the game's own rules when
@@ -107,6 +109,8 @@ costs per snapshot and per frame; a weapon breaking mid-wave, the hole layout an
 the own-player prediction, also for a client joining mid-wave; a jittered input stream (bunched
 packets, ticks without one, a late stop, a swapped pair, a duplicate) moving a remote player on the
 host one step per acked input, so the client's prediction never needs a correction.
+the own-player prediction, also for a client joining mid-wave, and the own player running only while its
+keys are held.
 
 The tests are named suites (`SUITES` in `mod_main.gd`), each passing on its own: `tools/check.sh -s <suite>`
 runs one, and `shards.txt` groups them into the game processes a full check runs side by side.

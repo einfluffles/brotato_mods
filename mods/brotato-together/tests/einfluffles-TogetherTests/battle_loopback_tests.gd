@@ -222,6 +222,7 @@ func run(together: Node):
 		abs(player.global_position.x - expected_x) < 0.5,
 		"prediction replays un-acked inputs (%.1f vs %.1f)" % [player.global_position.x, expected_x]
 	)
+	yield(_perf.test_own_animation(client, input_sync, player), "completed")
 	input_sync.history = []
 
 	# Death: a vanished unit plays its death animation, then returns to main's pool.
