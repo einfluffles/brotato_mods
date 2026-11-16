@@ -13,6 +13,9 @@ extends Reference
 # - The icon and number over a player whose stat changed (EVENT_STAT, protocol 18: evolution from
 #   a meca / mutant fruit, a mutation fruit's stat, an item's gain mid-wave): the game shows them
 #   from RunData.stat_added / stat_removed, which a client's puppet run never emits.
+# - A weapon that attacks with an animation of its own (AnimatedHitboxShootingBehavior: whip,
+#   flail) as EVENT_WEAPON_ANIM when the animation starts: sprite frames, the lash and its tip.
+#   The weapon's place and angle already travel with every snapshot (Snapshot.pack_weapons).
 # Derived by the client from what it already has (no bytes): screen shake (damage events), the
 # level-up and heal texts (player stats), the gold pickup sparkle (a gold puppet that vanished).
 
@@ -20,6 +23,7 @@ const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/
 const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
+const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
 const PF := Snapshot.PlayerField
 # Announced with BATTLE_START (rockets, grenades, landmines, ... all use it).
 const EXPLOSION_SCENE := "res://projectiles/explosion.tscn"
@@ -32,6 +36,7 @@ const MAX_STAT_TEXTS := 16  # per snapshot (a build can add a stat with every ki
 var _explosions := {}  # instance id -> animation position at the last capture
 var _picked := []  # [position, boost] of boosted gold picked up since the last capture
 var _stat_texts := []  # [player, stat, value] added (removed: negative) since the last capture
+var _lashes := {}  # weapon instance id -> its attack animation's position at the last capture
 var _bonus := []  # [value, visible] last captured
 var _bonus_since := -STATE_REFRESH
 var _wave_end := -1  # WAVE_* flags last captured, -1 while the wave runs
@@ -41,6 +46,7 @@ var _last_stats := {}  # player index -> [health, max health, level] of the host
 var _state_t := {}  # event kind -> host t of the last state event applied
 var _wave_ended := false
 var _label_shown := false
+var _anims = AnimMirror.new()  # weapon animations without their method tracks
 
 
 # --- host ---
@@ -49,6 +55,7 @@ var _label_shown := false
 # Appends this snapshot's feedback events (type_idx: BattleHost._type_idx).
 func capture(main: Node, events: Array, snapshot_count: int, type_idx: FuncRef) -> void:
 	_capture_explosions(main, events, type_idx)
+	_capture_weapon_anims(main, events)
 	for picked in _picked:
 		events.append([Snapshot.EVENT_GOLD_BOOST, picked[0], picked[1]])
 	_picked.clear()
@@ -105,6 +112,41 @@ func _capture_explosions(main: Node, events: Array, type_idx: FuncRef) -> void:
 	_explosions = seen
 
 
+# A whip or flail plays its attack animation from the start with every attack
+# (AnimatedHitboxShootingBehavior.shoot): new when it was not playing at the last capture or its
+# position went back.
+func _capture_weapon_anims(main: Node, events: Array) -> void:
+	var seen := {}
+	var players: Array = main.get("_players")
+	for p in players.size():
+		var weapons: Array = players[p].current_weapons
+		for k in weapons.size():
+			var player = attack_player(weapons[k])
+			if player == null or not player.is_playing():
+				continue
+			if player.current_animation != weapons[k]._shooting_behavior.animation_name:
+				continue
+			var key: int = weapons[k].get_instance_id()
+			var position: float = player.current_animation_position
+			seen[key] = position
+			if position < _lashes.get(key, INF):
+				events.append([Snapshot.EVENT_WEAPON_ANIM, p, k, position])
+	_lashes = seen
+
+
+# The AnimationPlayer a weapon attacks with, or null (every other weapon).
+static func attack_player(weapon: Node):
+	if not is_instance_valid(weapon):
+		return null
+	var behavior = weapon.get("_shooting_behavior")
+	if not behavior is AnimatedHitboxShootingBehavior:
+		return null
+	var player = weapon.get_node_or_null("AnimationPlayer")
+	if not player is AnimationPlayer or not player.has_animation(behavior.animation_name):
+		return null
+	return player
+
+
 # What the end of the wave shows: main.clean_up_room's outcome, and whether the label is up
 # (it starts later on a won run and is hidden again before the level-up panels).
 static func wave_end_flags(main: Node) -> int:
@@ -156,6 +198,8 @@ func fire(main: Node, types: Dictionary, t: int, event: Array) -> void:
 			_show_boost(main, event[1], event[2])
 		Snapshot.EVENT_STAT:
 			_show_stat(main, event[1], event[2], event[3])
+		Snapshot.EVENT_WEAPON_ANIM:
+			lash(main, event[1], event[2], event[3])
 		Snapshot.EVENT_BONUS_GOLD, Snapshot.EVENT_WAVE_END:
 			# Repeated state: an older copy that arrives late must not undo a newer one.
 			if t < _state_t.get(event[0], -1):
@@ -196,6 +240,24 @@ func explode(main: Node, scene, position: Vector2, scale: float, smoke: int) -> 
 	animation_player.stop(true)
 	animation_player.play(EXPLODE_ANIMATION)
 	return explosion
+
+
+# The puppet weapon's own attack animation from where the host's was, without its method track:
+# that opens the hitbox and plays the sound, which are the host's (damage events, EVENT_SOUND).
+func lash(main: Node, player_index: int, weapon_index: int, position: float) -> bool:
+	var players: Array = main.get("_players")
+	if player_index >= players.size() or players[player_index].dead:
+		return false
+	var weapons: Array = players[player_index].current_weapons
+	var player = attack_player(weapons[weapon_index]) if weapon_index < weapons.size() else null
+	if player == null:
+		return false
+	var name: String = weapons[weapon_index]._shooting_behavior.animation_name
+	var animation: Animation = _anims._without_method_tracks(player, name)
+	player.stop()
+	player.play(name)
+	player.seek(clamp(position, 0.0, animation.length), true)
+	return true
 
 
 func _show_boost(main: Node, position: Vector2, boost: int) -> void:
