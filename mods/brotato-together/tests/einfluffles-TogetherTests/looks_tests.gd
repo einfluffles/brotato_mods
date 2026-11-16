@@ -11,6 +11,7 @@ const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/loo
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
+const FacingTests := preload("res://mods-unpacked/einfluffles-TogetherTests/facing_tests.gd")
 const ENEMY := "res://entities/units/enemies/crash_zone/basic/baby_alien/baby_alien.tscn"
 const BULLET := "res://projectiles/bullet_enemy/enemy_projectile.tscn"
 const CHARM := "res://effect_behaviors/enemies/charm_enemy_effect_behavior.tscn"
@@ -21,6 +22,7 @@ const EXPLOSION := "res://projectiles/explosion.tscn"
 const ARSONIST_FIRE := "res://items/characters/arsonist/arsonist_effect_explosion_fire.tres"
 
 var _t: Node
+var _facing = null  # FacingTests, kept alive across its yields
 
 
 func run(test_mod: Node, together: Node):
@@ -30,6 +32,8 @@ func run(test_mod: Node, together: Node):
 	_test_host_sparse()
 	_test_resolve()
 	yield(_test_battle(together), "completed")
+	_facing = FacingTests.new(_t)
+	yield(_facing.run(together), "completed")
 
 
 # --- wire ---
@@ -39,12 +43,13 @@ func _test_wire() -> void:
 	_t._check(Looks.ALL == Snapshot.LOOK_BITS, "every look bit is accepted by the parser")
 	var view: Dictionary = SnapshotTests.new(_t).scenario(2, 12, 6, 4, 2, 4, 3, 2, true)
 	var plain := Snapshot.encode(view)
-	_t._check(plain[-1] == 0 and not Snapshot.parse(plain).empty(), "no looks: one count byte")
+	_t._check(plain[-2] == 0 and not Snapshot.parse(plain).empty(), "no looks: one count byte")
 	var last: int = view.ids.size() - 1
 	view["looks"] = {
 		0: Looks.CHARMED | Looks.CURSED,
 		5: Looks.BURNING | Looks.BURN_BLUE,
-		last: Looks.BOOSTED,
+		last: Looks.BOOSTED | Looks.MECA,
+		3: Looks.MUTANT,
 		7: 0,  # just became plain
 	}
 	var parsed := Snapshot.parse(Snapshot.encode(view))
@@ -52,17 +57,9 @@ func _test_wire() -> void:
 		not parsed.empty() and _same(parsed.get("looks", {}), view.looks),
 		"looks survive the round trip %s" % [parsed.get("looks")]
 	)
-	var bad := {
-		"look index out of range": {view.ids.size(): Looks.BURNING},
-		"unknown look bit": {0: Snapshot.LOOK_BITS + 1},
-	}
-	for label in bad:
-		var broken := view.duplicate(true)
-		broken.looks = bad[label]
-		var bytes := Snapshot.encode(broken)
-		if label == "unknown look bit":  # encode masks it: corrupt the byte on the wire
-			bytes[-1] = Snapshot.LOOK_BITS + 1
-		_t._check(Snapshot.parse(bytes).empty(), "malformed looks rejected: %s" % label)
+	var broken := view.duplicate(true)  # no unknown bit is left to reject: a byte holds eight
+	broken.looks = {view.ids.size(): Looks.BURNING}
+	_t._check(Snapshot.parse(Snapshot.encode(broken)).empty(), "look index out of range rejected")
 
 
 # A late wave with a burn build: 100 burning enemies and 5 charmed ones, the turn they all

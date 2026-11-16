@@ -27,7 +27,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   state]; u16 entity count, types as runs
   [varint type, varint length], u16 net ids, 4-bit flags, i16 x/y per entity not resting; poses as
   [varint index, u8 count, f32 values]; u8 event count + events (damage 7-8 B, sound 5-10 B, anim
-  8 B + name; protocol 11: explosion 9 B, bonus gold 3-5 B, wave end 2 B, gold boost 6 B). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
+  8 B + name; protocol 11: explosion 9 B, bonus gold 3-5 B, wave end 2 B, gold boost 6 B); the looks
+  and angles sections (see "Lasting looks", "Projectile angles"). Parsing is strict (bounds, counts, NaN, ASCII names, no trailing bytes) → whole snapshot dropped.
   Sparse data: `FLAG_REST` entities (unmoved for 4 snapshots: gold, structures, idle units) leave out their
   position except every 15th snapshot (staggered by id); player HUD stats only for 4 snapshots after a
   change and every 10th. The client fills both from earlier snapshots (`Snapshot.resolve`, which also builds
@@ -135,9 +136,22 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `Boss.init` does. Before, every elite showed a full bar for the whole fight.
 - Puppet timers: all paused, except a unit's `FlashTimer` and a `UIProgressBar`'s timer, whose timeouts
   only put the sprite's material / the bar's tint back. Paused, a hit unit stayed white until it died.
-- Projectile puppets face the direction between the two snapshots around render time (not the motion
-  of the last frame), stay hidden until they have two samples (a pooled puppet would sit one snapshot
-  long with the rotation of its last flight) and restart their animation when reused.
+- Projectile angles (`sync/facing.gd`, protocol 18): a projectile puppet has the host's rotation.
+  Until then it faced the direction between the two snapshots around render time, and positions
+  travel in half pixels: a slow shot's angle wobbled with every snapshot. The red line an enemy
+  slash shows before it strikes (mad slasher, pachyrhinosaurus: 300 px/s, 10 px per snapshot)
+  swung over about 4 degrees 30 times a second (measured: 0.644 to 0.714 rad for a host angle of
+  0.684), and a shot the game does not turn into its flight was turned all the same.
+  Host: every projectile without a pose (a laser's aim is a pose value) sends its rotation for 3
+  snapshots after it changes (a new shot, a bounce; a spinning one every time) and every 15th
+  (staggered by id). Wire: a section after the looks, `varint count` + per entry `varint gap to
+  the previous index + 1, i16 angle`; 3 B per entry, 1 B when there is none. `Snapshot.parse`
+  hands them out by net id, `Facing.resolve` keeps the newest per id while the id is listed (an
+  older snapshot neither turns one back nor drops one), and the client turns a spinning shot
+  between the two snapshots it renders. A puppet whose angle never arrived (every snapshot that
+  carried it lost) faces its motion as before and stays hidden for its first snapshot; one with
+  an angle shows at once. Puppets restart their animation when reused. Not mirrored: a
+  projectile's scale (the baryonyx' lasers are 0.55 on the host).
 - Bullet-hell waves: `main._ready` adds its own generator (a random pattern) on the client too;
   `BattleClient._freeze` frees it. The host's bullets arrive as puppets.
 - Scene state (protocol 13, `sync/battle_scene.gd`, one instance per battle on each side):
@@ -175,7 +189,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   animations (state).
 - Lasting looks (`sync/looks.gd`, protocol 12): states the game shows for seconds or for an entity's
   life, from game logic puppets never run. One byte of bits per entity: `BURNING` (+ `BURN_RED` /
-  `BURN_BLUE`, the gradient `BurningParticles._update_color` picked), `CHARMED`, `CURSED`, `BOOSTED`.
+  `BURN_BLUE`, the gradient `BurningParticles._update_color` picked), `CHARMED`, `CURSED`, `BOOSTED`,
+  and since protocol 18 `MECA` / `MUTANT` (the byte is full).
   The host reads them off what the game shows: the outline colours in `Entity._outline_colors`
   (`Utils.CHARM_COLOR` from `CharmEnemyEffectBehavior.charm`, `CURSE_COLOR` from
   `CurseEnemyEffectBehavior.init` and cursed structures / pets, `BOOST_COLOR` from `Entity.boost`
@@ -199,9 +214,14 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `burning_data`, so nothing spreads; no burning timer), the `CurseParticles` of
   `curse_enemy_effect_behavior.tscn` instanced without its script next to (not among) the effect
   behaviors, a pet's `curse_particles`, the charm material on a shot. A puppet that leaves the
-  snapshots (death, pool reuse) loses its look. Not mirrored: the meca / mutant evolution looks
-  (outline plus a texture swap, `MecaEnemyEffectBehavior.init`), percent-damage-taken outlines (lute,
-  diver), the one-shot boost particles (`stats_boosted` -> `EffectsManager`).
+  snapshots (death, pool reuse) loses its look. An evolved enemy (primal_dread; the outline is
+  `MECA_COLOR` / `MUTANT_COLOR` from `Meca` / `MutantEnemyEffectBehavior.init`) also gets its
+  `evolution_meca` / `evolution_mutant` sprite like that `init` sets it (the brachiosaurus foot:
+  its foot sprite), before the outline (the shader reads the texture's size); the scene's own
+  sprite comes back when the look ends, so a pooled puppet reused for a plain enemy is plain.
+  Until protocol 18 clients saw every evolved enemy as a plain one. Not mirrored:
+  percent-damage-taken outlines (lute, diver), the one-shot boost particles (`stats_boosted` ->
+  `EffectsManager`).
 - Puddles (`sync/puddles.gd`, protocol 12): acid / petrol / fire puddles (`GPESpawner`, children of
   `main._gpe_container` / `_fire_puddles_container`) are tracked like gold: static, so mostly
   `FLAG_REST`. A puddle's sprite (index into `puddle_sprites`) and target scale (`GPESpawner`'s size,

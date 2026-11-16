@@ -32,6 +32,7 @@ const FeedbackMirror := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
 )
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
+const Facing := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/facing.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
 const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
@@ -447,6 +448,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		_snapshot_gaps.note(session, host_id, snapshot.t, LOG_NAME, _render_delay.text(), _paused)
 	Looks.resolve(snapshot, _resolve_cache)  # first: it reads the entity indices as parsed
 	Snapshot.resolve(snapshot, _resolve_cache)
+	Facing.resolve(snapshot, _resolve_cache)
 	_buffer.insert(i, snapshot)
 	for event in snapshot.events:
 		if _events.size() < MAX_QUEUED_EVENTS:
@@ -616,6 +618,8 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 	var poses: Dictionary = to.poses
 	var from_positions: PoolVector2Array = from.positions
 	var from_poses: Dictionary = from.poses
+	var angles: Dictionary = to.get("angles_by_id", {})
+	var from_angles: Dictionary = from.get("angles_by_id", {})
 	Snapshot.index_of(from, 0)  # builds the index
 	var from_index: Dictionary = from.index
 	var max_jump: float = MAX_INTERP_SPEED * max(to.t - from.t, 1) / 1000.0
@@ -641,11 +645,22 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 		var kind: int = _entity_kinds[id]
 		var position := positions[i]
 		var j: int = from_index.get(id, -1)
+		# A projectile's rotation is the host's (sync/facing.gd); a spinning one turns between
+		# the two snapshots.
+		var facing = angles.get(id) if kind & KIND_PROJECTILE else null
+		if facing != null:
+			var before = from_angles.get(id)
+			if before != null and before != facing:
+				facing = lerp_angle(before, facing, alpha)
+			if node.rotation != facing:
+				node.rotation = facing
 		if j >= 0:
 			var start := from_positions[j]
 			if start != position:
 				if start.distance_to(position) <= max_jump:
-					if kind & KIND_PROJECTILE:  # faces where it flies
+					# Until its angle arrives it faces where it flies (not a laser: its aim
+					# is a pose value).
+					if kind & KIND_PROJECTILE and facing == null and not kind & KIND_POSE:
 						var angle: float = (position - start).angle()
 						if node.rotation != angle:
 							node.rotation = angle
@@ -674,9 +689,10 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 				sprite.scale.x = -sprite.scale.x
 			if sprite.flip_h != bool(node_flags & Snapshot.FLAG_FLIP_H):
 				sprite.flip_h = not sprite.flip_h
-		# A projectile seen once has no direction yet: it would sit there for a snapshot with
-		# the rotation of the pooled puppet's last flight.
-		var hidden: bool = node_flags & Snapshot.FLAG_HIDDEN or (kind & KIND_PROJECTILE and j < 0)
+		# A projectile seen once without its angle has no direction yet: it would sit there for
+		# a snapshot with the rotation of the pooled puppet's last flight.
+		var unaimed: bool = kind & KIND_PROJECTILE and j < 0 and facing == null
+		var hidden: bool = node_flags & Snapshot.FLAG_HIDDEN or unaimed
 		if node.visible == hidden:
 			node.visible = not hidden
 		if kind & KIND_POSE:  # also without values: the host's parts are gone then
