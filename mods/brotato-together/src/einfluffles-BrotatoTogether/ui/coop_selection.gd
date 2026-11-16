@@ -11,6 +11,8 @@ const SLOT_LABEL := "BrotatoTogetherSlotLabel"
 const COLOR_HINT := "BrotatoTogetherColorHint"
 const COLOR_ACTION := "ui_info"
 const ICON_SIZE := 40
+const HINT_MARGIN := 32  # from the screen's right edge, like the Back button's from the left
+const HINT_TOP := 26  # the DLC bar's top in co-op (ItemSetBar.horizontal_position)
 
 var _scene: Node = null
 var _color_hint: Control = null
@@ -83,14 +85,28 @@ func _update_color_hint(scene: Node, count: int) -> void:
 		_color_hint.visible = RunData.is_coop_run and count > 0
 
 
-# Below the title: "[F] / [Y]  Change colour" with the game's own key glyphs.
+# "[F] / [Y]  Change colour" with the game's own key glyphs, in the free strip at the top right:
+# level with the Back button and the DLC bar (top left), above the title (y 75 in the game's
+# 1920x1080 layout). A child of the scene root, anchored to its top right corner, so it takes no
+# space in the game's containers (under the title it pushed the grid down until it scrolled).
 func _add_color_hint(scene: Node) -> Control:
-	var title: Node = scene.get_node_or_null("MarginContainer/VBoxContainer/Title")
-	if title == null:
+	if scene.get_node_or_null("MarginContainer/VBoxContainer/Title") == null:
 		return null
 	var row := color_hint_row()
 	row.name = COLOR_HINT
-	title.get_parent().add_child_below_node(title, row)
+	row.anchor_left = 1.0
+	row.anchor_right = 1.0
+	row.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	row.margin_left = -HINT_MARGIN
+	row.margin_right = -HINT_MARGIN
+	row.margin_top = HINT_TOP
+	row.margin_bottom = HINT_TOP + ICON_SIZE  # grows to the label's height (~46): ends by y 75
+	# Drawn right after the Back button: under the cursors (focus emulators) and popups.
+	var back: Node = scene.get_node_or_null("BackButton")
+	if back != null:
+		scene.add_child_below_node(back, row)
+	else:
+		scene.add_child(row)
 	return row
 
 
@@ -120,6 +136,7 @@ static func add_icon(row: Control, texture: Texture) -> void:
 	icon.expand = true
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.rect_min_size = Vector2(ICON_SIZE, ICON_SIZE)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(icon)
 
 

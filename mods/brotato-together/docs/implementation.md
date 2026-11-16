@@ -931,7 +931,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   colour if free, else the first free one (never two equal). `ui_info` (F / Y, unused on this screen;
   remote players send it as a button) cycles to the next free colour; `CoopSelection` restyles what is on
   screen (focus styles, panels, locked panels, join progress). A hint row ("[F] / [Y] Change
-  colour", the game's glyphs) is added under the title. Colours travel as palette indices (`colors`) in
+  colour", the game's glyphs) sits at the top right, level with the Back button and the DLC bar and
+  above the title: a child of the scene root anchored to its top right corner, outside the game's
+  containers, so the screen lays out as without the mod (in the title's VBoxContainer it pushed the
+  character grid down until it scrolled). Colours travel as palette indices (`colors`) in
   the menu section, BATTLE_START and the shop state; the client validates them (one distinct palette index per slot)
   and mirrors them until it leaves the lobby (`bt_clear_remote_colors`). Nothing is saved.
 - **Locked characters**: the game's `LockedPanel` (challenge text via
