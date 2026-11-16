@@ -119,6 +119,30 @@ paused and resumed again). A host with nobody connected pauses as always.
 Aiming follows each player's own manual-aim setting (mouse or right stick). If a player drops and
 doesn't come back within 20 s, the host makes their level-up / crate / shop choices so the run goes on.
 
+## Launch options
+
+Set in Steam: right-click *Brotato* → *Properties…* → *General* → *Launch Options*, then restart the
+game.
+
+| Option | What it does |
+|---|---|
+| `+bt_relay` | All online traffic goes through Steam's relay servers, never directly between the two players. |
+
+**When to use `+bt_relay`:** everybody stands still for a second or three, again and again on a
+fixed beat (about every 12 s, in battle and in the shop), while both internet lines are fine.
+
+Steam keeps two routes to the other player, a direct one and one through its relays, uses the
+better one and keeps probing the other to see whether it should switch. When both are about
+equally fast, that weighing is the suspected cause of the stalls. With `+bt_relay` there is only
+the relayed route and nothing to weigh. The price is the detour over Steam's nearest data center
+(for two players near the same one, about the same ping as the direct route).
+
+- Both players set it.
+- It took effect when `modloader.log` says `+bt_relay: sessions go through Steam's relays only`
+  and the connection lines read `relayed via …` and never `direct`.
+- This is a test switch: the cause is not confirmed. If the stalls go on while relayed, the route
+  is not it; please report that with both players' `modloader.log`.
+
 ## Tests
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,

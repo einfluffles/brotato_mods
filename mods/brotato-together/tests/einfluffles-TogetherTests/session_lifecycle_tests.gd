@@ -9,6 +9,7 @@ extends Reference
 #    send -> resync, member join accepts the session
 #  - join compatibility (game / mod version; DLC never rejects) with the reason shown on the client
 #  - the ping is the network's round trip: not the frames either game let the messages wait
+#  - the +bt_relay launch option switches Steam's direct route off
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
@@ -42,6 +43,8 @@ class FakeSteam:
 	var invited := []  # lobby ids the invite dialog was opened for
 	var presence := {}
 	var inbox := []  # messages Steam has received and the game has not read yet
+	var config_values := {}  # ESteamNetworkingConfigValue -> value set
+	var config_accepted := true
 
 	# stamped: with Steam's receive time, as GodotSteam delivers it.
 	func queue(sender: int, channel: int, data: PoolByteArray, stamped := true) -> void:
@@ -118,6 +121,10 @@ class FakeSteam:
 	func setLobbyJoinable(_lobby_id: int, _joinable: bool) -> bool:
 		return true
 
+	func setGlobalConfigValueInt32(config: int, value: int) -> bool:
+		config_values[config] = value
+		return config_accepted
+
 	func getNumLobbyMembers(_lobby_id: int) -> int:
 		return lobby_members.size()
 
@@ -157,6 +164,7 @@ func run(t: Node, together: Node) -> void:
 	_test_ping(transport, session)
 	_test_compat()
 	_test_join_presence(transport)
+	_test_relay_route(transport)
 
 	session.disconnect("peer_ready", self, "_on_peer_ready")
 	transport.leave_lobby()
@@ -521,3 +529,24 @@ func _test_join_presence(transport: Node) -> void:
 	_t._check(_steam.presence.has("connect"), "slot free again: Join on")
 	transport.leave_lobby()
 	_t._check(not _steam.presence.has("connect") and transport.join_presence == "", "left: Join off")
+
+
+# Launch option +bt_relay: Steam's direct (ICE) route off, so sessions are relayed.
+func _test_relay_route(transport: Node) -> void:
+	_t._check(
+		not transport.apply_route(["--foo", "+connect_lobby", "5"]) and _steam.config_values.empty()
+		and not transport.relay_only,
+		"route: Steam's choice without the launch option"
+	)
+	_t._check(
+		transport.apply_route(["+bt_relay"]) and transport.relay_only
+		and _steam.config_values.size() == 1 and _steam.config_values.get(104) == 0,
+		"route: +bt_relay switches the direct route off %s" % [_steam.config_values]
+	)
+	_steam.config_accepted = false
+	_t._check(
+		not transport.apply_route(["+bt_relay"]) and not transport.relay_only,
+		"route: not claimed when Steam refuses the setting"
+	)
+	_steam.config_accepted = true
+	transport.relay_only = false

@@ -34,6 +34,12 @@ const MAX_MESSAGES_PER_POLL := 128
 const MAX_HELD_MSEC := 60000  # a longer wait is a clock that does not fit: unknown
 const KICK_CLOSE_MSEC := 3000  # a kicked member's session stays open this long for the KICK
 const LOBBY_KEY_MOD := "brotato_together"
+# Launch option: sessions only through Steam's relays, never directly between the two machines.
+const RELAY_ARG := "+bt_relay"
+# ESteamNetworkingConfigValue P2P_Transport_ICE_Enable and its "disable" value, by GodotSteam's
+# names, with the Steamworks SDK's numbers when the class does not list them.
+const CONFIG_ICE_ENABLE := ["NETWORKING_CONFIG_P2P_TRANSPORT_ICE_ENABLE", 104]
+const CONFIG_ICE_DISABLE := ["NETWORKING_CONFIG_P2P_TRANSPORT_ICE_DISABLE", 0]
 
 const LinkWatch := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/link_watch.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:Transport"
@@ -50,6 +56,7 @@ var pending_join_id := 0  # invite waiting for confirmation (joining leaves the 
 # Steam's lobby; after that it can join again.
 var kicked := {}
 
+var relay_only := false  # RELAY_ARG took effect (see apply_route)
 var join_presence := ""  # the "connect" rich presence we advertise ("" = no Join button)
 var _lobby_tag := ""
 var _next_send_warning_msec := 0
@@ -76,9 +83,41 @@ func setup(lobby_tag: String) -> bool:
 	_connect_steam("network_messages_session_request", "_on_session_request")
 	_connect_steam("network_messages_session_failed", "_on_session_failed")
 	steam.initRelayNetworkAccess()
+	apply_route(Array(OS.get_cmdline_args()))
 	_clear_join_presence()  # never inherit a Join button from an earlier (crashed) session
 	_check_launch_args()
 	return true
+
+
+# Steam keeps two routes to a peer, a direct one (ICE, through both players' NATs) and one
+# through its relays (SDR), uses the better one and keeps probing the other to see whether to
+# switch. With RELAY_ARG among the launch options the direct route is off: one route, nothing
+# to switch between. For telling a route problem from anything else (a stall that comes back on
+# a fixed beat while both lines are fine); the relay costs the detour to Steam's nearest data
+# center. Applies to sessions opened afterwards, so it is set before any lobby. Meant for both
+# players (whether one side alone keeps the direct route from forming is not tested).
+func apply_route(args: Array) -> bool:
+	relay_only = false
+	if not RELAY_ARG in args:
+		return false
+	if steam == null or not steam.has_method("setGlobalConfigValueInt32"):
+		ModLoaderLog.warning("%s: this GodotSteam cannot set the route" % RELAY_ARG, LOG_NAME)
+		return false
+	var set = steam.setGlobalConfigValueInt32(
+		_steam_constant(CONFIG_ICE_ENABLE), _steam_constant(CONFIG_ICE_DISABLE)
+	)
+	relay_only = set == true
+	if relay_only:
+		ModLoaderLog.info("%s: sessions go through Steam's relays only" % RELAY_ARG, LOG_NAME)
+	else:
+		ModLoaderLog.warning("%s: Steam refused the setting (%s)" % [RELAY_ARG, set], LOG_NAME)
+	return relay_only
+
+
+static func _steam_constant(entry: Array) -> int:
+	if ClassDB.class_has_integer_constant("Steam", entry[0]):
+		return ClassDB.class_get_integer_constant("Steam", entry[0])
+	return entry[1]
 
 
 func is_active() -> bool:
