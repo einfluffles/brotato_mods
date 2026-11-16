@@ -12,6 +12,10 @@ const FocusTargets := preload(
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
+const Settings := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/settings.gd")
+const MenuOptionsButton := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/extensions/ui/menu_options.gd"
+)
 const PISTOL := "weapon_pistol_1"
 const CROWD := 350  # enemies in the crowded wave
 const STALL_MSEC := 60  # added to every frame of it: a machine that cannot keep up
@@ -29,11 +33,13 @@ func _init(test_mod: Node) -> void:
 func run(together: Node):
 	var meter: Node = together.damage_meter
 	meter.connect("changed", self, "_on_changed")
-	var item = _test_measure()
+	var item = _test_measure(meter)
 	_test_board(meter)
 	yield(_test_hud(meter, item), "completed")
 	yield(_test_shop(item), "completed")
 	yield(_test_crowded_wave(meter), "completed")
+	_test_cost(meter)
+	yield(_test_solo_shop(meter), "completed")
 	meter.disconnect("changed", self, "_on_changed")
 	meter.clear_state(StateStream.DAMAGE)
 
@@ -44,12 +50,12 @@ func _on_changed() -> void:
 
 # Two pistols of player 0 are one source; an item's damage is what its counter gained since the
 # wave started; a counter that is no damage is left out. Returns the damage item.
-func _test_measure():
+func _test_measure(meter: Node):
 	RunData.add_weapon(_t._find_by_id(ItemService.weapons, PISTOL), 0)
 	var pistols: Array = RunData.get_player_weapons(0)
 	pistols[0].dmg_dealt_last_wave = 120
 	pistols[1].dmg_dealt_last_wave = 30
-	var mine := DamageMeter.measure_player(0, {})
+	var mine: Array = meter.measure_player(0, {})
 	_t._check(mine == [150, [[PISTOL, 2, 150]]], "equal weapons are one source %s" % [mine])
 	var item = null
 	var other = null
@@ -70,7 +76,7 @@ func _test_measure():
 	var baseline: Dictionary = RunData.tracked_item_effects[1].duplicate(true)
 	RunData.add_tracked_value(1, item.my_id_hash, 77)
 	RunData.add_tracked_value(1, other.my_id_hash, 9)
-	var theirs := DamageMeter.measure_player(1, baseline)
+	var theirs: Array = meter.measure_player(1, baseline)
 	_t._check(
 		theirs[0] == 77 and theirs[1] == [[item.my_id, 1, 77]],
 		"an item's damage is what its counter gained this wave %s (%s)" % [theirs, item.my_id]
@@ -131,7 +137,7 @@ func _test_hud(meter: Node, item):
 	meter.measure()
 	var icon: Texture = meter.data_of(PISTOL).icon
 	_t._check(
-		rows[0].visible and rows[0].get_child(1).text == "1,234" and rows[0].get_child(2).texture == icon,
+		rows[0].visible and "1,234" in rows[0].get_child(1).text and rows[0].get_child(2).texture == icon,
 		"the row shows the total and the strongest source (%s)" % rows[0].get_child(1).text
 	)
 	_t._check(
@@ -139,8 +145,8 @@ func _test_hud(meter: Node, item):
 		"with its number, and no second source where there is none"
 	)
 	_t._check(
-		item == null or (rows[1].visible and rows[1].get_child(1).text == "77"),
-		"the other player's row shows that player's own"
+		item == null or (rows[1].visible and rows[1].get_child(1).text == "77  6%"),
+		"the other player's row shows that player's own, with its share of the team's"
 	)
 
 
@@ -183,7 +189,10 @@ func _test_shop(item):
 	)
 	var list: Node = boards[0].get_child(0)
 	var title: String = list.get_child(0).text
-	_t._check("1,234" in title, "the board's title is the total (%s)" % title)
+	_t._check(
+		"1,234" in title and Text.text("WAVE", [str(RunData.current_wave)]) in title,
+		"the board's title is the wave and the total (%s)" % title
+	)
 	var row: Node = list.get_child(1)
 	_t._check(
 		row.visible and row.get_child(2).text == "1,234  100%" and not list.get_child(2).visible,
@@ -201,6 +210,49 @@ func _test_shop(item):
 	yield(_t.get_tree(), "idle_frame")
 	yield(_t.get_tree(), "idle_frame")
 	_t._check(not boards[1].visible, "the board goes when the cursor leaves")
+	yield(_test_switch(shop, buttons, boards), "completed")
+
+
+# Options > Gameplay has the switch; off, the buttons and boards are gone (a cursor on one moves
+# to reroll, and reroll leads where it did before), and the setting is kept.
+func _test_switch(shop: Node, buttons: Array, boards: Array):
+	var meter: Node = buttons[0].get_node(MenuOptionsButton.METER)
+	var options: Node = load("res://ui/menus/pages/menu_options.tscn").instance()
+	shop.add_child(options)
+	var gameplay: Node = options.boss_hp_bar_button.get_parent()
+	var toggle = gameplay.get_node_or_null(MenuOptionsButton.BUTTON_NAME)
+	_t._check(
+		toggle is CheckButton and toggle.pressed
+		and toggle.get_index() == options.boss_hp_bar_button.get_index() + 1,
+		"the options' Gameplay tab has the damage meter's switch, on"
+	)
+	if not toggle is CheckButton:
+		options.free()
+		return
+	var emulator = Utils.get_focus_emulator(1, shop)
+	var reroll: Control = shop._get_reroll_button(1)
+	emulator.focused_control = buttons[1]
+	yield(_t.get_tree(), "idle_frame")
+	toggle.pressed = false
+	yield(_t.get_tree(), "idle_frame")
+	yield(_t.get_tree(), "idle_frame")
+	var gone: bool = not buttons[0].visible and not buttons[1].visible and not boards[1].visible
+	_t._check(not meter.shown and gone, "switched off: no buttons, no board")
+	var right = reroll.get_node_or_null(reroll.focus_neighbour_right)
+	_t._check(
+		emulator.focused_control == reroll and right != buttons[1],
+		"the cursor that was on a button is on reroll, which no longer leads to it"
+	)
+	_t._check(Settings.read(DamageMeter.SETTING, true) == false, "the switch is kept in the config")
+	toggle.pressed = true
+	yield(_t.get_tree(), "idle_frame")
+	right = reroll.get_node_or_null(reroll.focus_neighbour_right)
+	_t._check(
+		meter.shown and buttons[1].visible and right == buttons[1],
+		"switched on again: the buttons are back"
+	)
+	_t._check(Settings.read(DamageMeter.SETTING, false) == true, "and so is the setting")
+	options.free()
 
 
 # A kill took all of the enemy's health; one the game removed (its cap on enemies) had lost what
@@ -260,9 +312,10 @@ func _test_crowded_wave(meter: Node):
 			alive += 1
 			lost += int(unit.max_stats.health - unit.current_stats.health)
 	var total := _total(meter)
-	var rising := totals.size() >= 3
+	# At a few frames a second, a second can pass without a hit: never less, and more at the end.
+	var rising: bool = totals.size() >= 3 and totals[-1] > totals[0]
 	for i in range(1, totals.size()):
-		rising = rising and totals[i] > totals[i - 1]
+		rising = rising and totals[i] >= totals[i - 1]
 	print(
 		"  info: crowded wave: %d frames in 5 s, %d enemies alive, %d kills, meter per second %s"
 		% [frames, alive, _kills, totals]
@@ -277,3 +330,95 @@ func _total(meter: Node) -> int:
 	for entry in meter.board.players:
 		total += entry[0]
 	return total
+
+
+# A late endless run, four players with 6 weapons and 250 items each, every counter gaining:
+# what a measurement costs and what the board weighs on the wire.
+func _test_cost(meter: Node) -> void:
+	CoopService.connected_players.clear()
+	for i in 4:
+		CoopService.connected_players.push_back([i, CoopService.PlayerType.GAMEPAD_XBOX])
+	RunData.reset()
+	RunData.set_coop_run(true)
+	RunData.set_player_count(4)
+	var pool: Array = ItemService.items
+	var weapons: Array = ItemService.weapons
+	for p in 4:
+		RunData.add_character(ItemService.characters[p], p)
+		for w in 6:
+			RunData.add_weapon(weapons[(p + w * 7) % weapons.size()], p)
+		for i in 250:
+			RunData.add_item(pool[(i * 13 + p) % pool.size()], p)
+	meter._baseline = RunData.tracked_item_effects.duplicate(true)
+	var calls := 20
+	var started := OS.get_ticks_usec()
+	for call in calls:
+		for p in 4:
+			for weapon in RunData.get_player_weapons(p):
+				weapon.dmg_dealt_last_wave += 1000 + call
+			var tracked: Dictionary = RunData.tracked_item_effects[p]
+			for key in tracked:
+				if typeof(tracked[key]) == TYPE_INT:
+					tracked[key] += 100 + call
+	var setting := (OS.get_ticks_usec() - started) / float(calls)
+	started = OS.get_ticks_usec()
+	for _i in calls:
+		meter.measure()
+	var live := (OS.get_ticks_usec() - started) / float(calls)
+	var live_size := var2bytes([StateStream.DAMAGE, 1, meter.state_body(StateStream.DAMAGE)]).size()
+	started = OS.get_ticks_usec()
+	for _i in calls:
+		meter.measure(true)
+	var final := (OS.get_ticks_usec() - started) / float(calls)
+	var size := var2bytes([StateStream.DAMAGE, 1, meter.state_body(StateStream.DAMAGE)]).size()
+	var sources := 0
+	for entry in meter.board.players:
+		sources += entry[1].size()
+	_t._check(live < 1500.0, "a measurement in a late run stays under 1.5 ms (%.0f usec)" % live)
+	_t._check(live_size < 800, "the board of a running wave stays under 800 B (%d)" % live_size)
+	print(
+		(
+			"  info: damage meter, late run, 4 players: %.0f usec per measurement, %d B during the"
+			+ " wave; at its end %.0f usec, %d B for %d sources (setting the counters: %.0f usec)"
+		)
+		% [live, live_size, final, size, sources, setting]
+	)
+
+
+# The solo shop: the button next to reroll, the board laid over the shop items while the button
+# has the focus.
+func _test_solo_shop(meter: Node):
+	CoopService.clear_coop_players()
+	RunData.reset()
+	RunData.add_character(ItemService.characters[0], 0)
+	RunData.add_weapon(_t._find_by_id(ItemService.weapons, PISTOL), 0)
+	_t.get_tree().change_scene(RunData.get_shop_scene_path())
+	for _i in 4:
+		yield(_t.get_tree(), "idle_frame")
+	# After the battle scene before it is gone: leaving, it measured its own last word.
+	meter.apply_state(StateStream.DAMAGE, {"wave": 2, "players": [[50, [[PISTOL, 1, 50]]]]}, 0)
+	var shop := _t.get_tree().current_scene
+	var reroll: Control = shop._get_reroll_button(0)
+	var slots: Control = shop._get_shop_items_container(0)
+	var button = reroll.get_parent().get_node_or_null(DamageViews.BUTTON_NAME)
+	var board = slots.get_node_or_null(DamageViews.BOARD_NAME)
+	_t._check(button != null and board != null and not board.visible, "the solo shop has them too")
+	if button == null or board == null:
+		return
+	var around: Rect2 = slots.get_parent().get_global_rect()
+	button.grab_focus()
+	yield(_t.get_tree(), "idle_frame")
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(
+		board.visible and board.get_global_rect().intersects(slots.get_global_rect()),
+		"the focus on the button puts the board over the shop items %s" % [board.get_global_rect()]
+	)
+	_t._check(
+		slots.get_parent().get_global_rect() == around,
+		"without moving the shop's layout"
+	)
+	_t._check("50" in board.get_child(0).get_child(0).text, "with the wave's total, no share alone")
+	reroll.grab_focus()
+	yield(_t.get_tree(), "idle_frame")
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(not board.visible, "and it goes with the focus")

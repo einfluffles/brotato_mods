@@ -2,13 +2,15 @@ extends Node
 # Where the damage meter (sync/damage_meter.gd) shows, on every machine, in the game's own
 # screens:
 # - In a wave: a row under each player's life bar (above it for the two lower players): the
-#   wave's total and the two strongest sources as icon and number.
-# - In the co-op shop: a button next to each player's reroll button. While a player's cursor
-#   rests on it, the board of the wave before is up over that player's shop items: the total and
-#   the sources with icon, name, number and share. Nothing is pressed and nothing pauses: the
-#   board belongs to the panel of the player who looks at it, the others shop on, and because
-#   cursors are mirrored (ui/focus_targets.gd: "shop_damage") every machine shows whose board
-#   is up.
+#   wave's total, in co-op the player's share of the team's, and the two strongest sources as
+#   icon and number.
+# - In the shop: a button next to each player's reroll button. While a player's cursor rests on
+#   it (or the mouse, or the focus in the solo shop), the board of the wave before is up over
+#   that player's shop items: the wave, the total and share, and the sources with icon, name,
+#   number and share. Nothing is pressed and nothing pauses: the board belongs to the panel of
+#   the player who looks at it, the others shop on, and because cursors are mirrored
+#   (ui/focus_targets.gd: "shop_damage") every machine shows whose board is up.
+# All of it is gone while the meter is switched off on this machine (DamageMeter.shown).
 
 const BATTLE_SCENE := "res://main.tscn"
 const ROW_NAME := "DamageRow"
@@ -21,6 +23,7 @@ const HUD_SOURCES := 2
 const HUD_ICON := Vector2(26, 26)
 const BOARD_ICON := Vector2(36, 36)
 const BUTTON_WIDTH := 60
+const REROLL_RIGHT_META := "brotato_together_reroll_right"  # reroll's own neighbour, on the button
 
 var meter: Node = null  # sync/damage_meter.gd (set by mod_main.gd)
 
@@ -45,7 +48,9 @@ func _process(_delta: float) -> void:
 		_shop = null
 		if scene != null and scene.filename == BATTLE_SCENE:
 			_build_rows(scene)
-		elif scene is CoopShop:
+		elif scene != null and scene.has_method("_get_reroll_button"):
+			# Told by what it can do: naming the shop's classes here would load base_shop.gd
+			# while the mods load, which breaks the game's shop scripts.
 			_shop = scene
 			call_deferred("_build_boards", scene)  # after the shop's own _ready wiring
 	if _shop != null:
@@ -77,9 +82,9 @@ func _build_rows(main: Node) -> void:
 	_fill()
 
 
-func _fill_row(row: HBoxContainer, entry: Array) -> void:
-	row.visible = entry[0] > 0
-	row.get_child(1).text = Text.get_formatted_number(entry[0])
+func _fill_row(row: HBoxContainer, entry: Array, share: String) -> void:
+	row.visible = meter.shown and entry[0] > 0
+	row.get_child(1).text = Text.get_formatted_number(entry[0]) + share
 	for k in HUD_SOURCES:
 		var icon: TextureRect = row.get_child(2 + 2 * k)
 		var label: Label = row.get_child(3 + 2 * k)
@@ -119,11 +124,38 @@ func _build_boards(shop: Node) -> void:
 			var target = null if path.is_empty() else reroll.get_node_or_null(path)
 			if target != null:
 				button.set(side, button.get_path_to(target))
-		reroll.focus_neighbour_right = reroll.get_path_to(button)
+		button.set_meta(REROLL_RIGHT_META, reroll.focus_neighbour_right)
 		var board := _board()
-		slots.get_parent().add_child(board)  # a PanelContainer: the board fills the slots' place
+		if slots.get_parent() is PanelContainer:
+			slots.get_parent().add_child(board)  # co-op: the board fills the slots' place
+		else:
+			board.set_as_toplevel(true)  # solo: laid over the slots when it comes up
+			slots.add_child(board)
 		_boards.append([button, board])
 	_fill()
+	_apply_shown()
+
+
+# The switch: the buttons come and go, and reroll's way to the right with them. A cursor that
+# rests on a button that goes moves to reroll.
+func _apply_shown() -> void:
+	if not is_instance_valid(_shop):
+		return
+	for p in _boards.size():
+		if _boards[p] == null or not is_instance_valid(_boards[p][0]):
+			continue
+		var button: Button = _boards[p][0]
+		var reroll: Control = _shop._get_reroll_button(p)
+		button.visible = meter.shown
+		if meter.shown:
+			reroll.focus_neighbour_right = reroll.get_path_to(button)
+			continue
+		reroll.focus_neighbour_right = button.get_meta(REROLL_RIGHT_META)
+		var emulator = Utils.get_focus_emulator(p, _shop)
+		if emulator != null and emulator.focused_control == button:
+			emulator.focused_control = reroll
+		elif button.has_focus():
+			reroll.grab_focus()
 
 
 # The board: a title and MAX_SOURCES rows of icon, name, number, share.
@@ -157,9 +189,12 @@ func _board() -> PanelContainer:
 	return board
 
 
-func _fill_board(board: PanelContainer, entry: Array) -> void:
+func _fill_board(board: PanelContainer, entry: Array, team_share: String) -> void:
 	var list: Node = board.get_child(0)
-	list.get_child(0).text = Text.text("DAMAGE_DEALT", [Text.get_formatted_number(entry[0])])
+	var dealt: String = Text.get_formatted_number(entry[0]) + team_share
+	var total: String = Text.text("DAMAGE_DEALT", [dealt])
+	var wave: int = meter.board.get("wave", 0)
+	list.get_child(0).text = "%s - %s" % [Text.text("WAVE", [str(wave)]), total]
 	for k in meter.MAX_SOURCES:
 		var row: Node = list.get_child(1 + k)
 		var source = entry[1][k] if k < entry[1].size() else null
@@ -186,9 +221,15 @@ func _show_boards() -> void:
 		var button: Button = _boards[p][0]
 		var emulator = Utils.get_focus_emulator(p, _shop)
 		var cursor = emulator.focused_control if emulator != null else null
-		var up: bool = cursor == button or button.has_focus()
-		if _boards[p][1].visible != up:
-			_boards[p][1].visible = up
+		var up: bool = cursor == button or button.has_focus() or button.is_hovered()
+		var board: Control = _boards[p][1]
+		up = up and meter.shown and button.is_visible_in_tree()
+		if board.visible != up:
+			if up and board.is_set_as_toplevel():
+				var slots: Control = board.get_parent()
+				board.rect_global_position = slots.rect_global_position
+				board.rect_size = slots.rect_size
+			board.visible = up
 
 
 # --- both ---
@@ -196,12 +237,20 @@ func _show_boards() -> void:
 
 func _fill() -> void:
 	var players: Array = meter.board.get("players", [])
-	for p in _rows.size():
-		if _rows[p] != null and is_instance_valid(_rows[p]):
-			_fill_row(_rows[p], players[p] if p < players.size() else [0, []])
-	for p in _boards.size():
-		if _boards[p] != null and is_instance_valid(_boards[p][1]):
-			_fill_board(_boards[p][1], players[p] if p < players.size() else [0, []])
+	var team := 0
+	for entry in players:
+		team += entry[0]
+	for p in int(max(_rows.size(), _boards.size())):
+		var entry: Array = players[p] if p < players.size() else [0, []]
+		# In co-op: the player's part of what the team dealt.
+		var share := ""
+		if players.size() > 1 and team > 0:
+			share = "  %d%%" % int(round(100.0 * entry[0] / team))
+		if p < _rows.size() and _rows[p] != null and is_instance_valid(_rows[p]):
+			_fill_row(_rows[p], entry, share)
+		if p < _boards.size() and _boards[p] != null and is_instance_valid(_boards[p][1]):
+			_fill_board(_boards[p][1], entry, share)
+	_apply_shown()
 
 
 static func _icon(size: Vector2) -> TextureRect:

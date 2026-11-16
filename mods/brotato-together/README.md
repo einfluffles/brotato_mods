@@ -62,10 +62,13 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   reroll button puts up the board of the wave before over that player's shop items for as long
   as the cursor rests on it: total, and every source with name, number and share. Nothing pauses
   and nobody else is held up; the others see whose board is up, like any other cursor. The host
-  measures (from the game's own counters) and every client shows the host's numbers. It also
-  works offline. After the [Damage Meter](https://steamcommunity.com/sharedfiles/filedetails/?id=3578347192)
+  measures (from the game's own counters) and every client shows the host's numbers. In co-op
+  the row and the board also show each player's share of the team's damage. It also works
+  offline, solo shop included. **Options → Gameplay → Damage meter** switches it off or on for
+  your machine (kept in the Mod Loader's config; the game has no settings screen for mods). After the [Damage Meter](https://steamcommunity.com/sharedfiles/filedetails/?id=3578347192)
   mod by Oudstand, which is no longer needed next to this mod (with both, each shows its own).
-  Not taken over: its options, damage per second, and the separate entry for charmed enemies.
+  Not taken over: its other options, damage per second, and the separate entry for charmed
+  enemies.
 - **Selection screens / end of run:** clients see the game's own character, weapon and difficulty
   selection and end-of-run screens, showing what the host's show: the host's grid (so local
   unlocks/DLC don't matter), every player's cursor, panel and ready state, the zone, the join

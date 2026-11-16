@@ -10,8 +10,16 @@ extends Node
 # The machine that runs the wave measures (the host; any machine outside a session). A client's
 # counters stand still during a puppet battle, so the host's board travels: section DAMAGE of
 # sync/state_stream.gd, {wave, players: [[total, [[my_id, count, damage], ...]], ...]}, checked
-# every UPDATE_SEC, sent when it changed. It stays as it is through the shop until the next
-# wave starts.
+# every UPDATE_SEC, sent when it changed. During the wave it carries the LIVE_SOURCES strongest
+# sources per player (what the HUD shows); the measurement when the battle scene leaves carries
+# MAX_SOURCES, and that board stands through the shop until the next wave starts.
+#
+# Cost: a measurement reads the weapons and only the counters that are damage (their keys are
+# looked up once per wave), a few dozen values per player however many items the run has.
+#
+# shown: this machine's switch (Options > Gameplay, extensions/ui/menu_options.gd), kept in the
+# Mod Loader's config (session/settings.gd). Off: nothing is shown here; the host still measures
+# while it has peers, who decide for themselves.
 #
 # After the Damage Meter mod by Oudstand (the idea, the counters it reads, the bonk dog's two
 # damage values), written anew for a board that every machine shows the same.
@@ -19,23 +27,30 @@ extends Node
 signal changed
 
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
+const Settings := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/settings.gd")
 const BATTLE_SCENE := "res://main.tscn"
 const DAMAGE_TEXTS := ["DAMAGE_DEALT", "EXPLOSION_DAMAGE_DEALT"]
 const SUMMED := ["item_bonk_dog"]  # tracked as [explosions, hits]: both are damage
 const UPDATE_SEC := 0.5
 const MAX_SOURCES := 10
+const LIVE_SOURCES := 2  # during the wave: what the HUD shows
+const SETTING := "damage_meter"
 const MAX_PLAYERS := 4
 const MAX_ID_LENGTH := 96
 
 var session: Node = null
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var board := {}  # see above; {} before the first wave
+var shown := true  # this machine shows the meter
 
 var _baseline := []  # per player: RunData.tracked_item_effects when the wave started
 var _scene_id := 0  # the battle scene being measured
 var _since := 0.0
 var _revision := 0
 var _data := {}  # my_id -> item / weapon / character data
+var _damage_ids := {}  # my_id -> whether its counter counts damage
+var _keys := []  # per player: [[counter key, my_id], ...] of the damage counters
+var _key_counts := []  # per player: how many counters there were when _keys was read
 
 
 func setup(netplay_session: Node) -> void:
@@ -47,6 +62,15 @@ func setup(netplay_session: Node) -> void:
 
 func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
+	shown = bool(Settings.read(SETTING, true))
+
+
+func set_shown(on: bool) -> void:
+	if on == shown:
+		return
+	shown = on
+	Settings.write(SETTING, on)
+	emit_signal("changed")
 
 
 func _process(delta: float) -> void:
@@ -58,28 +82,34 @@ func _process(delta: float) -> void:
 	if scene.get_instance_id() != _scene_id:
 		_scene_id = scene.get_instance_id()
 		_baseline = RunData.tracked_item_effects.duplicate(true)
+		_keys = []
+		_key_counts = []
 		_since = UPDATE_SEC
-		scene.connect("tree_exiting", self, "measure", [], CONNECT_ONESHOT)  # the final numbers
+		# The wave's last word, with every source the shop's board lists.
+		scene.connect("tree_exiting", self, "measure", [true], CONNECT_ONESHOT)
 	_since += delta
 	if _since >= UPDATE_SEC:
 		_since = 0.0
-		measure()
+		if shown or (session != null and session.is_host() and not session.peers.empty()):
+			measure()
 
 
 # --- measuring ---
 
 
-func measure() -> void:
+# final: with all MAX_SOURCES sources per player (the shop's board), else the HUD's few.
+func measure(final := false) -> void:
+	var limit := MAX_SOURCES if final else LIVE_SOURCES
 	var players := []
 	for p in RunData.get_player_count():
-		players.append(measure_player(p, _baseline[p] if p < _baseline.size() else {}))
+		players.append(measure_player(p, _baseline[p] if p < _baseline.size() else {}, limit))
 	_set_board({"wave": RunData.current_wave, "players": players})
 
 
 # [total, [[my_id, count, damage], ...]]: the player's sources that dealt damage, strongest
-# first, at most MAX_SOURCES; the total counts all of them. Equal weapons and items are one
-# source with their number (0: nothing of it in the inventory, e.g. a turret a weapon built).
-static func measure_player(p: int, baseline: Dictionary) -> Array:
+# first, at most `limit`; the total counts all of them. Equal weapons and items are one source
+# with their number (0: nothing of it in the inventory, e.g. a turret a weapon built).
+func measure_player(p: int, baseline: Dictionary, limit := MAX_SOURCES) -> Array:
 	var groups := {}  # my_id -> [count, damage]
 	for weapon in RunData.get_player_weapons(p):
 		var group = groups.get(weapon.my_id)
@@ -88,15 +118,13 @@ static func measure_player(p: int, baseline: Dictionary) -> Array:
 			groups[weapon.my_id] = group
 		group[0] += 1
 		group[1] += int(weapon.dmg_dealt_last_wave)
-	var counts := {}
-	for item in RunData.get_player_items(p):
-		counts[item.my_id] = counts.get(item.my_id, 0) + 1
 	var tracked: Dictionary = RunData.tracked_item_effects[p]
-	for key in tracked:
-		var id: String = Keys.hash_to_string.get(key, "") if key is int else str(key)
-		var gained := _damage(tracked[key], id) - _damage(baseline.get(key), id)
-		if gained > 0 and not groups.has(id) and _is_damage_item(id):
-			groups[id] = [counts.get(id, 0), gained]
+	for pair in _damage_keys(p, tracked):
+		var id: String = pair[1]
+		var gained := _damage(tracked[pair[0]], id) - _damage(baseline.get(pair[0]), id)
+		if gained > 0 and not groups.has(id):
+			var count: int = RunData.get_nb_item(pair[0], p) if pair[0] is int else 0
+			groups[id] = [count, gained]
 	var total := 0
 	var sources := []
 	for id in groups:
@@ -104,7 +132,24 @@ static func measure_player(p: int, baseline: Dictionary) -> Array:
 		if groups[id][1] > 0:
 			sources.append([id, groups[id][0], groups[id][1]])
 	sources.sort_custom(DamageOrder, "strongest_first")
-	return [total, sources.slice(0, MAX_SOURCES - 1)]
+	return [total, sources.slice(0, limit - 1)]
+
+
+# The player's counters that count damage, as [key, my_id]. Which ones they are only changes
+# when a counter is added, so the list is read again when there are more (and with every wave).
+func _damage_keys(p: int, tracked: Dictionary) -> Array:
+	while _keys.size() <= p:
+		_keys.append([])
+		_key_counts.append(-1)
+	if _key_counts[p] != tracked.size():
+		_key_counts[p] = tracked.size()
+		var pairs := []
+		for key in tracked:
+			var id: String = Keys.hash_to_string.get(key, "") if key is int else str(key)
+			if _is_damage_item(id):
+				pairs.append([key, id])
+		_keys[p] = pairs
+	return _keys[p]
 
 
 # A tracked value: a number, or a list whose first entry is the damage.
@@ -118,16 +163,17 @@ static func _damage(value, id: String) -> int:
 	return damage
 
 
-static func _is_damage_item(id: String) -> bool:
-	for list in [ItemService.items, ItemService.characters]:
-		for data in list:
-			if data.my_id == id:
-				return data.tracking_text in DAMAGE_TEXTS
-	return false
+func _is_damage_item(id: String) -> bool:
+	if _damage_ids.empty():
+		for list in [ItemService.items, ItemService.characters]:
+			for data in list:
+				_damage_ids[data.my_id] = data.tracking_text in DAMAGE_TEXTS
+	return _damage_ids.get(id, false)
 
 
 func _set_board(next: Dictionary) -> void:
-	if var2str(next) == var2str(board):
+	# Arrays compare by value.
+	if next.get("wave") == board.get("wave") and next.get("players") == board.get("players"):
 		return
 	board = next
 	_revision += 1

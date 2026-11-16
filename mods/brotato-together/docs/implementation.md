@@ -1226,7 +1226,15 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   copy taken when the battle scene appears. Every tracked key that gained counts, in the
   inventory or not (a turret a weapon built: count 0). A list value's first entry is the
   damage (the bonk dog's two both are). Equal ids are one source with their number. Per player
-  `[total, top 10 sources as [my_id, count, damage]]`.
+  `[total, sources as [my_id, count, damage]]`: the 2 strongest while the wave runs (what the
+  HUD shows), the 10 strongest in the measurement taken when the battle scene leaves (the
+  shop's board).
+- Cost (`damage_meter_tests.gd`, late endless run, 4 players with 6 weapons and 250 items each,
+  headless container): 6.5 ms per measurement at first, twice a second, and 2156 B per update.
+  It walked every item and every counter and looked each counter's item up in the item list.
+  Now 0.45 ms and 588 B during the wave (2156 B once at its end): the counters that count
+  damage are looked up once per wave (again when a counter is added), a source's number comes
+  from `RunData.get_nb_item`, and the board is compared as arrays, not as text.
 - Who measures: the machine that runs the wave (the host; any machine outside a session, so it
   works offline), every 0.5 s while the battle scene is the current one and once more when it
   leaves the tree. The board then stands through the shop until the next battle starts.
@@ -1235,13 +1243,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   strictly (`DamageMeter.clean`: at most 4 players, 10 sources, ids up to 96 characters, no
   negative numbers) and resolves ids against `ItemService.items / weapons / characters`.
 - HUD: an `HBoxContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
-  bars sit at the bottom; right-aligned for players 2 and 4): icon and total, then icon and
-  number of the two strongest sources. Hidden while the total is 0; mouse ignored.
-- Shop (co-op shop): a `Button` after each player's reroll button (reached with right from
-  reroll; up / down lead where they do from reroll) and a `PanelContainer` in the panel that
-  holds the player's `ShopItemsContainer`, so it fills the place of the shop items. The board is
-  visible while that player's `FocusEmulator` rests on the button (polled each frame): no press,
-  no modal state, no pause. `ui/focus_targets.gd` knows the button as `shop_damage`, so the
+  bars sit at the bottom; right-aligned for players 2 and 4): icon and total, in co-op the
+  player's share of the team's total, then icon and number of the two strongest sources.
+  Hidden while the total is 0; mouse ignored.
+- Shop: a `Button` after each player's reroll button (reached with right from reroll; up /
+  down lead where they do from reroll) and the board, a `PanelContainer`: in the co-op shop a
+  child of the panel that holds the player's `ShopItemsContainer`, so it fills the place of the
+  shop items; in the solo shop (the slots sit in a row there) a top-level child of the slots'
+  container, laid over its rect when it comes up, so the layout does not move. The board
+  (title: wave, total, share; a row per source) is visible while that player's `FocusEmulator`
+  rests on the button, the button has the focus (solo) or the mouse is on it (polled each
+  frame): no press, no modal state, no pause. The shop is told by `_get_reroll_button`, not by
+  class: naming `BaseShop` in a script that loads with the mod loads `base_shop.gd` too early
+  and the game's shop scripts no longer parse (seen in the tests). `ui/focus_targets.gd` knows the button as `shop_damage`, so the
   cursor on it travels like every other (`SHOP_FOCUS` to the host, the cursors section to the
   other clients) and every machine shows the board in that player's panel.
 - Under load (`damage_meter_tests.gd`, crowded wave: 350 enemies, twelve fast pistols, 60 ms
@@ -1251,9 +1265,22 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   handler, so nothing depends on frame rate, and every measurement reads the lists anew: no
   cached weapon or item objects, no dependence on the wave timer (the mod builds its source
   list once per wave and closes the wave's summary when the wave timer reads 0).
-- Not taken over from the mod: options (opacity, number of sources, ungrouped weapons), damage
-  per second, the "charmed enemies" entry (it extends `Enemy.take_damage`), dart traps (the game
-  ships them without a tracking key), the solo shop.
+- Switch: Options > Gameplay has a "Damage meter" check button under "life bars on bosses"
+  (`extensions/ui/menu_options.gd`: a copy of that button without its handler, so it looks and
+  sounds like the game's; set again in `init()`, which runs every time the page opens). The
+  game's own Mods menu only lists the installed mods and the Mod Loader has a config store but
+  no screen, so the switch sits with the game's display options, in the main menu and in the
+  pause menu alike. It is this machine's: off, the row, the buttons and the boards are gone
+  here (a cursor on a button moves to reroll, and reroll's way to the right is its old one);
+  a host with peers measures on, because each client decides for itself, a machine without
+  peers stops measuring. Another player's cursor on a button this machine hides is not shown
+  here (and not passed on, when this machine is the host). Stored with `session/settings.gd`
+  in the Mod Loader's config (`config_schema` in `manifest.json`, default on;
+  `user://mod_configs/einfluffles-BrotatoTogether/settings.json` from the first change: the
+  loader's "default" config cannot be written). The label is English only.
+- Not taken over from the mod: its other options (opacity, number of sources, ungrouped
+  weapons), damage per second, the "charmed enemies" entry (it extends `Enemy.take_damage`),
+  dart traps (the game ships them without a tracking key).
 - Open: the row and the board are checked as nodes, texts and rects in the headless tests
   (`damage_meter_tests.gd`), not seen on a real screen; the mouse on the button is untested.
 
