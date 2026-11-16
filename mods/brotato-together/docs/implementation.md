@@ -247,7 +247,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   state"). Also: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
   game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
   respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
-- Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
+- Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions),
+  except for what the host's run earns the client (see "Progress for clients").
   Puppet mode on stashes what `ProgressData.save()` persists from the run side (`saved_run_state`,
   `last_saved_run_state`, `data`, `killed_enemies`, `killed_by_enemies`, `items_bought`); off restores it
   (`session/puppet.gd`) — the shop resume path overwrites `saved_run_state` with the host's run. Unlocks /
@@ -1211,6 +1212,51 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   loads) until it leaves the tree (mirrored state and cursors would replay e.g. button focus sounds); ClientView isn't mirrored and
   stays audible. Sounds played while the host's tree is paused (pause menu) aren't recorded. UI pages that
   play their own `AudioStreamPlayer` (profile, codex, item sets) bypass SoundManager; they're host-only.
+
+## Progress for clients
+
+- `session/progress_share.gd`, the `ChallengeService` / `ProgressData` extensions,
+  `session/puppet.gd`. Until protocol 20 a client earned nothing in an online run: challenges
+  are decided by game code that only runs on the host, and the client's save is closed while it
+  mirrors (see "Battle mirror": saves / challenges blocked while puppeting or borrowing DLC).
+  Now what the run earns counts for every player's own save, as in local co-op, where one
+  profile gets whatever any player achieves.
+- Host: the `ChallengeService` extension hears every `try_complete_challenge(id, value, below)`
+  and `complete_challenge(id)` call. The game returns early from the first when the host has
+  the challenge already, so the extension holds the value against the challenge itself
+  (`ProgressShare.host_met`): a veteran host's clients still earn it. Each id goes out once per
+  session. `ProgressData.increment_stat(key)` is counted per key. `PROGRESS` (reliable, at most
+  once a second; at once when `run_won` is counted): `{challenges, stats, won}`. Only while a
+  peer is ready; a peer that joins later earns what comes from then on.
+- Never sent: challenges that hang on the host's own history. The lifetime counters'
+  (`check_counted_challenges`: survivor, gatherer, lumberjack, cautious, evil hat; dig site,
+  fruit basket, whip it): each client reaches them with its own count, to which it adds the
+  host's `stats` (a fixed list of counters; nothing else of `ProgressData.data` is the host's to
+  write). The hourglass (play time) and the three species challenges (trophy hunter, clever
+  girl, egg hunt: lists in the host's save) are not shared at all yet, nor are
+  `killed_enemies` (codex).
+- Client: `Puppet.set_own_progress(true)` around the apply is the one way through the block.
+  Challenges are completed by the game's own `complete_challenge` (popup, platform achievement,
+  `challenges_completed`, the reward), then `_bt_unlock_own` puts the reward's hash onto the
+  client's own list whether the content is registered or not: while the host's DLC is borrowed
+  the live lists are the borrowed state, which `DlcBorrow.revert` throws away, and the own
+  lists are in its stash (`Puppet.own_list`). So a reward behind a DLC the client only has
+  from the host stays unlocked in its save; without the DLC the game does not register the
+  content, with it the unlock is there. Counters go onto `Puppet.own_data()` (the stashed
+  `data` while mirroring). `won`: the game's own `RunData.apply_run_won()` on the mirrored run
+  (the characters' challenges per player, the difficulty challenges, the danger levels in
+  `difficulties_unlocked`, whose per-character objects the borrow stash shares with the live
+  list; an entry for a borrowed DLC character exists only live and goes with the borrow). Its
+  closing `reset_and_save_new_run_state` stays blocked.
+- Saving: `ProgressData.bt_save_own()` puts everything set aside for this client (both
+  stashes: `Puppet.own_fields`) into `ProgressData`, calls the game's `save()` and puts the
+  live values back. After a completed challenge or a win; counters alone within 60 s and when
+  the lobby is left.
+- Open: tested headless only (`progress_share_tests.gd`: the host's sending incl. a challenge
+  it had already, the exclusions, a client that mirrors and borrows completing a challenge on
+  its own lists and counters, a lifetime challenge by its own count, the win, the save object).
+  Not run against Steam: achievements are set on the client's real account and cannot be taken
+  back by the mod. Nothing is backfilled for runs played before this build.
 
 ## Damage meter
 

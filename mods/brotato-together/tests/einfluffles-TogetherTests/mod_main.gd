@@ -68,6 +68,9 @@ const CoopSelectionTests := preload(
 )
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
 const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks_tests.gd")
+const ProgressShareTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/progress_share_tests.gd"
+)
 const DamageMeterTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/damage_meter_tests.gd"
 )
@@ -120,6 +123,7 @@ const SUITES := [
 	"upgrades_change",
 	"lobby_menu",
 	"network_stalls",
+	"progress",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -418,6 +422,11 @@ func _suite_network_stalls(together: Node) -> void:
 
 # Character selection: the menu mirror leaves the scene with two co-op players that the grid and
 # colour tests use. Then each machine's own scroll, join slots and weapon panels.
+func _suite_progress(together: Node) -> void:
+	_suite = ProgressShareTests.new(self)
+	_suite.run(together)
+
+
 func _suite_selection(together: Node):
 	yield(_test_menu_mirror(together), "completed")
 	_suite = MenuUxTests.new()

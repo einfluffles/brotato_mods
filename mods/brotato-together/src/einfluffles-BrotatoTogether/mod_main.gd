@@ -45,6 +45,7 @@ var pause_control: Node = null
 var absent_players: Node = null
 var retry_sync: Node = null
 var pickup_list: Node = null  # the HUD's picked-up crates on clients (sync/pickup_list.gd)
+var progress_share: Node = null  # what the host's run earns for the clients' own saves
 var damage_meter: Node = null  # what each player's weapons and items dealt (sync/damage_meter.gd)
 var coop_selection: Node = null  # join hints + colour picking on the co-op selection screen
 
@@ -138,6 +139,9 @@ func _ready() -> void:
 	pickup_list = _add("sync/pickup_list.gd", "PickupList")
 	pickup_list.state_stream = state_stream
 	pickup_list.setup(battle_host, battle_client)
+
+	progress_share = _add("session/progress_share.gd", "ProgressShare")
+	progress_share.setup(session)
 
 	damage_meter = _add("sync/damage_meter.gd", "DamageMeter")
 	damage_meter.state_stream = state_stream

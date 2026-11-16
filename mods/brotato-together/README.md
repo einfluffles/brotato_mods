@@ -91,7 +91,14 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
 - A client never writes the host's run into its own save file and never unlocks challenges from it.
 - **DLC:** a friend without one of the host's DLCs can still join: like Steam Remote Play Together, the
   host's DLC content is usable in the host's session only (the *Online co-op* page says so) and is gone again as
-  soon as they leave (and while they are in their own main menu); nothing of it is saved and it never becomes their own.
+  soon as they leave (and while they are in their own main menu); the content never becomes their own.
+- **Progress counts for everyone:** what a run earns goes into every player's own save, like in
+  local co-op: challenges (with their Steam achievements and the characters, items and weapons
+  they unlock), the danger levels a won run opens, and the lifetime counters (enemies killed,
+  materials collected, ...), which every player counts for themselves. A reward that belongs to
+  a DLC you only have from the host is recorded as unlocked too; the game offers it once you
+  own the DLC. Not yet shared: the species challenges of Primal Dread (trophy hunter, clever
+  girl, egg hunt) and the codex's kill counts.
 
 Details: [`docs/implementation.md`](docs/implementation.md).
 
