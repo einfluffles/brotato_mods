@@ -35,6 +35,9 @@ enum Msg {
 	SHOP_INTENT,
 	# client -> host: shop_id, page, target (like UPGRADE_FOCUS, inside the sender's shop panel)
 	SHOP_FOCUS,
+	# host -> client: shop_id, player, stat (Keys hash), value: the icon and number the shop
+	# floats over a player's reroll button when a reroll gave a stat (bone dice; protocol 18)
+	SHOP_TEXT,
 	# host -> client: [section, revision, body or null (the section has no state now)], see
 	# sync/state_stream.gd; each section's body is described where it is built (shop:
 	# sync/shop_sync.gd, pause_shop: sync/pause_control.gd)

@@ -578,6 +578,15 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     after 1 s without one (`LOCK_WAIT_MSEC`: refused, or the item is gone) the slot shows the
     host's lock again. A press that steals (a steal left) sends no lock. The host refreshes its
     copy of the player's hint after an applied lock, like `BaseShop._input`.
+  - Reroll text (`SHOP_TEXT`, protocol 18): a reroll that gives a stat (bone dice,
+    `gain_stats_on_reroll` in `BaseShop._on_RerollButton_pressed`) floats the stat's icon and number
+    over the player's reroll button. A client's reroll runs on the host, so the client saw
+    nothing. The host hears `RunData.stat_added` in the shop and, deferred, sends the gain when
+    that player's `_reroll_count` went up since (the handler adds the stat before it counts the
+    reroll; the shop's own gains at its start count none). The client shows it through the
+    shop's `FloatingTextManagerShop.stat_added` at the co-op place, without the sound (the
+    host's arrives as `UI_SOUNDS`). Every client gets every player's, like the host's screen.
+    Not mirrored: the elite icon of a caught steal (`display_shop_icon`).
   - Go: the client keeps no flag of its own. Its press sends "go"; the checkmark appears when the host's
     state has it. The game clears the flag itself when the cursor leaves the button, on cancel and on the
     triggers (`_on_GoButton_focus_exited`, `BaseShop._input`): `ShopLocal.process` sends "go 0" when the
