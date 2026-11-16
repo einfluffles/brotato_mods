@@ -26,7 +26,10 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   the host; your own character's prediction moves at your speed on the host (petrol, slows).
   The host moves a remote player by exactly one of their inputs per physics tick (bunched packets
   wait in a short queue, a tick without one stands still) and acks the input it moved with, so the
-  prediction agrees with the host while running and stopping despite network jitter.
+  prediction agrees with the host while running and stopping despite network jitter. Each input
+  packet also carries the last few movements, so a lost packet costs no step; after a network
+  stall of up to 600 ms the host catches up on the steps you already saw (at most twice your speed)
+  instead of pulling you back, and only a longer one ends in a small, smoothed correction.
 - **Esc during a wave opens the menu without pausing:** the wave runs on for everybody. The host
   gets the game's menu (its character stands still meanwhile), a client its own copy for options and
   the codex; restart / end run stay with the host, and a client's *Quit* asks to leave the lobby.
@@ -130,9 +133,12 @@ of an online wave (host and client), and wave cleanup: object counts across seve
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave
 costs per snapshot and per frame; a weapon breaking mid-wave, the hole layout and the host's speed in
 the own-player prediction, also for a client joining mid-wave, and the own player running only while its
-keys are held; a jittered input stream (bunched packets, ticks without one, a late stop, a swapped pair, a
-duplicate) moving a remote player on the host one step per acked input, so the client's prediction never
-needs a correction; network stalls (a 400 ms snapshot gap in the replayed battle keeps the own player's
+keys are held; input streams moving a remote player on the host one step per acked input against the
+client's own prediction code (jittered: bunched packets, ticks without one, a late stop, a swapped pair, a
+duplicate; one lost packet and four in a row, recovered from the redundant moves; a 450 ms gap caught up
+without a release; a 1.2 s gap that releases the player and ends in a blended correction), so the
+prediction needs no correction short of that, plus malformed redundancy fields and the protocol bump;
+network stalls (a 400 ms snapshot gap in the replayed battle keeps the own player's
 prediction and holds the world, the render delay on a good connection, through a stall, under recurring
 lateness and after a long outage, gap log lines for snapshots and inputs, the session's path and what
 followed a failed session).

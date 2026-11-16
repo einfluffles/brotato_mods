@@ -42,6 +42,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   the frozen world. Up to 250 ms it was: on a connection with 300 to 500 ms network stalls every 20 to 50 s
   (Steam's own ping 25 ms meanwhile) the player snapped back to the host's last position and jumped ahead
   again. During a stall of the snapshots alone the host still gets the inputs, so the prediction is right.
+  The 600 ms are `Protocol.STALL_LIMIT_MSEC`, shared with the host's INPUT timeout (see "Remote input").
+  A correction (the host disagrees) is blended out (`PREDICTION_ERROR_DECAY`, 12/s); the steps of the
+  inputs sent since the last frame are motion, not a correction (counted as one until protocol 16, they
+  pulled the display back by the newest step on every snapshot: a lag of a few steps while running).
 - Render delay (`sync/render_delay.gd`): 100 ms behind the newest snapshot on a good connection (room for
   ~67 ms of lateness; nothing changes there). When the newest snapshot is all there is, render time holds on
   it (the delay grows by as long as the stall lasts, up to 500 ms) instead of running past it: the world
@@ -310,7 +314,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     physics steps) tells "held up on the way" (sent at the usual pace, arriving together after the gap) from
     "not sent or lost" (sent that far apart: the sender's frame stalled, or the messages were lost). With
     Steam's numbers, the session's path and the scene; the client's line also has the render delay. At most
-    one line per 5 s per stream, the next one counts the gaps left out. A host pause is no gap.
+    one line per 5 s per stream, the next one counts the gaps left out. A host pause is no gap. After a
+    client's gap the host also logs what its movement queue made of it (inputs filled in from redundancy,
+    steps caught up, steps dropped; see "Remote input", Movement).
   - Session path (`net/link_watch.gd`): once a second the transport asks GodotSteam's
     `getSessionConnectionInfo` for each lobby member and logs when the path changes: "connecting",
     "direct", "relayed via <POP> (peer's POP <POP>)" (`pop_relay` / `remote_pop` as data center codes, or
@@ -916,7 +922,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     After the lobby Start is enabled and `update_continue_button()` decides about Continue.
     Character selection entered from the title screen while hosting gets `CoopButton.pressed = true`
     (the game's own switch), like the Online toggle does.
-  - Kick (protocol 16, `Msg.KICK` among the session messages): Steam lobbies have no kick.
+  - Kick (protocol 17, `Msg.KICK` among the session messages): Steam lobbies have no kick.
     `Session.kick` sends KICK (reliable) and `Transport.kick` drops the member at once: out of
     `members` (and kept out of `_refresh_members` while in `kicked`), `peer_left` -> `peer_removed`
     like a player who left (slot freed before a run, absent player mid-run), its messages dropped as
@@ -1068,11 +1074,39 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 ## Remote input, pause, absent players
 
 - `INPUT` (unreliable, every physics frame): held mask + a 4-bit press counter per button
-  (`sync/press_counter.gd`) + aim flags. Host (`sync/remote_buttons.gd`): a press needs a counted edge (a
-  button still held after the 300 ms timeout release or at rejoin does nothing until released), a tap lost in
-  a loss burst is replayed once, `ui_pause` is never held (delivered as press+release on the client's release,
+  (`sync/press_counter.gd`) + aim flags + (protocol 16) the moves of the 4 inputs before it
+  (`InputSync.REDUNDANCY`, a `PoolVector2Array`, 40 B). Host (`sync/remote_buttons.gd`): a press
+  needs a counted edge (a button still held after the timeout release or at rejoin does nothing until
+  released), a tap lost in a loss burst is replayed once, `ui_pause` is never held (delivered as press+release on the client's release,
   so timeouts/disconnects can't pause), held menu directions repeat like the game's pad echo (following
   `set_gamepad_echo_processing`).
+- Movement (`sync/input_sync.gd`; the one input a client predicts, see "Own-player prediction"): the host
+  queues each remote player's moves in seq order and takes exactly one per physics tick (none queued: the
+  player stands and the ack waits). `INPUT_ACK` in the snapshot is the newest input whose tick has run, so
+  the client's replay (host position + one step per input after the ack) matches whatever the arrival
+  pattern. Aim and buttons stay newest-wins on arrival.
+  - Redundancy (protocol 16): each INPUT carries the moves of the 4 inputs before it, and the host queues
+    those still due (newer than the last taken or dropped, not queued yet). A lost packet, or up to 4 in a
+    row, costs no step, and a late packet's move is already queued before its successor. Bodies are
+    checked strictly (7 fields, at most 4 finite moves, the move finite): anything else is dropped whole.
+    Protocol 15 builds (6 fields) are turned away at HELLO; the mod version has to match anyway, so an
+    optional field would never meet an older build.
+  - Catch-up: more than `MAX_WAITING` (2) waiting only happens after a gap (the packets held up on the
+    way arrive together). The client predicted all of those steps, so the host keeps up to `MAX_BACKLOG`
+    (36: 600 ms at 60 Hz, below the client's replay of 45) and takes one extra per tick
+    (`CATCH_UP_PER_TICK`) as a physics step of its own before the snapshot (`InputSync._extra_step`:
+    `test_motion` and a slide like `Unit._physics_process`, at the speed the client predicts with; not while
+    paused, dead or outside a battle). That tick acks both: one step per acked input still holds, the ack
+    just moves twice as fast, and the player runs at most twice its speed until it is back where the
+    client showed it. Beyond `MAX_BACKLOG` the oldest are dropped: steps the client predicted and the host
+    never takes, which the client's own player blends out (`PREDICTION_ERROR_DECAY`).
+  - Timeout: after 600 ms without INPUT (`Protocol.STALL_LIMIT_MSEC`, the client's prediction limit too)
+    the host lets go of the player's buttons, aim and stick. At 300 ms, every input gap of 300 to 600 ms
+    released a player the client still showed running. Movement doesn't need it: with nothing queued the
+    player stands, so it never runs on into a wall; a full backlog drains in about 20 ticks, well within.
+  - Log: one line per catch-up or loss episode, at most one per 5 s per client, "Input from ...: N missing
+    input(s) filled in from later packets, N step(s) caught up, N dropped (corrected on the client)", next
+    to the input gap line (`sync/stream_gaps.gd`, see "Stall diagnostics").
 - Client mode (`VirtualDevices.set_client_mode`): the client's InputService tracks pad vs. mouse like solo
   play, shows the mouse when it moves and doesn't emulate echo actions; the left stick is sent as menu
   directions.
