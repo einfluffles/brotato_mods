@@ -104,6 +104,7 @@ func set_local_device(device: int) -> void:
 		if _local_buttons.device == device:
 			return
 		_local_buttons.release_held()
+		VirtualDevices.release_analog(_local_buttons.device)
 		_local_buttons = null
 	if device >= 0:
 		_local_buttons = RemoteButtons.new(device)
@@ -117,6 +118,7 @@ func set_local_menu(device: int) -> void:
 		return
 	if _menu_buttons != null:
 		_menu_buttons.release_held()
+		VirtualDevices.release_analog(_menu_buttons.device)
 		_presses.resume(local_buttons())
 	_menu_buttons = null
 	if device >= 0:
@@ -148,15 +150,38 @@ func sample_local() -> Array:
 		_menu_buttons.apply(buttons, _menu_presses.sample(buttons))
 		buttons = 0
 	elif not local_input_blocked:
-		move = _local_movement()
+		# A screen running here (level-up panels, shop) moves its cursor with the same keys and
+		# stick: the character stands still, on the host and in this client's prediction.
+		if _local_buttons == null:
+			move = _local_movement()
 		aim = LocalAim.sample(LocalAim.own_player(battle_client), InputService.using_gamepad)
 	var counts: int = _presses.sample(buttons)
 	if _local_buttons != null:
 		_local_buttons.apply(buttons, counts)
+	var screen = _menu_buttons if _menu_buttons != null else _local_buttons
+	if screen != null:
+		_drive_local_stick(screen.device)
 	history.append([_seq, move])
 	if history.size() > HISTORY_SIZE:
 		history.pop_front()
 	return [_seq, move, aim[1], buttons, counts, aim[0]]
+
+
+# A screen running here scrolls item descriptions, item lists and the stats sheet with its slot
+# device's right stick (Utils.get_player_rjoy_vector), which only the host's copy got before (as
+# the INPUT's aim): give the local slot device this player's right stick too.
+func _drive_local_stick(device: int) -> void:
+	var stick := Vector2.ZERO
+	if not local_input_blocked:
+		stick = Input.get_vector("rjoy_left", "rjoy_right", "rjoy_up", "rjoy_down")
+	VirtualDevices.set_axis_pair(
+		VirtualDevices.action("rjoy_left", device),
+		VirtualDevices.action("rjoy_right", device),
+		stick.x
+	)
+	VirtualDevices.set_axis_pair(
+		VirtualDevices.action("rjoy_up", device), VirtualDevices.action("rjoy_down", device), stick.y
+	)
 
 
 # Mirrors PlayerMovementBehavior.get_movement(): the stronger of analog and digital input.
