@@ -27,12 +27,16 @@ const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const GearRebuildTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/gear_rebuild_tests.gd"
 )
+const WheelScrollTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/wheel_scroll_tests.gd"
+)
 const MECA_DLC := "primal_dread"
 const PISTOL := "weapon_pistol_1"
 const BIT_ACCEPT := 1
 
 var _t: Node = null
 var _gear = GearRebuildTests.new()  # kept alive across its yields
+var _wheel = null  # WheelScrollTests, kept alive across its yields
 
 
 # Before the host's battle scene loads (UpgradesUI reads the effect in _ready): player p's
@@ -65,6 +69,18 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 		msg.seqs.size() == 2 and msg.seqs[0] > 0 and msg.pages == [0, 0],
 		"state carries a revision and page per player (%s, %s)" % [msg.seqs, msg.pages]
 	)
+	_wheel = WheelScrollTests.new(t)
+	var players := WheelScrollTests.as_keyboard_player(0)
+	var other: Control = ui._get_player_container(1)
+	var emulators := []  # main._on_EndWaveTimer_timeout lets them take input in the game
+	for child in ui.get_children():
+		if child is FocusEmulator and not child.is_processing_input():
+			emulators.append(child)
+			child.set_process_input(true)
+	yield(_wheel.check_wheel("level-up, host", container, other), "completed")
+	for emulator in emulators:
+		emulator.set_process_input(false)
+	CoopService.connected_players = players
 
 	# While the panels run on the clients, a remote button never presses the host's copy.
 	var saved_devices: Dictionary = input_sync.devices.duplicate()
@@ -439,6 +455,8 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	yield(_gear.run(t, panels, main, msg), "completed")
 
 	yield(_keyboard_and_mouse(panels, own, other, ui), "completed")
+	_wheel = WheelScrollTests.new(t)
+	yield(_wheel.check_wheel("level-up, client", own, other), "completed")
 
 	# Done: local control ends.
 	var finished := msg.duplicate(true)

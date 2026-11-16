@@ -778,9 +778,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
       button comes up: `LocalPanel` then sends the release of `ui_accept_<device>`, which is what
       ends the popup's hold-to-recycle (`handle_recycle_hold_release`); without it one click would
       count as a full hold.
-  - Open: no mouse wheel on the own panel (`ItemDescription._input` scrolls on the wheel, but it comes
-    after the emulators and `LocalPanel` in `_input` order; a keyboard player has no right stick
-    either, as in local co-op), a click outside an open popup does not close it (its Cancel button
+  - Mouse wheel: `LocalPanel` takes every wheel event, wherever the pointer is (a popup can reach
+    past its panel), and scrolls the innermost ScrollContainer under it in the own panel only
+    (`ui/wheel_scroll.gd`, see Mouse wheel and right stick under Menus).
+  - Open: a click outside an open popup does not close it (its Cancel button
     does), a mouse click on Ban counts as a full hold, like accept on that button in local co-op (only
     the ban key can be let go; `button_up` is never emitted through an emulator), the client's
     hold-to-ban depends on its own `chal_banned_items` unlock, after a combine the client's cursor
@@ -901,6 +902,30 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     device is not virtual, on a client the state's `you`; while no player of this machine has
     joined, every cursor counts. Per-player grids (weapon selection, shop, level-up) are not
     shared and follow their cursor as before.
+  - Right stick: the game scrolls each panel's description with that player's right stick
+    (`CharacterPanelUI._process` with the panel's `player_index`, `ItemDescription._process`), in
+    local co-op and on the host alike (a remote player's stick is its INPUT aim on its virtual
+    device). A client's copy got nothing: its slot devices are never pressed there and nothing
+    was mirrored. Now `InputSync._menu_copy_device` gives the own slot device this player's right
+    stick while a copy shows (only display scrolls read the stick on these screens, like the
+    shop's `_drive_local_stick`), and the menu state carries `scrolls` (per player its panel's
+    description `scroll_vertical`): the copy moves the other panels toward it at the stick's
+    speed (`MenuPuppet._follow_scrolls`, the state comes every 0.1 s). A wheel scroll on a client
+    stays on that client (the host's copy of its panel does not move).
+  - Mouse wheel and right stick on co-op screens: the game has no wheel there. Every
+    `FocusEmulator` with a cursor marks each event that is not a co-op action as handled while
+    nobody can join (no ScrollContainer sees it), and `BaseSelection._scroll_with_mouse_wheel`
+    returns at once in a co-op run; in character selection while players can join it reached the
+    GUI, which scrolled any panel under the pointer. `ui/wheel_scroll.gd`, called from the
+    `FocusEmulator` extension's `_input` (the emulators are children of the screen: CoopShop,
+    UpgradesUI, the selection scenes), scrolls the innermost ScrollContainer under the pointer
+    that has more content than room, in the mouse player's own panel (its `CoopShopPlayerContainer`,
+    `UpgradesUIPlayerContainer`, or selection panel plus its grid, the shared one in character
+    selection), and marks the event handled in any case. The mouse player: the keyboard player
+    (`KEYBOARD_REMAPPED_DEVICE_ID`) on the host and in local co-op, none without one; `you` on a
+    client's copy. A client's own shop / level-up panel scrolls in `LocalPanel` (it runs before
+    the emulators). On the host the game hides the pointer in co-op (`InputService._input`), so
+    the wheel scrolls where the hidden pointer is.
   - A screen without a copy (the co-op resume screen, a host choosing for or playing a solo run) shows
     `ui/client_view.gd`, now only a waiting screen (key art, connection line, where the host is).
     The host's title screen is not one of them: the client is in its own (see Client in its own

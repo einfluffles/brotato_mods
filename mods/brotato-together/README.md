@@ -57,7 +57,14 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   slots, and in weapon selection the character a player holds F / Y to see in their panel.
   They decide nothing there; input goes to the host. The character grid, which every cursor
   shares, scrolls after your own player's cursor only (on the host after its local players):
-  the other players moving through it no longer scroll your screen.
+  the other players moving through it no longer scroll your screen. Your right stick scrolls
+  your own panel's description there (on a client too, at once), and the other players' panels
+  show where their players scrolled them on the host.
+- **Mouse wheel:** on the selection screens, in the shop and in the level-up / crate panels the
+  wheel scrolls what is under the pointer in your own panel (description, stats, item lists, the
+  character grid), on the host for its keyboard player and on a client for its own player. It
+  never scrolls another player's panel; in local co-op without a lobby it scrolls the keyboard
+  player's panel only (the game turns the wheel off on co-op screens).
 - **Wave failed:** the retry / end-run prompt appears on clients too, with who gets to choose.
 - **Sounds:** clients hear the host's sounds — battle sounds with the snapshots, menu/shop sounds as
   they happen — instead of their own mirrored screens' sounds.
@@ -162,7 +169,7 @@ one, about the same ping as the direct route).
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
 run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
-panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade, the gear page rebuilt by the host's run changes under the own and a mirrored cursor, a cursor whose control is freed), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), "Player N" above the join hint, shop UI sounds, the lobby
+panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade, the gear page rebuilt by the host's run changes under the own and a mirrored cursor, a cursor whose control is freed), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), the mouse wheel scrolling only the mouse player's own panel (shop, level-up, character selection; host and client) and the right stick in character selection (own panel, mirrored positions on a client), "Player N" above the join hint, shop UI sounds, the lobby
 in the game's menus (the title screen's Host lobby button and player frame, kicking, a client in its own main menu
 while the host is in its own, the pause menu page, the Online toggle of character selection, the
 client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam), the wave-failed prompt and the battle -> shop transition on clients, which screen drives a client's own

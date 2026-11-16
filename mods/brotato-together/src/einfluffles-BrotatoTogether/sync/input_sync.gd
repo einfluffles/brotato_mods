@@ -26,6 +26,7 @@ const RemoteButtons := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/remote_buttons.gd"
 )
 const LocalAim := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_aim.gd")
+const SharedScroll := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/shared_scroll.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:InputSync"
 # host: without INPUT for this long a remote player lets go of its buttons, aim and stick. The
@@ -57,6 +58,7 @@ const NAV_DEADZONE := 0.5  # InputService.joystick_deadzone (left stick -> menu 
 
 var session: Node = null
 var battle_client: Node = null  # client: own player position for mouse aim
+var menu_puppet: Node = null  # client: the copy of the host's selection screen (own stick)
 # host: steam_id -> device. Kept for the whole lobby so a rejoining player gets the same
 # device and therefore the same co-op slot.
 var devices := {}
@@ -88,6 +90,7 @@ var _local_claims := []
 # neutral input meanwhile
 var _menu_buttons = null
 var _menu_presses = PressCounter.new()
+var _stick_device := -1  # the slot device _drive_local_stick drove last (-1: none)
 
 # host: steam_id -> {seq, last_msec, released, buttons: RemoteButtons, queue: [[seq, move]...],
 # applied, ack, move, dropped_to, and for the log: filled, caught_up, dropped, next_log_msec} (see
@@ -247,8 +250,7 @@ func sample_local() -> Array:
 	if _local_buttons != null:
 		_local_buttons.apply(buttons, counts)
 	var screen = _menu_buttons if _menu_buttons != null else _local_buttons
-	if screen != null:
-		_drive_local_stick(screen.device)
+	_drive_stick_of(screen.device if screen != null else _menu_copy_device())
 	var previous := redundant_moves(history, _seq)
 	history.append([_seq, move])
 	if history.size() > HISTORY_SIZE:
@@ -267,9 +269,33 @@ static func redundant_moves(inputs: Array, seq: int) -> PoolVector2Array:
 	return PoolVector2Array(moves)
 
 
+# The slot device the local right stick drives (-1: none); the one driven before lets go.
+func _drive_stick_of(device: int) -> void:
+	if device != _stick_device and _stick_device >= 0:
+		for pair in [["rjoy_left", "rjoy_right"], ["rjoy_up", "rjoy_down"]]:
+			VirtualDevices.set_axis_pair(
+				VirtualDevices.action(pair[0], _stick_device),
+				VirtualDevices.action(pair[1], _stick_device),
+				0.0
+			)
+	_stick_device = device
+	if device >= 0:
+		_drive_local_stick(device)
+
+
+# The copy of a host's selection screen (sync/menu_puppet.gd) decides nothing, but each player's
+# panel scrolls its description with that player's right stick (CharacterPanelUI._process,
+# ItemDescription._process): this player's slot device there, -1 while no copy shows.
+func _menu_copy_device() -> int:
+	if menu_puppet == null or menu_puppet.current() == null:
+		return -1
+	return CoopService.get_remapped_player_device(SharedScroll.own_player())
+
+
 # A screen running here scrolls item descriptions, item lists and the stats sheet with its slot
 # device's right stick (Utils.get_player_rjoy_vector), which only the host's copy got before (as
-# the INPUT's aim): give the local slot device this player's right stick too.
+# the INPUT's aim): give the local slot device this player's right stick too. The same for this
+# player's panel on a copy of the host's selection screens (nothing else there reads the stick).
 func _drive_local_stick(device: int) -> void:
 	var stick := Vector2.ZERO
 	if not local_input_blocked:
