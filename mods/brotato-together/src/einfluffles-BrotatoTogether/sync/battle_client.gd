@@ -683,7 +683,24 @@ func _move(node: Node, key, position: Vector2) -> void:
 	node.global_position = position
 	_last_positions[key] = position
 	if not node.get("dead"):
-		PuppetEntity.animate(node, position - last)
+		var motion: Vector2 = _own_motion() if key == "p%s" % _you else position - last
+		PuppetEntity.animate(node, motion)
+
+
+# The own player runs while its keys are held (the move it sends, also zero while the lobby popup
+# or its Esc menu has the input), not while a correction still blends out of the displayed
+# position (_predict_own): that never quite stops and kept it running for about a second. Facing
+# follows the held keys too, as on the host. Nothing runs while the host's world stands still,
+# where _own_target predicts nothing either.
+func _own_motion() -> Vector2:
+	var history: Array = input_sync.history if input_sync != null else []
+	if (
+		history.empty()
+		or _paused
+		or OS.get_ticks_msec() - _newest_rx_msec > PREDICTION_STALE_MSEC
+	):
+		return Vector2.ZERO
+	return history[-1][1]
 
 
 func _spawn(type_idx: int) -> Node:
