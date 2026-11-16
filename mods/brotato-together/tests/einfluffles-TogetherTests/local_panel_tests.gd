@@ -360,6 +360,15 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 		input[1] == Vector2.ZERO and input_sync.history[-1][1] == Vector2.ZERO,
 		"the stick moves the cursor, not the character %s" % [input]
 	)
+	Input.action_press("rjoy_down")
+	input_sync.sample_local()
+	var scroll: Vector2 = Utils.get_player_rjoy_vector(0)
+	Input.action_release("rjoy_down")
+	input_sync.sample_local()
+	t._check(
+		scroll.y > 0.5 and Utils.get_player_rjoy_vector(0) == Vector2.ZERO,
+		"the right stick scrolls the own panel here, and stops %s" % [scroll]
+	)
 	var emulator = own.focus_emulator
 	t._check(emulator.is_processing_input(), "own cursor takes input on the puppet")
 	var uis: Array = own._get_upgrade_uis()
