@@ -14,6 +14,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   (stats, shop, waves) runs unchanged on the host.
 - **Battles:** clients load the real battle scene with its simulation frozen and render the host's 30 Hz
   snapshots with interpolation (~100 ms behind); your own character is predicted locally and reconciled.
+  Short network stalls (up to about half a second) are ridden out: your character keeps moving, and the
+  world holds and then catches up smoothly instead of jumping. `modloader.log` names each stall (which
+  direction, how long, held up or lost) and whether the connection is direct or relayed by Steam.
   Spawn markers (where the next enemies appear) and the life bars of bosses and elites are mirrored too,
   and so are explosions, screen shake, level-up / heal / material texts and the end of the wave
   (dimmed screen, "wave completed", the bonus material bag).
@@ -106,11 +109,13 @@ client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam)
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave
 costs per snapshot and per frame; a weapon breaking mid-wave, the hole layout and the host's speed in
-the own-player prediction, also for a client joining mid-wave; a jittered input stream (bunched
-packets, ticks without one, a late stop, a swapped pair, a duplicate) moving a remote player on the
-host one step per acked input, so the client's prediction never needs a correction.
 the own-player prediction, also for a client joining mid-wave, and the own player running only while its
-keys are held.
+keys are held; a jittered input stream (bunched packets, ticks without one, a late stop, a swapped pair, a
+duplicate) moving a remote player on the host one step per acked input, so the client's prediction never
+needs a correction; network stalls (a 400 ms snapshot gap in the replayed battle keeps the own player's
+prediction and holds the world, the render delay on a good connection, through a stall, under recurring
+lateness and after a long outage, gap log lines for snapshots and inputs, the session's path and what
+followed a failed session).
 
 The tests are named suites (`SUITES` in `mod_main.gd`), each passing on its own: `tools/check.sh -s <suite>`
 runs one, and `shards.txt` groups them into the game processes a full check runs side by side.

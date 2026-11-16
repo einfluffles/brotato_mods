@@ -34,9 +34,11 @@ const MAX_MESSAGES_PER_POLL := 128
 const MAX_HELD_MSEC := 60000  # a longer wait is a clock that does not fit: unknown
 const LOBBY_KEY_MOD := "brotato_together"
 
+const LinkWatch := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/link_watch.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:Transport"
 
 var steam: Object = null
+var link_watch = LinkWatch.new()  # each member's session path (direct / relayed), for the log
 var local_id := 0
 var lobby_id := 0
 var host_id := 0
@@ -162,6 +164,8 @@ func _process(_delta: float) -> void:
 			var received := int(msg.get("time_received", 0))
 			var payload: PoolByteArray = msg.get("payload", PoolByteArray())
 			emit_signal("message_received", sender, channel, payload, received)
+	if is_active() and local_id != 0:
+		link_watch.poll(steam, members, OS.get_ticks_msec())
 
 
 # How long a message has waited for the frame that handles it, since Steam received it
@@ -176,8 +180,8 @@ func held_msec(received_usec: int) -> int:
 # Steam's own numbers for the connection to a peer (ping, queue_time in usec, pending_reliable,
 # pending_unreliable, send_rate, ...), {} when unavailable. For the log.
 func connection_status(steam_id: int) -> Dictionary:
-	if steam == null or not steam.has_method("getSessionConnectionInfo"):
-		return {}
+	if steam == null or local_id == 0 or not steam.has_method("getSessionConnectionInfo"):
+		return {}  # local_id 0: Steam not running (headless tests)
 	var status = steam.getSessionConnectionInfo(steam_id, false, true)
 	return status if typeof(status) == TYPE_DICTIONARY else {}
 
@@ -333,6 +337,8 @@ func _is_lobby_member(steam_id: int) -> bool:
 	return members.has(steam_id)
 
 
+# Signature differs between GodotSteam versions (3.x: reason, steam id, state, debug message).
+# What happened next (up again, over which path; or still not) follows from net/link_watch.gd.
 func _on_session_failed(a = null, b = null, c = null, d = null) -> void:
-	# Signature differs between GodotSteam versions; just log it.
-	ModLoaderLog.warning("Networking session failed: %s %s %s %s" % [a, b, c, d], LOG_NAME)
+	var text: String = link_watch.session_failed([a, b, c, d], OS.get_ticks_msec())
+	ModLoaderLog.warning(text, LOG_NAME)

@@ -35,10 +35,12 @@ const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/loo
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
 const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
+const RenderDelay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/render_delay.gd")
+const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
-const INTERP_DELAY_MSEC := 100
+const INTERP_DELAY_MSEC := 100  # longer through a stall: sync/render_delay.gd
 const PREDICTION_ERROR_DECAY := 12.0  # 1/s: how fast prediction corrections are smoothed out
 const MAX_BUFFERED := 32
 const MAX_QUEUED_EVENTS := 512
@@ -50,9 +52,15 @@ const WAVE_TIMER_TOLERANCE := 0.3
 # despawns a frame or two before replaying the event: keep the target findable for a moment.
 const DESPAWN_GRACE_MSEC := 1000
 # Own-player prediction only while the host's world moves: not while paused, not when the newest
-# snapshot is older than this (stall), and never more than MAX_REPLAY_INPUTS (0.5 s) ahead.
-const PREDICTION_STALE_MSEC := 250
-const MAX_REPLAY_INPUTS := 30
+# snapshot is older than this (stall), and never more than MAX_REPLAY_INPUTS (0.75 s) ahead.
+# Network stalls of 300 to 500 ms (seen every 20 to 50 s on some connections) are ridden out: at
+# 250 ms the player snapped back to the host's last position and jumped ahead again when the
+# snapshots came. Inputs still reach the host during a stall of the snapshots alone, so the
+# prediction is right; past 600 ms the connection is gone rather than late, and the player stays
+# with the frozen world. The replay covers that stall plus the round trip (on a good connection the
+# host acks within a few inputs, so the cap changes nothing there).
+const PREDICTION_STALE_MSEC := 600
+const MAX_REPLAY_INPUTS := 45
 # Faster than anything moves: a pooled node reused for a new entity under an old id; snap.
 const MAX_INTERP_SPEED := 6000.0  # px/s
 const MAX_POOLED_PER_TYPE := 128  # non-Entity puppets (projectiles, gold, consumables)
@@ -109,6 +117,8 @@ var _anim_mirror = AnimMirror.new()
 var _feedback = FeedbackMirror.new()  # explosions, texts, shake, wave end (protocol 11)
 var _looks = Looks.new()
 var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppets
+var _render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
+var _snapshot_gaps = StreamGaps.new("snapshot")  # stalls of the host's snapshots, for the log
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -175,6 +185,7 @@ func apply_state(_section: int, body, _revision: int) -> bool:
 
 # Resumed (or the battle is over: _leave_battle resets the pause anyway).
 func clear_state(_section: int) -> void:
+	_snapshot_gaps.reset()  # the pause was no stall
 	_pause_text = ""
 	_set_paused(false)
 
@@ -282,6 +293,8 @@ func _reset_battle_state() -> void:
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
 	_battle_scene = BattleScene.new()
+	_render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
+	_snapshot_gaps.reset()
 
 
 func _on_node_added(node: Node) -> void:
@@ -427,6 +440,8 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		return
 	if i == _buffer.size():
 		_newest_rx_msec = OS.get_ticks_msec()
+		var host_id: int = session.transport.host_id
+		_snapshot_gaps.note(session, host_id, snapshot.t, LOG_NAME, _render_delay.text(), _paused)
 	Looks.resolve(snapshot, _resolve_cache)  # first: it reads the entity indices as parsed
 	Snapshot.resolve(snapshot, _resolve_cache)
 	_buffer.insert(i, snapshot)
@@ -440,7 +455,9 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 func _process(delta: float) -> void:
 	if not is_in_battle() or _buffer.empty():
 		return
-	var render_t := OS.get_ticks_msec() - _clock_offset - INTERP_DELAY_MSEC
+	var render_t: float = _render_delay.render_time(
+		OS.get_ticks_msec(), _clock_offset, _buffer[-1].t, delta
+	)
 	# Drop snapshots that are fully in the past (keep one before render_t).
 	while _buffer.size() > 2 and _buffer[1].t <= render_t:
 		_buffer.pop_front()
