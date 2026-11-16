@@ -101,7 +101,8 @@ client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam)
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave
 costs per snapshot and per frame; a weapon breaking mid-wave, the hole layout and the host's speed in
-the own-player prediction, also for a client joining mid-wave.
+the own-player prediction, also for a client joining mid-wave, and the own player running only while its
+keys are held.
 
 The tests are named suites (`SUITES` in `mod_main.gd`), each passing on its own: `tools/check.sh -s <suite>`
 runs one, and `shards.txt` groups them into the game processes a full check runs side by side.
