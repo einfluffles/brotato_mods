@@ -333,8 +333,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     run deferred). Client: false while the shop it entered loads (`_on_shop_ready` calls `retry()`), so
     "latest state until the shop is ready" is the stream's. pause_shop: `PauseControl` provides
     `[paused, by, by_id]` while the host is in the shop (flushed on the menu's paused / unpaused),
-    `ShopSync` handles it (own panel off, banner; waits while the shop loads). No `clear_state`: the next
-    screen replaces the shop.
+    `ShopSync` handles it (own panel off, banner). The pause itself applies when the body arrives,
+    also while a shop loads; only the banner waits for that shop (a body that timed out waiting left an
+    older pause behind). `clear_state` (the host left the shop, also from its pause menu) resumes, so
+    no pause carries over to the next shop.
 - Join compatibility (`session/compat.gd`, HELLO): protocol, game version (`ProgressData.VERSION`), mod
   version (manifest) must match. Rejections carry a reason that the client shows like every lobby error
   (main menu error label, lobby page; see Lobby in the game's menus). DLC never rejects (protocol 5 / 0.2.1).
@@ -419,7 +421,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `extensions/ui/shop_item.gd`.
   - Client, own slot: as for the level-up panels, `InputSync.set_local_device` feeds the local buttons
     into the own slot's device and `FocusSync.local_emulators` keeps the host's cursor off the own
-    emulator. The shop scene processes input by itself, so cursor, carousel pages, item popup, inventory
+    emulator (both as owner `"shop"`). While the own panel runs and the host is not paused,
+    `ShopLocal.process` checks every frame that its device is the live one and takes it back if not,
+    with a warning naming what last changed it. The shop scene processes input by itself, so cursor, carousel pages, item popup, inventory
     browsing, the hold-to-ban bar (`ShopItem._on_BanButton_button_down`), the hold-to-recycle bar and a
     meca item's effect choice (`effect_choice_selected`) run locally.
   - Keyboard and mouse: `ShopLocal.guard` adds a `LocalPanel` (see the level-up panels) as the puppet
@@ -551,8 +555,14 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `Carousel` with three pages (upgrades / gear / stats, switched with the triggers) and a per-player item
   popup toggle (`CoopItemPopup._input`, `ui_info`): view state that only existed on the host, so a remote
   player who flipped the page lost its cursor on its own screen. Now:
-  - Client, own slot: `InputSync.set_local_device` feeds the local buttons into the own slot's device
-    through a `RemoteButtons` (the host's code path: counted edges, echo; pause excluded), and
+  - Client, own slot: `InputSync.set_local_device("upgrades", device, reason)` feeds the local buttons
+    into the own slot's device through a `RemoteButtons` (the host's code path: counted edges, echo;
+    pause excluded). The device is a claim per screen (`"upgrades"`, `"shop"`): -1 gives up only the
+    caller's own claim and the newest claim drives, so a late `stop_local` (`clear_state`, battle left,
+    the focus report outside a battle) after the shop took over leaves the shop's device alone;
+    `FocusSync.set_local_emulator(owner, emulator)` does the same for the emulators the host's cursor
+    stays off. Every claim change and every change of the live device is logged with its reason
+    (`InputSync.last_local_change` keeps the last one). And
     `Utils.set_process_input_where_defined(ui, true)` turns the panel's `_input` on
     (`main._on_EndWaveTimer_timeout` does that on the host and never runs on a puppet). The own
     `FocusEmulator`, carousel, popup and description scroll then work as in local co-op, with no round trip.
@@ -616,6 +626,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     are visible (and the game isn't paused: the pause menu is the host's) `InputSync.blocked_buttons` keeps
     every remote button but pause off the virtual devices, so a remote accept can't also press the host's
     copy.
+  - Host pause: `CoopUpgradesUI` runs with `pause_mode` process and `_on_choose_button_pressed` emits
+    `options_processed` synchronously, so a remote player's last decision applied during the host's
+    pause made `main.gd` load the shop with the tree still paused and the battle's pause menu gone: a
+    shop nobody could use, whose `pause_shop` state (`[true, ...]`) kept every client's own shop panel
+    off until the host paused and resumed. `host_apply_intent` therefore holds an intent while the tree
+    is paused (`UpgradesSync._held`, at most 8, logged) and `_process` applies the held ones in order
+    once it resumes, on the same `UpgradesUI` (another one drops them); the revision check still
+    applies. The client's own panel keeps running during the pause. Safety net:
+    `PauseControl.release_stale_pause` resumes a host shop that starts paused with its menu closed
+    (warning in the log).
   - Presence: the client reports its page and cursor (`UPGRADE_FOCUS`, `battle_id, page, target`: a
     cursor target restricted to its own panel's anchors since protocol 10, see Cursors; on change); the
     host applies them to its copy, from where `FocusSync` and `pages` carry them

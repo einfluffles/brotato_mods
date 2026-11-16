@@ -372,20 +372,31 @@ func _is_loading() -> bool:
 
 
 # [paused, by (name), by_id (steam id, 0: the host)]. While the host is paused its pause menu
-# is in charge: the own panel is off. The banner waits for the shop that is loading.
+# is in charge: the own panel is off. The newest body is the host's pause from the moment it
+# arrives, also while a shop loads: only the banner waits for that shop (a body that times out
+# waiting must not leave an older pause behind).
 func _apply_pause(body) -> bool:
 	if typeof(body) != TYPE_ARRAY or body.size() != 3:
 		return true
 	if typeof(body[1]) != TYPE_STRING or typeof(body[2]) != TYPE_INT:
 		return true
-	if _is_loading():
-		return false
 	var paused := bool(body[0])
 	local.set_paused(paused)
+	if _is_loading():
+		return false
 	if is_in_shop():
 		var text := PauseControl.banner_text(body[1], body[2], session.transport.local_id)
 		PauseControl.show_banner(_client_shop, paused, text)
 	return true
+
+
+# State stream: the host has no shop pause state any more (it left the shop, also from its pause
+# menu): no pause of that shop may carry over to the next one.
+func clear_state(section: int) -> void:
+	if section == StateStream.PAUSE_SHOP:
+		local.set_paused(false)
+		if is_in_shop():
+			PauseControl.show_banner(_client_shop, false, "")
 
 
 # Per player, the parts of the sent run state that its panel is built from, as hashes of their
@@ -502,7 +513,7 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 		local.on_state(_int_at(body.get("seqs"), you), shop._player_pressed_go_button[you])
 		local.on_mecas(_list_at(body.get("mecas"), you))
 	else:
-		local.stop()
+		local.stop("no own panel in the host's state")
 
 
 # The per-player part of BaseShop._ready, re-run with the host's values (no RNG anywhere).
@@ -639,7 +650,7 @@ func _on_lobby_left() -> void:
 	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_block_remote_buttons(false)
 	run_cache.clear()
-	local.stop()
+	local.stop("lobby left")
 	local.set_paused(false)
 	_client_shop = null
 	_client_shop_id = 0

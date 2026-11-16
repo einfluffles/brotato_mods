@@ -23,6 +23,7 @@ const StateStream := preload(
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
+const LOG_NAME := "einfluffles-BrotatoTogether:PauseControl"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const BATTLE_SCENE := "res://main.tscn"
 const REMOTE_PRESS_WINDOW_MSEC := 1000  # a remote pause press this recent caused the pause
@@ -124,10 +125,27 @@ func _watch_scene(scene: Node) -> void:
 	_menu = null
 	_pauser_device = -1
 	_held_behavior = null  # freed with its scene
+	if session.is_host():
+		release_stale_pause(scene)
 	var menu = scene.get("_pause_menu") if scene != null else null
 	if menu is PauseMenu and not menu.is_connected("paused", self, "_on_menu_paused"):
 		menu.connect("paused", self, "_on_menu_paused", [menu])
 		menu.connect("unpaused", self, "_on_menu_unpaused")
+
+
+# Host: a shop that starts with the tree still paused while its own pause menu is closed (the
+# battle's menu was open when the scene changed). Nobody could use it, and its pause state would
+# keep every client's own panel off until the host paused and resumed. Returns whether it
+# resumed. (UpgradesSync holds the level-up intents of a pause, the known way in.)
+func release_stale_pause(scene: Node) -> bool:
+	if scene == null or scene.filename != SHOP_SCENE or not get_tree().paused:
+		return false
+	var menu = scene.get("_pause_menu")
+	if menu == null or menu.visible:
+		return false
+	ModLoaderLog.warning("The shop started paused with its pause menu closed: resumed", LOG_NAME)
+	get_tree().paused = false
+	return true
 
 
 func _on_menu_paused(menu: Node) -> void:
