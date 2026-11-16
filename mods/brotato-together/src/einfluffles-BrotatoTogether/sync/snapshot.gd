@@ -21,6 +21,7 @@ extends Reference
 #     [EVENT_BONUS_GOLD, value, label visible: bool] (state, repeated)
 #     [EVENT_WAVE_END, WAVE_* flags] (state, repeated)
 #     [EVENT_GOLD_BOOST, position: Vector2, boost]
+#     [EVENT_STAT, player index, stat (Keys hash), value] (the icon and number over a player)
 #   looks: {entity index: look bits} (since protocol 12, see sync/looks.gd; indices of the parsed
 #     entity order: Looks.resolve reads them before resolve() may drop entities)
 #
@@ -59,6 +60,7 @@ const EVENT_EXPLOSION := 3
 const EVENT_BONUS_GOLD := 4
 const EVENT_WAVE_END := 5
 const EVENT_GOLD_BOOST := 6
+const EVENT_STAT := 7
 const DAMAGE_CRIT := 1
 const DAMAGE_DODGE := 2
 const DAMAGE_PROTECTED := 4
@@ -318,7 +320,7 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 				buf.put_data(name)
 			buf.put_u16(int(clamp(round(event[3] * ANIM_TIME_SCALE), 0, 65535)))
 			buf.put_u16(int(clamp(round(event[4] * ANIM_TIME_SCALE), 0, 65535)))
-		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
+		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST, EVENT_STAT:
 			_put_feedback_event(buf, event)
 
 
@@ -327,8 +329,13 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 #   BONUS_GOLD: u8 BONUS_VISIBLE bit, varint value
 #   WAVE_END: u8 WAVE_* flags
 #   GOLD_BOOST: i16 x, i16 y, u8 boost
+#   STAT (protocol 18): u8 player index, u32 stat hash, zigzag varint value
 static func _put_feedback_event(buf: StreamPeerBuffer, event: Array) -> void:
 	match event[0]:
+		EVENT_STAT:
+			buf.put_u8(int(clamp(event[1], 0, 255)))
+			buf.put_u32(event[2])
+			_put_varint(buf, _zigzag(event[3]))
 		EVENT_EXPLOSION:
 			_put_varint(buf, event[1])
 			_put_position(buf, event[2])
@@ -620,13 +627,20 @@ static func _get_event(buf: StreamPeerBuffer):
 				name = bytes.get_string_from_ascii()
 			var position := buf.get_u16() / ANIM_TIME_SCALE
 			return [EVENT_ANIM, id, name, position, buf.get_u16() / ANIM_TIME_SCALE]
-		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST:
+		EVENT_EXPLOSION, EVENT_BONUS_GOLD, EVENT_WAVE_END, EVENT_GOLD_BOOST, EVENT_STAT:
 			return _get_feedback_event(buf, kind)
 	return null
 
 
 static func _get_feedback_event(buf: StreamPeerBuffer, kind: int):
 	match kind:
+		EVENT_STAT:
+			if buf.get_available_bytes() < 6:
+				return null
+			var player := buf.get_u8()
+			var stat := buf.get_u32()
+			var value = _unzigzag(_get_varint(buf))
+			return null if value == null or player >= MAX_PLAYERS else [EVENT_STAT, player, stat, value]
 		EVENT_EXPLOSION:
 			var type_idx := _get_varint(buf)
 			if type_idx < 0 or buf.get_available_bytes() < 7:

@@ -1,11 +1,14 @@
 extends Reference
 # Feedback the client shows without game logic (sync/feedback_mirror.gd, protocol 11): the wire
 # format of its events and their size, then a host battle that explodes (once a pooled
-# explosion reused between two snapshots), pays out bonus gold, heals, levels up and ends its
-# wave, replayed on a client. Driven from mod_main.gd (late suites); checks go through its _check.
+# explosion reused between two snapshots), pays out bonus gold, heals, levels up, changes a
+# player's stats, picks up crates and ends its wave, replayed on a client: also the stat icons
+# over the player (protocol 18) and the HUD's picked-up crates (sync/pickup_list.gd).
+# Driven from mod_main.gd (late suites); checks go through its _check.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
+const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const FeedbackMirror := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
 )
@@ -39,6 +42,7 @@ func _feedback_events() -> Array:
 		[Snapshot.EVENT_BONUS_GOLD, 1234, true],
 		[Snapshot.EVENT_WAVE_END, Snapshot.WAVE_FAILED | Snapshot.WAVE_LABEL],
 		[Snapshot.EVENT_GOLD_BOOST, Vector2(5.0, 6.5), 2],
+		[Snapshot.EVENT_STAT, 1, Keys.stat_evolution_hash, -2],
 	]
 
 
@@ -61,6 +65,7 @@ func _test_wire() -> void:
 		"wave end flag out of range": [Snapshot.EVENT_WAVE_END, 16],
 		"bonus gold flag out of range": [Snapshot.EVENT_BONUS_GOLD, 2, 5],
 		"explosion of scale 0": [Snapshot.EVENT_EXPLOSION, 0, 0, 0, 0, 0, 0, 0, 9],
+		"stat of a player that cannot be": [Snapshot.EVENT_STAT, 9, 1, 0, 0, 0, 2],
 	}
 	for label in bad:
 		t._check(Snapshot.parse(_with_event(empty, bad[label])).empty(), "rejected: %s" % label)
@@ -71,7 +76,7 @@ func _test_wire() -> void:
 
 
 func _check_round_trip(events: Array) -> void:
-	var ok := events.size() == 4
+	var ok := events.size() == 5
 	if ok:
 		var boom: Array = events[0]
 		ok = (
@@ -83,7 +88,8 @@ func _check_round_trip(events: Array) -> void:
 		ok = ok and events[1] == [Snapshot.EVENT_BONUS_GOLD, 1234, true]
 		ok = ok and events[2][1] == Snapshot.WAVE_FAILED | Snapshot.WAVE_LABEL
 		ok = ok and events[3][1].distance_to(Vector2(5.0, 6.5)) < 0.5 and events[3][2] == 2
-	t._check(ok, "explosion, bonus gold, wave end and gold boost events survive %s" % [events])
+		ok = ok and events[4] == [Snapshot.EVENT_STAT, 1, Keys.stat_evolution_hash, -2]
+	t._check(ok, "explosion, bonus gold, wave end, gold boost and stat events survive %s" % [events])
 
 
 # A snapshot without events or looks with one hand-written event put in: its last two bytes are
@@ -158,6 +164,7 @@ func _test_sizes(tests) -> void:
 		sizes[Snapshot.EVENT_WAVE_END] == 2 and sizes[Snapshot.EVENT_GOLD_BOOST] == 6,
 		"wave end 2 B, gold boost 6 B"
 	)
+	t._check(sizes[Snapshot.EVENT_STAT] == 7, "a stat text 7 B (%d)" % sizes[Snapshot.EVENT_STAT])
 
 
 # --- battle ---
@@ -177,7 +184,7 @@ func _test_battle(mod: Node):
 	host._start_battle(main)
 	t._check(host._types.has(FeedbackMirror.EXPLOSION_SCENE), "explosion scene announced at start")
 	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
-	var host_side := {}
+	var host_side := {"pickup_list": mod.pickup_list}
 	var recorded: Array = yield(_record_host(host, main, host_side), "completed")
 	start.types = {}
 	for path in host._types:
@@ -189,6 +196,7 @@ func _test_battle(mod: Node):
 	var puppet_main: Node = client._main
 	var seen: Dictionary = yield(_replay(client, puppet_main, recorded), "completed")
 	_check_client(client, puppet_main, seen, host_side)
+	_check_pickups(mod.pickup_list, client, puppet_main, host_side)
 	yield(t.get_tree().create_timer(1.2), "timeout")  # "explode" lasts 1 s
 	var pooled: Node = seen.get("explosion")
 	t._check(
@@ -243,6 +251,12 @@ func _record_host(host: Node, main: Node, host_side: Dictionary):
 					golds.back().pickup(0)
 			10:
 				players[0].on_healing_effect(HEAL)
+			12:
+				RunData.emit_signal("stat_added", Keys.stat_evolution_hash, 4, 0.0, 1)
+			13:
+				RunData.emit_signal("stat_removed", Keys.stat_armor_hash, 2.0, 0.0, 0)
+			14:
+				_pick_up_crates(main, host_side)
 			18:
 				RunData.add_xp(RunData.get_next_level_xp_needed(0), 0)
 			22:
@@ -255,6 +269,94 @@ func _record_host(host: Node, main: Node, host_side: Dictionary):
 	host_side["reused"] = explosions[2] == explosions[0]
 	host_side["bonus"] = RunData.bonus_gold
 	return recorded
+
+
+# What main.on_consumable_picked_up puts into the HUD: player 1 a crate and a legendary crate,
+# player 0 a crate; then one of player 1's is taken out again.
+func _pick_up_crates(main: Node, host_side: Dictionary) -> void:
+	var pickup_list: Node = host_side.pickup_list
+	var crate = t._find_by_id(ItemService.consumables, "consumable_item_box")
+	var legendary = t._find_by_id(ItemService.consumables, "consumable_legendary_item_box")
+	var containers: Array = main._things_to_process_player_containers
+	host_side["none"] = bytes2var(var2bytes(pickup_list.state_body(StateStream.PICKUPS)), false)
+	var none_key: String = pickup_list.state_key(StateStream.PICKUPS)
+	var first: Resource = crate.duplicate()
+	containers[1].consumables.add_element(first)
+	containers[1].consumables.add_element(legendary.duplicate())
+	containers[0].consumables.add_element(crate.duplicate())
+	host_side["picked"] = bytes2var(var2bytes(pickup_list.state_body(StateStream.PICKUPS)), false)
+	host_side["key_changed"] = pickup_list.state_key(StateStream.PICKUPS) != none_key
+	containers[1].consumables.remove_element(first)
+	host_side["one_less"] = bytes2var(var2bytes(pickup_list.state_body(StateStream.PICKUPS)), false)
+
+
+# The HUD's picked-up crates on the client, from the host's lists (section pickups).
+func _check_pickups(pickup_list: Node, client: Node, puppet_main: Node, host_side: Dictionary):
+	var section := StateStream.PICKUPS
+	var lists := []
+	for container in puppet_main._things_to_process_player_containers:
+		lists.append(container.consumables)
+	t._check(
+		host_side.key_changed
+		and host_side.picked.players.slice(0, 1) == [
+			["consumable_item_box"], ["consumable_item_box", "consumable_legendary_item_box"]
+		],
+		"host: the picked-up crates of each player are state %s" % [host_side.picked.players]
+	)
+	t._check(
+		pickup_list.state_stream.message_for(section, 1)[2] == null,
+		"host: no such state outside a battle"
+	)
+	t._check(
+		pickup_list.apply_state(section, host_side.none, 1) and lists[1].is_empty(),
+		"client: nothing picked up, nothing listed"
+	)
+	t._check(
+		pickup_list.apply_state(section, host_side.picked, 2)
+		and _ids(lists[0]) == ["consumable_item_box"]
+		and _ids(lists[1]) == ["consumable_item_box", "consumable_legendary_item_box"]
+		and lists[1].get_child_count() == 2,
+		"client: the HUD lists the crates the host's players picked up %s" % [_ids(lists[1])]
+	)
+	var icon: Texture = lists[1]._elements[1].icon
+	t._check(
+		icon != null and icon == RunData.current_background.get_zone_consumable_sprite(
+			lists[1]._elements[1]
+		),
+		"client: with the zone's crate sprite"
+	)
+	t._check(
+		pickup_list.apply_state(section, host_side.picked, 2) and lists[1]._elements.size() == 2,
+		"client: the same state again changes nothing"
+	)
+	t._check(
+		pickup_list.apply_state(section, host_side.one_less, 3)
+		and _ids(lists[1]) == ["consumable_legendary_item_box"]
+		and _ids(lists[0]) == ["consumable_item_box"],
+		"client: an entry the host took out goes %s" % [_ids(lists[1])]
+	)
+	var later: Dictionary = host_side.picked.duplicate(true)
+	later.battle_id = client._battle_id + 1
+	var earlier: Dictionary = host_side.picked.duplicate(true)
+	earlier.battle_id = client._battle_id - 1
+	t._check(
+		not pickup_list.apply_state(section, later, 4)
+		and pickup_list.apply_state(section, earlier, 4)
+		and _ids(lists[1]) == ["consumable_legendary_item_box"],
+		"client: a later battle's lists wait for it, an earlier battle's are dropped"
+	)
+	var junk := {"battle_id": client._battle_id, "players": [7, ["no_such_consumable", 3]]}
+	t._check(
+		pickup_list.apply_state(section, junk, 5) and lists[0].is_empty() and lists[1].is_empty(),
+		"client: unknown entries are left out"
+	)
+
+
+static func _ids(list: Node) -> Array:
+	var ids := []
+	for data in list._elements:
+		ids.append(data.my_id)
+	return ids
 
 
 static func _explode(effect: Resource, position: Vector2) -> Node:
@@ -288,6 +390,10 @@ func _check_host_events(recorded: Array, host_side: Dictionary) -> void:
 	t._check(
 		host_side.boosted == 2 and boost == 2, "boosted gold pickup sent (x%d)" % host_side.boosted
 	)
+	t._check(
+		counts.get(Snapshot.EVENT_STAT, 0) == 3,
+		"a stat added, one removed and the level-up's max HP are sent once each"
+	)
 	var bonus_count: int = counts.get(Snapshot.EVENT_BONUS_GOLD, 0)
 	t._check(
 		bonus_count > FeedbackMirror.STATE_REPEAT and bonus_count < SNAPSHOTS / 2,
@@ -301,7 +407,7 @@ func _check_host_events(recorded: Array, host_side: Dictionary) -> void:
 
 # Replays the recording and notes what the client showed meanwhile.
 func _replay(client: Node, puppet_main: Node, recorded: Array):
-	var seen := {"explosions": 0, "texts": {}, "label": 0, "sparkles": 0}
+	var seen := {"explosions": 0, "texts": {}, "icons": {}, "label": 0, "sparkles": 0}
 	var sparkle: String = puppet_main._effects_manager.gold_pickup_particles.resource_path
 	var replay_start := OS.get_ticks_msec()
 	for msg in recorded:
@@ -329,6 +435,8 @@ func _sample(puppet_main: Node, seen: Dictionary, sparkle: String) -> void:
 	for text in puppet_main.get_node("%FloatingTexts").get_children():
 		if text.visible:
 			seen.texts[text.text] = true
+			if text.has_icon:
+				seen.icons[text.text] = text.player_index
 	seen.label = max(seen.label, puppet_main._wave_cleared_label.visible_characters)
 	for effect in puppet_main._effects.get_children():
 		seen.sparkles += 1 if effect.filename == sparkle else 0
@@ -353,6 +461,10 @@ func _check_client(client: Node, puppet_main: Node, seen: Dictionary, host_side:
 	t._check(seen.texts.has("+%d" % HEAL), "heal text derived from the host's health")
 	t._check(seen.texts.has("LEVEL_UP"), "level-up text derived from the host's level")
 	t._check(seen.texts.has("x2"), "boosted gold pickup shows x2")
+	t._check(
+		seen.icons.get("+4") == 1 and seen.icons.get("-2") == 0 and seen.icons.get("+1") == 0,
+		"a changed stat shows its icon and number over that player %s" % [seen.icons]
+	)
 	t._check(seen.sparkles > 0, "picked-up gold sparkles where it vanished")
 	t._check(puppet_main._ui_dim_screen.color.a > 0.0, "wave end dims the client's screen")
 	t._check(

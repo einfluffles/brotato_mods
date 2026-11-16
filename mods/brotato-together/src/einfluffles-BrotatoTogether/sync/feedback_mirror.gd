@@ -10,6 +10,9 @@ extends Reference
 #   screen, "wave completed" label) as state: sent when they change, repeated STATE_REPEAT times
 #   and every STATE_REFRESH snapshots, so a lost snapshot does not lose them.
 # - The "x2" over a boosted gold pickup (EVENT_GOLD_BOOST): the boost is host data.
+# - The icon and number over a player whose stat changed (EVENT_STAT, protocol 18: evolution from
+#   a meca / mutant fruit, a mutation fruit's stat, an item's gain mid-wave): the game shows them
+#   from RunData.stat_added / stat_removed, which a client's puppet run never emits.
 # Derived by the client from what it already has (no bytes): screen shake (damage events), the
 # level-up and heal texts (player stats), the gold pickup sparkle (a gold puppet that vanished).
 
@@ -23,10 +26,12 @@ const EXPLOSION_SCENE := "res://projectiles/explosion.tscn"
 const EXPLODE_ANIMATION := "explode"
 const STATE_REPEAT := 4
 const STATE_REFRESH := 15
+const MAX_STAT_TEXTS := 16  # per snapshot (a build can add a stat with every kill)
 
 # --- host ---
 var _explosions := {}  # instance id -> animation position at the last capture
 var _picked := []  # [position, boost] of boosted gold picked up since the last capture
+var _stat_texts := []  # [player, stat, value] added (removed: negative) since the last capture
 var _bonus := []  # [value, visible] last captured
 var _bonus_since := -STATE_REFRESH
 var _wave_end := -1  # WAVE_* flags last captured, -1 while the wave runs
@@ -47,6 +52,9 @@ func capture(main: Node, events: Array, snapshot_count: int, type_idx: FuncRef) 
 	for picked in _picked:
 		events.append([Snapshot.EVENT_GOLD_BOOST, picked[0], picked[1]])
 	_picked.clear()
+	for text in _stat_texts:
+		events.append([Snapshot.EVENT_STAT, text[0], text[1], text[2]])
+	_stat_texts.clear()
 	var label = main.get("_ui_bonus_gold")
 	var bonus := [int(RunData.bonus_gold), label != null and label.visible]
 	if bonus != _bonus:
@@ -112,6 +120,12 @@ static func wave_end_flags(main: Node) -> int:
 	return flags
 
 
+# RunData.stat_added / stat_removed during the battle (BattleHost).
+func stat_changed(stat: int, value: int, player_index: int) -> void:
+	if player_index >= 0 and _stat_texts.size() < MAX_STAT_TEXTS:
+		_stat_texts.append([player_index, stat, value])
+
+
 # A mirrored node enters the snapshots: gold gets the pickup hook (once per node, pools reuse it).
 func track(node: Node) -> void:
 	if node is Gold and not node.is_connected("picked_up", self, "_on_gold_picked_up"):
@@ -140,6 +154,8 @@ func fire(main: Node, types: Dictionary, t: int, event: Array) -> void:
 			explode(main, types.get(event[1]), event[2], event[3], event[4])
 		Snapshot.EVENT_GOLD_BOOST:
 			_show_boost(main, event[1], event[2])
+		Snapshot.EVENT_STAT:
+			_show_stat(main, event[1], event[2], event[3])
 		Snapshot.EVENT_BONUS_GOLD, Snapshot.EVENT_WAVE_END:
 			# Repeated state: an older copy that arrives late must not undo a newer one.
 			if t < _state_t.get(event[0], -1):
@@ -190,6 +206,17 @@ func _show_boost(main: Node, position: Vector2, boost: int) -> void:
 	texts.display(
 		"x%d" % boost, position, color, null, texts.duration, false, texts.direction, false
 	)
+
+
+# FloatingTextManager.on_stat_added itself (which stats it skips, a dead player, the place over
+# the player, the stacking, the colours), without its sounds: those are the host's events.
+func _show_stat(main: Node, player_index: int, stat: int, value: int) -> void:
+	var texts = main.get("_floating_text_manager")
+	if texts == null or player_index >= texts.players.size():
+		return
+	if player_index >= texts.players_add_stats_count.size():
+		return
+	texts.on_stat_added(stat, value, 0.0, player_index, [], [])
 
 
 func _show_bonus_gold(main: Node, value: int, visible: bool) -> void:

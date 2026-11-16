@@ -353,7 +353,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     it was up again and over which path, or that it still was not after 15 s.
 - **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
   ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
-  menu_grids, retry, pause_battle, pause_shop, cursors (state that builds controls before the cursors on
+  menu_grids, retry, pause_battle, pause_shop, pickups, cursors (state that builds controls before the cursors on
   them). Replaces the copy of the same machinery each module had (poll loop + change key, key forgotten on
   `peer_ready`, per-peer sends, "keep the latest until the scene is ready").
   - Host: a provider per section answers `state_key(section)` (text, "" = inactive; checked every interval,
@@ -1137,6 +1137,26 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `picked_up` of mirrored gold and reads `boosted` in its handler: Godot 3 calls a signal's
     targets in order of instance id and the per-battle helper is made after main, so main's
     handler has doubled it already, and `Gold.pickup` resets it right after the signal.
+  - `EVENT_STAT` [player, stat hash, value] (protocol 18, 7 B): the icon and number over a player
+    whose stat changed mid-wave (evolution from a meca / mutant fruit, a mutation fruit's stat, the
+    level-up's max HP, an item's gain). The game shows it from `RunData.stat_added` / `stat_removed`
+    (`FloatingTextManager.on_stat_added`), which a client's puppet run never emits. `BattleHost`
+    is connected to both (removed: the negative value) and hands them to the battle's
+    `FeedbackMirror`, at most 16 per snapshot; the client calls its own
+    `FloatingTextManager.on_stat_added` with empty sound lists (which stats it skips, a dead player,
+    the place and the stacking are the game's; the sounds are the host's events). The stat is
+    `Keys.generate_hash`'s `String.hash()`, the same on every machine.
+  - Picked-up crates in the HUD (`sync/pickup_list.gd`, protocol 18, state stream section pickups):
+    `main.on_consumable_picked_up` puts crates (the zone's green one, the red legendary one) and
+    the mutation fruit / meca parts into `_things_to_process_player_containers[p].consumables`;
+    on a client only the level-up icons of that row existed (`BattleClient._show_level_up`).
+    State, not an event: an icon missing for the rest of the wave would be worse than a missed
+    text. Body while the host is in a battle: `{battle_id, players: [[consumable my_id]]}` from
+    the lists' `_elements`; the client makes its lists the same with their own `add_element` /
+    `remove_element` (a copy per entry, with the zone's sprite as
+    `ItemService.get_consumable_for_tier` sets it), pending until the puppet battle of that
+    battle is ready; ids it does not know are left out. A player joining mid-wave gets the
+    lists with the resync.
   - Derived on the client, no bytes: screen shake (`Screenshaker._on_player_took_damage` for
     players, `_on_unit_took_damage` for enemies and neutrals, called with each damage event, which
     already leaves out `hide_feedback` hits; this client's screenshake option applies); level-up

@@ -43,6 +43,7 @@ var ui_sounds: Node = null
 var pause_control: Node = null
 var absent_players: Node = null
 var retry_sync: Node = null
+var pickup_list: Node = null  # the HUD's picked-up crates on clients (sync/pickup_list.gd)
 var coop_selection: Node = null  # join hints + colour picking on the co-op selection screen
 
 var _client_active := false
@@ -131,6 +132,10 @@ func _ready() -> void:
 	retry_sync = _add("sync/retry_sync.gd", "RetrySync")
 	retry_sync.state_stream = state_stream
 	retry_sync.setup(session, battle_host, battle_client)
+
+	pickup_list = _add("sync/pickup_list.gd", "PickupList")
+	pickup_list.state_stream = state_stream
+	pickup_list.setup(battle_host, battle_client)
 
 	coop_selection = _add("ui/coop_selection.gd", "CoopSelection")
 

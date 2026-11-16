@@ -18,7 +18,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   world holds and then catches up smoothly instead of jumping. `modloader.log` names each stall (which
   direction, how long, held up or lost) and whether the connection is direct or relayed by Steam.
   Spawn markers (where the next enemies appear) and the life bars of bosses and elites are mirrored too,
-  and so are explosions, screen shake, level-up / heal / material texts and the end of the wave
+  and so are explosions, screen shake, level-up / heal / material texts, the icon and number over
+  a character whose stat changed (evolution, a mutation fruit, an item's gain), the crates a player
+  has picked up (the icons next to the level-ups in the HUD) and the end of the wave
   (dimmed screen, "wave completed", the bonus material bag).
   Charmed, burning, cursed and boosted enemies look like they do on the host (a charmed enemy and
   its shots in the charm colour), and acid / petrol / fire puddles appear and fade with the host's.

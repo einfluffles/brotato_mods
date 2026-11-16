@@ -85,6 +85,8 @@ func setup(netplay_session: Node, remote_input: Node) -> void:
 	input_sync = remote_input
 	session.connect("peer_ready", self, "_on_peer_ready")
 	state_stream.register_provider(StateStream.PAUSE_BATTLE, self)
+	RunData.connect("stat_added", self, "_on_stat_changed", [1])
+	RunData.connect("stat_removed", self, "_on_stat_changed", [-1])
 
 
 func _ready() -> void:
@@ -178,6 +180,12 @@ func _start_battle(main: Node) -> void:
 	for steam_id in session.peers:
 		if session.peers[steam_id].ready:
 			_send_battle_start(steam_id, start)
+
+
+# The game floats an icon and a number over the player for these (FloatingTextManager).
+func _on_stat_changed(stat, value, _db_mod, player_index, factor: int) -> void:
+	if is_in_battle() and typeof(stat) == TYPE_INT and typeof(player_index) == TYPE_INT:
+		_feedback.stat_changed(stat, factor * int(value), player_index)
 
 
 func _on_battle_scene_exited(battle_id: int) -> void:

@@ -175,6 +175,7 @@ func _test_wiring(together: Node) -> void:
 	var missing := []
 	for module in [
 		together.shop_sync, together.upgrades_sync, together.menu_sync, together.retry_sync,
+		together.pickup_list,
 		together.focus_sync, together.pause_control, together.battle_host, together.battle_client
 	]:
 		if module.state_stream != stream:
@@ -500,7 +501,10 @@ func _test_apply_order() -> void:
 	for probe in probes:
 		probe.accept = true
 	stream.step(0.016)
-	t._check(_same(order, [0, 2, 7]), "pending sections apply in section order: %s" % [order])
+	t._check(
+		_same(order, [StateStream.RUN_SHOP, StateStream.MENU, StateStream.CURSORS]),
+		"pending sections apply in section order: %s" % [order]
+	)
 
 
 func _test_malformed() -> void:
