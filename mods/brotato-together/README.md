@@ -45,7 +45,10 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
 - **Selection screens / end of run:** clients see the game's own character, weapon and difficulty
   selection and end-of-run screens, showing what the host's show: the host's grid (so local
   unlocks/DLC don't matter), every player's cursor, panel and ready state, the zone, the join
-  slots. They decide nothing there; input goes to the host.
+  slots, and in weapon selection the character a player holds F / Y to see in their panel.
+  They decide nothing there; input goes to the host. The character grid, which every cursor
+  shares, scrolls after your own player's cursor only (on the host after its local players):
+  the other players moving through it no longer scroll your screen.
 - **Wave failed:** the retry / end-run prompt appears on clients too, with who gets to choose.
 - **Sounds:** clients hear the host's sounds — battle sounds with the snapshots, menu/shop sounds as
   they happen — instead of their own mirrored screens' sounds.
@@ -81,8 +84,8 @@ like them (mouse, keyboard, gamepad).
   error line and on the page.
 
 The host opens co-op character selection; remote players hold *accept* (Space / Enter / A) to join
-like local players. Every free slot shows "Player N" and the game's hold-to-join hint, on the host and
-on clients. In character selection each player can change their colour with **F** (keyboard) /
+like local players. Every free slot shows "Player N" at its top and the game's hold-to-join hint, on
+the host and on clients. In character selection each player can change their colour with **F** (keyboard) /
 **Y** (gamepad; Triangle on PlayStation pads), cycling through 8 colours and skipping colours other
 players already have. The colour is used everywhere the game uses player colours (cursor, panels,
 HUD, player highlight) and clients see the same colours. Nothing is saved; players who don't pick keep
@@ -100,7 +103,7 @@ doesn't come back within 20 s, the host makes their level-up / crate / shop choi
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
 run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
-panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress; nothing decided or saved there), shop UI sounds, the lobby
+panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), "Player N" above the join hint, shop UI sounds, the lobby
 in the game's menus (title screen and pause menu page, the Online toggle of character selection, the
 client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam), the wave-failed prompt and the battle -> shop transition on clients, the Esc menu
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and

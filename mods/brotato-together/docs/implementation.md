@@ -734,8 +734,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   selection logic. Now:
   - Host, state stream sections menu (kind, `screen` = host scene instance id, count, `coop`, who
     selected, colours, `you` as the per-peer patch; character selection: zone `[id, random]`,
-    endless, `join` = hold progress while joining is open; weapon selection: `picks`; end of run:
-    `pages`) and menu_grids (per visible grid every element `[my_id, flags, tier]` in the host's
+    endless, `join` = hold progress while joining is open; weapon selection: `picks`,
+    `character_shown` (per player: its panel shows the player's character, `ui_info` held); end
+    of run: `pages`) and menu_grids (per visible grid every element `[my_id, flags, tier]` in the host's
     order; for weapon / difficulty selection and the end of run also the run state, packed once
     per screen, and `won`). Both inactive in battle / shop. The cursors are FocusSync's, as on
     every screen with FocusEmulators.
@@ -767,12 +768,32 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     via `_player_characters` like on the host; re-applied every frame, the scene's own focus
     handlers clear it), zone / background / endless without the scene's handlers, the join
     progress through the CoopService extension (`bt_remote_progress`, so `CoopJoinPanel`s and
-    `ui/coop_selection.gd`'s hints follow), pick counts, end-of-run carousel pages.
+    `ui/coop_selection.gd`'s hints follow), pick counts, end-of-run carousel pages, and
+    `character_shown`: `WeaponSelection._input` switches a panel to the player's character while
+    `ui_info` is held (`CoopShowCharacterHint`); the button goes to the host, so the copy makes
+    the same calls (`set_data(character)` + `selected = false`, on release
+    `_display_element_panel_data` + `selected = _has_player_selected`) when the state differs
+    from what its panel shows. The host reads it off its panels (`MenuSync.shows_character`), so
+    a cursor moving while the button is held shows the weapon again on both sides, and the
+    every-frame `selected` above leaves a panel showing the character unselected.
+  - A player count rising on the character selection waits until the grids carry the grid
+    (`MenuPuppet._grid_ready_for`): the host's state names a player who joins first before its
+    grids (hidden while nobody has joined) have the elements, and
+    `CharacterSelection._on_connected_players_updated` puts the new player's cursor on
+    `_get_inventories()[0].get_child(0)` (an engine error on the empty grid, and no cursor).
+  - Scrolling: every `FocusEmulator` scrolls its control into view
+    (`_ensure_control_visible` -> `ScrollContainer.ensure_control_visible`), one screen in local
+    co-op. The character grid is shared by all four emulators, so online a remote / mirrored
+    cursor scrolled everybody's grid. `extensions/ui/focus_emulator.gd` + `ui/shared_scroll.gd`
+    skip that for a ScrollContainer another emulator of the same menu reaches (one of its focus
+    bases in or around it) unless the cursor is this machine's: on the host a player whose
+    device is not virtual, on a client the state's `you`; while no player of this machine has
+    joined, every cursor counts. Per-player grids (weapon selection, shop, level-up) are not
+    shared and follow their cursor as before.
   - A screen without a copy (title screen and its pages, a host choosing for a solo run) shows
     `ui/client_view.gd`, now only a waiting screen (key art, connection line, where the host is).
   - Open: the cursor on these screens still makes the round trip through the host (no local
-    panel as in the shop); `CoopShowCharacterHint` (hold to see the character in weapon
-    selection) is not mirrored; item-set requirements are evaluated with this machine's sets; the
+    panel as in the shop); item-set requirements are evaluated with this machine's sets; the
     end of run shows the host's unlocked rewards; none of this has run between two real machines
     yet (headless: `menu_puppet_tests.gd`).
 - **Co-op character selection UX** (`ui/coop_selection.gd`, `extensions/singletons/coop_service.gd`,
@@ -780,7 +801,14 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   the `COOP_HOLD_TO_JOIN` hint ("Hold {0} or {1} to join", A / Space glyphs) only in the *next* free slot
   and not at all before the first player joined (then only the big `%CoopJoinInstructions`).
   `CoopSelection._process` sets `instructions_visible` on every free, non-connecting slot while
-  `CoopService.listening_for_inputs`, and adds a "Player N" label (`COOP_PLAYER`) in the slot colour.
+  `CoopService.listening_for_inputs`, and adds a "Player N" label (`COOP_PLAYER`) in the slot colour,
+  at the top of the slot: a Label in the `PanelContainer` would centre itself vertically
+  (`SIZE_SHRINK_CENTER`, a Label's default), right over the hint, so its vertical flags are 0.
+- **Not a mod bug**: player 1's locked panel is narrower than the other slots in co-op character
+  selection. `LockedPanel1` has `rect_min_size` (320, 0) in the game's own
+  `character_selection.tscn`, `LockedPanel2..4` and the `CoopJoinPanel`s (370, 0), and
+  `locked_panel.tscn` shrinks to its minimum (`size_flags_horizontal = 4`); local co-op without
+  the mod looks the same.
 - **Player colours**: every colour use in the game goes through `CoopService.player_colors[slot]` /
   `get_player_color` (focus emulator borders, `ItemPanelUI` / `LockedPanel` / `CharacterPanelUI`, shop /
   upgrade / end-run containers, `coop_player_label`, HUD `player_ui_elements`, `Player.update_highlight`,

@@ -60,6 +60,9 @@ const ShopChangeTests := preload(
 const UpgradesChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_change_tests.gd"
 )
+const SelectionScreenTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/selection_screen_tests.gd"
+)
 const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
@@ -384,7 +387,7 @@ func _suite_lobby_menu(together: Node):
 
 
 # Character selection: the menu mirror leaves the scene with two co-op players that the grid and
-# colour tests use.
+# colour tests use. Then each machine's own scroll, join slots and weapon panels.
 func _suite_selection(together: Node):
 	yield(_test_menu_mirror(together), "completed")
 	_suite = MenuUxTests.new()
@@ -392,6 +395,8 @@ func _suite_selection(together: Node):
 	_suite = CoopSelectionTests.new()
 	yield(_suite.run(self, together), "completed")
 	_suite = MenuPuppetTests.new()
+	yield(_suite.run(self, together), "completed")
+	_suite = SelectionScreenTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

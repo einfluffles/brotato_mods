@@ -65,6 +65,9 @@ func _slot_label(panel: Control, i: int) -> void:
 		label.name = SLOT_LABEL
 		label.align = Label.ALIGN_CENTER
 		label.valign = Label.VALIGN_TOP
+		# A Label centres itself vertically in a container (SIZE_SHRINK_CENTER): right over the
+		# game's hold-to-join hint in the middle of the slot. At the top instead.
+		label.size_flags_vertical = 0  # shrink to the top (Godot 3 has no SIZE_SHRINK_BEGIN)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.add_child(label)
 	var text: String = Text.text("COOP_PLAYER", [str(i + 1)])

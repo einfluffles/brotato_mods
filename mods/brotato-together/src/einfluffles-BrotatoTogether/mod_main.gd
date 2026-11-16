@@ -21,6 +21,7 @@ const EXTENSIONS := [
 	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
 	"extensions/ui/shop_item.gd",
 	"extensions/ui/pause_menu.gd",
+	"extensions/ui/focus_emulator.gd",
 	"extensions/ui/character_selection.gd",
 	"extensions/ui/weapon_selection.gd",
 	"extensions/ui/difficulty_selection.gd",
