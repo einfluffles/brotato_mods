@@ -19,6 +19,8 @@ const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
+# Viewport sizes the colour hint is checked at (16:9 and 16:10).
+const SIZES := [Vector2(1920, 1080), Vector2(2560, 1440), Vector2(1280, 720), Vector2(1920, 1200)]
 
 var t: Node = null  # the test mod: _check()
 
@@ -37,6 +39,7 @@ func run(test_mod: Node, together: Node):
 	CoopService.bt_clear_remote_colors()
 	yield(_frames(2), "completed")
 	_test_join_hints(scene)
+	yield(check_hint_layout(t, together.coop_selection, scene, "host"), "completed")
 	yield(_test_color_picks(scene), "completed")
 	_test_color_mirror(together, scene)
 	yield(_test_locked(scene), "completed")
@@ -73,10 +76,103 @@ func _test_join_hints(scene: Node) -> void:
 		apart = apart and label != null and not label.get_global_rect().intersects(hint)
 		apart = apart and label.get_global_rect().end.y <= hint.position.y
 	t._check(apart, "join hints: \"Player N\" sits above the hint, not over it")
-	var hint: Control = scene.get_node_or_null(
-		"MarginContainer/VBoxContainer/" + CoopSelection.COLOR_HINT
+	var hint: Control = scene.find_node(CoopSelection.COLOR_HINT, true, false)
+	t._check(hint != null and hint.is_visible_in_tree(), "colour hint shown")
+
+
+# The colour hint takes no space in the game's layout and covers nothing, at several viewport
+# sizes. The game stretches a 1920x1080 layout to any window (2d / keep), so 1920x1080 is what it
+# lays out on every resolution; the stretch's base size is set to each resolution here so that
+# the layout itself is checked at those sizes too. `where`: host / client, for the messages.
+func check_hint_layout(test_mod: Node, coop_selection: Node, scene: Node, where: String):
+	t = test_mod
+	var hint: Control = scene.find_node(CoopSelection.COLOR_HINT, true, false)
+	var layout: Control = scene.get_node("MarginContainer")
+	t._check(
+		hint != null and hint.is_visible_in_tree() and not layout.is_a_parent_of(hint),
+		"colour hint (%s): shown, outside the game's layout containers" % where
 	)
-	t._check(hint != null and hint.is_visible_in_tree(), "colour hint shown under the title")
+	if hint == null:
+		yield(_frames(1), "completed")
+		return
+	coop_selection.set_process(false)  # it shows the hint every frame
+	# The DLC bar as co-op lays it out (in a row next to the Back button): the tests set the co-op
+	# run directly, so the game did not switch it.
+	var bar: Node = scene.get_node_or_null("%ItemSetBar")
+	var vertical: bool = bar != null and not bar._horizontal
+	if vertical:
+		bar.set_horizontal(true)
+	if bar == null or not bar.visible:
+		print("  info: no DLC bar here; the colour hint's check against it skipped")
+	var base := Vector2(
+		ProjectSettings.get_setting("display/window/size/width"),
+		ProjectSettings.get_setting("display/window/size/height")
+	)
+	var failures := []
+	for size in SIZES:
+		_stretch(size)
+		hint.visible = false
+		yield(_frames(3), "completed")
+		var vanilla := _layout_rects(scene)
+		hint.visible = true
+		yield(_frames(3), "completed")
+		var shown := _layout_rects(scene)
+		var at := "%dx%d" % [size.x, size.y]
+		if shown.rects != vanilla.rects:
+			failures.append("%s: layout moved (%s vs %s)" % [at, shown.rects, vanilla.rects])
+		if shown.scroll > vanilla.scroll:
+			failures.append("%s: grid scrolls %d instead of %d" % [at, shown.scroll, vanilla.scroll])
+		var rect := hint.get_global_rect()
+		if not scene.get_viewport().get_visible_rect().encloses(rect):
+			failures.append("%s: hint %s off screen" % [at, rect])
+		for other in _neighbours(scene):
+			if other.is_visible_in_tree() and rect.intersects(other.get_global_rect()):
+				var over: Rect2 = other.get_global_rect()
+				failures.append("%s: hint %s over %s %s" % [at, rect, other.name, over])
+	_stretch(base)
+	if vertical:
+		bar.set_horizontal(false)
+	coop_selection.set_process(true)
+	yield(_frames(3), "completed")
+	t._check(
+		failures.empty(),
+		"colour hint (%s): same layout, no extra grid scrolling, covers nothing at %s %s"
+		% [where, SIZES, failures]
+	)
+
+
+func _stretch(size: Vector2) -> void:
+	_tree().set_screen_stretch(SceneTree.STRETCH_MODE_2D, SceneTree.STRETCH_ASPECT_KEEP, size)
+
+
+# Rects of the layout's children and the character grid; how far the grid scrolls.
+static func _layout_rects(scene: Node) -> Dictionary:
+	var rects := []
+	for child in scene.get_node("MarginContainer/VBoxContainer").get_children():
+		if child is Control and child.visible:
+			rects.append([child.name, child.get_global_rect()])
+	var grid: Control = scene.get_node("%Inventory1")
+	rects.append([grid.name, grid.get_global_rect()])
+	var scroll: ScrollContainer = scene.get_node("%Inventories")
+	var bar := scroll.get_v_scrollbar()
+	return {rects = rects, scroll = max(0.0, bar.max_value - bar.page)}
+
+
+# What the hint must not cover: title, Back button, DLC bar, Run Options box, player panels.
+static func _neighbours(scene: Node) -> Array:
+	var nodes := [
+		scene.get_node("MarginContainer/VBoxContainer/Title"),
+		scene.get_node("BackButton"),
+		scene.get_node("%RunOptionsPanel"),
+	]
+	var bar: Node = scene.get_node_or_null("%ItemSetBar")
+	if bar != null:
+		nodes.append(bar.get_node("Panel"))
+	var row := "MarginContainer/VBoxContainer/DescriptionContainer/HBoxContainer"
+	for panel in scene.get_node(row).get_children():
+		if panel is Control:
+			nodes.append(panel)
+	return nodes
 
 
 func _press_virtual(device: int):

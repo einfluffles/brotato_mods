@@ -140,12 +140,27 @@ func _scrollable(scene: Node) -> bool:
 	return room > 0.0
 
 
+# The whole grid fits its box at 1920x1080: a spacer under the title shortens the box, so the
+# grid scrolls as a longer character list would.
+func _shorten_grid_box(scene: Node):
+	var spacer := Control.new()
+	spacer.name = "TestsGridSpacer"
+	spacer.rect_min_size = Vector2(0, 80)
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var title: Node = scene.get_node("MarginContainer/VBoxContainer/Title")
+	title.get_parent().add_child_below_node(title, spacer)
+	yield(_frames(2), "completed")
+
+
 # --- character selection ---
 
 
 func _host_characters():
 	var scene: Node = yield(_host_screen(MenuData.character_selection_scene, false), "completed")
-	if not CoopSelection.is_character_selection(scene) or not _scrollable(scene):
+	if not CoopSelection.is_character_selection(scene):
+		return {}
+	yield(_shorten_grid_box(scene), "completed")
+	if not _scrollable(scene):
 		return {}
 	# Two remote players and nobody of this machine: the grid follows them (as before).
 	t._check(_scrolls(scene, 0), "scroll: host without own players follows the remote cursors")
@@ -173,7 +188,10 @@ func _host_characters():
 
 func _client_characters(host: Dictionary):
 	var scene: Node = yield(_show(host.state.duplicate(true)), "completed")
-	if scene == null or not _scrollable(scene):
+	if scene == null:
+		return
+	yield(_shorten_grid_box(scene), "completed")
+	if not _scrollable(scene):
 		return
 	t._check(
 		CoopService.connected_players.size() == 2 and SharedScroll.own_player() == 1,

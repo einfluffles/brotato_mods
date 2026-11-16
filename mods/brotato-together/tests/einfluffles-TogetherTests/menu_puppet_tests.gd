@@ -20,6 +20,9 @@ const PuppetMenu := preload(
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
+const CoopSelectionTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
+)
 const CHARACTERS := "character_selection"
 const WEAPONS := "weapon_selection"
 const DIFFICULTY := "difficulty_selection"
@@ -30,6 +33,7 @@ var t: Node = null  # the test mod: _check()
 var _menus: Node = null  # MenuPuppet
 var _menu_sync: Node = null
 var _focus_sync: Node = null
+var _coop_selection: Node = null
 var _sent := {}  # kind -> {state (with its grids), cursors}
 var _host := {}  # what the host's screens showed, to compare with
 
@@ -39,6 +43,7 @@ func run(test_mod: Node, together: Node):
 	_menus = together.menu_puppet
 	_menu_sync = together.menu_sync
 	_focus_sync = together.focus_sync
+	_coop_selection = together.coop_selection
 	_menu_sync.set_process(false)
 	var settings := _settings()
 	var players: Array = CoopService.connected_players.duplicate(true)
@@ -338,6 +343,8 @@ func _client_characters():
 		"characters: a joining player's hold progress in the next free slot"
 	)
 	t._check(join[3].instructions_visible, "characters: the last slot offers to join")
+	var hint := CoopSelectionTests.new()  # kept by this function while it waits
+	yield(hint.check_hint_layout(t, _coop_selection, scene, "client"), "completed")
 
 	# Nothing is decided here.
 	FocusEmulatorSignal.emit(first, "pressed", 0)
