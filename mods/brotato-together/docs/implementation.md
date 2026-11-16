@@ -703,6 +703,36 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     to the other clients. Cosmetic: decisions never depend on it.
   - The client rebuilds a panel only when its revision or entry changed, and re-applies the run state only
     when its bytes changed (a rebuild of the own panel would fight the local cursor).
+  - Gear page after a run change (`UpgradesSync._rebuild_gear`): every run change (any player's pick,
+    reroll gold, a combine) makes the client call each container's `update_inventory`, which frees every
+    weapon and item element of its gear page (`Inventory.clear_elements`) and builds new ones. A real
+    session crashed there (native access violation, no script error): the own panel ran on its gear
+    page with the cursor on an element, the own `FocusEmulator` kept the freed element, and a released
+    build dereferences it (a debug build reads a freed object as null, so the headless tests check the
+    references themselves). Right before it the game logged "Node not found" + `Parameter "p_node" is
+    null` once per weapon: `CoopUpgradesUIPlayerContainer._set_focus_neighbours` links the weapons to
+    the last item (and the items to the first weapon) by node path, and only on a page change, so the
+    weapons inventory's relink after the rebuild named a freed item element. Now, per container and
+    before the rebuild, the cursor is taken off a gear element (also the element a focused popup was
+    opened from); after it (and after the crate list's refresh, which closes that popup) the cursor
+    goes to the same item (the element nearest its old index; items are shown newest first, so another
+    item moves it on), else the element at the same index, and for the own panel to the page's default
+    (`focus()`) if the inventory is empty. The game's way back to the gear page
+    (`_resume_inventory_control_focus`) moves the same way, focus neighbours naming a freed node are
+    dropped and, on the gear page, `_set_focus_neighbours` links the new elements. The crate weapons
+    list's cursor is taken off before `_refresh_weapons_inventory` too. The shop already did this for
+    its gear (`ShopSync._refresh_gear`; its inventories have no neighbour paths into each other, and
+    its way back (`_resume_shop_control_focus`) names shop items, which are kept).
+  - Safety net, every `FocusEmulator` (`extensions/ui/focus_emulator.gd`, online or not): a control
+    freed while it holds the cursor is dropped before the game's code touches it (`_input` and
+    `_process`, which Godot 3 calls at every script level with the extension's first, the
+    `focused_control` and `player_index` setters, `_clear_focused_control`). Whether it still exists is
+    looked up by instance id (`_cursor_id`), since a freed control cannot be asked and reads as null
+    in debug builds. The cursor goes to the control now at its place, as the game's own recovery in
+    `_handle_input` intends, or is cleared. Each drop logs a warning naming the player and the
+    parent (at most one per 10 s per emulator, with the count of the ones in between): a log that
+    shows one found a path the mod does not handle yet. `tools/check.sh` fails on "Node not found"
+    and `Parameter "p_node" is null` while tests run.
   - Keyboard and mouse (`sync/local_panel.gd`, a node `UpgradesSync` adds as the puppet `UpgradesUI`'s
     last child; written against "the own panel + its emulator", the shop uses it too, see above).
     Why a node there: a `FocusEmulator` with a cursor marks every event that is not a co-op action
