@@ -633,6 +633,7 @@ func _tracked_nodes() -> Array:
 			if child is EntityBirth and child.visible:
 				nodes.append(child)
 	nodes += Puddles.tracked(_main)  # acid, petrol, fire: static like gold
+	nodes += BattleScene.spawned_holes(_main)
 	# Pooled projectiles are removed from the tree, so container children are the live ones.
 	for container_name in ["_player_projectiles", "_enemy_projectiles"]:
 		var container = _main.get(container_name)

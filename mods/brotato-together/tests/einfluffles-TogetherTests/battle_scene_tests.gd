@@ -2,8 +2,11 @@ extends Reference
 # Battle state that changes the scene itself (sync/battle_scene.gd, protocol 13): the wire fields
 # (weapon slots, sparse speed: round trip, strict parsing, sizes, resolve), then one real host
 # battle with the hole layout forced on (the jungle waves' flag, on a base-game wave: the
-# headless game owns no jungle zone) in which a weapon breaks and a player is slowed, replayed on
-# a client that loads with the wave and on one that joins after the break.
+# headless game owns no jungle zone) in which a weapon breaks, a player is slowed, a single hole
+# appears (BrachiosaurusFoot._stomp's call) and a player walks into a layout hole and into that one,
+# replayed on a client that loads with the wave and on one that joins after the break. The client's
+# own-player prediction walks into both holes from the same spot with the same inputs and must end
+# where the host's physics stopped the player.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
@@ -13,6 +16,14 @@ const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/sn
 const PF := Snapshot.PlayerField
 const SLOW := -100  # bonus_speed of the slowed host player
 const SNAPSHOTS_EACH := 10  # recorded before and after the break
+const HOLE_SCENE := "res://entities/gpe/hole/hole.tscn"
+const WALKER := 1  # the host player walked into the holes
+const WALK_STEPS := 40  # physics ticks: far past a hole's edge from WALK_START
+const WALK_START := 180.0  # px beside a hole's center (its capsule reaches 105, a player 24 more)
+const WALK_ANGLE := 0.3  # rad off the hole's center: the player slides along it
+# px from other holes and players: a walk only reaches the hole it is meant for (it starts
+# WALK_START from it and heads for it, another hole reaches 105 + 24 px towards it)
+const ROOM := 350.0
 
 var _t: Node
 
@@ -23,6 +34,15 @@ class FakePlayer:
 
 	func get_move_speed() -> float:
 		return move_speed
+
+
+# Holds one direction, like a stick held on the player's device.
+class Walk:
+	extends MovementBehavior
+	var direction := Vector2.ZERO
+
+	func get_movement() -> Vector2:
+		return direction
 
 
 func run(test_mod: Node, together: Node):
@@ -180,9 +200,15 @@ func _test_battle(together: Node):
 	host._start_battle(main)
 	var host_player: Node = main.get("_players")[0]
 	host_player.bonus_speed = SLOW
+	var layout_hole := _clear_hole(main)
+	var stomp_at := _clear_spot(main)
+	main.get("_gpe_spawner").spawn_single_hole_at_position(stomp_at)
 	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
 	var recorded := []
 	yield(_record(host, recorded), "completed")
+	var walks := []
+	for hole in [layout_hole, stomp_at]:
+		walks.append(yield(_host_walk(main, hole), "completed"))
 	var weapon_count: int = host_player.current_weapons.size()
 	var broken_slot: int = weapon_count - 2  # the first one added: a neighbour on each side
 	host_player.on_weapon_wanted_to_break(host_player.current_weapons[broken_slot], 0)
@@ -200,13 +226,88 @@ func _test_battle(together: Node):
 	var expected_slots := range(weapon_count)
 	expected_slots.remove(broken_slot)
 	_check_host(start, late_start, recorded, expected_slots, host_player, kept_ids.size())
+	_t._check(types.values().has(HOLE_SCENE), "the single hole is a snapshot entity")
 	var last: Dictionary = SnapshotTests.views(recorded)[-1]
-	yield(_client_from_start(client, start, recorded, last, kept_ids), "completed")
+	yield(
+		_client_from_start(client, start, recorded, last, kept_ids, stomp_at, walks), "completed"
+	)
 	yield(_client_late(client, late_start, recorded, kept_ids, expected_slots), "completed")
 	wave_data.spawn_holes = saved_holes
 	for weapon in added.slice(1, added.size() - 1):  # the first one broke on the host
 		RunData.remove_weapon(weapon, 0)
 	host.set_process(true)
+
+
+# The hole of the host's layout with the most room around it.
+func _clear_hole(main: Node) -> Vector2:
+	var best := Vector2.ZERO
+	var best_room := 0.0
+	var layout = BattleScene._find_layout(main, BattleScene._layout_scenes(main))
+	var holes: Array = layout.get_children() if layout != null else []
+	for hole in holes:
+		var room := _room(main, hole.global_position)
+		if room > best_room:
+			best = hole.global_position
+			best_room = room
+	_t._check(best_room >= ROOM, "a layout hole with room around it (%.0f px)" % best_room)
+	return best
+
+
+# The spot with the most room for the single hole.
+func _clear_spot(main: Node) -> Vector2:
+	var best := Vector2.ZERO
+	var best_room := 0.0
+	var zone: Rect2 = ZoneService.get_current_zone_rect().grow(-WALK_START - 50)
+	for y in range(int(zone.position.y), int(zone.end.y), 25):
+		for x in range(int(zone.position.x), int(zone.end.x), 25):
+			var room := _room(main, Vector2(x, y))
+			if room > best_room:
+				best = Vector2(x, y)
+				best_room = room
+	_t._check(best_room >= ROOM, "a spot with room for the single hole (%.0f px)" % best_room)
+	return best
+
+
+# Distance to the nearest other hole or player (0 too close to the map's edge for a walk).
+func _room(main: Node, position: Vector2) -> float:
+	if not ZoneService.get_current_zone_rect().grow(-WALK_START - 50).has_point(position):
+		return 0.0
+	var room := INF
+	for circle in ZoneService.forbidden_circles:
+		if circle.center != position:
+			room = min(room, circle.center.distance_to(position))
+	for player in main.get("_players"):
+		room = min(room, player.global_position.distance_to(position))
+	return room
+
+
+# The host's own physics walks WALKER into the hole from WALK_START beside it, a tick per input:
+# [start, direction, position after every tick].
+func _host_walk(main: Node, hole: Vector2):
+	var player: Node = main.get("_players")[WALKER]
+	var middle: Vector2 = ZoneService.get_current_zone_rect().get_center()
+	var side := Vector2.LEFT if hole.x > middle.x else Vector2.RIGHT  # from the map's middle
+	var walk := Walk.new()
+	walk.direction = -side.rotated(WALK_ANGLE)
+	var saved = player._current_movement_behavior
+	var start := hole + side * WALK_START
+	yield(_t.get_tree(), "idle_frame")  # not between a physics_frame and its tick
+	player.global_position = start
+	player._current_movement_behavior = walk
+	var path := []
+	while path.size() <= WALK_STEPS:
+		yield(_t.get_tree(), "physics_frame")  # before this tick's move
+		path.append(player.global_position)
+	player._current_movement_behavior = saved
+	var step: float = player.get_move_speed() / Engine.iterations_per_second
+	var straight: Vector2 = start + walk.direction * step * WALK_STEPS
+	_t._check(
+		path[0] == start and path[-1].distance_to(straight) > 30.0,
+		"the hole stops the host's player (%.0f px short)" % path[-1].distance_to(straight)
+	)
+	var direction := walk.direction
+	walk.free()
+	return [start, direction, path]
 
 
 func _record(host: Node, recorded: Array):
@@ -272,7 +373,13 @@ func _check_host(
 
 
 func _client_from_start(
-	client: Node, start: Dictionary, recorded: Array, last: Dictionary, kept_ids: Array
+	client: Node,
+	start: Dictionary,
+	recorded: Array,
+	last: Dictionary,
+	kept_ids: Array,
+	stomp_at: Vector2,
+	walks: Array
 ):
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
@@ -313,9 +420,48 @@ func _client_from_start(
 		var diff: float = abs(wrapf(player.current_weapons[k].rotation - host_weapons[4 * k], -PI, PI))
 		aim_ok = aim_ok and diff < 0.01
 	_t._check(aim_ok, "every weapon after the broken one aims like its host weapon")
-	_test_prediction_speed(client, player, last.players[0])
+	_test_prediction_speed(client, player, last.players[0], walks[0][0])
+	_test_hole_walks(client, main, stomp_at, walks, last.players[WALKER])
 	client._leave_battle()
 	Puppet.set_active(false)
+
+
+# The single hole is the host's (the game's scene with its body), and the own player's prediction
+# of each host walk ends where the host's player did, also halfway.
+func _test_hole_walks(
+	client: Node, main: Node, stomp_at: Vector2, walks: Array, entry: Array
+) -> void:
+	var stomp = null
+	for child in main.get("_gpe_container").get_children():
+		stomp = child if child is Hole and child.global_position == stomp_at else stomp
+	_t._check(
+		stomp != null and stomp.collision_layer == 192,
+		"client has the single hole, a body on the obstacles layer"
+	)
+	var player: Node = main.get("_players")[WALKER]
+	var input_sync: Node = client.input_sync
+	var saved: Array = input_sync.history
+	client._newest_rx_msec = OS.get_ticks_msec()
+	for k in walks.size():
+		var walk: Array = walks[k]
+		var host_entry := entry.duplicate()
+		host_entry[PF.POSITION] = walk[0]
+		host_entry[PF.INPUT_ACK] = 0
+		var worst := 0.0
+		for steps in [WALK_STEPS / 2, WALK_STEPS]:
+			input_sync.history = []
+			for seq in range(1, steps + 1):
+				input_sync.history.append([seq, walk[1]])
+			var predicted: Vector2 = client._own_target(player, host_entry)
+			worst = max(worst, predicted.distance_to(walk[2][steps]))
+		_t._check(
+			worst < 0.1,
+			(
+				"prediction into the %s hole ends where the host's player did (off by %.2f px)"
+				% [["layout", "single"][k], worst]
+			)
+		)
+	input_sync.history = saved
 
 
 # Another layout and back: the old one goes, its circles with it; paths outside the spawner's
@@ -340,8 +486,10 @@ func _test_layout_swap(main: Node, host_path: String) -> void:
 	_t._check(back and holes == 1, "one hole layout in the scene after swaps")
 
 
-# The host's speed reaches the puppet, and the replay of an un-acked input moves by it.
-func _test_prediction_speed(client: Node, player: Node, entry: Array) -> void:
+# The host's speed reaches the puppet, and the replay of an un-acked input moves by it, from a spot
+# clear of the holes (a step along a hole's edge goes as far as the host's: test_motion and a
+# slide, up to twice as far).
+func _test_prediction_speed(client: Node, player: Node, entry: Array, clear: Vector2) -> void:
 	var host_speed = entry[PF.SPEED]
 	_t._check(
 		host_speed != null and player.get_move_speed() == float(host_speed),
@@ -351,13 +499,14 @@ func _test_prediction_speed(client: Node, player: Node, entry: Array) -> void:
 	var saved: Array = input_sync.history
 	var zone: Rect2 = ZoneService.get_current_zone_rect()
 	var direction := Vector2.RIGHT
-	if entry[PF.POSITION].x > zone.get_center().x:
+	if clear.x > zone.get_center().x:
 		direction = Vector2.LEFT
 	input_sync.history = [[1, direction]]
 	var host_entry := entry.duplicate()
+	host_entry[PF.POSITION] = clear
 	host_entry[PF.INPUT_ACK] = 0
 	client._newest_rx_msec = OS.get_ticks_msec()
-	var lead: float = client._own_target(player, host_entry).distance_to(entry[PF.POSITION])
+	var lead: float = client._own_target(player, host_entry).distance_to(clear)
 	var step := float(host_speed) / Engine.iterations_per_second
 	_t._check(abs(lead - step) < 0.01, "prediction steps %.2f px per input (host %.2f)" % [lead, step])
 	input_sync.history = saved

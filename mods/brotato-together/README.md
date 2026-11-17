@@ -35,8 +35,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   charmed enemy and its shots in the charm colour, an evolved one with its outline and sprite),
   shots point the way they do on the host, and acid / petrol / fire puddles appear and fade with
   the host's.
-  Clients see the host's holes on the jungle waves that have them and lose a weapon when it breaks on
-  the host; your own character's prediction moves at your speed on the host (petrol, slows).
+  Clients see the host's holes on the jungle waves that have them and the ones the brachiosaurus'
+  foot stomps, and lose a weapon when it breaks on the host; your own character's prediction moves
+  at your speed on the host (petrol, slows) and stops at holes like on the host.
   The host moves a remote player by exactly one of their inputs per physics tick (bunched packets
   wait in a short queue, a tick without one stands still) and acks the input it moved with, so the
   prediction agrees with the host while running and stopping despite network jitter. Each input
@@ -248,8 +249,9 @@ move nothing in the layout), the client's popup, each with keyboard / pad / Focu
 input from the level-up panels to the shop (a host pause across the change, late level-up stops, a lost device, a shop pause that ended with its shop), the Esc menu
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave
-costs per snapshot and per frame; a weapon breaking mid-wave, the hole layout and the host's speed in
-the own-player prediction, also for a client joining mid-wave, and the own player running only while its
+costs per snapshot and per frame; a weapon breaking mid-wave, the hole layout, a stomped hole, the host's
+speed in the own-player prediction and that prediction walking into holes where the host's player stops,
+also for a client joining mid-wave, and the own player running only while its
 keys are held; input streams moving a remote player on the host one step per acked input against the
 client's own prediction code (jittered: bunched packets, ticks without one, a late stop, a swapped pair, a
 duplicate; one lost packet and four in a row, recovered from the redundant moves; a 450 ms gap caught up

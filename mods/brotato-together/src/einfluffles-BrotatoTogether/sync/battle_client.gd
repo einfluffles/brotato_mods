@@ -116,6 +116,7 @@ var _own_base_t := -1
 var _own_error := Vector2.ZERO
 var _own_display := Vector2.ZERO
 var _own_seq := 0  # newest own input the displayed position includes
+var _motion_result := Physics2DTestMotionResult.new()  # reused by BattleScene.step
 var _paused := false
 var _wave_over := false  # the host's wave ended: its players stand (_note_wave_end)
 var _pause_text := ""
@@ -367,6 +368,7 @@ func _freeze(main: Node) -> void:
 				timer.stop()
 	for player in main.get("_players"):
 		PuppetEntity.puppetize(player)
+		player.collision_mask = BattleScene.OBSTACLES  # no layer: nothing runs into a puppet
 	# On a bullet-hell wave main._ready adds its own generator (a random pattern); the host's
 	# bullets arrive as puppets.
 	var enemy_projectiles = main.get("_enemy_projectiles")
@@ -529,8 +531,8 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 	if _own_base_t < 0:
 		_own_display = predicted
 	elif newest.t != _own_base_t:
-		# Clamped like the target: holding into the zone's edge is no correction either.
-		var moved := _in_zone(_own_display + _steps_since(player, _own_seq))
+		# Clamped and blocked like the target: holding into an edge or a hole is no correction.
+		var moved := _in_zone(_walk_since(player, _own_display, _own_seq))
 		_own_error = moved - predicted
 		var ack: int = newest.players[i][PF.INPUT_ACK]
 		var late: float = OS.get_ticks_msec() - _clock_offset - newest.t
@@ -544,18 +546,18 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 	_move(player, "p%s" % i, _own_display)
 
 
-# The own player's motion from the inputs after seq (none while nothing is predicted).
-func _steps_since(player: Node2D, seq: int) -> Vector2:
-	var motion := Vector2.ZERO
+# Where the own player gets from `from` with the inputs after seq (nowhere unless predicting).
+func _walk_since(player: Node2D, from: Vector2, seq: int) -> Vector2:
 	if not _predicting():
-		return motion
+		return from
 	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
 	var history: Array = input_sync.history
-	var k := history.size() - 1
-	while k >= 0 and history[k][0] > seq:
-		motion += history[k][1].normalized() * step
+	var k := history.size()
+	while k > 0 and history[k - 1][0] > seq:
 		k -= 1
-	return motion
+	for j in range(k, history.size()):
+		from = BattleScene.step(player, from, history[j][1].normalized() * step, _motion_result)
+	return from
 
 
 # The host's world moves: not paused, the wave not over, and the newest snapshot is fresh.
@@ -587,7 +589,8 @@ func _own_target(player: Node2D, entry: Array) -> Vector2:
 	var history: Array = input_sync.history
 	for k in range(max(0, history.size() - MAX_REPLAY_INPUTS), history.size()):
 		if history[k][0] > entry[PF.INPUT_ACK]:
-			predicted += history[k][1].normalized() * step
+			var motion: Vector2 = history[k][1].normalized() * step
+			predicted = BattleScene.step(player, predicted, motion, _motion_result)
 	return _in_zone(predicted)
 
 
@@ -838,7 +841,8 @@ func _spawn(type_idx: int) -> Node:
 			node.curse_particle_instance = null
 	if Puddles.is_puddle(node):
 		Puddles.start(node, data)
-	PuppetEntity.puppetize(node)
+	if not node is Hole:  # its body is what the own player's prediction runs into
+		PuppetEntity.puppetize(node)
 	AnimMirror.detach_game_handlers(node)
 	return node
 
@@ -867,6 +871,8 @@ func _container_for(node: Node) -> Node:
 		return _main.get("_births_container")
 	if Puddles.is_puddle(node):
 		return Puddles.container(_main, node)
+	if node is Hole:
+		return _main.get("_gpe_container")
 	if node.get_script() != null and node.get_script().resource_path.begins_with("res://items/"):
 		return _main.get("_materials_container")
 	return _main.get("_entities_container")
