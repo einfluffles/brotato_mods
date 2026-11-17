@@ -2,7 +2,8 @@ extends Reference
 # Suite shop_loopback: the host opens the real co-op shop (rolls items) and buys slot 1; the
 # client mirrors both states (host provider -> STATE -> client handler, shop_stream_tests.gd),
 # the host's cursor and the shop's sounds. Plays on mod_main's two-player run (coop_run); checks
-# go through its _check.
+# go through its _check. Then the weapons row at shop entry and after a new weapon slot
+# (shop_gear_tests.gd), in shops of its own.
 
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
@@ -25,9 +26,11 @@ const KEY_CHECKS := 200
 const ShopStreamTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_stream_tests.gd"
 )
+const ShopGearTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_gear_tests.gd")
 
 var t: Node  # the test mod: _check, helpers, scene tree
 var _stream_tests = null  # kept alive across its yields
+var _gear = ShopGearTests.new()  # kept alive across its yields
 
 
 func _init(test_mod: Node) -> void:
@@ -114,6 +117,8 @@ func run(together: Node):
 	Puppet.set_active(false)
 	shop_sync._host_shop = null  # set by hand above: the host shop is gone with the next scene
 	shop_sync.set_process(true)
+	# The Anvil at shop entry and a new weapon slot's label, co-op and solo (ends in a solo shop).
+	yield(_gear.entry(t), "completed")
 
 
 # The host's cursors through sync/state_stream.gd end to end: FocusSync is the CURSORS provider

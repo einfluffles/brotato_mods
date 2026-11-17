@@ -21,6 +21,8 @@ const EXTENSIONS := [
 	"extensions/entities/brachiosaurus_foot.gd",
 	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
 	"extensions/ui/shop_item.gd",
+	"extensions/ui/coop_shop.gd",
+	"extensions/ui/shop.gd",
 	"extensions/ui/pause_menu.gd",
 	"extensions/ui/menu_options.gd",
 	"extensions/ui/focus_emulator.gd",
