@@ -157,12 +157,12 @@ func on_hit(_unit, value: int, _kb, _crit, _dodge, _protected, _armor, args, _ty
 		_hits[p] = [value, source_of(args, p)]
 
 
-# The weapon or item a hit came from, as my_id, or "" when it does not say.
+# The weapon or item a hit came from, as my_id, or "" when it does not say. From the hitbox
+# only: a burn tick reuses the unit's TakeDamageArgs with its hitbox cleared but `from` left as
+# whatever hit that unit last, maybe another player's weapon (Unit._on_BurningTimer_timeout).
 static func source_of(args, p: int) -> String:
 	var hitbox = args.hitbox if is_instance_valid(args.hitbox) else null
-	var from = args.from if is_instance_valid(args.from) else null
-	if from == null and hitbox != null and is_instance_valid(hitbox.from):
-		from = hitbox.from
+	var from = hitbox.from if hitbox != null and is_instance_valid(hitbox.from) else null
 	var key: int = Keys.empty_hash
 	if from != null and "damage_tracking_key_hash" in from:
 		key = from.damage_tracking_key_hash

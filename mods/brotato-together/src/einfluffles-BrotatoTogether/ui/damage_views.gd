@@ -7,9 +7,9 @@ extends Node
 #   single hit.
 # - In the shop: a button next to each player's reroll button. While a player's cursor rests on
 #   it (or the mouse, or the focus in the solo shop), the board of the wave before is up over
-#   that player's shop items: the wave and in co-op the share of the team's damage, three tiles
-#   (total, damage per second, biggest hit with its source), and the sources with icon, name, a
-#   bar against the strongest, number and share. Nothing is pressed and nothing pauses: the
+#   that player's shop items: three tiles (the wave's total with, in co-op, the share of the
+#   team's; damage per second; biggest hit with its source), and the sources with icon, name
+#   over a bar against the strongest, number and share. Nothing is pressed and nothing pauses: the
 #   board belongs to the panel of the player who looks at it, the others shop on, and because
 #   cursors are mirrored (ui/focus_targets.gd: "shop_damage") every machine shows whose board
 #   is up.
@@ -31,9 +31,9 @@ const HUD_SMALL_SIZE := 20
 const HUD_SOURCES := 2
 const HUD_ICON := Vector2(24, 24)
 const HUD_SMALL_ICON := Vector2(20, 20)
-const TILE_ICON := Vector2(26, 26)
+const TILE_ICON := Vector2(22, 22)
 const BOARD_ICON := Vector2(32, 32)
-const BAR_SIZE := Vector2(72, 10)
+const BAR_HEIGHT := 6
 const AMOUNT_WIDTH := 84
 const SHARE_WIDTH := 56
 const BUTTON_WIDTH := 60
@@ -101,9 +101,9 @@ static func short(number: int) -> String:
 	return text + UNITS[unit]
 
 
-# Damage per second over the wave's time, "" before the wave has run a second.
-static func per_second(total: int, time: float) -> String:
-	return short(int(round(total / time))) + "/s" if time >= 1.0 else ""
+# Damage per second over the wave's time, -1 before the wave has run a second.
+static func per_second(total: int, time: float) -> int:
+	return int(round(total / time)) if time >= 1.0 else -1
 
 
 # --- HUD ---
@@ -146,7 +146,8 @@ func _fill_row(row: VBoxContainer, entry: Array, share: int, hit: Array) -> void
 	var main_line: Node = row.get_node("Main")
 	main_line.get_node("Total").text = short(entry[0])
 	_set_text(main_line.get_node("Share"), "%d%%" % share if share >= 0 else "")
-	_set_text(main_line.get_node("Dps"), per_second(entry[0], meter.board.get("time", 0.0)))
+	var dps := per_second(entry[0], meter.board.get("time", 0.0))
+	_set_text(main_line.get_node("Dps"), short(dps) + "/s" if dps >= 0 else "")
 	var detail: Node = row.get_node("Detail")
 	for k in HUD_SOURCES:
 		var icon: TextureRect = detail.get_node("Source%dIcon" % k)
@@ -231,8 +232,8 @@ func _apply_shown() -> void:
 			reroll.grab_focus()
 
 
-# The board: List > Header (Title, TeamShare), Tiles (Total, Dps, Hit), a line, Sources
-# (MAX_SOURCES rows of Icon, Name, Bar, Amount, Share).
+# The board: List > Tiles (Total: the wave over total and team share; Dps; Hit), a line,
+# Sources (MAX_SOURCES rows of Icon, Text > Name over Bar, Amount, Share).
 func _board() -> PanelContainer:
 	var board := PanelContainer.new()
 	board.name = BOARD_NAME
@@ -255,14 +256,10 @@ func _board() -> PanelContainer:
 	list.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	list.add_constant_override("separation", 8)
 	board.add_child(list)
-	var header := _line("Header", BoxContainer.ALIGN_BEGIN, 8)
-	var title := _label(font, "Title", MUTED)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(title)
-	header.add_child(_label(small, "TeamShare", MUTED))
-	list.add_child(header)
-	var tiles := _line("Tiles", BoxContainer.ALIGN_BEGIN, 18)
-	tiles.add_child(_tile("Total", "Damage", TOTAL_ICON, Color.white))
+	var tiles := _line("Tiles", BoxContainer.ALIGN_BEGIN, 12)
+	var total := _tile("Total", "", TOTAL_ICON, Color.white)
+	total.get_node("Line").add_child(_label(small, "Share", MUTED))
+	tiles.add_child(total)
 	tiles.add_child(_tile("Dps", "DPS", DPS_ICON, DPS_COLOR))
 	var hit := _tile("Hit", "Biggest hit", HIT_ICON, HIT_COLOR)
 	hit.get_node("Line").add_child(_icon(TILE_ICON, "SourceIcon"))
@@ -283,11 +280,16 @@ func _board() -> PanelContainer:
 	for _i in meter.MAX_SOURCES:
 		var row := _line("", BoxContainer.ALIGN_BEGIN, 10)
 		row.add_child(_icon(BOARD_ICON, "Icon"))
+		var text := VBoxContainer.new()
+		text.name = "Text"
+		text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		text.add_constant_override("separation", 0)
 		var name_label := _label(font, "Name")
-		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		name_label.clip_text = true
-		row.add_child(name_label)
-		row.add_child(_bar())
+		text.add_child(name_label)
+		text.add_child(_bar())
+		row.add_child(text)
 		var amount := _label(font, "Amount")
 		amount.align = Label.ALIGN_RIGHT
 		amount.rect_min_size.x = AMOUNT_WIDTH
@@ -322,8 +324,7 @@ func _bar() -> ProgressBar:
 	bar.name = "Bar"
 	bar.percent_visible = false
 	bar.max_value = 1000
-	bar.rect_min_size = BAR_SIZE
-	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.rect_min_size.y = BAR_HEIGHT
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for part in ["bg", "fg"]:
 		var style := StyleBoxFlat.new()
@@ -336,15 +337,12 @@ func _bar() -> ProgressBar:
 func _fill_board(board: PanelContainer, entry: Array, team_share: int, hit: Array) -> void:
 	var list: Node = board.get_node("List")
 	var wave: int = meter.board.get("wave", 0)
-	var header: Node = list.get_node("Header")
-	header.get_node("Title").text = Text.text("WAVE", [str(wave)])
-	var team_text := "%d%% of the team" % team_share if team_share >= 0 else ""
-	_set_text(header.get_node("TeamShare"), team_text)
 	var tiles: Node = list.get_node("Tiles")
+	tiles.get_node("Total/Caption").text = Text.text("WAVE", [str(wave)])
 	tiles.get_node("Total/Line/Value").text = short(entry[0])
-	var time: float = meter.board.get("time", 0.0)
-	var dps := short(int(round(entry[0] / time))) if time >= 1.0 else "-"
-	tiles.get_node("Dps/Line/Value").text = dps
+	_set_text(tiles.get_node("Total/Line/Share"), "%d%%" % team_share if team_share >= 0 else "")
+	var dps := per_second(entry[0], meter.board.get("time", 0.0))
+	tiles.get_node("Dps/Line/Value").text = short(dps) if dps >= 0 else "-"
 	tiles.get_node("Hit/Line/Value").text = short(hit[0]) if hit[0] > 0 else "-"
 	var hit_source = meter.data_of(hit[1]) if hit[1] != "" else null
 	var source_icon: TextureRect = tiles.get_node("Hit/Line/SourceIcon")
@@ -362,10 +360,10 @@ func _fill_board(board: PanelContainer, entry: Array, team_share: int, hit: Arra
 			continue
 		var color: Color = ItemService.get_color_from_tier(data.tier)
 		row.get_node("Icon").texture = data.icon
-		var name_label: Label = row.get_node("Name")
+		var name_label: Label = row.get_node("Text/Name")
 		name_label.text = tr(data.name) + (" x%d" % source[1] if source[1] > 1 else "")
 		name_label.add_color_override("font_color", color)
-		var bar: ProgressBar = row.get_node("Bar")
+		var bar: ProgressBar = row.get_node("Text/Bar")
 		bar.value = 1000.0 * source[2] / max(1, top)
 		bar.get_stylebox("fg").bg_color = Color(color.r, color.g, color.b, 0.85)
 		row.get_node("Amount").text = short(source[2])

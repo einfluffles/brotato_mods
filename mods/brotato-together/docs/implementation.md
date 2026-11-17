@@ -1619,9 +1619,12 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (`enemy_spawned`, `neutral_spawned`) and through it to each unit's `took_damage` (once per
   unit: the spawner's pools hand the same nodes out again). The value is `full_dmg_value`, what
   the floating damage text shows (not capped at the enemy's health, unlike the counters).
-  Per player, from `TakeDamageArgs.from_player_index`, the biggest with its source: a weapon's
-  own tracking key (an item that counts its damage), else the weapon's `my_id` from
-  `weapon_pos`, else the hitbox's tracking key, else none ("" on the wire, no icon). A hit costs
+  Per player, from `TakeDamageArgs.from_player_index`, the biggest with its source, read off
+  the hitbox: its `from` weapon's own tracking key (an item that counts its damage), else that
+  weapon's `my_id` from `weapon_pos`, else the hitbox's tracking key, else none ("" on the
+  wire, no icon). Never `args.from`: a burn tick reuses the unit's args with the hitbox
+  cleared and `from` left as whatever hit the unit last, maybe another player's weapon. So a
+  burn tick has no source. A hit costs
   a comparison; the source is looked up only for a new biggest one.
 - Wave time (damage per second = total / time): the meter's own count of frame time while
   `main`'s `WaveTimer` runs and the tree is not paused. The timer stops when the wave is over,
@@ -1657,10 +1660,11 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   child of the panel that holds the player's `ShopItemsContainer`, so it fills the place of the
   shop items; in the solo shop (the slots sit in a row there) a top-level child of the slots'
   container, laid over its rect when it comes up, so the layout does not move. The board
-  (header: wave and, in co-op, the share of the team's; three tiles with a caption over icon
-  and value: total, DPS, biggest hit with its source's icon, about 360 px wide so they fit a
-  four-player panel; a line; a row per source: icon, name in its tier colour, a bar against the
-  strongest source in that colour, number, share) is visible while that player's `FocusEmulator`
+  (three tiles with a caption over icon and value: the wave over the total and, in co-op, the
+  share of the team's; DPS; biggest hit with its source's icon. Estimated at about 340 px, for
+  the four-player panel's 403 (two players: 810). A line, then a row per source: icon, name in
+  its tier colour over a bar against the strongest source in that colour, number, share. The
+  bar sits under the name so the name keeps room in a narrow panel) is visible while that player's `FocusEmulator`
   rests on the button, the button has the focus (solo) or the mouse is on it (polled each
   frame): no press, no modal state, no pause. The shop is told by `_get_reroll_button`, not by
   class: naming `BaseShop` in a script that loads with the mod loads `base_shop.gd` too early
@@ -1692,6 +1696,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   dart traps (the game ships them without a tracking key).
 - Open: the row and the board are checked as nodes, texts and rects in the headless tests
   (`damage_meter_tests.gd`), not seen on a real screen; the mouse on the button is untested.
+  Widths cannot be checked there: headless, labels measure 0 px wide. The board grows the
+  player's panel while it is up when there are more sources than the slots' height holds (as
+  before); not seen yet whether that looks right with four players.
 
 ## Remote input, pause, absent players
 

@@ -108,7 +108,7 @@ func _test_short() -> void:
 			wrong.append("%d: %s" % [number, DamageViews.short(number)])
 	_t._check(wrong.empty(), "short numbers: 9,999, 12.3K, 4.57M, 7.89B %s" % [wrong])
 	_t._check(
-		DamageViews.per_second(1234, 10.0) == "123/s" and DamageViews.per_second(50, 0.5) == "",
+		DamageViews.per_second(1234, 10.0) == 123 and DamageViews.per_second(50, 0.5) == -1,
 		"damage per second, none before the wave ran a second"
 	)
 
@@ -259,13 +259,13 @@ func _test_shop(item):
 		"over that player's shop items %s" % [boards[1].get_global_rect()]
 	)
 	var list: Node = boards[0].get_node("List")
-	var title: String = list.get_node("Header/Title").text
-	var share: Label = list.get_node("Header/TeamShare")
+	var tiles: Node = list.get_node("Tiles")
+	var title: String = tiles.get_node("Total/Caption").text
+	var share: Label = tiles.get_node("Total/Line/Share")
 	_t._check(
 		title == Text.text("WAVE", [str(RunData.current_wave)]) and share.visible,
-		"the board's title is the wave, with the share of the team's (%s, %s)" % [title, share.text]
+		"the total's caption is the wave, with the share of the team's (%s, %s)" % [title, share.text]
 	)
-	var tiles: Node = list.get_node("Tiles")
 	var values := []
 	for tile in ["Total", "Dps", "Hit"]:
 		values.append(tiles.get_node(tile + "/Line/Value").text)
@@ -280,7 +280,7 @@ func _test_shop(item):
 		row.visible and number == "1,234 100%" and not rows.get_child(1).visible,
 		"a row per source with number and share (%s)" % number
 	)
-	_t._check(row.get_node("Bar").value == 1000, "the strongest source's bar is full")
+	_t._check(row.get_node("Text/Bar").value == 1000, "the strongest source's bar is full")
 	if item != null:
 		var theirs: Node = boards[1].get_node("List/Sources").get_child(0)
 		var item_icon: Texture = theirs.get_node("Icon").texture
@@ -508,7 +508,7 @@ func _test_solo_shop(meter: Node):
 		"without moving the shop's layout"
 	)
 	var total: String = board.get_node("List/Tiles/Total/Line/Value").text
-	var share: Label = board.get_node("List/Header/TeamShare")
+	var share: Label = board.get_node("List/Tiles/Total/Line/Share")
 	_t._check(total == "50" and not share.visible, "with the wave's total, no share alone")
 	_t._check(
 		board.get_node("List/Tiles/Hit/Line/Value").text == "-",
