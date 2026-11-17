@@ -9,10 +9,13 @@ extends Reference
 #    send -> resync, member join accepts the session
 #  - join compatibility (game / mod version; DLC never rejects) with the reason shown on the client
 #  - the ping is the network's round trip: not the frames either game let the messages wait
+#  - sessions are relayed by default (Steam's direct route off), +bt_direct opts out, +bt_relay is
+#    still accepted; a direct path while relay-only is on gets one warning per connection
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const LinkWatch := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/link_watch.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
@@ -42,6 +45,8 @@ class FakeSteam:
 	var invited := []  # lobby ids the invite dialog was opened for
 	var presence := {}
 	var inbox := []  # messages Steam has received and the game has not read yet
+	var config_values := {}  # ESteamNetworkingConfigValue -> value set
+	var config_accepted := true
 
 	# stamped: with Steam's receive time, as GodotSteam delivers it.
 	func queue(sender: int, channel: int, data: PoolByteArray, stamped := true) -> void:
@@ -118,11 +123,24 @@ class FakeSteam:
 	func setLobbyJoinable(_lobby_id: int, _joinable: bool) -> bool:
 		return true
 
+	func setGlobalConfigValueInt32(config: int, value: int) -> bool:
+		config_values[config] = value
+		return config_accepted
+
 	func getNumLobbyMembers(_lobby_id: int) -> int:
 		return lobby_members.size()
 
 	func getLobbyMemberByIndex(_lobby_id: int, index: int) -> int:
 		return lobby_members[index]
+
+
+# getSessionConnectionInfo only, for the session path (net/link_watch.gd).
+class PathSteam:
+	extends Reference
+	var infos := {}  # steam id -> getSessionConnectionInfo's answer
+
+	func getSessionConnectionInfo(steam_id: int, _connection: bool, _status: bool) -> Dictionary:
+		return infos.get(steam_id, {})
 
 
 # gdlint: enable=function-name
@@ -157,6 +175,7 @@ func run(t: Node, together: Node) -> void:
 	_test_ping(transport, session)
 	_test_compat()
 	_test_join_presence(transport)
+	_test_relay_route(transport)
 
 	session.disconnect("peer_ready", self, "_on_peer_ready")
 	transport.leave_lobby()
@@ -521,3 +540,104 @@ func _test_join_presence(transport: Node) -> void:
 	_t._check(_steam.presence.has("connect"), "slot free again: Join on")
 	transport.leave_lobby()
 	_t._check(not _steam.presence.has("connect") and transport.join_presence == "", "left: Join off")
+
+
+# Sessions go through Steam's relays only (its direct (ICE) route off) unless +bt_direct is given;
+# +bt_relay, the old opt-in, still works. Steam refusing the setting, or a GodotSteam without it,
+# is never claimed as relay-only.
+func _test_relay_route(transport: Node) -> void:
+	var saved_watch = transport.link_watch
+	transport.link_watch = LinkWatch.new()
+	_steam.config_values.clear()
+	_t._check(
+		(
+			transport.apply_route(["--foo", "+connect_lobby", "5"])
+			and transport.relay_only
+			and transport.link_watch.relay_only
+			and _steam.config_values.size() == 1
+			and _steam.config_values.get(104) == 0
+			and "relays only (default" in transport.route_note
+		),
+		"route: relay-only by default %s (%s)" % [_steam.config_values, transport.route_note]
+	)
+	_steam.config_values.clear()
+	_t._check(
+		(
+			not transport.apply_route(["+bt_direct"])
+			and not transport.relay_only
+			and not transport.link_watch.relay_only
+			and _steam.config_values.empty()
+			and "+bt_direct" in transport.route_note
+		),
+		"route: +bt_direct leaves Steam's direct route alone (%s)" % transport.route_note
+	)
+	_t._check(
+		(
+			transport.apply_route(["+bt_relay"])
+			and transport.relay_only
+			and _steam.config_values.get(104) == 0
+			and "+bt_relay" in transport.route_note
+			and "default" in transport.route_note
+		),
+		"route: +bt_relay still works and says it is the default (%s)" % transport.route_note
+	)
+	_steam.config_values.clear()
+	_t._check(
+		(
+			not transport.apply_route(["+bt_relay", "+bt_direct"])
+			and not transport.relay_only
+			and _steam.config_values.empty()
+		),
+		"route: +bt_direct wins over +bt_relay (%s)" % transport.route_note
+	)
+	_steam.config_accepted = false
+	_t._check(
+		(
+			not transport.apply_route([])
+			and not transport.relay_only
+			and not transport.link_watch.relay_only
+			and "refused" in transport.route_note
+			and not "relays only (" in transport.route_note
+		),
+		"route: not claimed when Steam refuses the setting (%s)" % transport.route_note
+	)
+	_steam.config_accepted = true
+	transport.steam = Reference.new()  # a GodotSteam without setGlobalConfigValueInt32
+	_t._check(
+		not transport.apply_route([]) and not transport.relay_only and "cannot" in transport.route_note,
+		"route: Steam's default without setGlobalConfigValueInt32 (%s)" % transport.route_note
+	)
+	transport.steam = _steam
+	transport.relay_only = false
+	transport.link_watch = saved_watch
+	_test_direct_under_relay()
+
+
+# A direct path although relay-only is on here (the other side runs an older build or +bt_direct):
+# one warning per connection, none when relay-only is off.
+func _test_direct_under_relay() -> void:
+	var steam := PathSteam.new()
+	steam.infos[CLIENT] = {"connection_state": 3, "ping": 20}
+	var watch = LinkWatch.new()
+	watch.relay_only = true
+	watch.poll(steam, [CLIENT], 1000)
+	var warned: String = watch.last_line
+	watch.poll(steam, [CLIENT], 2000)
+	steam.infos[CLIENT] = {"connection_state": 3, "info_flags": LinkWatch.FLAG_RELAYED}
+	watch.poll(steam, [CLIENT], 3000)
+	steam.infos[CLIENT] = {"connection_state": 3, "ping": 20}
+	watch.poll(steam, [CLIENT], 4000)
+	_t._check(
+		(
+			"direct although relay-only is on" in warned
+			and watch.direct_warnings == 1
+			and watch.lines == 4
+		),
+		"a direct path under relay-only is warned about once (%s)" % warned
+	)
+	watch.poll(steam, [], 5000)
+	watch.poll(steam, [CLIENT], 6000)
+	_t._check(watch.direct_warnings == 2, "a member who comes back is a new connection: warned again")
+	var plain = LinkWatch.new()
+	plain.poll(steam, [CLIENT], 1000)
+	_t._check(plain.direct_warnings == 0 and plain.lines == 1, "no warning without relay-only")

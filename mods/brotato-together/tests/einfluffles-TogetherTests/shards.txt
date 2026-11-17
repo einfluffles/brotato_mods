@@ -1,9 +1,9 @@
 # One game process per line (tools/check.sh), each running the comma-separated suites of
 # mod_main.gd's SUITES (in SUITES order). Every suite is in exactly one line; the test mod
-# checks that. Grouped by measured time: each line is about 22 to 29 s of tests.
+# checks that. Grouped by measured time: each line is about 22 to 31 s of tests.
 cleanup_client
 core,battle_loopback,shop_loopback,local_shop,pause_input,selection
-cleanup_host,menu_ux,live_menu
+cleanup_host,menu_ux,live_menu,local_device
 cleanup_misc,anim_mirror,runtime_parts,battle_perf
-pose_mirror,bullet_hell_left,bullet_hell_top,bullet_hell_bottom
-feedback,looks,battle_scene,state_stream,shop_change,cursor_key,upgrades_change,lobby_menu
+input_ack,pose_mirror,bullet_hell_left,bullet_hell_top,bullet_hell_bottom
+feedback,looks,battle_scene,state_stream,shop_change,cursor_key,upgrades_change,lobby_menu,network_stalls

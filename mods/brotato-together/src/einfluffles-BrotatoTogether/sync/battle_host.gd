@@ -26,6 +26,7 @@ const FeedbackMirror := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
 )
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
+const Facing := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/facing.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
 const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
@@ -49,6 +50,7 @@ const KIND_ENTITY := 1  # has `dead` and an AnimationPlayer worth watching
 const KIND_UNIT := 2  # has a sprite whose facing is host state
 const KIND_POSE := 4  # its scene has parts that sync/pose.gd captures
 const KIND_LOOK := 8  # can show a lasting look (sync/looks.gd)
+const KIND_FACING := 16  # a projectile whose rotation is sent (sync/facing.gd)
 # Snapshot time runs with the simulation; it is set back onto the wall clock when they part
 # (a pause, a long hitch, a host that cannot keep 8 physics steps per frame).
 const MAX_CLOCK_DRIFT_MSEC := 250.0
@@ -77,6 +79,7 @@ var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
 var _feedback = FeedbackMirror.new()  # explosions, bonus gold, wave end (protocol 11)
 var _looks = Looks.new()
+var _facing = Facing.new()
 var _battle_scene = BattleScene.new()  # weapons at wave start, sent speeds
 
 
@@ -85,6 +88,8 @@ func setup(netplay_session: Node, remote_input: Node) -> void:
 	input_sync = remote_input
 	session.connect("peer_ready", self, "_on_peer_ready")
 	state_stream.register_provider(StateStream.PAUSE_BATTLE, self)
+	RunData.connect("stat_added", self, "_on_stat_changed", [1])
+	RunData.connect("stat_removed", self, "_on_stat_changed", [-1])
 
 
 func _ready() -> void:
@@ -157,6 +162,7 @@ func _start_battle(main: Node) -> void:
 	_anim_mirror = AnimMirror.new()
 	_feedback = FeedbackMirror.new()
 	_looks = Looks.new()
+	_facing = Facing.new()
 	SoundRelay.set_sink(self)
 	var main_players: Array = main.get("_players")
 	for i in main_players.size():
@@ -180,6 +186,12 @@ func _start_battle(main: Node) -> void:
 			_send_battle_start(steam_id, start)
 
 
+# The game floats an icon and a number over the player for these (FloatingTextManager).
+func _on_stat_changed(stat, value, _db_mod, player_index, factor: int) -> void:
+	if is_in_battle() and typeof(stat) == TYPE_INT and typeof(player_index) == TYPE_INT:
+		_feedback.stat_changed(stat, factor * int(value), player_index)
+
+
 func _on_battle_scene_exited(battle_id: int) -> void:
 	if _battle_live and battle_id == _battle_id:
 		_end_battle()
@@ -199,6 +211,7 @@ func _end_battle() -> void:
 	_anim_mirror = AnimMirror.new()
 	_feedback = FeedbackMirror.new()
 	_looks = Looks.new()
+	_facing = Facing.new()
 	_battle_scene = BattleScene.new()
 	SoundRelay.set_sink(null)
 	if session.is_host():
@@ -256,7 +269,8 @@ func _player_index_of(steam_id: int) -> int:
 	return -1
 
 
-# Last INPUT seq applied for the peer controlling player i (0 for local players).
+# Newest INPUT seq the peer controlling player i has moved with, one physics tick each
+# (input_sync.last_applied_seq; 0 for local players).
 func _input_ack_of(player_index: int) -> int:
 	if player_index >= CoopService.connected_players.size():
 		return 0
@@ -392,6 +406,8 @@ func _build_snapshot() -> Array:
 				var entity: bool = kind & KIND_ENTITY
 				var unit: bool = kind & KIND_UNIT
 				_looks.capture(node, net_id, ids.size() - 1, _snapshot_count, entity, unit)
+			if kind & KIND_FACING:
+				_facing.capture(node, net_id, ids.size() - 1, _snapshot_count)
 			var posed := false
 			if kind & KIND_POSE:
 				var pose: PoolRealArray = _pose.capture(node)
@@ -426,6 +442,7 @@ func _build_snapshot() -> Array:
 	_feedback.capture(_main, _events, _snapshot_count, funcref(self, "_type_idx"))
 	view["events"] = Snapshot.select_events(_events, MAX_EVENTS)
 	view["looks"] = _looks.end_snapshot()
+	view["angles"] = _facing.end_snapshot()
 	_events = []
 	_snapshot_count += 1
 	return [Protocol.Msg.SNAPSHOT, Snapshot.encode(view)]
@@ -447,6 +464,8 @@ func _record(node: Node, key: int) -> Array:
 	var layout: Dictionary = _pose.layout(node)
 	if not layout.parts.empty() or layout.group != Pose.Group.NONE:
 		kind |= KIND_POSE
+	elif node is Projectile:
+		kind |= KIND_FACING  # a laser's aim is a pose value
 	if Looks.can_have_look(node):
 		kind |= KIND_LOOK
 	# X / Y: no position yet (out of the wire's range), so the first snapshot never rests.

@@ -38,9 +38,12 @@ const MAX_PLAYERS := 4
 var session: Node = null
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 # client: FocusEmulators this client drives itself (its own level-up panel, see
-# sync/upgrades_sync.gd). The host's cursor for them is never applied here.
+# sync/upgrades_sync.gd, and shop panel, sync/shop_local.gd). The host's cursor for them is never
+# applied here. Read only: set_local_emulator keeps it.
 var local_emulators := []
 var missed := 0  # host: changes only the key's safety net found (tests)
+
+var _local_by := {}  # client: screen ("shop", "upgrades") -> the FocusEmulator it drives
 
 # host: the scene the emulators were collected from (once per scene, like before the stream)
 var _scene: Node = null
@@ -57,6 +60,16 @@ func setup(netplay_session: Node) -> void:
 	session = netplay_session
 	state_stream.register_provider(StateStream.CURSORS, self, CHECK_INTERVAL)
 	state_stream.register_handler(StateStream.CURSORS, self, PENDING_TIMEOUT_SEC)
+
+
+# Client: the screen owner drives this emulator itself now (null: no more). Each screen sets only
+# its own entry, so a late stop of one never hands another one's cursor back to the host.
+func set_local_emulator(owner: String, emulator) -> void:
+	if emulator == null:
+		_local_by.erase(owner)
+	else:
+		_local_by[owner] = emulator
+	local_emulators = _local_by.values()
 
 
 # --- host (provider) ---

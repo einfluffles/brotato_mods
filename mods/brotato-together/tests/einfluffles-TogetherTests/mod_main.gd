@@ -60,6 +60,9 @@ const ShopChangeTests := preload(
 const UpgradesChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_change_tests.gd"
 )
+const SelectionScreenTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/selection_screen_tests.gd"
+)
 const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
@@ -74,11 +77,19 @@ const StateStreamTests := preload(
 const CursorKeyTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursor_key_tests.gd"
 )
+const LocalDeviceTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/local_device_tests.gd"
+)
+const InputAckTests := preload("res://mods-unpacked/einfluffles-TogetherTests/input_ack_tests.gd")
+const NetworkStallTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
+)
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
 	"core",
 	"battle_loopback",
+	"input_ack",
 	"pose_mirror",
 	"anim_mirror",
 	"runtime_parts",
@@ -89,6 +100,7 @@ const SUITES := [
 	"menu_ux",
 	"shop_loopback",
 	"local_shop",
+	"local_device",
 	"pause_input",
 	"live_menu",
 	"cleanup_host",
@@ -103,6 +115,7 @@ const SUITES := [
 	"cursor_key",
 	"upgrades_change",
 	"lobby_menu",
+	"network_stalls",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -225,6 +238,12 @@ func _suite_battle_loopback(together: Node):
 	yield(_suite.run(together), "completed")
 
 
+func _suite_input_ack(together: Node):
+	coop_run(3)
+	_suite = InputAckTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
 func _suite_pose_mirror(together: Node):
 	coop_run(3)
 	_suite = PoseMirrorTests.new(self)
@@ -284,6 +303,12 @@ func _suite_shop_loopback(together: Node):
 func _suite_local_shop(together: Node):
 	coop_run(2)
 	_suite = LocalShopTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_local_device(together: Node):
+	coop_run(2)
+	_suite = LocalDeviceTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
@@ -375,8 +400,14 @@ func _suite_lobby_menu(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
+# Render delay, gap log lines and session paths; the client side of a stall in a puppet battle
+# runs in battle_loopback.
+func _suite_network_stalls(together: Node) -> void:
+	NetworkStallTests.new(self).run(together)
+
+
 # Character selection: the menu mirror leaves the scene with two co-op players that the grid and
-# colour tests use.
+# colour tests use. Then each machine's own scroll, join slots and weapon panels.
 func _suite_selection(together: Node):
 	yield(_test_menu_mirror(together), "completed")
 	_suite = MenuUxTests.new()
@@ -384,6 +415,8 @@ func _suite_selection(together: Node):
 	_suite = CoopSelectionTests.new()
 	yield(_suite.run(self, together), "completed")
 	_suite = MenuPuppetTests.new()
+	yield(_suite.run(self, together), "completed")
+	_suite = SelectionScreenTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
@@ -446,7 +479,7 @@ func _suite_core(together: Node):
 	_check(not Input.is_action_pressed("ui_accept_%s" % DEVICE), "button released")
 
 	# Input timeout releases everything.
-	yield(get_tree().create_timer(0.4), "timeout")
+	yield(get_tree().create_timer((input_sync.INPUT_TIMEOUT_MSEC + 100) / 1000.0), "timeout")
 	input_sync._release_timed_out()
 	_check(
 		Input.get_action_strength("analog_move_right_%s" % DEVICE) == 0.0, "timeout releases move"
@@ -589,7 +622,8 @@ func _find_by_id(elements: Array, my_id: String):
 
 func _send(input_sync: Node, move: Vector2, aim: Vector2, buttons: int) -> void:
 	_seq += 1
-	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons, _presses.sample(buttons), 0])
+	var counts: int = _presses.sample(buttons)
+	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons, counts, 0, PoolVector2Array()])
 
 
 func _tap_key(scancode: int) -> void:

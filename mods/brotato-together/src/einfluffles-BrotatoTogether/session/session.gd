@@ -15,6 +15,9 @@ extends Node
 signal peer_ready(steam_id)
 signal peer_removed(steam_id)
 signal message(steam_id, msg_type, body)
+# Client: a message of the host, right before `message` (mod_main.gd takes the host's DLC back
+# before anything reads the message).
+signal host_message(msg_type, body)
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
@@ -26,6 +29,7 @@ const HOST_TIMEOUT_MSEC := 15000  # client gives up on a silent host (crash, net
 const HELLO_INTERVAL_MSEC := 1000
 const RESYNC_INTERVAL_MSEC := 1000  # at most one full resync per peer and interval
 const SLOW_ANSWER_MSEC := 150  # a PONG this late is logged with where the time went
+const KICKED_TEXT := "The host removed you from the lobby"
 # Transport.connection_status: what Steam measures itself, and what waits in its send queue.
 const STEAM_STATUS_KEYS := [
 	"ping", "queue_time", "pending_reliable", "pending_unreliable", "sent_unacknowledged_reliable",
@@ -40,11 +44,16 @@ var transport: Node = null
 # steam_id -> {name, ready, rtt_ms, answer_ms, last_seen_msec, resync, last_resync_msec}
 var peers := {}
 var slow_answers := 0  # logged so far (tests)
+# Client in its own menus: the host's DLC is handed back meanwhile (set_borrow_parked).
+var borrow_parked := false
+
+var _host_dlcs = null  # client: the DLCs of the host's WELCOME
 
 var _frame_msec := 0  # when _process ran last
 var _next_ping_msec := 0
 var _next_send_warning_msec := 0
 var _next_hello_msec := -1  # client: next HELLO (re)send, -1 when not waiting for WELCOME
+var _received_usec := 0  # Steam's receive time of the message being handled (see arrival_msec)
 
 
 func setup(steam_transport: Node) -> void:
@@ -89,6 +98,32 @@ func broadcast_unreliable(msg_type: int, body = null) -> void:
 	for steam_id in peers:
 		if peers[steam_id].ready:
 			send_unreliable(steam_id, msg_type, body)
+
+
+# Host: out of the lobby, like a peer that left. It may join again once its game has left.
+func kick(steam_id: int) -> void:
+	if not is_host() or not peers.has(steam_id):
+		return
+	ModLoaderLog.info("Kicking %s (%s)" % [peers[steam_id].name, steam_id], LOG_NAME)
+	send_reliable(steam_id, Protocol.Msg.KICK)
+	transport.kick(steam_id)
+	_on_peer_left(steam_id)  # also when the transport did not know it
+
+
+# Client: while it is in its own menus (the host is in its main menu) the borrowed DLC is given
+# back, so that these run on this machine's own content and saves; taken again before the first
+# thing of the host that needs it. No-op without a welcome that lent something.
+func set_borrow_parked(parked: bool) -> void:
+	borrow_parked = parked
+	if parked:
+		DlcBorrow.revert()
+	elif is_ready_client() and not DlcBorrow.is_active():
+		_log_borrowed(DlcBorrow.borrow(_host_dlcs))
+
+
+func _log_borrowed(borrowed: Array) -> void:
+	if not borrowed.empty():
+		ModLoaderLog.info("Using the host's DLC: %s" % [borrowed], LOG_NAME)
 
 
 func is_peer_stale(steam_id: int) -> bool:
@@ -173,16 +208,23 @@ func _add_peer(steam_id: int) -> Dictionary:
 
 func _on_lobby_ready(_lobby_id: int, _is_host: bool) -> void:
 	DlcBorrow.revert()  # a new lobby (either role) starts with this machine's own DLC only
+	_forget_host_dlcs()
 	peers.clear()
 	_next_hello_msec = -1
 
 
 func _on_lobby_left() -> void:
 	DlcBorrow.revert()  # every way out of a lobby; the title screen loads after (deferred)
+	_forget_host_dlcs()
 	_next_hello_msec = -1
 	for steam_id in peers.keys():
 		emit_signal("peer_removed", steam_id)
 	peers.clear()
+
+
+func _forget_host_dlcs() -> void:
+	_host_dlcs = null
+	borrow_parked = false
 
 
 func _on_peer_joined(steam_id: int) -> void:
@@ -237,9 +279,21 @@ func _on_message_received(
 			send_unreliable(steam_id, Protocol.Msg.PONG, _pong(body, received_usec))
 		Protocol.Msg.PONG:
 			_handle_pong(steam_id, body, received_usec)
+		Protocol.Msg.KICK:
+			_handle_kick(steam_id)
 		_:
 			if peer.ready:
+				if is_client() and steam_id == transport.host_id:
+					emit_signal("host_message", msg_type, body)
+				_received_usec = received_usec
 				emit_signal("message", steam_id, msg_type, body)
+				_received_usec = 0
+
+
+# During a "message" handler: when Steam received that message, in OS.get_ticks_msec() time (now
+# when unknown). Unlike the handler's own time it leaves out how long this game's frame took.
+func arrival_msec() -> int:
+	return OS.get_ticks_msec() - transport.held_msec(_received_usec)
 
 
 # The PING's body and how long the PING waited here for this frame.
@@ -282,13 +336,23 @@ func slow_answer_text(steam_id: int, held_there: int, held_here: int) -> String:
 		" (%d ms since the last frame, %s)"
 		% [OS.get_ticks_msec() - _frame_msec, scene.filename.get_file() if scene != null else "-"]
 	)
+	return text + steam_status_text(steam_id)
+
+
+# For log lines about a peer: Steam's numbers for the connection and its path (direct / relayed,
+# net/link_watch.gd); "" when neither is known.
+func steam_status_text(steam_id: int) -> String:
+	var text := ""
 	var status: Dictionary = transport.connection_status(steam_id)
-	if status.empty():
-		return text
-	var values := []
-	for key in STEAM_STATUS_KEYS:
-		values.append(status.get(key, "?"))
-	return text + STEAM_STATUS_TEXT % values
+	if not status.empty():
+		var values := []
+		for key in STEAM_STATUS_KEYS:
+			values.append(status.get(key, "?"))
+		text = STEAM_STATUS_TEXT % values
+	var path: String = transport.link_watch.paths.get(steam_id, "")
+	if path != "":
+		text += "; path: %s" % path
+	return text
 
 
 # Idempotent: answered every time (the client resends until it sees WELCOME).
@@ -322,15 +386,23 @@ func _handle_welcome(steam_id: int, body) -> void:
 	if body.get("accepted", false):
 		if not peers[steam_id].ready:
 			# Before peer_ready: the client view and every sync module see the host's DLC.
-			var borrowed := DlcBorrow.borrow(body.get("dlcs"))
-			if not borrowed.empty():
-				ModLoaderLog.info("Using the host's DLC: %s" % [borrowed], LOG_NAME)
+			_host_dlcs = body.get("dlcs")
+			borrow_parked = false
+			_log_borrowed(DlcBorrow.borrow(_host_dlcs))
 			_mark_ready(steam_id)
 	else:
 		var reason := "The host rejected the join: %s" % str(body.get("reason", "?"))
 		ModLoaderLog.error(reason, LOG_NAME)
 		transport.emit_signal("lobby_failed", reason)  # ui/lobby_menu.gd shows it
 		transport.leave_lobby()
+
+
+func _handle_kick(steam_id: int) -> void:
+	if not is_client() or steam_id != transport.host_id:
+		return
+	ModLoaderLog.warning(KICKED_TEXT, LOG_NAME)
+	transport.emit_signal("lobby_failed", KICKED_TEXT)
+	transport.leave_lobby()
 
 
 func _mark_ready(steam_id: int) -> void:

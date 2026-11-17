@@ -86,8 +86,10 @@ func state_patch(section: int, steam_id: int) -> Dictionary:
 
 # kind, screen, count, coop, selected (per player), colors (palette index per slot), max; character
 # selection: zone [id, random], endless, and while joining is open join (hold progress of the
-# joining players); weapon selection: picks (per player the indices of its picked elements);
-# end of run: pages (per player its carousel page). `you` comes with the per-peer patch.
+# joining players); the selection screens: scrolls (per player its panel's description
+# scroll position); weapon selection: picks (per player the indices of its picked elements),
+# character_shown (per player: its panel shows the player's character, ui_info held); end of
+# run: pages (per player its carousel page). `you` comes with the per-peer patch.
 func _state() -> Dictionary:
 	var count: int = CoopService.connected_players.size()
 	var chosen = _scene.get("_has_player_selected")
@@ -112,9 +114,12 @@ func _state() -> Dictionary:
 			for progress in CoopService.connection_progress:
 				joining.append(stepify(progress, 0.1))
 			state["join"] = joining
+	if _scene.has_method("_get_panels"):
+		state["scrolls"] = _scrolls(count)
 	var picked = _scene.get("_picked_elements")
 	if picked is Array:
 		state["picks"] = _picks(picked)
+		state["character_shown"] = _character_shown(count)
 	var containers = _scene.get("player_containers")
 	if containers is Array:
 		var pages := []
@@ -124,8 +129,37 @@ func _state() -> Dictionary:
 	return state
 
 
+# Selection screens: per player how far its panel's description is scrolled (its right stick, or
+# the wheel of the host's keyboard player, scrolls it here).
+func _scrolls(count: int) -> Array:
+	var scrolls := []
+	var panels: Array = _scene._get_panels()
+	for p in min(count, panels.size()):
+		var scroll = null
+		if panels[p] != null and panels[p].has_method("get_description_scroll"):
+			scroll = panels[p].get_description_scroll()
+		scrolls.append(scroll.scroll_vertical if scroll is ScrollContainer else 0)
+	return scrolls
+
+
 static func kind_of(scene: Node) -> String:
 	return scene.filename.get_file().get_basename()
+
+
+# WeaponSelection: per player whether its panel shows the player's character (ui_info held,
+# WeaponSelection._input) instead of the element under its cursor.
+func _character_shown(count: int) -> Array:
+	var shown := []
+	var panels: Array = _scene._get_panels()
+	for p in min(count, panels.size()):
+		var character = RunData.get_player_character(p) if p < RunData.get_player_count() else null
+		shown.append(shows_character(panels[p], character))
+	return shown
+
+
+static func shows_character(panel: Node, character) -> bool:
+	var item = panel.get("item_data")
+	return character != null and item != null and item.my_id == character.my_id
 
 
 # WeaponSelection._picked_elements as indices into each player's grid.

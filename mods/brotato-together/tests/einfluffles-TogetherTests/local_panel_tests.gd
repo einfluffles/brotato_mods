@@ -24,11 +24,19 @@ const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const GearRebuildTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/gear_rebuild_tests.gd"
+)
+const WheelScrollTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/wheel_scroll_tests.gd"
+)
 const MECA_DLC := "primal_dread"
 const PISTOL := "weapon_pistol_1"
 const BIT_ACCEPT := 1
 
 var _t: Node = null
+var _gear = GearRebuildTests.new()  # kept alive across its yields
+var _wheel = null  # WheelScrollTests, kept alive across its yields
 
 
 # Before the host's battle scene loads (UpgradesUI reads the effect in _ready): player p's
@@ -61,6 +69,18 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 		msg.seqs.size() == 2 and msg.seqs[0] > 0 and msg.pages == [0, 0],
 		"state carries a revision and page per player (%s, %s)" % [msg.seqs, msg.pages]
 	)
+	_wheel = WheelScrollTests.new(t)
+	var players := WheelScrollTests.as_keyboard_player(0)
+	var other: Control = ui._get_player_container(1)
+	var emulators := []  # main._on_EndWaveTimer_timeout lets them take input in the game
+	for child in ui.get_children():
+		if child is FocusEmulator and not child.is_processing_input():
+			emulators.append(child)
+			child.set_process_input(true)
+	yield(_wheel.check_wheel("level-up, host", container, other), "completed")
+	for emulator in emulators:
+		emulator.set_process_input(false)
+	CoopService.connected_players = players
 
 	# While the panels run on the clients, a remote button never presses the host's copy.
 	var saved_devices: Dictionary = input_sync.devices.duplicate()
@@ -353,6 +373,22 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 		and input_sync._local_buttons.blocked == 1 << VirtualDevices.PAUSE_INDEX,
 		"pause still goes to the host only"
 	)
+	Input.action_press("analog_move_right")
+	var input: Array = input_sync.sample_local()
+	Input.action_release("analog_move_right")
+	t._check(
+		input[1] == Vector2.ZERO and input_sync.history[-1][1] == Vector2.ZERO,
+		"the stick moves the cursor, not the character %s" % [input]
+	)
+	Input.action_press("rjoy_down")
+	input_sync.sample_local()
+	var scroll: Vector2 = Utils.get_player_rjoy_vector(0)
+	Input.action_release("rjoy_down")
+	input_sync.sample_local()
+	t._check(
+		scroll.y > 0.5 and Utils.get_player_rjoy_vector(0) == Vector2.ZERO,
+		"the right stick scrolls the own panel here, and stops %s" % [scroll]
+	)
 	var emulator = own.focus_emulator
 	t._check(emulator.is_processing_input(), "own cursor takes input on the puppet")
 	var uis: Array = own._get_upgrade_uis()
@@ -415,8 +451,12 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	t._check(other.carousel.index == 2, "another player's page mirrored")
 	t._check(own.carousel.index == 1, "own page stays local")
 	t._check(own._level == 99, "unchanged panel not rebuilt")
+	# The host's run changes while the own panel shows its gear page.
+	yield(_gear.run(t, panels, main, msg), "completed")
 
 	yield(_keyboard_and_mouse(panels, own, other, ui), "completed")
+	_wheel = WheelScrollTests.new(t)
+	yield(_wheel.check_wheel("level-up, client", own, other), "completed")
 
 	# Done: local control ends.
 	var finished := msg.duplicate(true)

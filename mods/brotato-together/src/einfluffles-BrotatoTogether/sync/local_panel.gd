@@ -16,6 +16,8 @@ extends Node
 #   there; a left click presses it through the emulator, so the press belongs to the own
 #   player (a native GUI press has no player: PopupManager would book it on player 0).
 # - A mouse event over any player's panel ends here: another player's panel never reacts.
+# - The wheel scrolls what is under the pointer in the own panel only (ui/wheel_scroll.gd), and
+#   ends here wherever the pointer is.
 # Nothing here knows a particular screen. A screen sets panels, keeps blocked up to date,
 # calls set_own(panel, emulator, player_index) while its own panel is local, and redoes its
 # own focus neighbours on player_type_changed. hold_cursor is for a screen whose cursor
@@ -27,6 +29,7 @@ signal player_type_changed(player_type, cursor_lost)
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
+const WheelScroll := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/wheel_scroll.gd")
 # UIService._check_input: slower mouse motion is not a change of device (a bumped desk).
 const MOUSE_SWITCH_SPEED := 1000.0
 const STICK_SWITCH := 0.5  # InputService.joystick_deadzone
@@ -72,6 +75,13 @@ func _input(event: InputEvent) -> void:
 	if has_own():
 		_track_device(event)
 	if not (event is InputEventMouse):
+		return
+	var wheel := WheelScroll.direction(event)
+	if wheel != 0:
+		# Wherever the pointer is (a popup can reach past its panel): only the own panel scrolls.
+		get_tree().set_input_as_handled()
+		if event.pressed and has_own():
+			WheelScroll.scroll_at(_own, event.position, wheel)
 		return
 	var left: bool = event is InputEventMouseButton and event.button_index == BUTTON_LEFT
 	if left and not event.pressed:

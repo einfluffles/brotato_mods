@@ -32,13 +32,16 @@ const FeedbackMirror := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
 )
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
+const Facing := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/facing.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
 const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
+const RenderDelay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/render_delay.gd")
+const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
-const INTERP_DELAY_MSEC := 100
+const INTERP_DELAY_MSEC := 100  # longer through a stall: sync/render_delay.gd
 const PREDICTION_ERROR_DECAY := 12.0  # 1/s: how fast prediction corrections are smoothed out
 const MAX_BUFFERED := 32
 const MAX_QUEUED_EVENTS := 512
@@ -50,9 +53,17 @@ const WAVE_TIMER_TOLERANCE := 0.3
 # despawns a frame or two before replaying the event: keep the target findable for a moment.
 const DESPAWN_GRACE_MSEC := 1000
 # Own-player prediction only while the host's world moves: not while paused, not when the newest
-# snapshot is older than this (stall), and never more than MAX_REPLAY_INPUTS (0.5 s) ahead.
-const PREDICTION_STALE_MSEC := 250
-const MAX_REPLAY_INPUTS := 30
+# snapshot is older than this (stall), and never more than MAX_REPLAY_INPUTS (0.75 s) ahead.
+# Network stalls of 300 to 500 ms (seen every 20 to 50 s on some connections) are ridden out: at
+# 250 ms the player snapped back to the host's last position and jumped ahead again when the
+# snapshots came. Inputs still reach the host during a stall of the snapshots alone, so the
+# prediction is right; past 600 ms the connection is gone rather than late, and the player stays
+# with the frozen world (the same limit as the host's INPUT timeout, Protocol.STALL_LIMIT_MSEC).
+# The replay covers that stall plus the round trip (on a good connection the host acks within a
+# few inputs, so the cap changes nothing there); it is above the host's catch-up backlog
+# (InputSync.MAX_BACKLOG), so whatever the host still catches up on is in the replay.
+const PREDICTION_STALE_MSEC := Protocol.STALL_LIMIT_MSEC
+const MAX_REPLAY_INPUTS := 45
 # Faster than anything moves: a pooled node reused for a new entity under an old id; snap.
 const MAX_INTERP_SPEED := 6000.0  # px/s
 const MAX_POOLED_PER_TYPE := 128  # non-Entity puppets (projectiles, gold, consumables)
@@ -101,6 +112,7 @@ var _you := -1  # player slot this client controls (-1: spectator)
 var _own_base_t := -1
 var _own_error := Vector2.ZERO
 var _own_display := Vector2.ZERO
+var _own_seq := 0  # newest own input the displayed position includes
 var _paused := false
 var _pause_text := ""
 var _events := []  # [host t, event] waiting for render time
@@ -109,6 +121,8 @@ var _anim_mirror = AnimMirror.new()
 var _feedback = FeedbackMirror.new()  # explosions, texts, shake, wave end (protocol 11)
 var _looks = Looks.new()
 var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppets
+var _render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
+var _snapshot_gaps = StreamGaps.new("snapshot")  # stalls of the host's snapshots, for the log
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -175,6 +189,7 @@ func apply_state(_section: int, body, _revision: int) -> bool:
 
 # Resumed (or the battle is over: _leave_battle resets the pause anyway).
 func clear_state(_section: int) -> void:
+	_snapshot_gaps.reset()  # the pause was no stall
 	_pause_text = ""
 	_set_paused(false)
 
@@ -282,6 +297,8 @@ func _reset_battle_state() -> void:
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
 	_battle_scene = BattleScene.new()
+	_render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
+	_snapshot_gaps.reset()
 
 
 func _on_node_added(node: Node) -> void:
@@ -427,8 +444,11 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		return
 	if i == _buffer.size():
 		_newest_rx_msec = OS.get_ticks_msec()
+		var host_id: int = session.transport.host_id
+		_snapshot_gaps.note(session, host_id, snapshot.t, LOG_NAME, _render_delay.text(), _paused)
 	Looks.resolve(snapshot, _resolve_cache)  # first: it reads the entity indices as parsed
 	Snapshot.resolve(snapshot, _resolve_cache)
+	Facing.resolve(snapshot, _resolve_cache)
 	_buffer.insert(i, snapshot)
 	for event in snapshot.events:
 		if _events.size() < MAX_QUEUED_EVENTS:
@@ -440,7 +460,9 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 func _process(delta: float) -> void:
 	if not is_in_battle() or _buffer.empty():
 		return
-	var render_t := OS.get_ticks_msec() - _clock_offset - INTERP_DELAY_MSEC
+	var render_t: float = _render_delay.render_time(
+		OS.get_ticks_msec(), _clock_offset, _buffer[-1].t, delta
+	)
 	# Drop snapshots that are fully in the past (keep one before render_t).
 	while _buffer.size() > 2 and _buffer[1].t <= render_t:
 		_buffer.pop_front()
@@ -486,17 +508,43 @@ func _apply_players(
 
 
 # Own player: newest host position + replay of inputs the host hasn't applied yet, so movement
-# responds immediately. Corrections (host disagrees) are blended out instead of snapping.
+# responds immediately. Corrections (host disagrees) are blended out instead of snapping. The steps
+# of the inputs sent since the last frame are the player's own motion, not a correction: counted as
+# one, they pulled the display back by the newest step on every snapshot (a lag of a few steps
+# while running, and a glide after the stop).
 func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> void:
 	var predicted := _own_target(player, newest.players[i])
+	var history: Array = input_sync.history
 	if _own_base_t < 0:
 		_own_display = predicted
 	elif newest.t != _own_base_t:
-		_own_error = _own_display - predicted
+		# Clamped like the target: holding into the zone's edge is no correction either.
+		var moved := _in_zone(_own_display + _steps_since(player, _own_seq))
+		_own_error = moved - predicted
 	_own_base_t = newest.t
+	_own_seq = history[-1][0] if not history.empty() else 0
 	_own_error *= exp(-delta * PREDICTION_ERROR_DECAY)
 	_own_display = predicted + _own_error
 	_move(player, "p%s" % i, _own_display)
+
+
+# The own player's motion from the inputs after seq (none while nothing is predicted).
+func _steps_since(player: Node2D, seq: int) -> Vector2:
+	var motion := Vector2.ZERO
+	if not _predicting():
+		return motion
+	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
+	var history: Array = input_sync.history
+	var k := history.size() - 1
+	while k >= 0 and history[k][0] > seq:
+		motion += history[k][1].normalized() * step
+		k -= 1
+	return motion
+
+
+# The host's world moves: not paused, and the newest snapshot is fresh.
+func _predicting() -> bool:
+	return not _paused and OS.get_ticks_msec() - _newest_rx_msec <= PREDICTION_STALE_MSEC
 
 
 # Host position + the last MAX_REPLAY_INPUTS un-acked inputs; just the host position while the
@@ -504,17 +552,21 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 # frozen world and glide back.
 func _own_target(player: Node2D, entry: Array) -> Vector2:
 	var predicted: Vector2 = entry[PF.POSITION]
-	if _paused or OS.get_ticks_msec() - _newest_rx_msec > PREDICTION_STALE_MSEC:
+	if not _predicting():
 		return predicted
 	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
 	var history: Array = input_sync.history
 	for k in range(max(0, history.size() - MAX_REPLAY_INPUTS), history.size()):
 		if history[k][0] > entry[PF.INPUT_ACK]:
 			predicted += history[k][1].normalized() * step
+	return _in_zone(predicted)
+
+
+static func _in_zone(position: Vector2) -> Vector2:
 	var zone: Rect2 = ZoneService.get_current_zone_rect()
-	predicted.x = clamp(predicted.x, zone.position.x, zone.end.x)
-	predicted.y = clamp(predicted.y, zone.position.y, zone.end.y)
-	return predicted
+	position.x = clamp(position.x, zone.position.x, zone.end.x)
+	position.y = clamp(position.y, zone.position.y, zone.end.y)
+	return position
 
 
 # HUD values (the HUD listens to these signals). Level-ups only update visuals here: the game's
@@ -566,6 +618,8 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 	var poses: Dictionary = to.poses
 	var from_positions: PoolVector2Array = from.positions
 	var from_poses: Dictionary = from.poses
+	var angles: Dictionary = to.get("angles_by_id", {})
+	var from_angles: Dictionary = from.get("angles_by_id", {})
 	Snapshot.index_of(from, 0)  # builds the index
 	var from_index: Dictionary = from.index
 	var max_jump: float = MAX_INTERP_SPEED * max(to.t - from.t, 1) / 1000.0
@@ -591,11 +645,22 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 		var kind: int = _entity_kinds[id]
 		var position := positions[i]
 		var j: int = from_index.get(id, -1)
+		# A projectile's rotation is the host's (sync/facing.gd); a spinning one turns between
+		# the two snapshots.
+		var facing = angles.get(id) if kind & KIND_PROJECTILE else null
+		if facing != null:
+			var before = from_angles.get(id)
+			if before != null and before != facing:
+				facing = lerp_angle(before, facing, alpha)
+			if node.rotation != facing:
+				node.rotation = facing
 		if j >= 0:
 			var start := from_positions[j]
 			if start != position:
 				if start.distance_to(position) <= max_jump:
-					if kind & KIND_PROJECTILE:  # faces where it flies
+					# Until its angle arrives it faces where it flies (not a laser: its aim
+					# is a pose value).
+					if kind & KIND_PROJECTILE and facing == null and not kind & KIND_POSE:
 						var angle: float = (position - start).angle()
 						if node.rotation != angle:
 							node.rotation = angle
@@ -624,9 +689,10 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 				sprite.scale.x = -sprite.scale.x
 			if sprite.flip_h != bool(node_flags & Snapshot.FLAG_FLIP_H):
 				sprite.flip_h = not sprite.flip_h
-		# A projectile seen once has no direction yet: it would sit there for a snapshot with
-		# the rotation of the pooled puppet's last flight.
-		var hidden: bool = node_flags & Snapshot.FLAG_HIDDEN or (kind & KIND_PROJECTILE and j < 0)
+		# A projectile seen once without its angle has no direction yet: it would sit there for
+		# a snapshot with the rotation of the pooled puppet's last flight.
+		var unaimed: bool = kind & KIND_PROJECTILE and j < 0 and facing == null
+		var hidden: bool = node_flags & Snapshot.FLAG_HIDDEN or unaimed
 		if node.visible == hidden:
 			node.visible = not hidden
 		if kind & KIND_POSE:  # also without values: the host's parts are gone then
@@ -683,7 +749,20 @@ func _move(node: Node, key, position: Vector2) -> void:
 	node.global_position = position
 	_last_positions[key] = position
 	if not node.get("dead"):
-		PuppetEntity.animate(node, position - last)
+		var motion: Vector2 = _own_motion() if key == "p%s" % _you else position - last
+		PuppetEntity.animate(node, motion)
+
+
+# The own player runs while its keys are held (the move it sends, also zero while the lobby popup
+# or its Esc menu has the input), not while a correction still blends out of the displayed
+# position (_predict_own): that never quite stops and kept it running for about a second. Facing
+# follows the held keys too, as on the host. Nothing runs while the host's world stands still,
+# where _own_target predicts nothing either.
+func _own_motion() -> Vector2:
+	var history: Array = input_sync.history if input_sync != null else []
+	if history.empty() or not _predicting():
+		return Vector2.ZERO
+	return history[-1][1]
 
 
 func _spawn(type_idx: int) -> Node:

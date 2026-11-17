@@ -60,6 +60,9 @@ const WEAPON_POPUP_HANDLERS := {
 }
 # weapon_meca_roll: the host rolls (or finds) the two meca options; weapon_meca: picks one.
 const WEAPON_KINDS := ["weapon_combine", "weapon_discard", "weapon_meca_roll", "weapon_meca"]
+const MAX_HELD := 8  # intents held while the host is paused (a few presses per player)
+const LOG_NAME := "einfluffles-BrotatoTogether:UpgradesSync"
+const DEVICE_OWNER := "upgrades"  # InputSync.set_local_device
 
 var session: Node = null
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
@@ -74,6 +77,9 @@ var run_cache = RunCache.new("upgrades")  # host: the run state, serialized on c
 var _seq_ui_id := 0  # instance id of the UpgradesUI the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel shows something new
 var _seq_keys := []
+# Intents that came while the host was paused: [UpgradesUI instance id, player, msg], applied in
+# order once it resumes (see host_apply_intent).
+var _held := []
 
 # client
 var _guarded_ui: Node = null  # the puppet UpgradesUI whose decision signals are rewired
@@ -117,6 +123,7 @@ func _process(_delta: float) -> void:
 		# Panels closed or battle over (also without peers, when the stream asks nothing): the
 		# run's text does not outlive the wave.
 		run_cache.clear()
+	_apply_held(ui)
 	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
 	var showing: bool = session.is_host() and ui != null
 	_block_remote_buttons(showing and not get_tree().paused)
@@ -264,8 +271,20 @@ static func _options(ui: Node) -> Array:
 # A player's decision, sent from its own panel. Only applied to what that panel shows right
 # now: the revision catches a press that was made on options the host has since replaced, the
 # id a mismatch in content. Returns whether a handler ran.
+# While the host is paused nothing runs: the intent is held and applied once it resumes. The
+# panels run on in a pause (pause_mode process), so the last decision would end them there and
+# main.gd would load the shop with the tree still paused: a shop nobody can use, whose pause
+# state turned every client's own panel off until the host paused and resumed again.
 func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 	if p < 0 or p >= RunData.get_player_count() or p >= _seqs.size():
+		return false
+	if get_tree().paused:
+		if _held.size() < MAX_HELD:
+			_held.append([ui.get_instance_id(), p, msg])
+			ModLoaderLog.info(
+				"Level-up intent of player %d held: the host is paused (%s)" % [p, msg.get("kind")],
+				LOG_NAME
+			)
 		return false
 	var kind = msg.get("kind")
 	var id = msg.get("id")
@@ -393,6 +412,7 @@ func _on_peer_ready(_steam_id: int) -> void:
 
 func _on_lobby_left() -> void:
 	run_cache.clear()
+	_held = []
 
 
 # The revision changes with what the panel shows, even when two options in a row look the same
@@ -422,6 +442,25 @@ func _update_seqs(ui: Node, players: Array) -> void:
 		if key != _seq_keys[p]:
 			_seq_keys[p] = key
 			_seqs[p] += 1
+
+
+# Every frame: the intents held during a pause, once the host resumed, in the order they came,
+# on the panels they were sent for (gone panels drop them). The revision check still applies.
+func _apply_held(ui) -> void:
+	if _held.empty() or get_tree().paused:
+		return
+	var held := _held
+	_held = []
+	for entry in held:
+		var applied := false
+		if ui != null and ui.get_instance_id() == entry[0]:
+			applied = host_apply_intent(ui, entry[1], entry[2])
+		var outcome: String = "applied" if applied else "dropped"
+		ModLoaderLog.info(
+			"Held level-up intent of player %d %s after the pause" % [entry[1], outcome], LOG_NAME
+		)
+		if applied:
+			state_stream.flush(StateStream.UPGRADES)
 
 
 func _block_remote_buttons(block: bool) -> void:
@@ -459,7 +498,7 @@ func apply_state(_section: int, state, _revision: int) -> bool:
 # input (its intents would name a revision the host no longer has), and a later state
 # rebuilds every panel.
 func clear_state(_section: int) -> void:
-	stop_local()
+	stop_local("host's panels closed")
 	_applied = {}
 	_own_seq = -1
 	_own_item_id = ""
@@ -484,8 +523,9 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var container = ui._get_player_container(p)
 		var slot := _weapon_slot(ui, container, p)  # before anything is rebuilt
 		var in_popup: bool = ui._popup_manager._elements_pressed[p] != null
+		var gear_cursor := []
 		if run_changed:
-			container.update_inventory()
+			gear_cursor = _rebuild_gear(ui, container, p)
 			container.update_stats()
 			container._update_gold_label()
 		var seq: int = _int_at(seqs, p)
@@ -499,12 +539,22 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var on_weapon := false
 		if rebuilt or run_changed:
 			on_weapon = _refresh_weapons(ui, container, p, slot, p == you)
+		# After the crate list's refresh, which closes a popup opened from the gear.
+		var on_gear: bool = not on_weapon and _put_gear_cursor(container, gear_cursor)
 		if rebuilt and p == you:
 			_own_seq = seq
 			_own_item_id = entry[2] if entry[0] == "item" and entry.size() == 3 else ""
-			_on_own_panel_changed(ui, container, entry[0], on_weapon)
-		elif run_changed and p == you and _local_active and in_popup and not on_weapon:
-			# The refresh closed the popup the cursor was in (opened from the gear page).
+			_on_own_panel_changed(ui, container, entry[0], on_weapon or on_gear)
+		elif (
+			run_changed
+			and p == you
+			and _local_active
+			and not on_weapon
+			and not on_gear
+			and (in_popup or not gear_cursor.empty())
+		):
+			# The refresh closed the popup the cursor was in (opened from the gear page), or
+			# the gear it was in has no element left at its place.
 			container.call_deferred("focus")
 		if p == you:
 			# The host's meca rolls for this player: the one the own popup asked for is shown.
@@ -516,7 +566,7 @@ func apply(main: Node, msg: Dictionary) -> void:
 
 # The puppet scene goes with its wave: keep nothing of it (a freed node's address is reused).
 func _on_battle_left() -> void:
-	stop_local()
+	stop_local("battle left")
 	_guarded_ui = null
 	_own = null
 	_local_panel = null  # a child of the scene's UpgradesUI
@@ -525,15 +575,18 @@ func _on_battle_left() -> void:
 	_run_key = []
 
 
-func stop_local() -> void:
+# The own panel stops taking local input. Gives up only this screen's device and cursor: a stop
+# that comes late (the shop already took over) leaves the shop's alone.
+func stop_local(reason := "stopped") -> void:
 	if not _local_active:
 		return
+	ModLoaderLog.info("Own level-up panel stops (%s)" % reason, LOG_NAME)
 	_local_active = false
 	_sent_focus = ""
 	if input_sync != null:
-		input_sync.set_local_device(-1)
+		input_sync.set_local_device(DEVICE_OWNER, -1, reason)
 	if focus_sync != null:
-		focus_sync.local_emulators = []
+		focus_sync.set_local_emulator(DEVICE_OWNER, null)
 	if is_instance_valid(_local_panel):
 		_local_panel.set_own(null, null, -1)
 
@@ -557,6 +610,10 @@ func _show_entry(container, p: int, entry: Array) -> void:
 static func _refresh_weapons(ui: Node, container: Node, p: int, slot: int, own: bool) -> bool:
 	if not ui._weapons_inventory_enabled[p]:
 		return false
+	var elements = container.crate_weapons_container._elements
+	var emulator = container.focus_emulator
+	if _is_child_of(emulator.focused_control, elements):
+		emulator.focused_control = null  # its element is freed now; slot puts it back
 	ui._refresh_weapons_inventory(p)
 	var list = container.crate_weapons_container
 	var count: int = list.get_element_count()
@@ -580,9 +637,103 @@ static func _weapon_slot(ui: Node, container: Node, p: int) -> int:
 	var elements = container.crate_weapons_container._elements
 	var pressed = ui._popup_manager._elements_pressed[p]
 	for control in [pressed, container.focus_emulator.focused_control]:
-		if is_instance_valid(control) and control.get_parent() == elements:
+		if _is_child_of(control, elements):
 			return control.get_index()
 	return -1
+
+
+# update_inventory frees every element of the gear page (weapons and items) and builds new
+# ones. Nothing may keep an old one: a FocusEmulator whose control was freed crashes a released
+# game (extensions/ui/focus_emulator.gd), and a focus neighbour naming one makes the game's
+# Inventory log "Node not found" for each element it relinks. So the cursor is taken off first
+# (returned: where it was, [] when not in the gear; _put_gear_cursor puts it back), and the
+# game's way back to the gear page (_resume_inventory_control_focus) and the gear's focus
+# neighbours move to the new elements.
+static func _rebuild_gear(ui: Node, container: Node, p: int) -> Array:
+	var emulator = container.focus_emulator
+	var cursor := _gear_place(container, emulator.focused_control)
+	if not cursor.empty():
+		emulator.focused_control = null
+	else:
+		# In the popup opened from a gear element: the crate list's refresh closes it.
+		cursor = _gear_place(container, ui._popup_manager._elements_pressed[p])
+	var resume := _gear_place(container, container._resume_inventory_control_focus)
+	container.update_inventory()
+	if not resume.empty():
+		container._resume_inventory_control_focus = _gear_element(container, resume)
+	_relink_gear(container)
+	return cursor
+
+
+# The cursor back on the rebuilt gear (see _gear_element). Returns whether it is there.
+static func _put_gear_cursor(container: Node, place: Array) -> bool:
+	var element = _gear_element(container, place)
+	if element == null or not element.is_visible_in_tree() or container.item_popup._focused:
+		return false
+	if container.focus_emulator.focused_control != element:
+		container.focus_emulator.focused_control = element
+	return true
+
+
+static func _gear_inventories(container: Node) -> Array:
+	var gear = container.player_gear_container
+	return [gear.weapons_container._elements, gear.items_container._elements]
+
+
+# [inventory (0 weapons, 1 items), element index, item id] of a gear element, else [].
+static func _gear_place(container: Node, control) -> Array:
+	var inventories := _gear_inventories(container)
+	for i in inventories.size():
+		if _is_child_of(control, inventories[i]):
+			var item = control.item
+			return [i, control.get_index(), item.my_id if item != null else ""]
+	return []
+
+
+# The element of the rebuilt gear that stands for place: the same item (the one nearest its
+# old index; items are shown newest first, so a new item moves the others on), else the one at
+# the same index (the last one if there are fewer). null when that inventory is empty.
+static func _gear_element(container: Node, place: Array):
+	if place.empty():
+		return null
+	var inventory: Node = _gear_inventories(container)[place[0]]
+	var best = null
+	var best_distance := 0
+	for element in inventory.get_children():
+		if element.is_queued_for_deletion() or element.item == null:
+			continue
+		var distance := int(abs(element.get_index() - place[1]))
+		if element.item.my_id == place[2] and (best == null or distance < best_distance):
+			best = element
+			best_distance = distance
+	var count: int = inventory.get_child_count()
+	if best == null and count > 0:
+		best = inventory.get_child(int(min(place[1], count - 1)))
+	return best
+
+
+# The gear's focus neighbours after a rebuild. On the gear page the game's own links are redone
+# (CoopUpgradesUIPlayerContainer._set_focus_neighbours, which the game runs on a page change
+# only: weapons to the last item and items to the first weapon, by node path). On another page
+# a path to a freed element is dropped; the page change links it again.
+static func _relink_gear(container: Node) -> void:
+	var gear = container.player_gear_container
+	for inventory in [gear.weapons_container, gear.items_container]:
+		_drop_dead_neighbours(inventory)
+		_drop_dead_neighbours(inventory._elements)
+	if container.carousel.index == 1 and gear.items_container.get_element_count() > 0:
+		container._set_focus_neighbours()
+
+
+static func _drop_dead_neighbours(control: Control) -> void:
+	for margin in [MARGIN_LEFT, MARGIN_TOP, MARGIN_RIGHT, MARGIN_BOTTOM]:
+		var path := control.get_focus_neighbour(margin)
+		if not path.is_empty() and control.get_node_or_null(path) == null:
+			control.set_focus_neighbour(margin, NodePath(""))
+
+
+static func _is_child_of(control, parent: Node) -> bool:
+	return is_instance_valid(control) and control.get_parent() == parent
 
 
 # The run state is only re-applied (and the inventories and stats rebuilt) when it changed.
@@ -614,7 +765,7 @@ func _guard(ui: Node, you: int) -> void:
 	_own_seq = -1
 	_own_item_id = ""
 	_meca.detach()
-	stop_local()
+	stop_local("new panels")
 	var containers := []
 	for p in RunData.get_player_count():
 		var container = ui._get_player_container(p)
@@ -656,18 +807,23 @@ static func _disconnect(source: Object, signal_name: String, target: Object, met
 # on_weapon: the cursor kept its place in the crate weapons list (see _refresh_weapons).
 func _on_own_panel_changed(ui: Node, container: Node, kind: String, on_weapon := false) -> void:
 	if kind != "upgrades" and kind != "item":
-		stop_local()
+		stop_local("own panel shows %s" % kind)
 		return
 	if not _local_active:
 		_local_active = true
+		ModLoaderLog.info(
+			"Own level-up panel runs here (player %d, %s)" % [container.player_index, kind], LOG_NAME
+		)
 		# main._on_EndWaveTimer_timeout does this on the host; it never runs on a puppet.
 		Utils.set_process_input_where_defined(ui, true)
 		if input_sync != null:
 			input_sync.set_local_device(
-				CoopService.get_remapped_player_device(container.player_index)
+				DEVICE_OWNER,
+				CoopService.get_remapped_player_device(container.player_index),
+				"own panel shows %s" % kind
 			)
 		if focus_sync != null:
-			focus_sync.local_emulators = [container.focus_emulator]
+			focus_sync.set_local_emulator(DEVICE_OWNER, container.focus_emulator)
 		if is_instance_valid(_local_panel):
 			_local_panel.set_own(container, container.focus_emulator, container.player_index)
 	if not on_weapon:
@@ -686,7 +842,7 @@ func _on_own_type_changed(_player_type: int, cursor_lost: bool) -> void:
 
 func _report_own_focus() -> void:
 	if not battle_client.is_in_battle() or not is_instance_valid(_own):
-		stop_local()
+		stop_local("battle over or own panel gone")
 		return
 	var control = _own.focus_emulator.focused_control
 	var target := []

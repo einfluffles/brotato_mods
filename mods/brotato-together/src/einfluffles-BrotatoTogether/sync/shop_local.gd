@@ -19,6 +19,9 @@ extends Reference
 #   round trip. Its cursor and page travel as SHOP_FOCUS (what the host and the others see).
 #   Keyboard and mouse: sync/local_panel.gd (added to the puppet shop by guard()) types the own
 #   slot as the device in use and moves / presses the own cursor with the mouse.
+#   The device is claimed as "shop" (the level-up panels claim it as "upgrades": neither can turn
+#   off the other's). While the own panel runs and the host is not paused, process() checks every
+#   frame that the device is still live and takes it back with a warning if not.
 # A control this file does not know (another mod's button) keeps its own handler: it can show
 # things, but every way into the run above is cut.
 
@@ -42,6 +45,8 @@ const POPUP_HANDLERS := {
 	"item_meca_upgrade_selected": "_on_item_meca_upgrade_selected",
 }
 const LOCK_WAIT_MSEC := 1000  # how long an own lock press shows without the host's answer
+const LOG_NAME := "einfluffles-BrotatoTogether:ShopLocal"
+const DEVICE_OWNER := "shop"  # InputSync.set_local_device
 
 var session: Node = null
 var input_sync: Node = null
@@ -57,7 +62,6 @@ var _shop: Node = null  # the puppet shop whose handlers are cut
 var _shop_id := 0
 var _own := []  # [source, signal, method]: this file's handlers on the own panel
 var _paused := false  # the host paused: the pause menu is the host's, nothing runs here
-var _driving := false  # the local buttons drive the own slot's device
 var _host_ready := false  # the own Go flag as the host has it
 var _unready_sent := false
 var _go_sent := false  # "go 1" left and the host's ready flag is not here yet
@@ -76,7 +80,7 @@ func _init() -> void:
 func guard(shop: Node, shop_id: int) -> void:
 	if shop == _shop:
 		return
-	stop()
+	stop("another shop")
 	_shop = shop
 	_shop_id = shop_id
 	_own = []
@@ -99,20 +103,27 @@ func guard(shop: Node, shop_id: int) -> void:
 # The own panel takes local input. Safe to call again; another slot releases the old one.
 func take_over(player: int) -> void:
 	if not is_instance_valid(_shop) or player < 0 or player >= RunData.get_player_count():
-		stop()
+		stop("no own panel in the state")
 		return
+	if not active or player != you:
+		ModLoaderLog.info(
+			"Own shop panel runs here (player %d%s)" % [player, ", host paused" if _paused else ""],
+			LOG_NAME
+		)
 	if player != you or _own.empty():
 		_release_own()
 		you = player
 		_connect_own()
 	active = true
-	_apply_device()
+	_apply_device("own panel in the host's state")
 	if focus_sync != null:
-		focus_sync.local_emulators = [Utils.get_focus_emulator(you, _shop)]
+		focus_sync.set_local_emulator(DEVICE_OWNER, Utils.get_focus_emulator(you, _shop))
 	_apply_local_panel()
 
 
-func stop() -> void:
+func stop(reason := "stopped") -> void:
+	if active:
+		ModLoaderLog.info("Own shop panel stops (%s)" % reason, LOG_NAME)
 	_release_own()
 	you = -1
 	seq = -1
@@ -124,16 +135,16 @@ func stop() -> void:
 	if not active:
 		return
 	active = false
-	_apply_device()
+	_apply_device(reason)
 	if focus_sync != null:
-		focus_sync.local_emulators = []
+		focus_sync.set_local_emulator(DEVICE_OWNER, null)
 	_apply_local_panel()
 
 
 # The puppet shop left the tree.
 func leave(shop: Node) -> void:
 	if shop == _shop:
-		stop()
+		stop("shop left")
 		_shop = null
 		local_panel = null  # freed with the shop
 
@@ -154,8 +165,10 @@ func on_mecas(rolls) -> void:
 
 
 func set_paused(paused: bool) -> void:
+	if paused != _paused:
+		ModLoaderLog.info("Host's shop pause: %s" % ("paused" if paused else "resumed"), LOG_NAME)
 	_paused = paused
-	_apply_device()
+	_apply_device("host paused" if paused else "host resumed")
 	_apply_local_panel()
 
 
@@ -167,8 +180,9 @@ func process() -> void:
 	if not active:
 		return
 	if not is_instance_valid(_shop) or not _shop.is_inside_tree():
-		stop()
+		stop("shop gone")
 		return
+	_heal_device()
 	_expire_locks()
 	_report_focus()
 	# Ready only lasts while the cursor rests on Go: the game clears the flag itself when the
@@ -228,17 +242,31 @@ static func _disconnect(source: Object, signal_name: String, target: Object, met
 		source.disconnect(signal_name, target, method)
 
 
-func _apply_device() -> void:
-	if input_sync == null:
+# The own slot's device while the own panel runs and the host is not paused, else -1.
+func _wanted_device() -> int:
+	return CoopService.get_remapped_player_device(you) if active and not _paused else -1
+
+
+# Claims or gives up the "shop" claim only: another screen's claim stays as it is.
+func _apply_device(reason: String) -> void:
+	if input_sync != null:
+		input_sync.set_local_device(DEVICE_OWNER, _wanted_device(), reason)
+
+
+# The own panel runs and the host is not paused, so its device must be the live one. Whatever
+# turned it off, take it back (and say what had done it: the next session's log shows it).
+func _heal_device() -> void:
+	var device := _wanted_device()
+	if input_sync == null or device < 0 or input_sync.local_device() == device:
 		return
-	var device := -1
-	if active and not _paused:
-		device = CoopService.get_remapped_player_device(you)
-	# Never turns off a device another screen set (the level-up panels use the same switch).
-	if device < 0 and not _driving:
-		return
-	_driving = device >= 0
-	input_sync.set_local_device(device)
+	ModLoaderLog.warning(
+		(
+			"Own shop panel had lost its device %d (live: %d, last change: %s); taken back"
+			% [device, input_sync.local_device(), input_sync.last_local_change]
+		),
+		LOG_NAME
+	)
+	_apply_device("self-heal")
 
 
 # Once per puppet shop, as its last child: after the FocusEmulators, so it gets every event

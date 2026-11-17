@@ -31,7 +31,7 @@ func test_no_global_hooks(together: Node) -> void:
 	_t._check(hooked.empty(), "no node_added hooks outside a session %s" % [hooked])
 
 
-# Client in a battle (mod_main's loopback): prediction replays at most 0.5 s of un-acked input,
+# Client in a battle (mod_main's loopback): prediction replays at most 0.75 s of un-acked input,
 # and none while paused or when snapshots stopped.
 func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Array) -> void:
 	var host_entry := entry.duplicate()
@@ -50,7 +50,7 @@ func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Arra
 	var lead: float = client._own_target(player, host_entry).distance_to(entry[PF.POSITION])
 	_t._check(
 		abs(lead - client.MAX_REPLAY_INPUTS * step) < 0.5,
-		"prediction capped at 0.5 s of input (%.0f px, uncapped %.0f)" % [lead, history.size() * step]
+		"prediction capped at 0.75 s of input (%.0f px, uncapped %.0f)" % [lead, history.size() * step]
 	)
 	client._paused = true
 	var paused_target: Vector2 = client._own_target(player, host_entry)
@@ -61,6 +61,45 @@ func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Arra
 		paused_target == entry[PF.POSITION] and stale_target == entry[PF.POSITION],
 		"no prediction while paused or when snapshots stopped"
 	)
+	input_sync.history = saved
+
+
+# Client in a battle, the client processing: the own player runs while its keys are held and is
+# idle on the next frame after they are let go, though a prediction correction is still blending
+# out of its displayed position (that kept it running for about a second). It faces the held keys
+# and stands while the host's world is paused.
+func test_own_animation(client: Node, input_sync: Node, player: Node2D):
+	var saved: Array = input_sync.history
+	var anim: AnimationPlayer = player._animation_player
+	client._newest_rx_msec = OS.get_ticks_msec()
+	input_sync.history = [[1, Vector2.LEFT]]
+	client._own_error = Vector2(20, 0)
+	yield(_t.get_tree(), "idle_frame")
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(
+		anim.current_animation == player.animation_move and player._sprites[0].scale.x < 0,
+		"own player runs and faces the held keys (%s)" % anim.current_animation
+	)
+	input_sync.history.append([2, Vector2.ZERO])
+	client._own_error = Vector2(20, 0)
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(
+		anim.current_animation == player.animation_idle and client._own_error.length() > 1,
+		(
+			"own player idle on the frame the keys are let go, correction still %.1f px (%s)"
+			% [client._own_error.length(), anim.current_animation]
+		)
+	)
+	input_sync.history.append([3, Vector2.RIGHT])
+	yield(_t.get_tree(), "idle_frame")
+	var ran: bool = anim.current_animation == player.animation_move
+	client._paused = true
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(
+		ran and anim.current_animation == player.animation_idle,
+		"own player stands while the host's world is paused, keys held (ran before: %s)" % ran
+	)
+	client._paused = false
 	input_sync.history = saved
 
 

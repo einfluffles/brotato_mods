@@ -58,6 +58,7 @@ var input_sync: Node = null setget set_input_sync
 var focus_sync: Node = null setget set_focus_sync
 var local = ShopLocal.new()  # client: this client's own panel
 var run_cache = RunCache.new("shop")  # host: the shop's run state, serialized on change
+var last_text := {}  # host: the last SHOP_TEXT sent (also read by the tests)
 
 # host
 var _host_shop: Node = null
@@ -84,6 +85,7 @@ func setup(netplay_session: Node) -> void:
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
+	RunData.connect("stat_added", self, "_on_stat_added")
 	var timeout_sec := LOADING_TIMEOUT_MSEC / 1000.0
 	state_stream.register_provider(StateStream.RUN_SHOP, self, CHECK_INTERVAL)
 	state_stream.register_handler(StateStream.RUN_SHOP, self, timeout_sec)
@@ -166,6 +168,9 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 			var shop = _host_shop_for(body)
 			if shop != null:
 				host_apply_intent(shop, _player_index_of(steam_id), body)
+		Protocol.Msg.SHOP_TEXT:
+			if session.is_client() and steam_id == session.transport.host_id:
+				client_show_text(body)
 		Protocol.Msg.SHOP_FOCUS:
 			var shop = _host_shop_for(body)
 			var p := _player_index_of(steam_id)
@@ -174,6 +179,32 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 
 
 # --- host ---
+
+
+# A reroll that gives a stat (bone dice: BaseShop._on_RerollButton_pressed) floats its icon and
+# number over the player's reroll button, on the host only: a client's reroll is an intent the
+# host applies. The stat comes from RunData.add_stat inside that handler, before it counts the
+# reroll: a gain followed by a counted reroll of the same player within the frame is that one
+# (the shop's own stat gains at its start count no reroll and show nothing).
+func _on_stat_added(stat, value, _db_mod, p) -> void:
+	if _host_shop == null or not is_instance_valid(_host_shop):
+		return
+	if typeof(stat) != TYPE_INT or typeof(p) != TYPE_INT:
+		return
+	var rerolls: Array = _host_shop._reroll_count
+	if p >= 0 and p < rerolls.size():
+		var shop_id := _host_shop.get_instance_id()
+		call_deferred("_send_reroll_text", shop_id, p, stat, int(value), rerolls[p])
+
+
+func _send_reroll_text(shop_id: int, p: int, stat: int, value: int, rerolls_before: int) -> void:
+	if not is_instance_valid(_host_shop) or _host_shop.get_instance_id() != shop_id:
+		return
+	if _host_shop._reroll_count[p] <= rerolls_before:
+		return
+	last_text = {"shop_id": _shop_id, "player": p, "stat": stat, "value": value}
+	if session.is_host():
+		session.broadcast_reliable(Protocol.Msg.SHOP_TEXT, last_text)
 
 
 # State stream provider, section RUN_SHOP: inactive ("") unless the host is in the shop. The key
@@ -374,6 +405,26 @@ func _player_index_of(steam_id: int) -> int:
 # --- client ---
 
 
+# SHOP_TEXT: the game's own floating text where BaseShop puts it (the co-op place: the right end
+# of the player's reroll button). Its sound is the host's (UI_SOUNDS).
+func client_show_text(body) -> bool:
+	if typeof(body) != TYPE_DICTIONARY or not is_in_shop():
+		return false
+	var p = body.get("player")
+	var stat = body.get("stat")
+	var value = body.get("value")
+	if body.get("shop_id") != _client_shop_id or typeof(p) != TYPE_INT:
+		return false
+	if typeof(stat) != TYPE_INT or typeof(value) != TYPE_INT or value == 0:
+		return false
+	if p < 0 or p >= RunData.get_player_count() or not Utils.is_stat_key(stat):
+		return false
+	var button: Control = _client_shop._get_reroll_button(p)
+	var position: Vector2 = button.rect_global_position + Vector2(button.rect_size.x - 80, 0)
+	_client_shop._floating_text_manager.stat_added(stat, value, 0, position, [], [])
+	return true
+
+
 # State stream handler: RUN_SHOP (the shop) and PAUSE_SHOP (the host's pause). False: the shop
 # is still loading, the stream keeps the latest body and _on_shop_ready retries it.
 func apply_state(section: int, body, _revision: int) -> bool:
@@ -420,20 +471,31 @@ func _is_loading() -> bool:
 
 
 # [paused, by (name), by_id (steam id, 0: the host)]. While the host is paused its pause menu
-# is in charge: the own panel is off. The banner waits for the shop that is loading.
+# is in charge: the own panel is off. The newest body is the host's pause from the moment it
+# arrives, also while a shop loads: only the banner waits for that shop (a body that times out
+# waiting must not leave an older pause behind).
 func _apply_pause(body) -> bool:
 	if typeof(body) != TYPE_ARRAY or body.size() != 3:
 		return true
 	if typeof(body[1]) != TYPE_STRING or typeof(body[2]) != TYPE_INT:
 		return true
-	if _is_loading():
-		return false
 	var paused := bool(body[0])
 	local.set_paused(paused)
+	if _is_loading():
+		return false
 	if is_in_shop():
 		var text := PauseControl.banner_text(body[1], body[2], session.transport.local_id)
 		PauseControl.show_banner(_client_shop, paused, text)
 	return true
+
+
+# State stream: the host has no shop pause state any more (it left the shop, also from its pause
+# menu): no pause of that shop may carry over to the next one.
+func clear_state(section: int) -> void:
+	if section == StateStream.PAUSE_SHOP:
+		local.set_paused(false)
+		if is_in_shop():
+			PauseControl.show_banner(_client_shop, false, "")
 
 
 # Per player, the parts of the sent run state that its panel is built from, as hashes of their
@@ -555,7 +617,7 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 		local.on_state(_int_at(body.get("seqs"), you), shop._player_pressed_go_button[you])
 		local.on_mecas(_list_at(body.get("mecas"), you))
 	else:
-		local.stop()
+		local.stop("no own panel in the host's state")
 
 
 # The per-player part of BaseShop._ready, re-run with the host's values (no RNG anywhere).
@@ -692,7 +754,7 @@ func _on_lobby_left() -> void:
 	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_block_remote_buttons(false)
 	run_cache.clear()
-	local.stop()
+	local.stop("lobby left")
 	local.set_paused(false)
 	_client_shop = null
 	_client_shop_id = 0

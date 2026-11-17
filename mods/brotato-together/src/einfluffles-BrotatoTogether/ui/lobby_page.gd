@@ -1,9 +1,10 @@
 extends Control
 # The "Online co-op" page: host / invite / leave / join an invite, and the connection details.
 # Built like the game's own menu pages (title, a panel, MyMenuButtons, Back; init() and
-# back_button_pressed as Menus.switch and its pages use them), so it sits in the title screen's
-# and the pause menu's page stack (ui/lobby_menu.gd) with the game's focus handling: Godot focus
-# in solo play, the pause menu's FocusEmulator in co-op.
+# back_button_pressed as Menus.switch and its pages use them), so it sits in the pause menu's
+# page stack (ui/lobby_menu.gd) with the game's focus handling: Godot focus in solo play, the
+# pause menu's FocusEmulator in co-op. (The title screen has the lobby in a frame on its main
+# menu instead, ui/lobby_frame.gd.)
 # Leaving mid-run asks on the game's confirm page (menu_confirm.tscn with our question; its Yes
 # leaves the lobby instead of the run).
 # framed: the same page as a popup (ui/lobby_popup.gd), a panel on the dimmed screen. There the

@@ -37,7 +37,7 @@ A trade is a gift: nothing is paid and the receiver is not asked.
 Works online with [brotato:together](../brotato-together). The host needs both mods; a client
 needs brotato:trade to trade itself (without it, it still sees what the others trade). A client
 whose host has no brotato:trade gets no Trade button. brotato:together must be the version with
-intents for other mods (protocol 16).
+intents for other mods (protocol 21).
 
 ## How it works
 

@@ -8,9 +8,15 @@ extends Node
 #   those extensions; the end-of-run buttons are spent (BaseEndRun._button_pressed);
 # - nobody joins here (CoopService.listening_for_inputs stays off), the mouse is kept off the
 #   scene's controls and no control keeps the keyboard focus;
-# - who selected, the zone, the run options, the join progress, the picks and the end-of-run
-#   pages are set from the host's state; the cursors arrive with FocusSync, through the game's
-#   own focus code, so the panels show what each cursor is on.
+# - who selected, the zone, the run options, the join progress, the picks, whose weapon panel
+#   shows the player's character (ui_info held) and the end-of-run pages are set from the host's
+#   state; the cursors arrive with FocusSync, through the game's own focus code, so the panels
+#   show what each cursor is on;
+# - the character grid, which all cursors share, scrolls after this machine's own player only
+#   (ui/shared_scroll.gd, from the state's `you`);
+# - each panel's description: this player's own with its right stick (sync/input_sync.gd drives
+#   its slot device here) and its mouse wheel (ui/wheel_scroll.gd), the others follow the
+#   host's scroll positions (the state's `scrolls`) at the stick's speed.
 # All input still goes to the host (the players are virtual devices nobody presses here).
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -27,6 +33,7 @@ const VirtualDevices := preload(
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
+const SharedScroll := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/shared_scroll.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:MenuPuppet"
 const CHARACTERS := "character_selection"
 const WEAPONS := "weapon_selection"
@@ -43,6 +50,7 @@ const LOADING_TIMEOUT_MSEC := 10000
 const MAX_PLAYERS := 4
 const MAX_ELEMENTS := 400
 const MAX_ID_LENGTH := 96
+const SCROLL_SPEED := 600.0  # CharacterPanelUI.SCROLL_SPEED: how fast a mirrored scroll follows
 
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 
@@ -53,6 +61,7 @@ var _loading_msec := -LOADING_TIMEOUT_MSEC
 var _state := {}  # the latest state of _screen
 var _grids_key := 0  # hash of the inventories the copy was built from
 var _items := {}  # my_id -> item of this machine
+var _scrolls := []  # per player the host's scroll position of its panel's description (-1: none)
 
 
 func _ready() -> void:
@@ -72,6 +81,7 @@ func show(state: Dictionary) -> bool:
 	if not SCENES.has(kind) or typeof(grids) != TYPE_DICTIONARY or state.get("coop") == false:
 		forget()
 		return false
+	_set_own_player(state)
 	var scene := current()
 	if state.screen != _screen or (scene == null and not _is_loading()):
 		return _enter(kind, state)
@@ -97,6 +107,14 @@ func forget() -> void:
 	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_state = {}
 	CoopService.bt_remote_progress = null
+	_scrolls = []
+	SharedScroll.clear_own_player()
+
+
+# The shared character grid scrolls after this machine's player (`you`, -1: a spectator).
+static func _set_own_player(state: Dictionary) -> void:
+	var you = state.get("you")
+	SharedScroll.set_own_player(you if typeof(you) == TYPE_INT else -1)
 
 
 func _is_loading() -> bool:
@@ -116,6 +134,7 @@ func _enter(kind: String, state: Dictionary) -> bool:
 	_screen = state.screen
 	_kind = kind
 	_state = state
+	_set_own_player(state)
 	Puppet.set_active(true)
 	var count := _count(state)
 	VirtualDevices.fill_puppet_slots(count)
@@ -180,10 +199,11 @@ func _on_scene_ready(scene: Node) -> void:
 		state_stream.retry()  # the cursors that waited for this scene
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	var scene := current()
 	if scene == null or _state.empty():
 		return
+	_follow_scrolls(scene, delta)
 	# The scene's own handlers (a cursor arriving, its deferred first focus) clear selections
 	# and turn the join listening back on; the host's state stands.
 	CoopService.listening_for_inputs = false
@@ -200,25 +220,64 @@ func _apply(scene: Node, state: Dictionary) -> void:
 		_grids_key = hash(inventories)
 		PuppetMenu.set_inventories(_inventories(inventories))
 	var count := _count(state)
-	if count != CoopService.connected_players.size():
+	if count != CoopService.connected_players.size() and _grid_ready_for(count):
 		# CharacterSelection builds a joining player's grid from this (the host's list above).
 		VirtualDevices.fill_puppet_slots(count)
 		CoopService.emit_signal("connected_players_updated", CoopService.connected_players)
 	if grids_changed:
 		_apply_grids(scene, inventories)
 	_apply_selected(scene, state)
+	_apply_scrolls(state.get("scrolls"))
 	if _kind == CHARACTERS:
 		_apply_run_options(scene, state)
 		_apply_join(scene, state.get("join"))
 		_apply_tiers(scene, inventories)
 	elif _kind == WEAPONS:
 		_apply_picks(scene, state.get("picks"))
+		_apply_character_shown(scene, state.get("character_shown"))
 	elif _kind == END_RUN:
 		_apply_pages(scene, state.get("pages"))
 
 
+func _apply_scrolls(scrolls) -> void:
+	_scrolls = []
+	if typeof(scrolls) != TYPE_ARRAY:
+		return
+	for p in min(scrolls.size(), MAX_PLAYERS):
+		var value = scrolls[p]
+		_scrolls.append(int(max(value, 0)) if typeof(value) == TYPE_INT else -1)
+
+
+# The other players' descriptions move toward where the host has them, as fast as a stick
+# scrolls (the state comes ten times a second); this player's own is scrolled here.
+func _follow_scrolls(scene: Node, delta: float) -> void:
+	if _scrolls.empty() or not scene.has_method("_get_panels"):
+		return
+	var panels: Array = scene._get_panels()
+	var own := SharedScroll.own_player()
+	var step := int(max(SCROLL_SPEED * delta, 1.0))
+	for p in min(_scrolls.size(), panels.size()):
+		if p == own or _scrolls[p] < 0 or not panels[p].has_method("get_description_scroll"):
+			continue
+		var scroll = panels[p].get_description_scroll()
+		if scroll is ScrollContainer and scroll.scroll_vertical != _scrolls[p]:
+			scroll.scroll_vertical += int(clamp(_scrolls[p] - scroll.scroll_vertical, -step, step))
+
+
 static func _count(state: Dictionary) -> int:
 	return int(clamp(state.get("count", 0), 0, MAX_PLAYERS))
+
+
+# CharacterSelection._on_connected_players_updated puts a joining player's cursor on the first
+# element of the character grid, which it fills from the host's list when the grid appears. The
+# host's state names the new player before its grids carry that grid (menu_grids follows menu,
+# and the host's grid is hidden while nobody has joined): the player is added once they do.
+# Before, the game read the empty grid (get_child(0) out of bounds) and gave no cursor.
+func _grid_ready_for(count: int) -> bool:
+	if _kind != CHARACTERS or count <= CoopService.connected_players.size():
+		return true
+	var elements = PuppetMenu.elements(0)
+	return elements == null or not elements.empty()
 
 
 # --- grids ---
@@ -367,8 +426,10 @@ func _apply_selected(scene: Node, state: Dictionary) -> void:
 	for p in min(RunData.get_player_count(), has_selected.size()):
 		var wanted: bool = p < selected.size() and selected[p] == true
 		has_selected[p] = wanted
-		if panels[p].selected != wanted:
-			panels[p].selected = wanted
+		# A panel showing the player's character is not shown as selected (WeaponSelection._input).
+		var look: bool = wanted and not _character_shown(state, p)
+		if panels[p].selected != look:
+			panels[p].selected = look
 		if characters is Array:
 			# CharacterSelection: a chosen character keeps its panel while the cursor moves on.
 			if wanted and characters[p] == null:
@@ -393,7 +454,8 @@ func _apply_run_options(scene: Node, state: Dictionary) -> void:
 		return
 	if typeof(zone[0]) != TYPE_INT or typeof(zone[1]) != TYPE_BOOL:
 		return
-	if scene.get_meta("bt_zone", null) == zone:
+	# get_meta logs an engine error for a missing key, even with a default.
+	if scene.has_meta("bt_zone") and scene.get_meta("bt_zone") == zone:
 		return
 	var button: OptionButton = scene._zone_selection_button
 	var index: int = scene._random_zone_index
@@ -455,6 +517,37 @@ func _apply_picks(scene: Node, picks) -> void:
 			scene._update_pick_count_label(element, p)
 
 
+static func _character_shown(state: Dictionary, p: int) -> bool:
+	var shown = state.get("character_shown")
+	return typeof(shown) == TYPE_ARRAY and p < shown.size() and shown[p] == true
+
+
+# WeaponSelection: a player holding ui_info (F / Y) sees their character in their panel instead
+# of the weapon under their cursor. The button goes to the host, whose WeaponSelection._input
+# switches its panel; the copy switches with the same calls when the host's state says so. Only
+# when that differs from what the panel shows: the cursors (FocusSync) show the focused weapon
+# again the way they do on the host, and a player without weapon slots shows the character for
+# good (WeaponSelection._ready, here too).
+func _apply_character_shown(scene: Node, shown) -> void:
+	if typeof(shown) != TYPE_ARRAY:
+		return
+	var panels: Array = scene._get_panels()
+	for p in min(RunData.get_player_count(), min(shown.size(), panels.size())):
+		if not RunData.player_has_weapon_slots(p):
+			continue
+		var panel = panels[p]
+		var character = RunData.get_player_character(p)
+		var showing: bool = MenuSync.shows_character(panel, character)
+		if shown[p] == true and not showing:
+			panel.set_data(character, p)
+			panel.selected = false
+		elif shown[p] == false and showing:
+			var element = scene._displayed_panel_data_element[p]
+			if element != null and is_instance_valid(element):
+				scene._display_element_panel_data(element, p)
+			panel.selected = scene._has_player_selected[p]
+
+
 # End of run: each player's carousel page (items / stats).
 func _apply_pages(scene: Node, pages) -> void:
 	if typeof(pages) != TYPE_ARRAY:
@@ -467,10 +560,16 @@ func _apply_pages(scene: Node, pages) -> void:
 
 
 func _on_lobby_left(transport: Node) -> void:
+	release(not transport.was_host)
+
+
+# Done with the host's screens: the lobby is left, or the host is back in its main menu and a
+# client in its own (mod_main.gd).
+func release(as_client: bool) -> void:
 	var mirrored := _screen != 0
 	forget()
 	PuppetMenu.clear()
-	if mirrored and not transport.was_host:
+	if mirrored and as_client:
 		# What _enter set for the copies; this machine's own character selection starts solo.
 		RunData.play_mode = RunData.PlayMode.SOLO
 		RunData.menu_selection_back = false

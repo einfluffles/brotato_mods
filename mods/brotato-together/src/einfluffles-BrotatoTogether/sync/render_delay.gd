@@ -1,0 +1,74 @@
+extends Reference
+# How far behind the newest snapshot a client renders the host's world (BattleClient._process).
+# On a good connection exactly the base delay (100 ms: three snapshots at 30 Hz, room for ~67 ms
+# of lateness), so nothing changes there. When snapshots stop coming (a network stall: seen as
+# 300 to 500 ms gaps every 20 to 50 s), the base delay runs out and the world used to freeze at the
+# newest snapshot and then jump ahead by the whole stall once snapshots came again.
+# Instead, while the newest snapshot is all there is, render time holds on it (the delay grows by
+# as much as the stall lasts, up to MAX_HOLD_MSEC): the world freezes the same, but carries on from
+# there when the late snapshots arrive, then catches up by playing SHRINK_RATE faster (1.15x: hard
+# to notice, and the extra delay of a 400 ms stall is gone after ~2 s). A longer stall (or a host
+# pause) is not held: past MAX_HOLD_MSEC the delay drops back and the world jumps as before, rather
+# than showing it seconds late afterwards. Holding never moves render time backwards.
+# Recurring lateness (JITTER_HOLDS holds within JITTER_WINDOW_MSEC) keeps the delay at the longest
+# of those holds (at most MAX_JITTER_MSEC) instead of shrinking, so the same lateness does not
+# freeze the world again and again; once it calms down for JITTER_WINDOW_MSEC, the delay shrinks
+# back to the base.
+
+const MAX_HOLD_MSEC := 500
+const SHRINK_RATE := 0.15  # delay ms given back per ms
+const JITTER_WINDOW_MSEC := 5000
+const JITTER_HOLDS := 2
+const MAX_JITTER_MSEC := 250
+const MAX_HOLDS_KEPT := 16
+
+var delay_msec := 0.0
+var holds := 0  # holds so far (tests)
+var _base := 0.0
+var _holding := false
+var _holds := []  # [msec, delay reached] of recent holds, oldest first
+
+
+func _init(base_msec: int) -> void:
+	_base = float(base_msec)
+	delay_msec = _base
+
+
+# Render time (host msec) for this frame. clock_offset: local msec - host msec (min-filtered);
+# newest_t: host time of the newest snapshot; delta: this frame's seconds.
+func render_time(now: int, clock_offset: float, newest_t: float, delta: float) -> float:
+	var lag: float = now - clock_offset - newest_t  # the delay that renders the newest snapshot
+	if lag > delay_msec:  # render time would pass the newest snapshot: nothing to show there
+		if lag <= MAX_HOLD_MSEC:
+			delay_msec = lag
+			_holding = true
+		else:
+			delay_msec = floor_msec(now)
+			_holding = false  # too long to hold: not counted as lateness either
+	else:
+		if _holding:  # the next snapshot came
+			_holding = false
+			holds += 1
+			_holds.append([now, delay_msec])
+			if _holds.size() > MAX_HOLDS_KEPT:
+				_holds.pop_front()
+		var lowest := floor_msec(now)
+		if delay_msec > lowest:
+			delay_msec = max(lowest, delay_msec - SHRINK_RATE * delta * 1000.0)
+	return now - clock_offset - delay_msec
+
+
+# The base delay, or the recent lateness while it recurs.
+func floor_msec(now: int) -> float:
+	while not _holds.empty() and now - _holds[0][0] > JITTER_WINDOW_MSEC:
+		_holds.pop_front()
+	if _holds.size() < JITTER_HOLDS:
+		return _base
+	var longest := _base
+	for hold in _holds:
+		longest = max(longest, hold[1])
+	return min(longest, max(_base, MAX_JITTER_MSEC))
+
+
+func text() -> String:
+	return "; render delay %d ms" % delay_msec
