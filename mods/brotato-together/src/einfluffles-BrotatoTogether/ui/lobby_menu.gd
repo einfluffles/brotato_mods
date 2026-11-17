@@ -6,13 +6,14 @@ extends Node
 #  - The "Online co-op" page (ui/lobby_page.gd) is put into the page stack of every pause menu,
 #    behind a button added to its main page next to the game's own.
 #    (Both found when the scene changes: no script extension of the menus.)
-#  - Character selection gets the Online toggle in its run options (ui/online_options.gd).
+#  - Character selection: Co-op Off / Local / Online in its run options, Invite friends and the
+#    lobby status in the next free player slot (ui/coop_mode.gd, ui/slot_invite.gd).
 #  - A client on a screen without a pause menu (the waiting screen, the mirrored selection
 #    screens) has no game menu to open: releasing pause there opens the page as a popup
 #    (ui/lobby_popup.gd). open() falls back to it too.
 # This node is what those talk to: the lobby actions, the texts, the last error.
 #  - Leaving mid-run (also by accepting another Steam invite) asks first; a failed lobby shows in
-#    the page's details, the run options' status line and the main menu's error label.
+#    the page's details, the player slot's status line and the main menu's error label.
 
 signal open_changed(is_open)  # the popup: it takes keyboard and pad while open
 
@@ -21,8 +22,8 @@ const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sess
 const LobbyPage := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_page.gd")
 const LobbyFrame := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_frame.gd")
 const LobbyPopup := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_popup.gd")
-const OnlineOptions := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/online_options.gd"
+const CoopMode := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_mode.gd"
 )
 const RUN_SCENE_PREFIXES := ["res://main.tscn", "res://ui/menus/shop/"]
 const PAGE_NAME := "BrotatoTogetherLobbyPage"
@@ -235,7 +236,7 @@ func details_text() -> String:
 	return PoolStringArray(lines).join("\n")
 
 
-# One line for the run options box of character selection ("": nothing to say).
+# One line for the player slot of character selection ("": nothing to say).
 func status_text() -> String:
 	if not steam_available():
 		return "Online: needs Steam"
@@ -344,8 +345,8 @@ func _enter_scene(scene: Node, previous_file: String) -> void:
 			LobbyFrame.add_to(scene, main_menu, entry, self)
 			_show_notice()
 	elif scene.filename == MenuData.character_selection_scene:
-		var options = OnlineOptions.add_to(scene, self)
-		# Start with a lobby open in the main menu: a co-op run, as with the Online toggle.
+		var options = CoopMode.add_to(scene, self)
+		# Start with a lobby open in the main menu: a co-op run, as with Co-op: Online.
 		if options != null and previous_file == MenuData.title_screen_scene and transport.is_host():
 			if not options.coop_button.pressed:
 				options.coop_button.pressed = true

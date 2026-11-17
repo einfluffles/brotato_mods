@@ -1378,18 +1378,61 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `FocusEmulator` there is no Godot focus owner, and the page's own `null.grab_focus()` only passes in
     release builds. When the page is hidden (back, the pause menu closed, the wave ended) the question is
     dropped (a visible `MenuConfirm` takes every `ui_cancel`) and a pending invite declined.
-  - Character selection (`ui/online_options.gd`, added below `%CoopButton` in the run options box): an
-    *Online* `CheckButton` with the Co-op toggle's font and hover style (on: `host()` and, if it is off,
-    `CoopButton.pressed = true`, the game's own switch to co-op; off: `leave()`; shown pressed while
-    hosting or while Steam creates the lobby), *Invite friends* while hosting, and a status line
-    (`Online: N players`, `Online: needs Steam`, the last error). The box is a focus base of
-    `FocusEmulator1` only, so player 1's cursor finds them below Co-op (the grid's `focus_neighbour_top`
-    still leads to Co-op) and nobody else's does. A press that comes from a remote player holding slot 1
-    (`FocusEmulatorSignal.get_player_index` -> a virtual device) is ignored. Hidden and inert while
-    `session.is_client()`. The game's theme has no icons for a disabled `CheckButton`; the toggle gets the
-    normal ones as overrides (else it is 18 px lower than its neighbours). Cost: the box (500 px minimum)
-    grows while hosting, by 23 px without the Ban toggle (measured) and by about 100 px with it (about
-    15 px when not hosting); the character grid below gives that up and scrolls.
+  - Character selection, Co-op row (`ui/coop_mode.gd`): the game's Co-op toggle becomes one option
+    with three values, "Co-op: Off" (solo), "Co-op: Local" (the game's co-op), "Co-op: Online" (co-op
+    and `host()`). An `OptionButton` like the zone dropdown above it (its theme,
+    `zone_selection_button_theme.tres`: the 26 px outlined font, the dropdown arrow), in the toggle's
+    place and at its height (70 px, `CoopButton`'s minimum), so the run options box keeps its vanilla
+    rows and rects (1920x1080: zone 286..348, Co-op 438..508, x 1608..1868 in a client's test layout).
+    The game builds its own play mode choice the same way on consoles
+    (`CharacterSelection._mode_selection_button`, an `OptionButton` in this box). The game's
+    `CoopButton` stays in the tree, hidden (re-hidden every frame), and still switches co-op: the
+    option sets its `pressed` (the game's `toggled` -> `RunData.play_mode`, `coop_initialized`,
+    `set_coop_run`). Online leaves the lobby when Off or Local is chosen. Without Steam, Online is a
+    disabled item and the tooltip says why. On a client it shows Online, takes no focus and no mouse.
+    Focus: the row is in the run options box (a focus base of `FocusEmulator1` only, as vanilla);
+    `Inventory1.focus_neighbour_top` (the game's: `CoopButton`, inherited by the grid's top row) is
+    set to it; its `focus_entered` does what the game's `_on_CoopButton_focus_entered` does (player 1
+    goes back to the character it left the grid from). Keyboard and pad in solo use Godot's focus
+    and popup, player 1's FocusEmulator opens and walks the popup as for the zone dropdown. A remote
+    player holding slot 1 changes nothing.
+    The popups (the row's and the game's zone dropdown's) keep the zone theme's look: its
+    `PopupMenu/styles/panel` (black 88 %), its default font (`font_26_outline_thick`), Godot's
+    default PopupMenu colours (text 0.88 grey, hovered 0.88, disabled 0.4 grey at 80 %: Online without
+    Steam is dim but readable) and radio icons; nothing is overridden. In co-op a mouse press in an
+    open popup gives it Godot's focus, and a FocusEmulator takes a focused control inside its focus
+    bases (`_on_focus_changed`; the popup is a child of its dropdown in the run options box) and
+    styles it as a focused button: `font_color` became the popup's `font_color_focus`, which a
+    PopupMenu does not have (black). Every row but the hovered one was black on black from then on,
+    in the game's zone dropdown too. `CoopMode._keep_cursor_on` moves such a cursor back to the
+    dropdown (which clears the popup's focus style), deferred on the popup's `focus_entered` (before
+    the frame is drawn) and every frame, for both dropdowns.
+  - Invite friends and the lobby status (`ui/slot_invite.gd`) are in the player slot the next player
+    takes (the game's `CoopJoinPanel` at `connected + connecting`, "Player N" on top and the
+    hold-to-join hint in the middle), at the slot's bottom: a `MyMenuButton` in the theme the slot
+    inherits (`base_theme`: black rounded button, white on hover / focus) with the 26 px font of the
+    Back button and the run options, 260x51.5; under it the status in the join hint's label theme
+    (`small_label_theme`, 26 px), 260x31.5, clipped with the whole text in its tooltip; 50 px of space
+    below. In a 370x500 slot at y 183 (1920x1080) the button is at y 526..577.5 and the status at
+    586..617.5; the hint is at about 408..458. Their minimum size (260x152) is far below the slot's,
+    so the slot keeps its rect. Shown while hosting (Invite friends and `Online: N players`), the
+    status alone while the lobby is made or after it failed; not without Steam, not on a client,
+    not when every slot is taken. Player 1 reaches the button left from the Co-op row (its
+    `focus_neighbour_left`, set while the button is shown), right from it goes back; each slot's
+    block is a focus base of `FocusEmulator1` only; mouse as usual. The button does not take
+    Godot's focus when the mouse enters it (`grab_focus_with_mouse` off). A `MyMenuButton` does by
+    default; in co-op the FocusEmulator then moved player 1's cursor onto it with its focus style,
+    which stayed after the mouse had left (solo: Godot's focus look stayed). The first top-row
+    version also copied the buttons' styles before they were in the tree, so they had Godot's
+    default grey and blue-grey styles, not the game's: these controls keep the theme's styles.
+    Tests: `online_layout_tests.gd` (host and client, the colour hint check's sizes: the box, its
+    rows, the slots and the grid with vanilla rects, the grid scrolls no further, the invite inside
+    its slot over none of its texts, texts shown whole), `coop_mode_tests.gd` (the values, the
+    lobby, keyboard / pad / popup / FocusEmulator navigation, the invite, a mouse over the button
+    and away leaves the normal look, a remote player 1, a client's copy).
+    The first versions of this PR put an Online toggle under Co-op in the box (the box grew by 23 px
+    with a one-line status, 104 px with a long one, and the grid scrolled 75 px) and then into a bar
+    at the top of the screen.
   - Popup (`ui/lobby_popup.gd`): the same page (`framed`: a panel on the dimmed screen, CanvasLayer 128)
     for a client on a screen without a pause menu (`popup_on_pause`: `session.is_client()` and the scene
     has no `_pause_menu` and is not the title screen: the waiting screen, mirrored selection screens). `LobbyMenu._poll_pause` opens it
