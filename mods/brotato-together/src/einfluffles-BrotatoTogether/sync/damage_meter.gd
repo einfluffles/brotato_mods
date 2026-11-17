@@ -5,14 +5,19 @@ extends Node
 # The numbers are the game's own counters: WeaponData.dmg_dealt_last_wave (reset when a wave
 # starts, counted up by Weapon as it hits) and RunData.tracked_item_effects of the items whose
 # tracking text is a damage text (counted for the whole run: the wave's part is the difference
-# to the values at the wave's start). No hook into the fight.
+# to the values at the wave's start). Two more numbers per player: the biggest single hit (the
+# took_damage signal of every enemy and tree the battle's EntitySpawner spawns: the number the
+# floating damage text shows, with the source that dealt it) and the seconds the wave timer ran,
+# which make the damage per second.
 #
 # The machine that runs the wave measures (the host; any machine outside a session). A client's
 # counters stand still during a puppet battle, so the host's board travels: section DAMAGE of
-# sync/state_stream.gd, {wave, players: [[total, [[my_id, count, damage], ...]], ...]}, checked
-# every UPDATE_SEC, sent when it changed. During the wave it carries the LIVE_SOURCES strongest
-# sources per player (what the HUD shows); the measurement when the battle scene leaves carries
-# MAX_SOURCES, and that board stands through the shop until the next wave starts.
+# sync/state_stream.gd, {wave, players: [[total, [[my_id, count, damage], ...]], ...], time:
+# seconds, hits: [[damage, my_id or ""], ...] per player}, checked every UPDATE_SEC, sent when it
+# changed. time and hits came later: a board without them is still one (0 and none). During
+# the wave it carries the LIVE_SOURCES strongest sources per player (what the HUD shows); the
+# measurement when the battle scene leaves carries MAX_SOURCES, and that board stands through
+# the shop until the next wave starts.
 #
 # Cost: a measurement reads the weapons and only the counters that are damage (their keys are
 # looked up once per wave), a few dozen values per player however many items the run has.
@@ -51,6 +56,8 @@ var _data := {}  # my_id -> item / weapon / character data
 var _damage_ids := {}  # my_id -> whether its counter counts damage
 var _keys := []  # per player: [[counter key, my_id], ...] of the damage counters
 var _key_counts := []  # per player: how many counters there were when _keys was read
+var _wave_time := 0.0  # seconds the wave timer ran in the battle being measured
+var _hits := []  # per player: [damage, my_id] of the wave's biggest hit
 
 
 func setup(netplay_session: Node) -> void:
@@ -85,8 +92,16 @@ func _process(delta: float) -> void:
 		_keys = []
 		_key_counts = []
 		_since = UPDATE_SEC
+		_wave_time = 0.0
+		_hits = []
+		_watch_hits(scene)
 		# The wave's last word, with every source the shop's board lists.
 		scene.connect("tree_exiting", self, "measure", [true], CONNECT_ONESHOT)
+	# The wave's time: while its timer runs. The timer stands with the paused tree and stops when
+	# the wave is over, so the collecting at the end does not count.
+	var timer = scene.get_node_or_null("WaveTimer")
+	if timer is Timer and not timer.is_stopped() and not get_tree().paused:
+		_wave_time += delta
 	_since += delta
 	if _since >= UPDATE_SEC:
 		_since = 0.0
@@ -103,7 +118,61 @@ func measure(final := false) -> void:
 	var players := []
 	for p in RunData.get_player_count():
 		players.append(measure_player(p, _baseline[p] if p < _baseline.size() else {}, limit))
-	_set_board({"wave": RunData.current_wave, "players": players})
+	var hits := []
+	for p in players.size():
+		hits.append(_hits[p].duplicate() if p < _hits.size() else [0, ""])
+	var time := stepify(_wave_time, 0.1)
+	_set_board({"wave": RunData.current_wave, "players": players, "time": time, "hits": hits})
+
+
+# --- the biggest hit ---
+
+
+func _watch_hits(main: Node) -> void:
+	var spawner = main.get_node_or_null("EntitySpawner")
+	if spawner == null:
+		return
+	for spawned in ["enemy_spawned", "neutral_spawned"]:
+		if spawner.has_signal(spawned) and not spawner.is_connected(spawned, self, "_watch_unit"):
+			spawner.connect(spawned, self, "_watch_unit")
+
+
+# Spawned units are used again (the spawner's pools): one connection each.
+func _watch_unit(unit: Node) -> void:
+	if unit.has_signal("took_damage") and not unit.is_connected("took_damage", self, "on_hit"):
+		unit.connect("took_damage", self, "on_hit")
+
+
+# Unit.took_damage: unit, value (what the floating text shows), knockback, crit, dodge,
+# protected, armor, args (TakeDamageArgs), hit type, one shot.
+func on_hit(_unit, value: int, _kb, _crit, _dodge, _protected, _armor, args, _type, _one) -> void:
+	if args == null or value <= 0:
+		return
+	var p: int = args.from_player_index
+	if p < 0 or p >= MAX_PLAYERS:
+		return
+	while _hits.size() <= p:
+		_hits.append([0, ""])
+	if value > _hits[p][0]:
+		_hits[p] = [value, source_of(args, p)]
+
+
+# The weapon or item a hit came from, as my_id, or "" when it does not say. From the hitbox
+# only: a burn tick reuses the unit's TakeDamageArgs with its hitbox cleared but `from` left as
+# whatever hit that unit last, maybe another player's weapon (Unit._on_BurningTimer_timeout).
+static func source_of(args, p: int) -> String:
+	var hitbox = args.hitbox if is_instance_valid(args.hitbox) else null
+	var from = hitbox.from if hitbox != null and is_instance_valid(hitbox.from) else null
+	var key: int = Keys.empty_hash
+	if from != null and "damage_tracking_key_hash" in from:
+		key = from.damage_tracking_key_hash
+	if key == Keys.empty_hash and from != null and "weapon_pos" in from:
+		var weapons: Array = RunData.get_player_weapons(p)
+		if from.weapon_pos >= 0 and from.weapon_pos < weapons.size():
+			return weapons[from.weapon_pos].my_id
+	if key == Keys.empty_hash and hitbox != null:
+		key = hitbox.damage_tracking_key_hash
+	return Keys.hash_to_string.get(key, "") if key != Keys.empty_hash else ""
 
 
 # [total, [[my_id, count, damage], ...]]: the player's sources that dealt damage, strongest
@@ -172,8 +241,11 @@ func _is_damage_item(id: String) -> bool:
 
 
 func _set_board(next: Dictionary) -> void:
-	# Arrays compare by value.
-	if next.get("wave") == board.get("wave") and next.get("players") == board.get("players"):
+	# Arrays compare by value, dictionaries by reference.
+	var same := true
+	for key in ["wave", "players", "time", "hits"]:
+		same = same and next.get(key) == board.get(key)
+	if same:
 		return
 	board = next
 	_revision += 1
@@ -243,7 +315,20 @@ static func clean(body) -> Dictionary:
 				return {}
 			sources.append([source[0], source[1], source[2]])
 		players.append([entry[0], sources])
-	return {"wave": body.wave, "players": players}
+	var time = body.get("time", 0.0)
+	if not typeof(time) in [TYPE_INT, TYPE_REAL] or time < 0:
+		return {}
+	var sent_hits = body.get("hits", [])
+	if typeof(sent_hits) != TYPE_ARRAY or sent_hits.size() > MAX_PLAYERS:
+		return {}
+	var hits := []
+	for hit in sent_hits:
+		if typeof(hit) != TYPE_ARRAY or hit.size() != 2 or typeof(hit[0]) != TYPE_INT:
+			return {}
+		if hit[0] < 0 or typeof(hit[1]) != TYPE_STRING or hit[1].length() > MAX_ID_LENGTH:
+			return {}
+		hits.append([hit[0], hit[1]])
+	return {"wave": body.wave, "players": players, "time": float(time), "hits": hits}
 
 
 class DamageOrder:

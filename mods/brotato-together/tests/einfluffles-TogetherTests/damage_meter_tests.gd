@@ -1,8 +1,9 @@
 extends Reference
 # Damage meter (sync/damage_meter.gd, ui/damage_views.gd): what a player's weapons and items
-# dealt, read off the game's counters; the board as the state stream carries it; the row in the
-# wave's HUD; the button and board in the co-op shop, up while a player's cursor rests on the
-# button. Driven from mod_main.gd (two-player co-op run); checks go through its _check.
+# dealt, read off the game's counters; the biggest hit and the wave's time; the short numbers;
+# the board as the state stream carries it; the row in the wave's HUD; the button and board in
+# the co-op shop, up while a player's cursor rests on the button. Driven from mod_main.gd
+# (two-player co-op run); checks go through its _check.
 
 const DamageMeter := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_meter.gd")
 const DamageViews := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/damage_views.gd")
@@ -34,6 +35,7 @@ func run(together: Node):
 	var meter: Node = together.damage_meter
 	meter.connect("changed", self, "_on_changed")
 	var item = _test_measure(meter)
+	_test_short()
 	_test_board(meter)
 	yield(_test_hud(meter, item), "completed")
 	yield(_test_shop(item), "completed")
@@ -84,6 +86,33 @@ func _test_measure(meter: Node):
 	return item
 
 
+# Up to 9,999 as it is, then three digits and a unit, also where rounding reaches the next one.
+func _test_short() -> void:
+	var cases := {
+		0: "0",
+		999: "999",
+		9999: "9,999",
+		10000: "10.0K",
+		12345: "12.3K",
+		99960: "100K",
+		123456: "123K",
+		999600: "1.00M",
+		4567890: "4.57M",
+		9996000: "10.0M",
+		7890000000: "7.89B",
+		1230000000000: "1.23T",
+	}
+	var wrong := []
+	for number in cases:
+		if DamageViews.short(number) != cases[number]:
+			wrong.append("%d: %s" % [number, DamageViews.short(number)])
+	_t._check(wrong.empty(), "short numbers: 9,999, 12.3K, 4.57M, 7.89B %s" % [wrong])
+	_t._check(
+		DamageViews.per_second(1234, 10.0) == 123 and DamageViews.per_second(50, 0.5) == -1,
+		"damage per second, none before the wave ran a second"
+	)
+
+
 func _test_board(meter: Node) -> void:
 	meter.clear_state(StateStream.DAMAGE)
 	_t._check(meter.state_key(StateStream.DAMAGE) == "", "no board, no state")
@@ -103,14 +132,27 @@ func _test_board(meter: Node) -> void:
 		"a negative total": {"wave": 1, "players": [[-5, []]]},
 		"a source without a number": {"wave": 1, "players": [[5, [["weapon_x", 1, "5"]]]]},
 		"no wave": {"players": []},
+		"a negative time": {"wave": 1, "players": [], "time": -1.0},
+		"a hit without a number": {"wave": 1, "players": [], "hits": [["weapon_x", 5]]},
+		"a hit with a long id": {"wave": 1, "players": [], "hits": [[5, "x".repeat(200)]]},
 	}
 	for label in bad:
 		_t._check(DamageMeter.clean(bad[label]).empty(), "malformed board rejected: %s" % label)
-	var received := {"wave": 4, "players": [[9, [[PISTOL, 1, 9]]], [0, []]]}
+	var received := {
+		"wave": 4,
+		"players": [[9, [[PISTOL, 1, 9]]], [0, []]],
+		"time": 12.5,
+		"hits": [[7, PISTOL], [0, ""]],
+	}
 	meter.apply_state(StateStream.DAMAGE, received, 1)
 	_t._check(
 		var2str(meter.board) == var2str(received) and _changes == 2,
 		"a client shows the host's board"
+	)
+	var older := DamageMeter.clean({"wave": 4, "players": [[9, []]]})
+	_t._check(
+		older.get("time") == 0.0 and older.get("hits") == [],
+		"a board without time and hits (an older host's) is still one %s" % [older]
 	)
 
 
@@ -136,18 +178,47 @@ func _test_hud(meter: Node, item):
 		RunData.add_tracked_value(1, item.my_id_hash, 77)
 	meter.measure()
 	var icon: Texture = meter.data_of(PISTOL).icon
+	var total: Label = rows[0].get_node("Main/Total")
+	var detail: Node = rows[0].get_node("Detail")
 	_t._check(
-		rows[0].visible and "1,234" in rows[0].get_child(1).text and rows[0].get_child(2).texture == icon,
-		"the row shows the total and the strongest source (%s)" % rows[0].get_child(1).text
+		rows[0].visible and total.text == "1,234" and detail.get_node("Source0Icon").texture == icon,
+		"the row shows the total and the strongest source (%s)" % total.text
 	)
 	_t._check(
-		rows[0].get_child(3).text == "1,234" and not rows[0].get_child(4).visible,
+		detail.get_node("Source0").text == "1,234" and not detail.get_node("Source1").visible,
 		"with its number, and no second source where there is none"
 	)
 	_t._check(
-		item == null or (rows[1].visible and rows[1].get_child(1).text == "77  6%"),
+		not rows[0].get_node("Main/Dps").visible and not detail.get_node("Hit").visible,
+		"no damage per second before the wave ran a second, no biggest hit before a hit"
+	)
+	_t._check(
+		item == null
+		or (
+			rows[1].visible
+			and rows[1].get_node("Main/Total").text == "77"
+			and rows[1].get_node("Main/Share").text == "6%"
+		),
 		"the other player's row shows that player's own, with its share of the team's"
 	)
+	# A hit: the biggest one stays, a smaller one after it does not replace it.
+	var args := TakeDamageArgs.new(0)
+	meter.on_hit(null, 52345, Vector2.ZERO, true, false, false, false, args, 0, false)
+	meter.on_hit(null, 900, Vector2.ZERO, false, false, false, false, args, 0, false)
+	var nobody := TakeDamageArgs.new(-1)
+	meter.on_hit(null, 99999, Vector2.ZERO, false, false, false, false, nobody, 0, false)
+	meter._wave_time = 10.0
+	meter.measure()
+	_t._check(
+		meter.board.hits[0] == [52345, ""] and meter.board.hits[1] == [0, ""],
+		"the biggest hit per player, none for a hit that was no player's %s" % [meter.board.hits]
+	)
+	_t._check(
+		detail.get_node("Hit").visible and detail.get_node("Hit").text == "52.3K",
+		"the row shows it, short (%s)" % detail.get_node("Hit").text
+	)
+	var dps: Label = rows[0].get_node("Main/Dps")
+	_t._check(dps.visible and dps.text == "123/s", "and the damage per second (%s)" % dps.text)
 
 
 # The button next to reroll and the board over the shop items.
@@ -187,20 +258,33 @@ func _test_shop(item):
 		boards[1].get_global_rect().encloses(slots.get_global_rect().grow(-2)),
 		"over that player's shop items %s" % [boards[1].get_global_rect()]
 	)
-	var list: Node = boards[0].get_child(0)
-	var title: String = list.get_child(0).text
+	var list: Node = boards[0].get_node("List")
+	var tiles: Node = list.get_node("Tiles")
+	var title: String = tiles.get_node("Total/Caption").text
+	var share: Label = tiles.get_node("Total/Line/Share")
 	_t._check(
-		"1,234" in title and Text.text("WAVE", [str(RunData.current_wave)]) in title,
-		"the board's title is the wave and the total (%s)" % title
+		title == Text.text("WAVE", [str(RunData.current_wave)]) and share.visible,
+		"the total's caption is the wave, with the share of the team's (%s, %s)" % [title, share.text]
 	)
-	var row: Node = list.get_child(1)
+	var values := []
+	for tile in ["Total", "Dps", "Hit"]:
+		values.append(tiles.get_node(tile + "/Line/Value").text)
 	_t._check(
-		row.visible and row.get_child(2).text == "1,234  100%" and not list.get_child(2).visible,
-		"a row per source with number and share (%s)" % row.get_child(2).text
+		values[0] == "1,234" and values[1] != "-" and values[2] == "52.3K",
+		"tiles: the total, damage per second and the biggest hit %s" % [values]
 	)
+	var rows: Node = list.get_node("Sources")
+	var row: Node = rows.get_child(0)
+	var number := "%s %s" % [row.get_node("Amount").text, row.get_node("Share").text]
+	_t._check(
+		row.visible and number == "1,234 100%" and not rows.get_child(1).visible,
+		"a row per source with number and share (%s)" % number
+	)
+	_t._check(row.get_node("Text/Bar").value == 1000, "the strongest source's bar is full")
 	if item != null:
-		var theirs: Node = boards[1].get_child(0).get_child(1)
-		_t._check(theirs.visible and theirs.get_child(0).texture == item.icon, "an item's row: its icon")
+		var theirs: Node = boards[1].get_node("List/Sources").get_child(0)
+		var item_icon: Texture = theirs.get_node("Icon").texture
+		_t._check(theirs.visible and item_icon == item.icon, "an item's row: its icon")
 	var target: Array = FocusTargets.describe(buttons[1], shop, 1)
 	_t._check(
 		not target.empty() and FocusTargets.resolve(target, shop, 1) == buttons[1],
@@ -322,6 +406,12 @@ func _test_crowded_wave(meter: Node):
 	)
 	_t._check(rising, "the meter counts on through a crowded wave %s" % [totals])
 	_t._check(_kills > 0 and total == lost, "to the point: %d dealt, %d health lost" % [total, lost])
+	var hits: Array = meter.board.hits
+	_t._check(
+		hits.size() == 2 and hits[0][0] > 0 and hits[0][1] == PISTOL and hits[1][1] == PISTOL,
+		"the biggest hit of a real wave, with the weapon that dealt it %s" % [hits]
+	)
+	_t._check(meter.board.time > 0.0, "and the wave's time (%.1f s)" % meter.board.time)
 
 
 func _total(meter: Node) -> int:
@@ -417,7 +507,13 @@ func _test_solo_shop(meter: Node):
 		slots.get_parent().get_global_rect() == around,
 		"without moving the shop's layout"
 	)
-	_t._check("50" in board.get_child(0).get_child(0).text, "with the wave's total, no share alone")
+	var total: String = board.get_node("List/Tiles/Total/Line/Value").text
+	var share: Label = board.get_node("List/Tiles/Total/Line/Share")
+	_t._check(total == "50" and not share.visible, "with the wave's total, no share alone")
+	_t._check(
+		board.get_node("List/Tiles/Hit/Line/Value").text == "-",
+		"a board without hits (an older host's): no biggest hit"
+	)
 	reroll.grab_focus()
 	yield(_t.get_tree(), "idle_frame")
 	yield(_t.get_tree(), "idle_frame")
