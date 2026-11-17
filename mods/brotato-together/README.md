@@ -89,6 +89,18 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   (both written to the log).
   Other mods can add shop decisions of their own that reach the host the same way
   ([brotato:trade](../brotato-trade) does, for giving items and weapons to other players).
+- **Two fixes in the game's own shop** (online, local co-op and solo): an item that adds a weapon
+  slot (Cybernetic Arm) shows in "WEAPONS (n/m)" as soon as it is bought, not only in the next
+  shop (the slot itself could always be used at once, also by a client and in the next wave).
+  The Anvil's weapon upgrade at shop entry no longer builds a weapon in the still empty weapons
+  row and frees it again ("combine: no inventory element for ..., the weapons row is out of sync"
+  in the log, and a cursor sent to a control that was being freed).
+- **Axolotl crash fixed** (DLC 1, online and local co-op): once a player had bought an Axolotl,
+  the next Axolotl offered to another player (in the shop or a crate) made the game forget which
+  stats the bought one had swapped, and showing its text closed the game without an error. Its
+  text now names
+  that player's own highest and lowest stats, and `modloader.log` gets a warning
+  (`einfluffles-BrotatoTogether:Axolotl`) with what was found: please include it in a report.
 - **Damage meter:** during a wave, two lines at each player's life bar show what that player
   has dealt in the wave, the damage per second, the two strongest weapons or items and the
   biggest single hit. Big numbers stay short (12.3K, 4.57M, 7.89B). In the co-op shop and at
@@ -239,7 +251,7 @@ that Steam's default stays if Steam refuses the setting.
 ## Tests
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
-run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the run state in parts (which parts each change sends, the client building the same run from
+run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the weapons row of the shop (the Anvil at shop entry co-op and solo, a new weapon slot in the label at once, a remote player buying into it, a 7th weapon on a client's puppet), the run state in parts (which parts each change sends, the client building the same run from
 them, resyncs, a body replaced while pending, a missing part, a client held while Steam's queue to it is full getting the union of what it missed; a wave's start after the shop carrying only the common part, the client's run then the host's, a start queued while a scene loads), shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), another mod's shop intent (registered, applied once, sent from the own panel only), level-up/crate
 panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade, the gear page rebuilt by the host's run changes under the own and a mirrored cursor, a cursor whose control is freed), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), the mouse wheel scrolling only the mouse player's own panel (shop, level-up, character selection; host and client) and the right stick in character selection (own panel, mirrored positions on a client), "Player N" above the join hint, shop UI sounds, the lobby
@@ -266,7 +278,10 @@ queue size from which slow answer and gap lines name it, the rate limit of the b
 after a peer left);
 a client's reports to the host's log (frame windows from fed frame times, a scene change's stall with
 the mod's share in it, corrections over a step; the host's lines, malformed reports dropped, the line
-budget; a replayed battle's real stall and mirror cost).
+budget; a replayed battle's real stall and mirror cost);
+the Axolotl's text in the state the game's own roll leaves its shared effect in during co-op (the
+shop's description of the offer, the owner's item, broken saved states; a normal Axolotl keeps the
+game's text).
 
 The tests are named suites (`SUITES` in `mod_main.gd`), each passing on its own: `tools/check.sh -s <suite>`
 runs one, and `shards.txt` groups them into the game processes a full check runs side by side.

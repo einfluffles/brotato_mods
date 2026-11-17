@@ -98,6 +98,7 @@ const TrafficTests := preload("res://mods-unpacked/einfluffles-TogetherTests/tra
 const ClientReportTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/client_report_tests.gd"
 )
+const AxolotlTests := preload("res://mods-unpacked/einfluffles-TogetherTests/axolotl_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -136,6 +137,7 @@ const SUITES := [
 	"traffic",
 	"progress",
 	"client_report",
+	"axolotl",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -463,6 +465,13 @@ func _suite_progress(together: Node) -> void:
 func _suite_client_report(together: Node):
 	coop_run(3)
 	_suite = ClientReportTests.new(self)
+	yield(_suite.run(together), "completed")
+
+
+# The Axolotl's text (DLC 1) in the broken state the game leaves its shared effect in during
+# co-op: no method call on null (a crash in a release build of the game).
+func _suite_axolotl(together: Node):
+	_suite = AxolotlTests.new(self)
 	yield(_suite.run(together), "completed")
 
 

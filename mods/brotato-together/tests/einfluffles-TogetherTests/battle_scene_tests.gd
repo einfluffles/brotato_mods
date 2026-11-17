@@ -193,6 +193,10 @@ func _test_battle(together: Node):
 	var saved_holes: bool = wave_data.spawn_holes
 	wave_data.spawn_holes = true
 	var added := _add_distinct_weapons(0, 2)
+	# Player 1 has the Cybernetic Arm (mod_main.coop_run): a weapon in each of its 7 slots, as
+	# after buying the 7th in the shop before this wave.
+	var slots: int = RunData.get_player_effect(Keys.weapon_slot_hash, 1)
+	var full := _add_distinct_weapons(1, slots - RunData.get_player_weapons(1).size())
 	tree.change_scene("res://main.tscn")
 	yield(tree, "idle_frame")
 	yield(tree, "idle_frame")
@@ -235,6 +239,8 @@ func _test_battle(together: Node):
 	wave_data.spawn_holes = saved_holes
 	for weapon in added.slice(1, added.size() - 1):  # the first one broke on the host
 		RunData.remove_weapon(weapon, 0)
+	for weapon in full:
+		RunData.remove_weapon(weapon, 1)
 	host.set_process(true)
 
 
@@ -420,6 +426,7 @@ func _client_from_start(
 		var diff: float = abs(wrapf(player.current_weapons[k].rotation - host_weapons[4 * k], -PI, PI))
 		aim_ok = aim_ok and diff < 0.01
 	_t._check(aim_ok, "every weapon after the broken one aims like its host weapon")
+	_check_full_slots(main.get("_players")[1], start, last.players[1])
 	_test_prediction_speed(client, player, last.players[0], walks[0][0])
 	_test_hole_walks(client, main, stomp_at, walks, last.players[WALKER])
 	client._leave_battle()
@@ -462,6 +469,23 @@ func _test_hole_walks(
 			)
 		)
 	input_sync.history = saved
+
+
+# Player 1, a weapon in each of its 7 slots (the Arm's 7th bought in the shop before): BATTLE_START
+# and the snapshots carry all of them, and the client's puppet has and aims every one.
+func _check_full_slots(player: Node, start: Dictionary, entry: Array) -> void:
+	var slots: int = RunData.get_player_effect(Keys.weapon_slot_hash, 1)
+	var host_weapons: PoolRealArray = entry[PF.WEAPONS]
+	var weapons: Array = player.current_weapons
+	var aim_ok: bool = host_weapons.size() == weapons.size() * Snapshot.WEAPON_STRIDE
+	for k in min(weapons.size(), host_weapons.size() / Snapshot.WEAPON_STRIDE):
+		var host_aim: float = host_weapons[Snapshot.WEAPON_STRIDE * k]
+		aim_ok = aim_ok and abs(wrapf(weapons[k].rotation - host_aim, -PI, PI)) < 0.01
+	_t._check(
+		slots == 7 and weapons.size() == slots and start.weapon_slots[1].size() == slots,
+		"a player's 7th weapon (+1 slot) is on the client's puppet (%d of %d)" % [weapons.size(), slots]
+	)
+	_t._check(aim_ok, "and each of the 7 aims like its host weapon")
 
 
 # Another layout and back: the old one goes, its circles with it; paths outside the spawner's

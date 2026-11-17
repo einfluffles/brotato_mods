@@ -164,7 +164,8 @@ func _test_retry_prompt(together: Node):
 		"retry: applied once the puppet battle is ready"
 	)
 	t._check(
-		banner != null and banner.visible and banner.get_node("Label").text.begins_with("Paused by")
+		banner != null and banner.visible
+		and PauseControl.banner_label(banner).text.begins_with("Paused by")
 		and not stream.is_pending(StateStream.PAUSE_BATTLE),
 		"pause: applied once the puppet battle is ready"
 	)

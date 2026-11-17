@@ -902,6 +902,48 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     are only tested against stand-ins (no meca weapons without the DLC in the headless suite; the meca
     upgrade runs on the DLC's data, switched on for its checks, with signal presses in the shop popup);
     none of this has run between two real machines yet.
+- **Weapons row of the shop** (`ui/shop_gear.gd`, used by `extensions/ui/coop_shop.gd` and
+  `extensions/ui/shop.gd`): two bugs of the game's own shop, fixed for every shop (online, local
+  co-op, solo). Both extensions extend the concrete shop scripts by path, like brotato:trade's
+  extension of `coop_shop.gd` (the two chain); nothing names `BaseShop` (see Damage meter).
+  - Anvil (`upgrade_random_weapon`): `BaseShop._ready` upgrades a random weapon with
+    `_combine_weapon(weapon, p, true)` before it fills the gear rows (`set_weapons_data`, about 50
+    lines later). The game's combine then found no element to remove (`push_error` "combine: no
+    inventory element for weapon_machinegun_2, the weapons row is out of sync", seen in an online
+    endless run), added an element for the new weapon to the still empty row and, with the mouse
+    hidden, deferred a `grab_focus` on it; `set_weapons_data` -> `clear_elements` queue_freed that
+    element first ("grab_focus: Condition "!is_inside_tree()" is true"). The rows end up right (built
+    from `RunData`), but the game works on a control that is being freed, the class of bug that
+    crashes release builds natively. The override does only the run part while
+    `RunData.shop_effects_checked` is false (only during that block: `_ready` sets it right after):
+    `RunData.combine_weapon(weapon, null, p)`, the new weapon keeps `dmg_dealt_last_wave`, the
+    combine sound. Skipped: the element, its focus, `reload_shop_items` (no offered items yet) and
+    `_update_stats(p)` (the block's own `_update_stats()` follows). Every other combine (a buy into
+    a full row, the popup's combine) is the game's. Online the Anvil runs once, on the host: a
+    client enters its copy with `shop_effects_checked = true` (`ShopSync._enter_shop`, after the
+    host's run state, which has it true too), so the host's upgrade arrives as run state and the
+    client's `_ready` skips the block.
+  - "WEAPONS (n/m)": `PlayerGearContainer._on_weapons_changed` computes the label, connected only to
+    the weapons row's `elements_changed`. Buying an item that adds a weapon slot (Cybernetic Arm,
+    `item_cybernetic_arm`, +1 `weapon_slot`) changes the items row only, so the host, a local co-op
+    or a solo player saw the old m until the next shop (the same in the game without mods). The
+    shop's `_update_stats` (after every purchase, combine, meca upgrade, trade, and on a client for
+    every player whose data changed) now computes the label of that player again (`-1`: all). A
+    client was already right: its gear rows are rebuilt from the host's run when the items change.
+  - The slot itself was never late (checked, nothing to fix): a remote player's buy runs on the
+    host through the game's `ShopItemsContainer` checks (`_can_weapon_be_bought` ->
+    `RunData.has_weapon_slot_available`) against the host's run, which has the slot from the moment
+    the Arm is applied; a client's own panel decides nothing locally (it sends the buy), only its
+    next press waits for the new panel revision like after any buy. The next wave builds every
+    puppet from the run in `BATTLE_START` and the snapshots carry each weapon (up to
+    `Snapshot.MAX_WEAPONS`, 32): a 7th weapon shows and aims on the client.
+  - Tests: `shop_gear_tests.gd` (Anvil at entry in the co-op and the solo shop: the upgrade, its
+    damage, no weapons row element made and freed while the shop loads; the label after a local
+    purchase of the Arm; a remote player's weapon refused with full slots, the Arm, the weapon right
+    away; the label on the host and on a client; a client does not apply the host's Anvil again),
+    `battle_scene_tests.gd` (a player with 7 weapons: BATTLE_START, the snapshots and the client's
+    puppet have and aim all 7). Without the fix the element and label checks fail (an element made
+    and freed, "(2/6)" after the Arm; the game's "out of sync" error is in the log).
 - **Level-up / crate panels** (`sync/upgrades_sync.gd`): per player container state from `_old_upgrades`,
   `_level`, `_reroll_price`, `_item_data`, `_checkmark_group`; client re-implements
   `show_upgrades_for_level` without `ItemService.get_upgrades` and uses `show_item` for crates (item rebuilt
@@ -1835,3 +1877,50 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Absent players (`sync/absent_players.gd`): after 20 s without messages (stale or left), the host makes the
   player's pending choice the game's way: first level-up option, crate take (recycle if it can't be taken),
   shop Go. Listed in the lobby page's details; a returning player just plays on.
+
+## Axolotl crash (a game bug in co-op)
+
+A host crashed natively (access violation, no script error) when the co-op shop opened after wave
+36 of an online endless run: `BaseShop._ready` -> `ShopItemsContainer.set_shop_items` ->
+`ItemDescription.set_item` of an Axolotl offer (DLC 1) -> `EffectLine._display_effect` ->
+`Effect.get_text` -> `SwapMaxMinStatEffect.get_args`, which calls
+`Keys.hash_to_string[stats_swapped[1]].to_upper()`. The game's release build (its own Godot 3.7)
+checks for a method call on null only in debug builds, so such a call kills the process there; a
+debug build (the headless tests) logs a script error and goes on with null.
+
+- Cause (the game's own, in local co-op too): an Axolotl's effect object is shared. Shop offers and
+  the pools they are rolled from are shallow duplicates of the ItemService item, and a bought
+  offer is added as it is, so the original, every offer and every Axolotl bought from a shop in
+  this session hold one `SwapMaxMinStatEffect`. Buying one runs `apply`: `has_been_applied = true`
+  and `stats_swapped` = [lowest, highest stat] on that shared object. Whenever
+  `ItemService._get_rand_item_for_wave` then rolls an Axolotl (for another player: `max_nb` 1
+  keeps it from its owner), it sets `elt.effects[0].stats_swapped = []`, on the shared object.
+  `get_args` recomputes the stats only while `has_been_applied` is false, so the offer's text,
+  and the owner's own item, index `[]` and call `to_upper()` on null. In solo the owner never gets
+  a second offer; an Axolotl loaded from a save is a separate instance (the run save of the crash
+  had player 1's Axolotl with `[stat_engineering, stat_range]`, written before that shop's roll).
+  Nothing in the mod writes these fields; the test suite `axolotl` reproduces the state with the
+  game's own roll.
+- `extensions/effects/swap_max_min_stat_effect.gd`: `get_args` hands every state the game can
+  render to the game's own `get_args`. Applied with fewer than two entries, or an entry that is no
+  int or is missing from `Keys.hash_to_string` (null, a string, a float hash from JSON: a float key
+  misses the int keys too), it names the player's current highest and lowest primary stats
+  (`_find_min_max_stat_keys(player_index)`, what the game shows for an Axolotl nobody bought). It
+  does not repair `stats_swapped`: the object is shared, so a repair would write one viewer's
+  stats into everybody's Axolotl and into the run state the host sends and saves. Gameplay is
+  untouched (`apply` is the game's; the swap happened at the purchase).
+- Diagnostics: a warning (`einfluffles-BrotatoTogether:Axolotl`) where such a state is met:
+  `get_args`, and `apply` / `deserialize_and_merge` when they leave one behind (a run state saved
+  after the roll has `has_been_applied` true and `[]`). It names the effect's instance id, the
+  player, the wave, `has_been_applied`, `stats_swapped` with each entry's type and value (and its
+  key name when known), the hashes missing from `Keys.hash_to_string`, whether the object is the
+  ItemService original's effect (shared) or a separate instance, and which players' items hold it.
+  Rate limit (Engine meta `bt_axolotl_warnings`): the first 5 are logged, later ones at most once a
+  minute with the number left out.
+- The game's other `get_args`: only this one indexes `Keys.hash_to_string`. Several pass nested
+  resources (`burning_data`, `weapon_stats`, `stats`, `explosion_effect`, `landmine_effect_stat`,
+  `structure_effect.stats`) to `WeaponService`; those are null only after a `deserialize_and_merge`
+  of data without them, and the effects' `serialize` writes them whenever they are set (the game's
+  resources always set them), so they are not guarded.
+  No wire change: both sides render the same state, a client with an older mod version only lacks
+  the guard.

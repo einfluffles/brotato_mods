@@ -74,6 +74,8 @@ var blocked_buttons := 0
 # host: more masks of that kind, one per screen (key: its name), so that two screens never
 # overwrite each other's block (the shop, sync/shop_sync.gd). OR-ed with blocked_buttons.
 var blocked_by := {}
+# client: owner ("battle", "shop") -> true while the host's game is paused there
+var host_paused := {}
 # client: what last switched the local buttons ("owner: reason"), for the logs
 var last_local_change := ""
 # host: the last line about filled-in, caught-up or dropped inputs (tests)
@@ -222,6 +224,25 @@ func menu_device() -> int:
 	return _menu_buttons.device if _menu_buttons != null else -1
 
 
+# The host's battle or shop is paused (BattleClient, ShopLocal): buttons are dropped here.
+func set_host_paused(owner: String, paused: bool) -> void:
+	if paused == host_paused.has(owner):
+		return
+	ModLoaderLog.info("Host paused (%s): %s" % [owner, paused], LOG_NAME)
+	if paused:
+		host_paused[owner] = true
+	else:
+		host_paused.erase(owner)
+
+
+func is_host_paused() -> bool:
+	return not host_paused.empty()
+
+
+static func held_while_paused_mask() -> int:
+	return ((1 << VirtualDevices.BUTTON_ACTIONS.size()) - 1) & ~(1 << VirtualDevices.PAUSE_INDEX)
+
+
 func _send_local_input() -> void:
 	var host_id: int = session.transport.host_id
 	if not session.peers.has(host_id) or not session.peers[host_id].ready:
@@ -246,7 +267,10 @@ func sample_local() -> Array:
 		if _local_buttons == null:
 			move = _local_movement()
 		aim = LocalAim.sample(LocalAim.own_player(battle_client), InputService.using_gamepad)
-	var counts: int = _presses.sample(buttons)
+	# The host is paused: presses go nowhere, none is kept for after (pause still resumes).
+	var dropped := held_while_paused_mask() if is_host_paused() else 0
+	var counts: int = _presses.sample(buttons, dropped)
+	buttons &= ~dropped
 	if _local_buttons != null:
 		_local_buttons.apply(buttons, counts)
 	var screen = _menu_buttons if _menu_buttons != null else _local_buttons
@@ -405,6 +429,7 @@ func _on_lobby_left() -> void:
 	set_local_menu(-1)
 	blocked_buttons = 0
 	blocked_by.clear()
+	host_paused.clear()
 	var was_host: bool = session.transport.was_host
 	for steam_id in devices.keys():
 		var device: int = devices[steam_id]

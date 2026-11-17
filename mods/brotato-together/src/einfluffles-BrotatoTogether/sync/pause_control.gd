@@ -30,6 +30,8 @@ const REMOTE_PRESS_WINDOW_MSEC := 1000  # a remote pause press this recent cause
 const BLOCK_KEY := "battle"  # InputSync.blocked_by
 const CLIENT_MENU_META := "brotato_together_client_menu"
 const BANNER_NAME := "BrotatoTogetherPauseBanner"
+const TITLE_FONT := "res://resources/fonts/actual/base/font_60_outline.tres"
+const TEXT_FONT := "res://resources/fonts/actual/base/font_35_outline.tres"
 const HOST_ONLY_BUTTONS := ["%RestartButton", "%EndRunButton"]
 
 var session: Node = null
@@ -75,30 +77,63 @@ static func banner_text(by: String, by_id: int, local_id: int) -> String:
 	return "Paused by %s" % (by if by != "" else "the host")
 
 
-# The banner lives in the scene it covers and is found there by name: nothing to keep here.
+# The host's pause on a client: the scene dims behind the backdrop of its own pause menu, with
+# who paused in the game's fonts. Lives in the scene it covers, found there by name.
 static func show_banner(parent: Node, visible: bool, text: String) -> void:
 	var banner = parent.get_node_or_null(BANNER_NAME)
 	if banner == null:
 		if not visible:
 			return
 		banner = make_banner(parent)
-	banner.get_node("Label").text = text
+	banner_label(banner).text = text
 	banner.visible = visible
+
+
+static func banner_label(banner: Node) -> Label:
+	return banner.get_node("Mask/Lines/Label") as Label
 
 
 static func make_banner(parent: Node) -> CanvasLayer:
 	var banner := CanvasLayer.new()
 	banner.name = BANNER_NAME
 	banner.layer = 100
-	var label := Label.new()
-	label.name = "Label"
-	label.align = Label.ALIGN_CENTER
-	label.valign = Label.VALIGN_CENTER
-	label.anchor_right = 1.0
-	label.anchor_bottom = 1.0
-	banner.add_child(label)
+	var mask := PanelContainer.new()
+	mask.name = "Mask"
+	mask.anchor_right = 1.0
+	mask.anchor_bottom = 1.0
+	mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mask.add_stylebox_override("panel", _backdrop(parent))
+	var lines := VBoxContainer.new()
+	lines.name = "Lines"
+	lines.alignment = BoxContainer.ALIGN_CENTER
+	lines.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lines.add_constant_override("separation", 20)
+	lines.add_child(_line("Title", "PAUSE", TITLE_FONT))
+	lines.add_child(_line("Label", "", TEXT_FONT))
+	mask.add_child(lines)
+	banner.add_child(mask)
 	parent.add_child(banner)
 	return banner
+
+
+# PauseMenu's own dark panel.
+static func _backdrop(parent: Node) -> StyleBox:
+	var menu = parent.get("_pause_menu")
+	if menu is Control and menu.has_stylebox("panel"):
+		return menu.get_stylebox("panel")
+	var flat := StyleBoxFlat.new()
+	flat.bg_color = Color(0, 0, 0, 0.784314)
+	return flat
+
+
+static func _line(node_name: String, text: String, font_path: String) -> Label:
+	var label := Label.new()
+	label.name = node_name
+	label.text = text
+	label.align = Label.ALIGN_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_font_override("font", load(font_path))
+	return label
 
 
 # --- host ---

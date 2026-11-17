@@ -1,7 +1,7 @@
 # One game process per line (tools/check.sh), each running the comma-separated suites of
 # mod_main.gd's SUITES (in SUITES order). Every suite is in exactly one line; the test mod
 # checks that. Grouped by measured time: each line is about 22 to 31 s of tests.
-cleanup_client
+cleanup_client,axolotl
 core,battle_loopback,shop_loopback,local_shop,pause_input,selection,run_parts
 cleanup_host,menu_ux,live_menu,local_device,traffic,battle_start
 cleanup_misc,anim_mirror,runtime_parts,battle_perf,client_report
