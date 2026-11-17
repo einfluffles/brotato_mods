@@ -513,6 +513,32 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     arrives and before it is pending. That is where the run parts are stored: a pending body that a
     newer one replaces is never applied, and the newer one only names the parts the replaced one
     brought.
+  - Backpressure (host only, no protocol change): a message handed to Steam cannot be withdrawn, so
+    quick successive shop changes used to pile up full states behind each other (wave 42 of a
+    three-player session: 250 KB pending reliable per client, a 954 ms send queue at Steam's
+    262144 B/s, pings of about 1 s). `register_provider(section, provider, interval, heavy)`; shop and
+    upgrades are heavy. When a heavy section sends a body, the stream asks
+    `Transport.connection_status(peer)` once per target peer (`getSessionConnectionInfo`; nothing is
+    asked while nothing changes) and hands the state only to peers with at most `HOLD_BYTES` (24 KB,
+    about 94 ms of queue) of reliable data pending. A peer over it stays in the section's dirty set, so
+    the next check (0.1 s) tries again, and it then gets the revision current at that time: one
+    message for all the changes it missed. Its run parts are right because the provider builds the
+    patch (`run_for`) and records it (`state_sent` / `commit`) only for peers actually sent to, so
+    the parts are computed against what the peer really has (the run parts test: held over three
+    gold changes of players 0, 1, 0, the peer gets one body with `p0` and `p1`, 13.8 KB instead of
+    three of 21.9 KB together, and its store rebuilds the exact run). Never held: a null body (the
+    screen closed), a light section, a peer that has waited `MAX_HOLD_MSEC` (2 s; then it is sent
+    anyway), a peer Steam has no numbers for (`{}`: no Steam, headless tests). A resync target is
+    held the same way. `flush(hold)` is unaffected (it only moves when the check runs).
+    Order across sections: a held shop state reaches that peer after the lighter sections sent
+    meanwhile (cursors, pause_shop). The client applies sections on their own; a cursor on a
+    control that is not built yet stays pending until it resolves (10 s), and the shop's item
+    controls are the same nodes before and after a shop state. Shop and upgrades never overtake
+    each other for a peer: both go through the one `RunParts.Sender` record, which only sees what
+    was sent, in the order it was sent.
+    Log: when the section closes, one host line per client that was held, e.g. "Shop state held 3
+    times for <name>, longest 2001 ms (Steam's queue over 24 KB)" (holds counted per episode, from
+    the first held check to the send).
 - **Run state in parts** (`sync/run_parts.gd`, protocol 23): the shop and the level-up / crate panels
   sent the whole run state with every run change, about 40 KB per client at wave 40 in a 3-player
   session (compressed), and every client parsed and deserialized every player each time

@@ -55,11 +55,14 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   level-up / crate panels then redo only that player's stats, and its gear page only when its items or
   weapons changed: a level-up choice or reroll applies in about 40 instead of 320 to 365 ms there, a
   crate item in about 110 instead of 300 to 345 ms (these panels were where clients dropped to 5 to
-  8 FPS). A
-  purchase still sends that player's whole item list (about as much as before). When the shop or
-  the panels close, the host logs what they sent (`modloader.log`: "Shop 12: 28 states, ...").
-  A change of the run its quick check did not see still goes out within 1 s, and the warning names
-  what changed ("shop run state changed without a change of its fingerprint:
+  8 FPS). A purchase still sends that player's whole item list (about as much as before). While
+  Steam still has more than 24 KB queued for a client, the host does not pile the next shop or panel
+  state on top: that client gets the newest state once the queue has room (at most 2 s later), one
+  message for every change it missed (three quick changes in a test run: 13.8 KB instead of
+  21.9 KB). When the shop or the panels close, the host logs what they sent (`modloader.log`:
+  "Shop 12: 28 states, ...", and "Shop state held 3 times for <name>, longest ... ms" for each
+  client it held). A change of the run its quick check did not see still goes out within 1 s, and
+  the warning names what changed ("shop run state changed without a change of its fingerprint:
   p0.effects.stat_max_hp; sent"): please include such lines in a report. (The misses earlier
   sessions logged late in a run came from item descriptions shown on the host, which changed how
   the game saves those items; they no longer do.)
@@ -225,7 +228,7 @@ that Steam's default stays if Steam refuses the setting.
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
 run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the run state in parts (which parts each change sends, the client building the same run from
-them, resyncs, a body replaced while pending, a missing part), shop locks (per slot, also after a buy; the own press shown at once), the own shop
+them, resyncs, a body replaced while pending, a missing part, a client held while Steam's queue to it is full getting the union of what it missed), shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), another mod's shop intent (registered, applied once, sent from the own panel only), level-up/crate
 panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade, the gear page rebuilt by the host's run changes under the own and a mirrored cursor, a cursor whose control is freed), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), the mouse wheel scrolling only the mouse player's own panel (shop, level-up, character selection; host and client) and the right stick in character selection (own panel, mirrored positions on a client), "Player N" above the join hint, shop UI sounds, the lobby
 in the game's menus (the title screen's Host lobby button and player frame, kicking, a client in its own main menu

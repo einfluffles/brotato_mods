@@ -11,7 +11,9 @@ extends Reference
 #   that did not change and names the ones that did;
 # - peer_ready sends every part to that peer and only the change to the other; message_for
 #   records nothing; a body replaced while pending leaves the store complete; a missing part
-#   asks the host for a resync and applies nothing; the shop's counters for its log line.
+#   asks the host for a resync and applies nothing; the shop's counters for its log line;
+# - a peer the stream held back (Steam's queue to it full) later gets one body whose parts are
+#   the union of the changes it missed, and its store builds the exact run from it.
 # RunParts.changed_paths (what the host's miss warning names) and the warning's list of paths.
 # Prints the bytes per page flip, Go, lock, reroll, purchase and level-up choice, the host's
 # time per change and a client's time per changed state, before (the whole run in every body,
@@ -141,6 +143,7 @@ func _shop(players: int):
 	_check_players(label + ", purchase", before, true)
 	yield(tests._buy_delay(), "completed")
 
+	_test_held(label)
 	_test_peer_ready(provider_node, label)
 	_test_pending(provider_node, label)
 	_test_missing(provider_node, label)
@@ -163,6 +166,50 @@ func _test_message_for(provider_node: Node) -> void:
 		"run parts: message_for records nothing (%s)" % [first[2].run.parts.keys()]
 	)
 	_change("gold", ["p0"])
+
+
+# Steam's queue to P1 is over the stream's limit: P2 gets each change, P1 none; once the queue
+# has room, P1 gets one message whose parts are the union of the changes it missed, and its
+# store builds the host's exact run from it.
+func _test_held(label: String) -> void:
+	var statuses: Dictionary = _stream.session.transport.statuses
+	statuses[P1] = {"pending_reliable": StateStream.HOLD_BYTES + 1}
+	var to_p2 := []
+	var p2_bytes := 0
+	for p in [0, 1, 0]:
+		RunData.add_gold(1, p)
+		_stream.step(1.0)
+		var check := _take()
+		var to_peer := _message_to(P2, check)
+		var parts: Array = to_peer[2].run.get("parts", {}).keys() if not to_peer.empty() else []
+		to_p2.append(parts)
+		p2_bytes += Protocol.encode(Protocol.Msg.STATE, to_peer).size()
+		if not _message_to(P1, check).empty():
+			to_p2.append("P1 sent")
+	statuses.erase(P1)
+	_stream.step(1.0)
+	var sent := _take()
+	var message := _message_to(P1, sent)
+	var keys: Array = message[2].run.get("parts", {}).keys() if not message.empty() else []
+	keys.sort()
+	print(
+		(
+			"  info: run parts, %s: held over 3 changes: 1 state of %d B (the other peer: 3, %d B)"
+			% [label, Protocol.encode(Protocol.Msg.STATE, message).size(), p2_bytes]
+		)
+	)
+	_t._check(
+		to_p2 == [["p0"], ["p1"], ["p0"]] and sent.size() == 1 and keys == ["p0", "p1"],
+		(
+			"run parts, %s: a held peer gets the union of the changes it missed (%s; then %s)"
+			% [label, to_p2, keys]
+		)
+	)
+	_t._check(
+		not message.empty() and _ingest(message[2]),
+		"run parts, %s: the held peer's store builds the state" % label
+	)
+	_check_join(label + ", held changes")
 
 
 # peer_ready: the providers forget what the peer has, the stream's resync (its next step) sends
@@ -377,7 +424,7 @@ func _start(section: int, provider: Node) -> void:
 	session.peers[P2] = {"ready": true}
 	_stream = StateStream.new()
 	_stream.setup(session)
-	_stream.register_provider(section, provider, provider.CHECK_INTERVAL)
+	_stream.register_provider(section, provider, provider.CHECK_INTERVAL, true)
 	_provider = provider
 	provider.state_stream = _stream  # host_apply_intent flushes this one
 	provider.run_cache.clear()  # as when the screen comes up

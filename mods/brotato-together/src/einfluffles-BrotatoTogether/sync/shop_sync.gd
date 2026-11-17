@@ -93,7 +93,7 @@ func setup(netplay_session: Node) -> void:
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
 	RunData.connect("stat_added", self, "_on_stat_added")
 	var timeout_sec := LOADING_TIMEOUT_MSEC / 1000.0
-	state_stream.register_provider(StateStream.RUN_SHOP, self, CHECK_INTERVAL)
+	state_stream.register_provider(StateStream.RUN_SHOP, self, CHECK_INTERVAL, true)
 	state_stream.register_handler(StateStream.RUN_SHOP, self, timeout_sec)
 	state_stream.register_handler(StateStream.PAUSE_SHOP, self, timeout_sec)
 

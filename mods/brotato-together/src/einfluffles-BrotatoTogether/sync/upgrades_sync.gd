@@ -109,7 +109,7 @@ func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> voi
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
-	state_stream.register_provider(StateStream.UPGRADES, self, CHECK_INTERVAL)
+	state_stream.register_provider(StateStream.UPGRADES, self, CHECK_INTERVAL, true)
 	state_stream.register_handler(StateStream.UPGRADES, self, PENDING_TIMEOUT_SEC)
 	_meca.connect("roll_requested", self, "_on_own_meca_roll")
 	_meca.connect("picked", self, "_on_own_meca_picked")
