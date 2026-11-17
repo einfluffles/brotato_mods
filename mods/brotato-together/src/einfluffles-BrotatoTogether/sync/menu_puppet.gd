@@ -61,6 +61,7 @@ var _loading_msec := -LOADING_TIMEOUT_MSEC
 var _state := {}  # the latest state of _screen
 var _grids_key := 0  # hash of the inventories the copy was built from
 var _items := {}  # my_id -> item of this machine
+var _join_received = null  # the host's last join progress (_apply_join)
 var _scrolls := []  # per player the host's scroll position of its panel's description (-1: none)
 
 
@@ -107,6 +108,7 @@ func forget() -> void:
 	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_state = {}
 	CoopService.bt_remote_progress = null
+	_join_received = null
 	_scrolls = []
 	SharedScroll.clear_own_player()
 
@@ -204,6 +206,8 @@ func _process(delta: float) -> void:
 	if scene == null or _state.empty():
 		return
 	_follow_scrolls(scene, delta)
+	if _kind == CHARACTERS:
+		_advance_join(delta)
 	# The scene's own handlers (a cursor arriving, its deferred first focus) clear selections
 	# and turn the join listening back on; the host's state stands.
 	CoopService.listening_for_inputs = false
@@ -484,6 +488,8 @@ func _apply_run_options(scene: Node, state: Dictionary) -> void:
 
 # The host's hold-to-join progress in the free slots (CoopService extension;
 # ui/coop_selection.gd adds its hints from it). null: the host lets nobody join right now.
+# The state comes ten times a second in steps of 0.1 and a hold takes 0.7 s: between states
+# _advance_join fills the wheels here at the game's speed, the host's values only correct them.
 func _apply_join(_scene: Node, join) -> void:
 	var progress = null
 	if typeof(join) == TYPE_ARRAY:
@@ -491,9 +497,26 @@ func _apply_join(_scene: Node, join) -> void:
 		for value in join.slice(0, MAX_PLAYERS - 1):
 			if typeof(value) == TYPE_REAL or typeof(value) == TYPE_INT:
 				progress.append(clamp(value, 0.0, 1.0))
-	if progress == CoopService.bt_remote_progress:
+	if progress == _join_received:
 		return
+	var shown = CoopService.bt_remote_progress
+	if progress != null and shown is Array and _join_received is Array:
+		if shown.size() == progress.size() and _join_received.size() == progress.size():
+			for i in progress.size():
+				# Lower than the host said before: a new hold. Else the wheel never runs back.
+				if progress[i] >= _join_received[i]:
+					progress[i] = max(progress[i], shown[i])
+	_join_received = progress.duplicate() if progress is Array else null
 	CoopService.bt_remote_progress = progress
+	CoopService._update_connection_progress()
+
+
+func _advance_join(delta: float) -> void:
+	var shown = CoopService.bt_remote_progress
+	if not shown is Array or shown.empty():
+		return
+	for i in shown.size():
+		shown[i] = min(shown[i] + delta / CoopService.HOLD_DURATION, 1.0)
 	CoopService._update_connection_progress()
 
 
