@@ -542,10 +542,9 @@ func apply(main: Node, msg: Dictionary) -> void:
 		return
 	var you: int = battle_client._you
 	_guard(ui, you)
-	var run = _apply_run(msg.get("run"))
-	if run == null:
+	var changed = _apply_run(msg.get("run"))
+	if changed == null:
 		return  # a run part is missing: nothing applied, the host resyncs this client
-	var run_changed: bool = run
 	ui.show()
 	var seqs = msg.get("seqs")
 	var pages = msg.get("pages")
@@ -556,9 +555,14 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var container = ui._get_player_container(p)
 		var slot := UpgradesGear.weapon_slot(ui, container, p)  # before anything is rebuilt
 		var in_popup: bool = ui._popup_manager._elements_pressed[p] != null
+		# Only what the run change touched: a changed player's stats, gold and crate weapons (new
+		# weapon objects), its gear (about 250 elements late in a run) only when its gear changed.
+		var player_changed: bool = changed.has(p)
+		var gear_changed: bool = changed.get(p, false)
 		var gear_cursor := []
-		if run_changed:
+		if gear_changed:
 			gear_cursor = UpgradesGear.rebuild_gear(ui, container, p)
+		if player_changed:
 			container.update_stats()
 			container._update_gold_label()
 		var seq: int = _int_at(seqs, p)
@@ -570,7 +574,7 @@ func apply(main: Node, msg: Dictionary) -> void:
 			_applied[p] = key
 			_show_entry(container, p, entry)
 		var on_weapon := false
-		if rebuilt or run_changed:
+		if rebuilt or player_changed:
 			on_weapon = UpgradesGear.refresh_weapons(ui, container, p, slot, p == you)
 		# After the crate list's refresh, which closes a popup opened from the gear.
 		var on_gear: bool = not on_weapon and UpgradesGear.put_gear_cursor(container, gear_cursor)
@@ -579,12 +583,12 @@ func apply(main: Node, msg: Dictionary) -> void:
 			_own_item_id = entry[2] if entry[0] == "item" and entry.size() == 3 else ""
 			_on_own_panel_changed(ui, container, entry[0], on_weapon or on_gear)
 		elif (
-			run_changed
+			player_changed
 			and p == you
 			and _local_active
 			and not on_weapon
 			and not on_gear
-			and (in_popup or not gear_cursor.empty())
+			and (UpgradesGear.popup_refreshed(ui, p, in_popup, gear_changed) or not gear_cursor.empty())
 		):
 			# The refresh closed the popup the cursor was in (opened from the gear page), or
 			# the gear it was in has no element left at its place.
@@ -636,18 +640,21 @@ func _show_entry(container, p: int, entry: Array) -> void:
 				_show_item(container, entry[1], entry[2])
 
 
-# The run state is only re-applied (and the inventories and stats rebuilt) when its part ids
-# changed. Returns whether it was, null when a part is missing (or the run malformed).
+# The run state is only re-applied when its part ids changed. Returns player -> whether its
+# gear changed, for each player the change touched ({} when the ids did not change; every
+# player, gear too, on the first state of these panels: UpgradesGear.changed_players), null when
+# a part is missing (or the run malformed).
 func _apply_run(run):
 	var ids = run_store.ids_for(run)
 	if RunParts.same_ids(ids, _run_key):
-		return false
+		return {}
 	var state: Dictionary = run_store.state_for(ids)
 	if state.empty():
 		return null
 	RunStateCodec.apply(state)
+	var changed := UpgradesGear.changed_players(run_store, _run_key, ids)
 	_run_key = ids
-	return true
+	return changed
 
 
 # Once per puppet scene. On a client no panel may decide anything: the containers' decision

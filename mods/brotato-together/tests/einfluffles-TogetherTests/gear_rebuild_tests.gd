@@ -1,8 +1,9 @@
 extends Reference
 # The gear page (carousel page 1) of the level-up panels while this client's own panel runs
-# locally, and the host's run state changes under it. UpgradesSync.apply then rebuilds every
-# panel's gear (CoopUpgradesUIPlayerContainer.update_inventory frees each InventoryElement and
-# builds new ones). A real session crashed there: the own FocusEmulator kept its freed element
+# locally, and the host's run state changes under it. UpgradesSync.apply then rebuilds the gear
+# of each player whose gear changed (CoopUpgradesUIPlayerContainer.update_inventory frees each
+# InventoryElement and builds new ones), and leaves the others' gear and cursors alone.
+# A real session crashed there: the own FocusEmulator kept its freed element
 # (a released build dereferences it; a debug build reads it as null, so these checks look at
 # the references themselves), and the weapons inventory's focus neighbour named a freed item
 # element ("Node not found" from Inventory._inherit_or_set_neighbour for each weapon).
@@ -18,10 +19,12 @@ const VirtualDevices := preload(
 const MARGINS := [MARGIN_LEFT, MARGIN_TOP, MARGIN_RIGHT, MARGIN_BOTTOM]
 
 var _t: Node = null
+var _parts := {}  # key -> RunParts.entry of the last _with_run
 
 
 func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 	_t = t
+	_parts = {}
 	var ui = main.get("_coop_upgrades_ui")
 	var own = ui._get_player_container(0)
 	var other = ui._get_player_container(1)
@@ -52,13 +55,20 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 		"gear: both cursors on an item element"
 	)
 
-	# The other player's pick adds an item: the run changes, every panel's gear is rebuilt.
+	# The other player's pick adds an item: only its gear is rebuilt (under its mirrored cursor),
+	# the own gear and the own cursor's element stay as they are.
 	var start_id: String = start.item.my_id
 	var start_index: int = start.get_index()
 	var other_id: String = other_start.item.my_id
 	RunData.add_item(coupon, 1)
 	panels.apply(main, _with_run(msg))
-	t._check(start.is_queued_for_deletion(), "gear: (control) the run change rebuilt the gear")
+	t._check(
+		other_start.is_queued_for_deletion(), "gear: (control) the other's pick rebuilt its gear"
+	)
+	t._check(
+		not start.is_queued_for_deletion() and emulator.focused_control == start,
+		"gear: the other's pick leaves the own gear and its cursor alone"
+	)
 	yield(_frames(2), "completed")  # the old elements are freed, the inventories relinked
 	_check_cursor(emulator, items, start_id, start_index, "own cursor after the other's pick")
 	_check_cursor(
@@ -76,12 +86,27 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 	emulator.focused_control = items.get_child(start_index)
 
 	# This player's own pick: the new item is shown first (newest first), so the cursor's item
-	# moved one place on; the cursor goes with its item.
+	# moved one place on; the cursor goes with its item. Only the own gear is rebuilt: the
+	# mirrored cursor keeps its element.
+	var own_before = emulator.focused_control
+	var other_cursor = mirrored.focused_control
 	RunData.add_item(coupon, 0)
 	panels.apply(main, _with_run(msg))
+	t._check(
+		own_before.is_queued_for_deletion(), "gear: (control) the own pick rebuilt the own gear"
+	)
+	t._check(
+		(
+			is_instance_valid(other_cursor)
+			and not other_cursor.is_queued_for_deletion()
+			and mirrored.focused_control == other_cursor
+		),
+		"gear: the own pick leaves the other's gear and its mirrored cursor alone"
+	)
 	yield(_frames(2), "completed")
 	_check_cursor(emulator, items, start_id, start_index + 1, "own cursor after its own pick")
 	_check_neighbours(own, "own panel after its own pick")
+	_check_neighbours(other, "other panel after the own pick")
 
 	# Off the gear page: the game remembers the gear cursor for the way back
 	# (_resume_inventory_control_focus); it must survive a rebuild too.
@@ -148,10 +173,23 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 
 
 # msg with the run as it is now (the host's state after a change of the gear); the other
-# player's page is mirrored from it (its gear page while these tests look at it).
-static func _with_run(msg: Dictionary, other_page := 1) -> Dictionary:
+# player's page is mirrored from it (its gear page while these tests look at it). A part whose
+# JSON text did not change keeps its id, as in the host's RunCache: this process's RunData holds
+# the objects the client deserialized, and their values can hash differently (an int read back
+# as a float) with the same text.
+func _with_run(msg: Dictionary, other_page := 1) -> Dictionary:
+	var parts := RunParts.split(RunStateCodec.serialize())
+	var run := {"ids": {}, "parts": {}}
+	for key in parts:
+		var text := JSON.print(parts[key])
+		var part = _parts.get(key)
+		if part == null or part.text != text:
+			part = RunParts.entry(parts[key], hash(parts[key]), text)
+			_parts[key] = part
+		run.ids[key] = part.id
+		run.parts[key] = {"size": part.size, "data": part.data}
 	var changed := msg.duplicate()
-	changed.run = bytes2var(var2bytes(RunParts.pack_all(RunStateCodec.serialize())), false)
+	changed.run = bytes2var(var2bytes(run), false)
 	changed.pages = [msg.pages[0], other_page]
 	return changed
 

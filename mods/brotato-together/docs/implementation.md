@@ -546,8 +546,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     whose `players_data` holds only the players whose parts changed since the last `state_for`, and
     puts the previous `PlayerRunData` objects back for the others; `changed_players()` /
     `gear_changed(p)` name what moved. `ShopSync.player_keys` takes the part ids (gear = the `g<p>` id)
-    and a hash of the offered items; `UpgradesSync` keys its run on the ids (its rebuild of every panel
-    is unchanged).
+    and a hash of the offered items; `UpgradesSync` keys its run on the ids and rebuilds only the
+    players that changed (see the level-up panels: per-player rebuild).
   - What a change costs, late endless test runs with 2 / 4 players and 250 items each
     (`run_parts_tests.gd`, headless container; bytes per client on the wire, host time for the check
     that sends it, client time for parse + deserialize; before: the whole run in every body):
@@ -845,8 +845,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - Crate weapon popup (protocol 7; characters whose crates give weapons, `effect_crate_give_weapon`):
     `UpgradesUI._setup_weapons_inventory` runs in the puppet's `_ready` too (the run state is applied
     before the scene loads), but only the host's `_show_next_player_options` fills the list, so the client
-    calls `_refresh_weapons_inventory` for every panel it rebuilds and whenever the run state changed (new
-    weapon objects). A cursor in the list keeps its slot. The own popup's combine / recycle / meca upgrade
+    calls `_refresh_weapons_inventory` for every panel it rebuilds and whenever that player's part of the
+    run state changed (new weapon objects). A cursor in the list keeps its slot. The own popup's combine / recycle / meca upgrade
     leave as `UPGRADE_INTENT` kinds `weapon_combine` / `weapon_discard` / `weapon_meca_roll` /
     `weapon_meca` with `weapon` (slot in `RunData.get_player_weapons`) and `id` (its `my_id`); after
     combine / recycle / meca pick the popup closes like after a cancel (`_on_weapon_cancel_button_pressed`)
@@ -910,10 +910,38 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     to the other clients. Cosmetic: decisions never depend on it.
   - The client rebuilds a panel only when its revision or entry changed, and re-applies the run state only
     when its part ids changed (a rebuild of the own panel would fight the local cursor).
+  - Per-player rebuild (`UpgradesGear.changed_players`): a new run state rebuilds only the players whose
+    parts changed. Their stats, gold label and crate weapons list are redone (`p<p>` or `g<p>` moved:
+    a new `PlayerRunData`, so new weapon objects), their gear page only when `g<p>` moved (a crate item,
+    a combine, a recycle). A level-up choice or a reroll redoes that player's stats only, and no gear.
+    The players come from the store (`changed_players()`, `gear_changed(p)`) and from the ids the
+    panels showed before (`_run_key`; the store compares with its own last `state_for`, which another
+    section could have moved). The first state for new panels (`_guard`: `_run_key` empty) rebuilds
+    every player, gear too. The own panel's fallback to `focus()` for a popup that the refresh took
+    (`UpgradesGear.popup_refreshed`) needs a gear rebuild or a crate weapons list; with neither the
+    popup stays open as it was. In a real session the clients' frames took 100 to 205 ms (5 to 8 FPS)
+    exactly during these panels in late endless waves, because every applied run change rebuilt the
+    gear (about 250 elements each), stats and weapons of every player. Client time per applied state
+    (`UpgradesSync.accept_state` + `apply`, `upgrades_change_tests.gd`, late endless test runs with
+    2 / 4 players and 250 items each, headless container; the freed elements go at the end of the
+    frame and are not counted):
+
+    | applied state | before | now |
+    |---|---|---|
+    | upgrade choice | 162 to 179 / 318 to 366 ms | 40 to 45 / 37 to 46 ms |
+    | reroll | 158 to 180 / 334 to 365 ms | 40 to 52 / 35 to 48 ms |
+    | crate item | 184 to 188 / 304 to 343 ms | 94 to 149 / 106 to 121 ms |
+    | new panels (every player) | 208 to 263 / 417 to 425 ms | 171 to 264 / 349 to 464 ms |
+
+    (Before: two runs of the same tests on the code before; now: three runs, on a machine shared with
+    other test runs, so the times move by up to a half.) What a change still costs is
+    the changed player's `PlayerRunData.deserialize` (about 30 ms, see Run state in parts), its stats,
+    and for a crate item its gear page.
   - Gear page after a run change (`UpgradesGear.rebuild_gear`, `sync/upgrades_gear.gd`, moved out of
-    `upgrades_sync.gd` with the crate weapon list's helpers): every run change (any player's pick,
-    reroll gold, a combine) makes the client call each container's `update_inventory`, which frees every
-    weapon and item element of its gear page (`Inventory.clear_elements`) and builds new ones. A real
+    `upgrades_sync.gd` with the crate weapon list's helpers): a run change that moves a player's weapons
+    or items (a crate item, a combine) makes the client call that container's `update_inventory`, which
+    frees every weapon and item element of its gear page (`Inventory.clear_elements`) and builds new
+    ones; the other panels' gear and cursors stay as they are. A real
     session crashed there (native access violation, no script error): the own panel ran on its gear
     page with the cursor on an element, the own `FocusEmulator` kept the freed element, and a released
     build dereferences it (a debug build reads a freed object as null, so the headless tests check the

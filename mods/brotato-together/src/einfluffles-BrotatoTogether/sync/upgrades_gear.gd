@@ -3,6 +3,40 @@ extends Reference
 # the host's run state changes (sync/upgrades_sync.gd apply). Static helpers, moved out of
 # upgrades_sync.gd (its line budget).
 
+
+# What a new run state changed, per player: p -> whether its gear (its "g<p>" part, weapons and
+# items) changed, for each player whose parts changed. apply rebuilds only these: stats, gold
+# and crate weapons of a changed player, the gear (about 250 elements each late in a run, the
+# slow part) only where it changed. store: the RunParts.Store right after its state_for(ids);
+# old: the ids the panels showed before, {} for panels that showed none yet (a new UI: every
+# player, gear too). The store compares with its own last state_for, which is the panels' unless
+# another section built one in between, so the ids the panels showed count too.
+static func changed_players(store, old: Dictionary, ids: Dictionary) -> Dictionary:
+	var changed := {}
+	var rebuilt: Array = store.changed_players()
+	for p in RunData.get_player_count():
+		var gear_key: String = "g%d" % p
+		var gear: bool = (
+			old.empty()
+			or store.gear_changed(p)
+			or not _same_id(ids.get(gear_key), old.get(gear_key))
+		)
+		if gear or p in rebuilt or not _same_id(ids.get("p%d" % p), old.get("p%d" % p)):
+			changed[p] = gear
+	return changed
+
+
+# Whether apply's refresh can have taken the popup p's cursor was in (in_popup): the crate list's
+# refresh closes it, a gear rebuild frees the gear element it was opened from. Without either
+# (a changed player whose gear did not change, no crate weapons) it stays open as it was.
+static func popup_refreshed(ui: Node, p: int, in_popup: bool, gear: bool) -> bool:
+	return in_popup and (gear or ui._weapons_inventory_enabled[p])
+
+
+static func _same_id(a, b) -> bool:
+	return typeof(a) == TYPE_ARRAY and typeof(b) == TYPE_ARRAY and a == b
+
+
 # UpgradesUI._show_next_player_options refreshes the crate weapons list (only there for a
 # player whose crates give weapons) on the host; a puppet never runs it. The run state brings
 # new weapon objects, so the list is rebuilt with it. A cursor that was in the list (slot)

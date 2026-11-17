@@ -51,7 +51,11 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   part, and per player its weapons and items and the rest) and each client gets only the parts it
   lacks: a page flip or a Go no longer resends the whole run (in a late 4-player test run 0.75 KB
   instead of 30 KB per client), a level-up choice only that player's part (7.6 KB), and a client only
-  parses and rebuilds the players that changed (a level-up choice: 29 instead of 150 ms there). A
+  parses and rebuilds the players that changed (a level-up choice: 29 instead of 150 ms there). The
+  level-up / crate panels then redo only that player's stats, and its gear page only when its items or
+  weapons changed: a level-up choice or reroll applies in about 40 instead of 320 to 365 ms there, a
+  crate item in about 110 instead of 300 to 345 ms (these panels were where clients dropped to 5 to
+  8 FPS). A
   purchase still sends that player's whole item list (about as much as before). When the shop or
   the panels close, the host logs what they sent (`modloader.log`: "Shop 12: 28 states, ...").
 - **Your own level-up / crate panel runs on your machine:** cursor, pages (upgrades / gear / stats) and

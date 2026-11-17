@@ -9,6 +9,9 @@ extends Reference
 # out and counts as missed; an applied intent forces the next check; peer_ready resends every
 # part without compressing again; the cache is gone with the battle. Prints the cost of a send
 # before and after, and of a typical level-up sequence, in a small and in late runs.
+# A client applying that sequence's states in the late runs (UpgradesSync.apply) rebuilds only
+# the player that changed: a crate item its gear and stats, a reroll or an upgrade choice its
+# stats only, new panels every player. Prints the client's time per applied state.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -29,6 +32,9 @@ const LATE_ITEMS := 250
 const LATE_WEAPONS := 6
 const IDLE_CHECKS := 20
 const BUTTON_DELAY_SEC := 0.15  # UpgradesUIPlayerContainer's ButtonDelayTimer: 0.1 s
+const CLIENT_KINDS := ["crate item", "reroll", "upgrade choice"]  # _sequence's steps 2, 3, 4 and 5
+const NEW_PANELS := "new panels"
+const STATS_MARK := "-"  # a stat value no update leaves (the level shown in each panel's stats)
 
 var _t: Node = null
 var _together: Node = null
@@ -41,6 +47,7 @@ var _run := ""  # the run part ids last sent (var2str)
 var _client = RunParts.Store.new()  # what a client has of the run, from what was sent
 var _client_ok := true  # no body named a part the client lacked
 var _client_ids := {}  # the run part ids last sent
+var _bodies := []  # [kind, player, body]: the states of _sequence that changed the run
 
 
 func run(t: Node, together: Node):
@@ -333,6 +340,7 @@ func _late_run(players: int):
 	_stream.step(1.0)
 	_run = _run_of(_take())
 	yield(_sequence(label, players, encode), "completed")
+	yield(_client_replay(label, players), "completed")
 
 
 # A typical level-up sequence, on the stream: every player looks at its gear page and back,
@@ -344,6 +352,8 @@ func _sequence(label: String, players: int, encode: float):
 	var packs: int = _cache.packs
 	var sends := 0
 	var usec := 0
+	_bodies = []
+	_record(NEW_PANELS, -1)
 	for step in 6:
 		for p in players:
 			var container = _ui._get_player_container(p)
@@ -360,6 +370,8 @@ func _sequence(label: String, players: int, encode: float):
 			_stream.step(1.0)
 			usec += OS.get_ticks_usec() - started
 			sends += _take().size()
+			if step >= 2:
+				_record(CLIENT_KINDS[min(step - 2, 2)], p)
 		if step == 3:
 			_stream.session.emit_signal("peer_ready", PEER)
 			_sync._on_peer_ready(PEER)
@@ -440,6 +452,107 @@ func _measure(label: String, slow_calls: int) -> float:
 		% [label, before, key, capture, reuse, net, change, _cache.text_size()]
 	)
 	return before
+
+
+# --- late runs: a client applying the states ---
+
+
+# The sequence's states as a client applies them (UpgradesSync.apply, each after the stream's
+# accept_state), in order, on the host's panels made a spectator's puppet (its own store; the
+# panels' decisions are cut, which is why this comes after the sequence). Counts per state the
+# players whose gear was rebuilt (their elements' instance ids) and whose stats were updated, and
+# prints the time per applied state (apply only: the freed elements go at the end of the frame).
+func _client_replay(label: String, players: int):
+	var client: Node = _together.battle_client
+	var saved_you: int = client._you
+	var saved_store = _sync.run_store
+	client._you = -1
+	_sync.run_store = RunParts.Store.new()
+	_sync._guarded_ui = null
+	var all := range(players)
+	var times := {}  # kind -> [usec, states]
+	for recorded in _bodies:
+		var kind: String = recorded[0]
+		var p: int = recorded[1]
+		var done: Array = yield(_client_apply(recorded[2], players), "completed")
+		if not times.has(kind):
+			times[kind] = [0, 0]
+		times[kind][0] += done[2]
+		times[kind][1] += 1
+		var gear := [p] if kind == CLIENT_KINDS[0] else []
+		if kind == NEW_PANELS:
+			gear = all
+		var stats: Array = all if kind == NEW_PANELS else [p]
+		_t._check(
+			done[0] == gear and done[1] == stats,
+			(
+				"%s, client: %s (player %d) rebuilds gear %s, updates stats %s (did %s, %s)"
+				% [label, kind, p, gear, stats, done[0], done[1]]
+			)
+		)
+	# New panels (another wave's) on a run the store already built: every player again.
+	_sync._guarded_ui = null
+	var again: Array = yield(_client_apply(_bodies[-1][2], players), "completed")
+	_t._check(
+		again[0] == all and again[1] == all,
+		"%s, client: new panels rebuild every player's gear and stats (did %s, %s)"
+		% [label, again[0], again[1]]
+	)
+	var line := ""
+	for kind in [NEW_PANELS] + CLIENT_KINDS:
+		if times.has(kind):
+			line += ", %s %d" % [kind, times[kind][0] / times[kind][1]]
+	print("  info: upgrades client, %s: usec per applied state%s" % [label, line])
+	_sync._on_battle_left()  # the client's state of these panels goes
+	_sync.run_store = saved_store
+	client._you = saved_you
+
+
+# Applies body as a client and returns [players whose gear was rebuilt, players whose stats
+# were updated, usec]; one frame later, so that the freed elements are gone.
+func _client_apply(body: Dictionary, players: int):
+	var gear_ids := []
+	for p in players:
+		var container = _ui._get_player_container(p)
+		gear_ids.append(_gear_ids(container))
+		container.primary_stats_container.general_stats[0]._value.text = STATS_MARK
+	var started := OS.get_ticks_usec()
+	_sync.accept_state(StateStream.UPGRADES, body, 0)
+	_sync.apply(_main, body)
+	var usec := OS.get_ticks_usec() - started
+	var gear := []
+	var stats := []
+	for p in players:
+		var container = _ui._get_player_container(p)
+		if _gear_ids(container) != gear_ids[p]:
+			gear.append(p)
+		if container.primary_stats_container.general_stats[0]._value.text != STATS_MARK:
+			stats.append(p)
+	yield(_t.get_tree(), "idle_frame")
+	return [gear, stats, usec]
+
+
+# The instance ids of the live elements of a panel's gear page (weapons, then items).
+static func _gear_ids(container: Node) -> Array:
+	var ids := []
+	var gear = container.player_gear_container
+	for inventory in [gear.weapons_container._elements, gear.items_container._elements]:
+		for element in inventory.get_children():
+			if not element.is_queued_for_deletion():
+				ids.append(element.get_instance_id())
+	return ids
+
+
+# The panels' state now, as a client gets it (every part, a copy), for the replay; only when
+# its run differs from the one recorded last (a free reroll changes no part).
+func _record(kind: String, p: int) -> void:
+	var body = _sync.state_body(StateStream.UPGRADES)
+	if typeof(body) != TYPE_DICTIONARY:
+		return
+	body = bytes2var(var2bytes(body))
+	if not _bodies.empty() and RunParts.same_ids(body.run.ids, _bodies[-1][2].run.ids):
+		return
+	_bodies.append([kind, p, body])
 
 
 # --- the battle ends ---
