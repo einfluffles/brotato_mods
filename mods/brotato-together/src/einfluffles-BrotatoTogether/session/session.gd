@@ -22,6 +22,7 @@ signal host_message(msg_type, body)
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
 const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/dlc_borrow.gd")
+const Traffic := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/traffic.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:Session"
 const PING_INTERVAL_MSEC := 1000
 const PEER_STALE_MSEC := 5000
@@ -46,6 +47,8 @@ var peers := {}
 var slow_answers := 0  # logged so far (tests)
 # Client in its own menus: the host's DLC is handed back meanwhile (set_borrow_parked).
 var borrow_parked := false
+# What went out reliably to each peer lately (net/traffic.gd), for the log.
+var traffic = Traffic.new()
 
 var _host_dlcs = null  # client: the DLCs of the host's WELCOME
 
@@ -81,7 +84,30 @@ func is_ready_client() -> bool:
 
 
 func send_reliable(steam_id: int, msg_type: int, body = null) -> void:
-	transport.send(steam_id, transport.CHANNEL_RELIABLE, Protocol.encode(msg_type, body))
+	var data := Protocol.encode(msg_type, body)
+	transport.send(steam_id, transport.CHANNEL_RELIABLE, data)
+	_note_reliable(steam_id, msg_type, body, data.size())
+
+
+# Noted for the log (net/traffic.gd); a message over 32 KB or a reliable queue over 64 KB gets a
+# line of its own, at most one per peer in 5 s (Steam's queue is only asked when one may follow,
+# and after small messages at most every 250 ms: Traffic.query_due).
+func _note_reliable(steam_id: int, msg_type: int, body, size: int) -> void:
+	var now := OS.get_ticks_msec()
+	var text := Traffic.label(msg_type, body)
+	traffic.note(steam_id, text, size, now)
+	if not traffic.line_due(steam_id, now) or not traffic.query_due(steam_id, size, now):
+		return
+	var pending := _pending_reliable(transport.connection_status(steam_id))
+	var peer_name: String = peers[steam_id].name if peers.has(steam_id) else str(steam_id)
+	var line: String = traffic.burst_line(steam_id, peer_name, text, size, pending, now)
+	if line != "":
+		ModLoaderLog.info(line, LOG_NAME)
+
+
+static func _pending_reliable(status: Dictionary) -> int:
+	var pending = status.get("pending_reliable", 0)
+	return int(pending) if typeof(pending) == TYPE_INT or typeof(pending) == TYPE_REAL else 0
 
 
 func send_unreliable(steam_id: int, msg_type: int, body = null) -> void:
@@ -192,6 +218,23 @@ func request_resync(steam_id: int) -> void:
 		peers[steam_id].resync = true
 
 
+# Client: the host's state named something this client lacks (a run part, sync/run_parts.gd).
+# HELLO again: the host takes a HELLO from a ready peer as a missed WELCOME and resyncs it fully
+# (request_resync, at most once per RESYNC_INTERVAL_MSEC); asked at most that often from here too
+# (the host's entry's last_resync_msec, unused on a client otherwise).
+func ask_resync() -> void:
+	if not is_ready_client():
+		return
+	var host: Dictionary = peers[transport.host_id]
+	var now := OS.get_ticks_msec()
+	if now - host.last_resync_msec < RESYNC_INTERVAL_MSEC:
+		return
+	host.last_resync_msec = now
+	ModLoaderLog.info("Asking the host for a full resync", LOG_NAME)
+	var persona: String = transport.get_persona_name(transport.local_id)
+	send_reliable(transport.host_id, Protocol.Msg.HELLO, Compat.local_info(persona))
+
+
 func _add_peer(steam_id: int) -> Dictionary:
 	if not peers.has(steam_id):
 		peers[steam_id] = {
@@ -220,6 +263,7 @@ func _on_lobby_left() -> void:
 	for steam_id in peers.keys():
 		emit_signal("peer_removed", steam_id)
 	peers.clear()
+	traffic.clear()
 
 
 func _forget_host_dlcs() -> void:
@@ -257,6 +301,7 @@ func _on_send_failed(steam_id: int, channel: int, result) -> void:
 func _on_peer_left(steam_id: int) -> void:
 	if peers.erase(steam_id):
 		emit_signal("peer_removed", steam_id)
+	traffic.forget(steam_id)
 
 
 func _on_message_received(
@@ -349,6 +394,7 @@ func steam_status_text(steam_id: int) -> String:
 		for key in STEAM_STATUS_KEYS:
 			values.append(status.get(key, "?"))
 		text = STEAM_STATUS_TEXT % values
+		text += traffic.backlog_text(steam_id, _pending_reliable(status), OS.get_ticks_msec())
 	var path: String = transport.link_watch.paths.get(steam_id, "")
 	if path != "":
 		text += "; path: %s" % path

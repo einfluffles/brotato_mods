@@ -10,9 +10,12 @@ enum Msg {
 	# client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons (held mask),
 	# presses (4-bit counter per button, sync/press_counter.gd), flags (sync/local_aim.gd),
 	# previous: PoolVector2Array (the moves of the up to InputSync.REDUNDANCY inputs right before
-	# seq, oldest first, so a lost packet's move still arrives with a later one; protocol 16)]
+	# seq, oldest first, so a lost packet's move still arrives with a later one; protocol 16),
+	# sent_msec (the client's OS.get_ticks_msec() when it sent it: the host's gap log tells the
+	# client's own stalls from inputs held up on the way, sync/stream_gaps.gd; protocol 22)]
 	INPUT,
-	# host -> client: battle_id, run (RunStateCodec), types {idx: scene_path}, colors (palette
+	# host -> client: battle_id, run (in parts, only those the client lacks: sync/run_parts.gd;
+	# protocol 25), types {idx: scene_path}, colors (palette
 	# index per slot, CoopService extension; also in the shop and menu states)
 	# + holes (hole layout scene, "" none), weapon_slots (per player; sync/battle_scene.gd)
 	BATTLE_START,
@@ -42,13 +45,17 @@ enum Msg {
 	# how often they went up), won: what the run earns for the client's own save
 	# (session/progress_share.gd; protocol 20)
 	PROGRESS,
+	# client -> host: a client's frame times, scene-change stalls and prediction corrections for
+	# the host's log, numbers only (sync/client_report.gd; protocol 24)
+	CLIENT_REPORT,
 	# host -> client: [section, revision, body or null (the section has no state now)], see
 	# sync/state_stream.gd; each section's body is described where it is built (shop:
-	# sync/shop_sync.gd, pause_shop: sync/pause_control.gd)
+	# sync/shop_sync.gd, pause_shop: sync/pause_control.gd). The run state of sections shop and
+	# upgrades travels in parts, only those the client lacks (sync/run_parts.gd; protocol 23)
 	STATE,
 }
 
-const VERSION := 21
+const VERSION := 25
 # How long one side carries on without the other's stream (snapshots on a client, INPUT on the
 # host) before it counts as gone rather than late. Both ends share it: a client predicts its own
 # player for that long without snapshots (sync/battle_client.gd PREDICTION_STALE_MSEC), and the

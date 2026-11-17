@@ -57,6 +57,10 @@ const ShopLoopbackTests := preload(
 const ShopChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_change_tests.gd"
 )
+const RunPartsTests := preload("res://mods-unpacked/einfluffles-TogetherTests/run_parts_tests.gd")
+const BattleStartTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/battle_start_tests.gd"
+)
 const UpgradesChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_change_tests.gd"
 )
@@ -90,6 +94,10 @@ const InputAckTests := preload("res://mods-unpacked/einfluffles-TogetherTests/in
 const NetworkStallTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
 )
+const TrafficTests := preload("res://mods-unpacked/einfluffles-TogetherTests/traffic_tests.gd")
+const ClientReportTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/client_report_tests.gd"
+)
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -119,11 +127,15 @@ const SUITES := [
 	"selection",
 	"state_stream",
 	"shop_change",
+	"run_parts",
+	"battle_start",
 	"cursor_key",
 	"upgrades_change",
 	"lobby_menu",
 	"network_stalls",
+	"traffic",
 	"progress",
+	"client_report",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -392,6 +404,20 @@ func _suite_shop_change(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
+# The run state of the shop and the level-up panels in parts, only those a client lacks, with
+# what a change costs on the wire, on the host and on a client before and now.
+func _suite_run_parts(together: Node):
+	_suite = RunPartsTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+# BATTLE_START carries only the run parts a client lacks: bytes per client and the client's
+# time before change_scene, before and now.
+func _suite_battle_start(together: Node):
+	_suite = BattleStartTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
 # The cursors' key against their description on the co-op shop (cursor_key_tests.gd; the
 # level-up panels and the retry prompt are checked in battle_loopback and menu_ux).
 func _suite_cursor_key(together: Node):
@@ -420,11 +446,24 @@ func _suite_network_stalls(together: Node) -> void:
 	NetworkStallTests.new(self).run(together)
 
 
+# What went out reliably to a peer, for the slow answer, gap and burst lines (net/traffic.gd).
+func _suite_traffic(_together: Node) -> void:
+	TrafficTests.new(self).run()
+
+
 # Character selection: the menu mirror leaves the scene with two co-op players that the grid and
 # colour tests use. Then each machine's own scroll, join slots and weapon panels.
 func _suite_progress(together: Node) -> void:
 	_suite = ProgressShareTests.new(self)
 	_suite.run(together)
+
+
+# A client's frame, stall and correction reports and the host's lines for them; ends with a
+# short battle the host records and a client replays.
+func _suite_client_report(together: Node):
+	coop_run(3)
+	_suite = ClientReportTests.new(self)
+	yield(_suite.run(together), "completed")
 
 
 func _suite_selection(together: Node):
@@ -642,7 +681,7 @@ func _find_by_id(elements: Array, my_id: String):
 func _send(input_sync: Node, move: Vector2, aim: Vector2, buttons: int) -> void:
 	_seq += 1
 	var counts: int = _presses.sample(buttons)
-	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons, counts, 0, PoolVector2Array()])
+	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons, counts, 0, PoolVector2Array(), 0])
 
 
 func _tap_key(scancode: int) -> void:

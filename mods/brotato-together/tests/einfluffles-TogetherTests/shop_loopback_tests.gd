@@ -51,6 +51,8 @@ func run(together: Node):
 	shop_sync._shop_id = 7
 	_stream_tests = ShopStreamTests.new(t, together)
 	yield(_stream_tests.run_host(host_shop), "completed")
+	# The client below gets none of what run_host sent: the next send carries every run part.
+	shop_sync.run_sender.forget(ShopStreamTests.PEER)
 	var before: Array = bytes2var(var2bytes(_stream_tests.send_shop()), false)
 	var host_before: Array = t._shop_slots(host_shop, 0)
 

@@ -7,6 +7,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Run state travels the save-file path: `ProgressData.get_run_state()` → `ProgressDataLoaderV3.serialize_run_state`
   → `JSON.print` → zstd; client: `JSON.parse` → `deserialize_run_state` → `RunData.resume_from_state`.
   The JSON step is required: the deserializers expect string keys / float numbers (~5 KB for 2 players).
+  BATTLE_START carries it in parts, only those the client lacks (protocol 25: see Run state in parts).
 - Client loads `main.tscn` itself; `SceneTree.node_added` (connected only from BATTLE_START until the scene
   is ready — no handler for every node otherwise, also in the shop) + the scene's `ready` signal freeze it right after
   `main._ready()` (before the first physics frame): `main.set_process(false)` (pause/aim),
@@ -319,7 +320,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   until the PONG is handled holds up to a frame of each game and all of a stalled one: with no network delay
   at all, two 60 ms stalls read as 120 ms (`session_lifecycle_tests.gd`). Stalls measured headless: battle
   scene 0.3 s, shop scene 0.2 / 0.5 / 0.8 s (small / late 2 / late 4-player run), a changed shop state on a
-  client 6 / 100 / 200 ms (now 4 / 60 / 115 ms, see Shop). `rtt_ms` therefore leaves out what both messages waited for their frame:
+  client 6 / 100 / 200 ms (then 4 / 60 / 115 ms, see Shop; with the run in parts a purchase costs
+  39 / 56 ms in the late runs, a lock 3 / 12 ms, see Run state in parts). `rtt_ms` therefore leaves out what both messages waited for their frame:
   GodotSteam's `time_received` against `getLocalTimestamp()` when the message is handled
   (`Transport.held_msec`); the PONG carries the PING's wait (`held`). What is left is the network and Steam's
   send queue. The whole time stays in `answer_ms` (the page: "with frame time"). Without a receive time
@@ -328,16 +330,42 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   and Steam's own numbers from `getSessionConnectionInfo`: its ping, send queue time, pending and unacked
   bytes, send rate, quality), at most once a second per peer: it tells a stalled frame on either side from
   the network and from a full send queue.
+- Reliable traffic (`net/traffic.gd`, for the log only): `Session.send_reliable` notes every message with
+  its encoded size, per peer in two one-second buckets of label -> count and bytes. The label is the
+  message type (`Protocol.Msg`'s name), for STATE with the section (`StateStream.NAMES`): "STATE shop".
+  When Steam's reliable queue holds 4 KB or more, `Session.steam_status_text` (slow answer and gap lines)
+  adds what went out in the current and the previous second, largest total first, at most 4, as count x
+  mean size: "; reliable in the last 2 s: STATE shop 3 x 13.1 KB, UI_SOUNDS 4 x 0.2 KB" (before the path).
+  A line of its own ("Reliable burst to ...: STATE upgrades of 39.1 KB queued, 70.2 KB pending; reliable in
+  the last 2 s: ...") when one message is larger than 32 KB or the queue holds more than 64 KB right after
+  a send, at most one per peer in 5 s; Steam's queue (`getSessionConnectionInfo`) is only asked when such
+  a line may follow, and then after every message of 4 KB or more but after smaller ones at most once
+  per 250 ms per peer (`Traffic.query_due`): a shower of sounds or cursors costs no Steam call per send,
+  and a backlog built of small messages is still seen within a quarter second. Noting costs about 2.2 us per message headless (`traffic_tests.gd`); nothing is
+  kept for a peer that left or after the lobby. Why: a 43-wave session of 2026-11-16 had reliable
+  backlogs of 20 to 250 KB in the shop and 55 to 76 s into battles, and which messages they were could
+  only be guessed from their timing.
 - Stall diagnostics, for the log only (a PING a second only sees stalls longer than a second's share):
   - Gaps (`sync/stream_gaps.gd`): a client logs when the host's snapshots stop for 200 ms or more, the host
     when a client's INPUT stream does (per client). Timed by Steam's receive time (`Session.arrival_msec`), so
-    this game's own long frames are no gap. The sender's clock for the message (snapshot time; INPUT seq in
-    physics steps) tells "held up on the way" (sent at the usual pace, arriving together after the gap) from
-    "not sent or lost" (sent that far apart: the sender's frame stalled, or the messages were lost). With
+    this game's own long frames are no gap. The sender's clock for the message tells "held up on the way" (sent
+    at the usual pace, arriving together after the gap) from the rest. Snapshots carry the host's snapshot
+    time: the rest is "not sent or lost" (sent that far apart: the host's frame stalled, or the snapshots
+    were lost). INPUT (protocol 22) carries the client's `OS.get_ticks_msec()` at sending next to its seq
+    (one per physics step), which splits the rest: a client whose frame stalls runs no physics steps
+    meanwhile (Godot then runs at most 8 in one frame), so its clock jumps while its seq does not. When the
+    send time the seq steps don't account for is at least half the gap, the line reads "its game sent nothing
+    for N ms (its own stall)"; else a seq jump beyond the redundancy (more than 5) reads "N inputs lost on the
+    way"; else "held up on the way". The line names the seq step ("(seq +N)") and, when the 600 ms timeout
+    let go of the player during the gap, "; buttons released". Until protocol 22 the host took the send time
+    from the seq: in a three-player session of 43 waves every one of its 213 input gap lines (200 to 847 ms;
+    120 in the battle scene, 89 in the shop, most at a battle start or a shop entry) read "sent 16 or 17 ms
+    apart: held up on the way", though a client frame stalled at a scene change sends nothing and then its physics steps at once
+    (`network_stall_tests.gd` replays that: 650 ms without input, then 8 in one frame). With
     Steam's numbers, the session's path and the scene; the client's line also has the render delay. At most
     one line per 5 s per stream, the next one counts the gaps left out. A host pause is no gap. After a
     client's gap the host also logs what its movement queue made of it (inputs filled in from redundancy,
-    steps caught up, steps dropped; see "Remote input", Movement).
+    steps caught up, steps dropped and how many of them moved; see "Remote input", Movement).
   - Route (`Transport.apply_route`): relay-only by default. `setGlobalConfigValueInt32(
     P2P_Transport_ICE_Enable, disable)` at startup, before any session, so Steam has the relayed (SDR)
     route only. Launch option `+bt_direct` skips that and leaves Steam's default (ICE and SDR, Steam picks);
@@ -363,11 +391,82 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     ("P2PGrassGreenerCheck", every 10 s) and re-evaluates which one to use every second; with one route
     left it stops evaluating (`SelectTransport`: "no use evaluating other transports"). The relayed session
     above is the result of that experiment.
+  - Send rate (`Transport.apply_send_rate`, right after the route): `setGlobalConfigValueInt32` sets
+    `SendRateMax` and then `SendRateMin` (ESteamNetworkingConfigValue 11 and 10, GodotSteam's
+    `NETWORKING_CONFIG_SEND_RATE_MAX` / `_MIN`, looked up by name as for the route) to 524288 B/s, at
+    startup before any session. Startup line: `Send rate: up to 512 KB/s (Steam's default is 256)`. A
+    GodotSteam without the setter, or Steam refusing either value, is a warning
+    (`Send rate: ...; Steam's default of 256 KB/s stays`), `Transport.send_rate` stays 0, and the mod goes
+    on. No protocol change, the setting is local; the host does the sending that matters (run state,
+    snapshots), so a new host already helps with older clients.
+    Why: the setting was never touched, so Steam paced every session at its default 262144 B/s (all 820
+    slow-answer lines of the 43-wave session of 2026-11-16 read `rate 262144 B/s`). In the shop at wave
+    42, 251211 B of reliable run state were pending for each of two clients at once, and the slow-answer
+    lines showed `send queue 954330 us`: 251211 / 262144 B/s = 958 ms, with the snapshots and pings
+    queued behind it. At 512 KB/s the same backlog takes 480 ms, and the run in parts makes such backlogs rare.
+    Why min and max both: GameNetworkingSockets (`steamnetworkingsockets_snp.cpp`) does not estimate the
+    line. `SNP_InitializeConnection` starts a session at 4380 B per round trip and `SNP_ClampSendRate`
+    clamps that to [min, max] (min == max: exactly that rate); nothing raises it later. With a ping above
+    4380 B / min the rate is therefore the min: a higher max with min left at 256 KB/s would only help
+    pings under 17 ms, and the min is the rate itself. `steamnetworkingtypes.h` says the same: "these two options should always be set to the
+    same value, to manually configure a specific send rate. The default value is 256K."
+    Slow uplinks: the rate only paces data that is waiting; with nothing queued nothing changes. A host
+    whose upload is below 4 Mbit/s per client sends a backlog faster than the line takes it, so the excess waits in
+    the router instead of in Steam's queue (or is dropped there and resent by Steam's reliability layer).
+    The backlog still leaves at the line's speed, which is not slower than before for any upload above
+    Steam's old 2 Mbit/s; snapshots behind a backlog wait in the router instead of in Steam.
+    Why 512 KB/s and not more: Steam paces each session at this fixed rate without measuring the line,
+    and the host has one session per client, so with three clients a backlog leaves at up to 12 Mbit/s
+    (24 Mbit/s at 1 MB/s), more than many home uploads. Data beyond the line's speed waits or is
+    dropped in the router, where it delays snapshots too. With the run state sent in parts, the
+    largest single update (a purchase) is about 30 KB per client: about 60 ms at this rate.
+    Verified: the numbers in `steamnetworkingtypes.h` of GameNetworkingSockets (`SendRateMin = 10`,
+    `SendRateMax = 11`, `P2P_Transport_ICE_Enable = 104` beside them as a check) and the defaults in
+    `csteamnetworkingsockets.cpp` (`SendRateMin, 256*1024` and `SendRateMax, 256*1024`); the names in
+    Brotato.exe's strings (GodotSteam 3.31 lists `NETWORKING_CONFIG_SEND_RATE_MIN` and `_MAX`).
+    Not measurable headless: in the next session the slow-answer lines' `rate N B/s` must read 524288
+    and `send queue` should be about half the old value for the same pending bytes.
   - Session path (`net/link_watch.gd`): once a second the transport asks GodotSteam's
     `getSessionConnectionInfo` for each lobby member and logs when the path changes: "connecting",
     "direct", "relayed via <POP> (peer's POP <POP>)" (`pop_relay` / `remote_pop` as data center codes, or
     the Relayed flag), "closed: <reason>". The peer's IP address is not logged. Slow answer and gap lines
     end with the current path.
+  - Client reports (`sync/client_report.gd`, protocol 24: CLIENT_REPORT, client to host, reliable,
+    numbers only): the host's log is the one at hand after a session, and it saw a client's frames only
+    through one PING a second, could not split a scene-change stall (150 to 700 ms per client in a 43-wave
+    session) into the mod's work and the game's load, and saw no correction of a client's own player.
+    A ready client measures, the host logs. The node runs first in every frame (`process_priority`
+    -1000), so the time between two of its `_process` calls holds a whole frame, a scene swap deferred to
+    the end of the frame included.
+    - Frames: per window of 10 s of unpaused frames in one scene: count, average, worst, frames of 50 ms
+      or more; in a battle also what `BattleClient._process` took (two lines there, `mirror_cost`) and
+      the most entities it mirrored. Sent when the worst frame took 50 ms or more, else once a minute.
+      A scene change ends the window (sent if it had a slow frame).
+    - Scene change: the longest frame within 3 s of a change of `current_scene` (the frame before the
+      change counts too), with the mod's share of that frame from timing marks:
+      `ClientReport.mark(label, usec)`, static (the node registers itself with `Engine.set_meta`; no
+      static variables in Godot 3), in `RunStateCodec.parse`, `deserialize` and `apply` (BATTLE_START
+      since protocol 25: `BattleRun.state`, the run parts not parsed yet and `state_for`) and around
+      `_freeze` in `BattleClient._on_battle_scene_ready` (puppet setup). The host's line ends with the
+      rest, the game's part. Measured headless (small two-player run, `client_report` suite): the
+      battle scene change stalls 284 ms, of which run parse 0.5, deserialize 2.6, apply 1.4 and
+      puppet setup 0.3 ms.
+    - Corrections: in `_predict_own`, a new `_own_error` longer than one step at the player's speed is
+      counted per window, the largest with the snapshot's age (how much later it came than the fastest
+      snapshot so far, plus half the round trip), the inputs not acked yet and the speed. Only
+      observed: the prediction maths are unchanged.
+    - Host: the sender must be a ready peer; every value must be a number (int or float, not NaN) and is
+      clamped, or the report is dropped (debug line). One info line per part, the client named as the
+      other session lines name it:
+      `Client X entered main.tscn: stalled 640 ms (run parse 22, deserialize 78, apply 9, puppet setup 31, rest 500)`,
+      `Client X frames in main.tscn, 10 s: avg 17, worst 48, 0 over 50 ms; mirror avg 1.9, worst 6.2 ms; up to 412 entities`,
+      `Client X corrections, 10 s: 4 over a step, largest 38 px (snapshot 70 ms old, 6 inputs unacked, 420 px/s)`.
+      Scenes are sent as an index into a fixed list of the game's scene files ("another scene" for the
+      rest, "the waiting screen" for the client view).
+    - Budget: the Mod Loader keeps every log line in memory. A client sends at most 6 window lines and 2
+      scene lines a minute; a window that finds no room goes on and is sent with its whole length once
+      there is (e.g. "frames in main.tscn, 20 s"). The host logs at most 8 lines a minute per client and
+      says in the next line how many it left out.
   - `network_messages_session_failed` (GodotSteam 3.31: reason, steam id, state, debug message) is logged
     with the reason in words (5008: P2P rendezvous failed, ...). Sends use
     `SEND_AUTO_RESTART_BROKEN_SESSION`, so the next message opens a new session; a follow-up line says when
@@ -396,7 +495,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - Tests step it by hand (`step`) and pass `message_for(section, steam_id)` to `receive`
     (`state_stream_tests.gd`). Idle cost, 8 sections checked per frame: about 13 us.
   - On it: upgrades (`UpgradesSync`, was UPGRADES_STATE; key = the run state's revision from its own
-    `RunCache` + the panels, the run packed once per revision as in the shop), menu + menu_grids (`MenuSync`, was
+    `RunCache` + the panels, the run in parts as in the shop), menu + menu_grids (`MenuSync`, was
     MENU_STATE), retry (`RetrySync`, was RETRY_PROMPT),
     pause_battle (`BattleHost` / `BattleClient`, was BATTLE_PAUSE and the `paused` of BATTLE_START).
     `BattleClient` retries the stream on `battle_entered`: retry and pause_battle stay pending until the
@@ -406,9 +505,141 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - cursors: `FocusSync` (provider and handler, 0.05 s, 10 s timeout) instead of FOCUS, its poll loop and
     its pending-per-scene table; see Cursors.
   - shop: `ShopSync` is provider and handler (was SHOP_STATE): key = the run state's revision
-    (`run_cache.rev`, bumped when its JSON changes) + slots, Go, seqs, pages, mecas, `shop_id`, colors
-    and every peer's player index; the run is serialized only when it can have changed and packed once
-    per revision (resends reuse it); `you` is the patch.
+    (`run_cache.rev`, bumped when a part id changes) + slots, Go, seqs, pages, mecas, `shop_id`, colors
+    and every peer's player index; the run is serialized only when it can have changed, and only its
+    changed parts are printed and packed (resends reuse them); `you` and the run parts the peer lacks
+    are the patch (see Run state in parts).
+  - Two optional hooks (protocol 23): a provider's `state_sent(section, steam_id)` runs right after
+    each send to that peer (not for `message_for`, so a body built for a test records nothing); a
+    handler's `accept_state(section, body, revision)` runs once for every body that is not stale, as it
+    arrives and before it is pending. That is where the run parts are stored: a pending body that a
+    newer one replaces is never applied, and the newer one only names the parts the replaced one
+    brought.
+  - Backpressure (host only, no protocol change): a message handed to Steam cannot be withdrawn, so
+    quick successive shop changes used to pile up full states behind each other (wave 42 of a
+    three-player session: 250 KB pending reliable per client, a 954 ms send queue at Steam's
+    262144 B/s, pings of about 1 s). `register_provider(section, provider, interval, heavy)`; shop and
+    upgrades are heavy. When a heavy section sends a body, the stream asks
+    `Transport.connection_status(peer)` once per target peer (`getSessionConnectionInfo`; nothing is
+    asked while nothing changes) and hands the state only to peers with at most `HOLD_BYTES` (24 KB,
+    about 94 ms of queue) of reliable data pending. A peer over it stays in the section's dirty set, so
+    the next check (0.1 s) tries again, and it then gets the revision current at that time: one
+    message for all the changes it missed. Its run parts are right because the provider builds the
+    patch (`run_for`) and records it (`state_sent` / `commit`) only for peers actually sent to, so
+    the parts are computed against what the peer really has (the run parts test: held over three
+    gold changes of players 0, 1, 0, the peer gets one body with `p0` and `p1`, 13.8 KB instead of
+    three of 21.9 KB together, and its store rebuilds the exact run). Never held: a null body (the
+    screen closed), a light section, a peer that has waited `MAX_HOLD_MSEC` (2 s; then it is sent
+    anyway), a peer Steam has no numbers for (`{}`: no Steam, headless tests). A resync target is
+    held the same way. `flush(hold)` is unaffected (it only moves when the check runs).
+    Order across sections: a held shop state reaches that peer after the lighter sections sent
+    meanwhile (cursors, pause_shop). The client applies sections on their own; a cursor on a
+    control that is not built yet stays pending until it resolves (10 s), and the shop's item
+    controls are the same nodes before and after a shop state. Shop and upgrades never overtake
+    each other for a peer: both go through the one `RunParts.Sender` record, which only sees what
+    was sent, in the order it was sent.
+    Log: when the section closes, one host line per client that was held, e.g. "Shop state held 3
+    times for <name>, longest 2001 ms (Steam's queue over 24 KB)" (holds counted per episode, from
+    the first held check to the send).
+- **Run state in parts** (`sync/run_parts.gd`, protocol 23): the shop and the level-up / crate panels
+  sent the whole run state with every run change, about 40 KB per client at wave 40 in a 3-player
+  session (compressed), and every client parsed and deserialized every player each time
+  (`JSON.parse` + `deserialize_run_state` 72 - 78 / 141 - 150 ms in the late 2 / 4-player test runs).
+  - Split: `RunParts.split` cuts `RunStateCodec.serialize()`'s dictionary into `c` (everything but
+    `players_data`, which becomes its size: shop items, locked items, counters, other mods' fields),
+    per player `g<p>` (`{weapons, items}`) and `p<p>` (the rest of the player, weapons and items kept as
+    null so that `join` puts them back at their place). A part's id is `[hash(), length of its JSON
+    text]`. `join` is the inverse; the tests check after every change kind of `shop_change` and
+    `upgrades_change` that a client's parts, joined and printed, equal `RunStateCodec.encode_json`.
+  - Host (`RunCache.refresh`, fingerprint, force and safety net unchanged): after `serialize` it
+    splits and hashes each part; only a part whose hash changed is printed and compressed; `rev`
+    moves when an id changed. One `RunParts.Sender` (created in `mod_main.gd`, shared by `ShopSync` and
+    `UpgradesSync`) records per peer the ids it was last sent: the provider's `state_body` offers its
+    cache (and carries every part, for a body built alone), `state_patch` puts in the parts whose id
+    differs from that peer's record (`run_for`), `state_sent` commits them. A run where nothing differs
+    goes as `{}` (no ids either: four players' ids are 350 of the 1100 bytes of a page flip); the
+    client takes the ids of the last run it got. `forget(peer)` (each provider's `peer_ready`, the
+    session's `peer_removed`, `lobby_left`) makes the next send full: a resync, a late joiner and a
+    failed reliable send (the session queues a resync) all get every part, the other peers only the
+    change. `forget` is idempotent per idle frame: Godot 3 calls the `peer_ready` handlers by object
+    id, so a commit between the two providers' calls must survive. Ids are content hashes, so parts
+    carry over from the panels to the shop (its first state after the panels sends little more than
+    `c`).
+  - Client: one `RunParts.Store` for both sections. `accept_state` ingests (keeps the compressed parts
+    by key and id, the last two versions of each key, and fills in the ids of a `{}` run in place); a
+    body that names a part the client has neither stored nor been sent logs a warning, asks the host
+    for a full resync (`Session.ask_resync`: HELLO again, which the host answers like a missed WELCOME,
+    at most once a second) and applies nothing. `state_for(ids)` decompresses and parses only parts it
+    has not parsed, runs `deserialize_run_state` on a deep copy of `c` (the game writes into its input)
+    whose `players_data` holds only the players whose parts changed since the last `state_for`, and
+    puts the previous `PlayerRunData` objects back for the others; `changed_players()` /
+    `gear_changed(p)` name what moved. `ShopSync.player_keys` takes the part ids (gear = the `g<p>` id)
+    and a hash of the offered items; `UpgradesSync` keys its run on the ids and rebuilds only the
+    players that changed (see the level-up panels: per-player rebuild).
+  - What a change costs, late endless test runs with 2 / 4 players and 250 items each
+    (`run_parts_tests.gd`, headless container; bytes per client on the wire, host time for the check
+    that sends it, client time for parse + deserialize; before: the whole run in every body):
+
+    | change | bytes before | bytes now | host before | host now | client before | client now |
+    |---|---|---|---|---|---|---|
+    | page flip, Go | 27.5 / 30.5 KB | 544 / 752 B | - | - | - | - |
+    | lock | 27.5 / 30.5 KB | 4.0 / 5.0 KB | 29 / 71 ms | 10 / 21 ms | 77 / 150 ms | 3 / 12 ms |
+    | reroll (paid) | 27.3 / 30.6 KB | 10.4 / 11.7 KB | 33 / 69 ms | 13 / 23 ms | 78 / 141 ms | 46 / 46 ms |
+    | purchase | 27.3 / 30.6 KB | 30.4 / 31.9 KB | 39 / 65 ms | 28 / 33 ms | 77 / 149 ms | 39 / 56 ms |
+    | level-up choice | 27.0 / 29.6 KB | 7.1 / 7.6 KB | 30 / 71 ms | 10 / 25 ms | 72 / 150 ms | 30 / 29 ms |
+
+    (One run; the times move by a fifth or so from run to run, the bytes do not.)
+
+    A purchase sends `c`, `p0` and `g0`, a paid reroll `c` and `p0`, a lock `c`, a level-up choice
+    `p<p>` only. A purchase is not cheaper on the wire in these runs: every test player carries nearly
+    the same 250 items, so the whole run compresses across players, while `g0` alone does not (in a
+    real run the players' items differ). What is left on a client is mostly the changed player's
+    `PlayerRunData.deserialize` (its 250 items), which a change of `p<p>` alone needs too.
+  - BATTLE_START (protocol 25): its run goes through the same `RunParts.Sender` (`BattleHost`, a
+    `RunCache` of its own labelled `battle`). Sent directly, not through the stream: `_send_battle_start`
+    offers the cache, puts in `run_for(peer)` and commits at once. The run is the one the battle scene
+    entered the tree with (`SceneTree.node_added`, connected between battles only, when a peer is
+    ready): `main._ready` then starts the wave, which sets every player's health to its start value
+    (`hp_start_wave`, `hp_start_next_wave`) and writes it into the player's part, and the client's own
+    `main._ready` does the same to the run it gets. Serialized after `_ready`, as before, every player
+    hurt in the last wave sent its `p` part again (8 KB each in the late test runs). So after a shop
+    only `c` goes: the wave, `shop_effects_checked`, the shop's fields gone; a player's parts only when
+    Go took one of its items (hourglass, lifeform scanner, `BaseShop._on_GoButton_pressed`). A peer that
+    becomes ready mid-wave gets the run as it is then (`forget` first, then every part): only the
+    first start of a battle uses the run from the scene's entry, and a battle the host loaded with
+    nobody ready serializes when the start is built.
+    Client (`sync/battle_run.gd`): `take` ingests as the message arrives, also a start that is only
+    adopted (a resync of the battle the client is in) or queued (a scene still loading), so the store
+    sees every body in the order the host sent it; a missing part asks for a resync and the start is
+    dropped (the resync sends it again with every part). A queued start keeps its ids (the store keeps
+    two versions per key) and runs `state_for` on them when its turn comes. `BattleRun.state` marks run
+    parse (the parts not parsed yet) and deserialize (`state_for`) for the scene-change report.
+    Measured (late test runs, 2 / 4 players, every player hurt; `battle_start_tests.gd`):
+
+    | | before | now |
+    |---|---|---|
+    | BATTLE_START per client | 27.9 / 30.4 KB (run 26.4 / 28.5 KB) | 3.1 / 3.3 KB (run 1.5 / 1.6 KB) |
+    | client: run parse, deserialize, apply | 14.5, 75.1, 6.4 / 25.5, 112.1, 7.0 ms | 0.2, 0.2, 2.0 / 0.2, 0.1, 3.7 ms |
+    | client: `_on_battle_start` up to `change_scene` | 220 / 240 ms | 87 / 95 ms |
+    | host: `_start_battle` | 37 / 77 ms (`RunStateCodec.encode`) | 1.4 / 0.7 ms |
+    | host: the run packed in parts as the scene enters | - | 31 to 36 / 60 to 86 ms |
+
+    The rest of the message (type table, weapon slots, colours) is 1.6 to 1.9 KB. The rest of the
+    client's time up to `change_scene` is not the run's: 85 to 125 ms in these runs, before and
+    now (the stash of its own save not counted). The host packs about as long as it encoded before,
+    now in the frame of the scene change instead of the first frame of the battle.
+    Wave start on the client, before and now: before, the client applied the run after the host's
+    `main._ready` and ran its own on top. A player who starts the wave hurt on the host (weird ghost,
+    hourglass) was healed on the client (`hp_start_wave` again, the host had already reset
+    `hp_start_next_wave`); now the client runs the wave start once, like the host, and its run is the
+    host's after it (checked). The candy bag's random stats at wave start (`main._ready`,
+    `gain_random_primary_stats_on_go_to_next_wave`) are rolled on each machine: before, the client
+    added its roll to the host's, now it has its own roll instead of the host's. Either way the next
+    state with that player's parts (the level-up panels, the shop) brings the host's.
+  - Log: when the shop or the panels close, one host line per screen, e.g. "Shop 40: 28 states, 20 with
+    run parts (501.9 KB: c 11, g0 5, p0 14, g1 3, p1 5, g2 3, p2 3, g3 3, p3 3), 8 view only (5.3 KB),
+    largest 110.5 KB" (`Sender.close`, counted per peer and send: the test's late 4-player shop with two
+    peers, `run_parts_tests.gd`).
     An applied intent flushes: the stream holds the section until the next frame (Buy / Steal
     run deferred). Client: false while the shop it entered loads (`_on_shop_ready` calls `retry()`), so
     "latest state until the shop is ready" is the stream's. pause_shop: `PauseControl` provides
@@ -483,21 +714,43 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (1.2 / 8 / 15 ms in the runs above: 1.5 % of the host's time at worst); a different hash prints and
   compares the text. A change found while the fingerprint stayed the same (a stat or effect written
   directly, e.g. by another mod; the game's own come with a fingerprint change) is logged as a warning
-  and sent. A change costs one serialization + zstd (2.9 / 30 / 63 ms).
+  and sent. The warning names what changed, so a gap in the fingerprint can be found from a log:
+  `RunCache.miss_paths` parses the old and new text of each part whose id changed and
+  `RunParts.changed_paths` lists the paths whose `hash()` differs, 4 levels deep, keys the game hashed
+  by their names, arrays with their sizes, at most 6 then "+N more" ("shop run state changed without
+  a change of its fingerprint: g0.weapons[0].dmg_dealt_last_wave, p0.effects.stat_max_hp; sent").
+  Only a miss pays for it: about 20 ms in the late 2 / 4-player runs when the miss is in a `g` part
+  (two parses of its text), on top of the check. A change costs one serialization + zstd (2.9 / 30 /
+  63 ms).
+  Effects' custom args (`sync/effect_args.gd`): `Effect.get_text` adds an effect's custom args
+  (`_add_custom_args`: burn chance, burning, turret, fire puddle, carbon bow, temp stats per
+  interval) the first time its description is shown, and `serialize()` writes them. Effects are
+  shared resources (every copy of an item, the shop's offered items), so a tooltip, an offered flame
+  turret or a gear page shown on the host changed the serialized gear of every player owning that
+  effect without any change of the run: the 7 misses a 43-wave, three-player session logged in the
+  shop between waves 18 and 40, and the flaky run parts checks (a reroll that carried every `g` part,
+  depending on which items it offered). `RunStateCodec.serialize` now gives every effect it serializes
+  its custom args first (`EffectArgs.settle(state, true)`, as showing its text would; each effect
+  once: 2.4 / 3.0 ms per serialization in the late 2 / 4-player runs, never in the fingerprint check),
+  so a description shown later changes nothing. A client marks the effects it deserializes from such a
+  state as having them (`RunStateCodec.deserialize`, `RunParts.Store.state_for`), so its own tooltip
+  does not add them a second time. (A second copy would read the same: every added arg is USUAL value
+  and format with a NEUTRAL sign, and the game's own resume has that duplicate.)
   Since protocol 8 the state also carries per player a panel revision (`seqs`) and the carousel page
   (`pages`), and for each client its own player index (`you`, so the message is sent per peer). The client
-  rebuilds per player and per part: `ShopSync.player_keys` cuts the sent run state (before it is
-  deserialized) into the player's whole data, its gear (weapons / items) and its offered items, as
-  `hash()` of each (as JSON text until the ping-spike work: 2 / 43 / 90 ms per changed state on every
-  client in a small / late 2 / late 4-player run, now 0.05 / 1 / 2 ms; what is left of a changed state
-  before any panel is rebuilt is `JSON.parse` 1 / 12 / 23 ms and the game's `deserialize_run_state`
-  3 / 47 / 90 ms, `shop_change_tests.gd`).
+  rebuilds per player and per part: `ShopSync.player_keys` keys the player's whole data (the ids of its
+  `p` and `g` run parts), its gear (the `g` id) and its offered items (a `hash()` of them in the
+  common part). (As JSON text until the ping-spike work: 2 / 43 / 90 ms per changed state on every
+  client in a small / late 2 / late 4-player run, then 0.05 / 1 / 2 ms as hashes of the parsed run;
+  the ids cost nothing to compare. The whole run costs a client `JSON.parse` 1 / 12 / 26 ms and the
+  game's `deserialize_run_state` 3 / 49 / 116 ms, `shop_change_tests.gd`; a change now only parses
+  and deserializes its parts and players, see Run state in parts.)
   A player whose data did not change keeps its `PlayerRunData` object across `resume_from_state` (the
   panel's gear elements and popup hold those objects), gear elements are only replaced when the gear
   changed (the cursor is taken off them first and put back on the element at the same index: a
   `FocusEmulator` must never keep a control that is about to be freed), shop item nodes only when the
-  player's data, offered items or slot layout changed. The same run bytes again (only a Go flag, a page
-  or a revision differs) skip `resume_from_state` altogether.
+  player's data, offered items or slot layout changed. The same run part ids again (only a Go flag, a
+  page or a revision differs) skip `resume_from_state` altogether.
 - **Own shop panel runs on the client** (protocol 8; second screen of the "local view, decisions to the
   host" model). Files: `sync/shop_local.gd` (client), `sync/shop_intents.gd` (host),
   `extensions/ui/shop_item.gd`.
@@ -639,13 +892,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     rerolls and done: every decision moves it, also the host's own and absent players' presses that no
     intent forces), in the check after an applied intent (`force()`; not for a meca roll; the handlers
     change the run before they return, only a held ban (`holding_button`) ends later and is found by the
-    fingerprint), after `peer_ready`, and by the 1 s safety net (hash first, a miss is logged); packed
-    once per revision. `body()` refreshes too, so a body built without a key (tests, `message_for`) still
+    fingerprint), after `peer_ready`, and by the 1 s safety net (hash first, a miss is logged with the
+    paths that changed); only
+    its changed parts are packed, and each peer gets only the parts it lacks (see Run state in parts).
+    `body()` refreshes too, so a body built without a key (tests, `message_for`) still
     has a run as new as its fingerprint. Pages, revisions, meca rolls and resyncs reuse it: 0.15 / 0.3 ms
     per send instead of 2.0 / 28 / 58 ms (small, late 2 / 4 players). A typical sequence (every player
     looks at its gear page and back, takes a crate item, rerolls, chooses twice; one resync) sent 13 / 25
-    times in the late 2 / 4-player runs, each encoding the run (0.37 / 1.47 s); now 8 / 16 encodes, one per
-    decision (0.25 / 0.99 s in the stream's checks). The cache keeps text and ints only and is dropped
+    times in the late 2 / 4-player runs, each encoding the run (0.37 / 1.47 s); then 8 / 16 encodes, one
+    per decision (0.25 / 0.99 s in the stream's checks); with the run in parts 9 / 17 serializations
+    that pack 10 / 22 parts (0.13 / 0.35 s). The cache keeps text and ints only and is dropped
     when the panels close or the battle ends (`_process`, also without peers) and on `lobby_left`. A run
     change alone (gold or a fruit still flying in) is now sent too, at most once per check.
     An applied intent `flush`es. Client handler: false (pending in the
@@ -680,8 +936,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - Crate weapon popup (protocol 7; characters whose crates give weapons, `effect_crate_give_weapon`):
     `UpgradesUI._setup_weapons_inventory` runs in the puppet's `_ready` too (the run state is applied
     before the scene loads), but only the host's `_show_next_player_options` fills the list, so the client
-    calls `_refresh_weapons_inventory` for every panel it rebuilds and whenever the run state changed (new
-    weapon objects). A cursor in the list keeps its slot. The own popup's combine / recycle / meca upgrade
+    calls `_refresh_weapons_inventory` for every panel it rebuilds and whenever that player's part of the
+    run state changed (new weapon objects). A cursor in the list keeps its slot. The own popup's combine / recycle / meca upgrade
     leave as `UPGRADE_INTENT` kinds `weapon_combine` / `weapon_discard` / `weapon_meca_roll` /
     `weapon_meca` with `weapon` (slot in `RunData.get_player_weapons`) and `id` (its `my_id`); after
     combine / recycle / meca pick the popup closes like after a cancel (`_on_weapon_cancel_button_pressed`)
@@ -744,10 +1000,39 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     host applies them to its copy, from where `FocusSync` and `pages` carry them
     to the other clients. Cosmetic: decisions never depend on it.
   - The client rebuilds a panel only when its revision or entry changed, and re-applies the run state only
-    when its bytes changed (a rebuild of the own panel would fight the local cursor).
-  - Gear page after a run change (`UpgradesSync._rebuild_gear`): every run change (any player's pick,
-    reroll gold, a combine) makes the client call each container's `update_inventory`, which frees every
-    weapon and item element of its gear page (`Inventory.clear_elements`) and builds new ones. A real
+    when its part ids changed (a rebuild of the own panel would fight the local cursor).
+  - Per-player rebuild (`UpgradesGear.changed_players`): a new run state rebuilds only the players whose
+    parts changed. Their stats, gold label and crate weapons list are redone (`p<p>` or `g<p>` moved:
+    a new `PlayerRunData`, so new weapon objects), their gear page only when `g<p>` moved (a crate item,
+    a combine, a recycle). A level-up choice or a reroll redoes that player's stats only, and no gear.
+    The players come from the store (`changed_players()`, `gear_changed(p)`) and from the ids the
+    panels showed before (`_run_key`; the store compares with its own last `state_for`, which another
+    section could have moved). The first state for new panels (`_guard`: `_run_key` empty) rebuilds
+    every player, gear too. The own panel's fallback to `focus()` for a popup that the refresh took
+    (`UpgradesGear.popup_refreshed`) needs a gear rebuild or a crate weapons list; with neither the
+    popup stays open as it was. In a real session the clients' frames took 100 to 205 ms (5 to 8 FPS)
+    exactly during these panels in late endless waves, because every applied run change rebuilt the
+    gear (about 250 elements each), stats and weapons of every player. Client time per applied state
+    (`UpgradesSync.accept_state` + `apply`, `upgrades_change_tests.gd`, late endless test runs with
+    2 / 4 players and 250 items each, headless container; the freed elements go at the end of the
+    frame and are not counted):
+
+    | applied state | before | now |
+    |---|---|---|
+    | upgrade choice | 162 to 179 / 318 to 366 ms | 40 to 45 / 37 to 46 ms |
+    | reroll | 158 to 180 / 334 to 365 ms | 40 to 52 / 35 to 48 ms |
+    | crate item | 184 to 188 / 304 to 343 ms | 94 to 149 / 106 to 121 ms |
+    | new panels (every player) | 208 to 263 / 417 to 425 ms | 171 to 264 / 349 to 464 ms |
+
+    (Before: two runs of the same tests on the code before; now: three runs, on a machine shared with
+    other test runs, so the times move by up to a half.) What a change still costs is
+    the changed player's `PlayerRunData.deserialize` (about 30 ms, see Run state in parts), its stats,
+    and for a crate item its gear page.
+  - Gear page after a run change (`UpgradesGear.rebuild_gear`, `sync/upgrades_gear.gd`, moved out of
+    `upgrades_sync.gd` with the crate weapon list's helpers): a run change that moves a player's weapons
+    or items (a crate item, a combine) makes the client call that container's `update_inventory`, which
+    frees every weapon and item element of its gear page (`Inventory.clear_elements`) and builds new
+    ones; the other panels' gear and cursors stay as they are. A real
     session crashed there (native access violation, no script error): the own panel ran on its gear
     page with the cursor on an element, the own `FocusEmulator` kept the freed element, and a released
     build dereferences it (a debug build reads a freed object as null, so the headless tests check the
@@ -1346,7 +1631,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 
 - `INPUT` (unreliable, every physics frame): held mask + a 4-bit press counter per button
   (`sync/press_counter.gd`) + aim flags + (protocol 16) the moves of the 4 inputs before it
-  (`InputSync.REDUNDANCY`, a `PoolVector2Array`, 40 B). Host (`sync/remote_buttons.gd`): a press
+  (`InputSync.REDUNDANCY`, a `PoolVector2Array`, 40 B) + (protocol 22) the client's `OS.get_ticks_msec()` at
+  sending (only for the gap log, see "Stall diagnostics"). Host (`sync/remote_buttons.gd`): a press
   needs a counted edge (a button still held after the timeout release or at rejoin does nothing until
   released), a tap lost in a loss burst is replayed once, `ui_pause` is never held (delivered as press+release on the client's release,
   so timeouts/disconnects can't pause), held menu directions repeat like the game's pad echo (following
@@ -1359,8 +1645,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - Redundancy (protocol 16): each INPUT carries the moves of the 4 inputs before it, and the host queues
     those still due (newer than the last taken or dropped, not queued yet). A lost packet, or up to 4 in a
     row, costs no step, and a late packet's move is already queued before its successor. Bodies are
-    checked strictly (7 fields, at most 4 finite moves, the move finite): anything else is dropped whole.
-    Protocol 15 builds (6 fields) are turned away at HELLO; the mod version has to match anyway, so an
+    checked strictly (8 fields, at most 4 finite moves, the move finite, the send time an int): anything
+    else is dropped whole. Protocol 15 builds (6 fields) and protocol 21 ones (7, no send time) are turned
+    away at HELLO; the mod version has to match anyway, so an
     optional field would never meet an older build.
   - Catch-up: more than `MAX_WAITING` (2) waiting only happens after a gap (the packets held up on the
     way arrive together). The client predicted all of those steps, so the host keeps up to `MAX_BACKLOG`
@@ -1376,8 +1663,12 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     released a player the client still showed running. Movement doesn't need it: with nothing queued the
     player stands, so it never runs on into a wall; a full backlog drains in about 20 ticks, well within.
   - Log: one line per catch-up or loss episode, at most one per 5 s per client, "Input from ...: N missing
-    input(s) filled in from later packets, N step(s) caught up, N dropped (corrected on the client)", next
-    to the input gap line (`sync/stream_gaps.gd`, see "Stall diagnostics").
+    input(s) filled in from later packets, N step(s) caught up, N dropped, M of them moving (corrected on the
+    client)", next to the input gap line (`sync/stream_gaps.gd`, see "Stall diagnostics"). Only a dropped
+    input that moves costs the client a correction (it predicted a step the host never takes); a standing
+    one moves neither side. The timeout clears 4 or 5 standing inputs at every battle start, which until
+    protocol 22 made a line of its own ("0 ... filled in, 0 ... caught up, 5 dropped"; 15 of the 228 lines in
+    the 43-wave session): drops of standing inputs alone log nothing now.
 - Client mode (`VirtualDevices.set_client_mode`): the client's InputService tracks pad vs. mouse like solo
   play, shows the mouse when it moves and doesn't emulate echo actions; the left stick is sent as menu
   directions.

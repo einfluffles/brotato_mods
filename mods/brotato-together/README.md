@@ -16,7 +16,14 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   snapshots with interpolation (~100 ms behind); your own character is predicted locally and reconciled.
   Short network stalls (up to about half a second) are ridden out: your character keeps moving, and the
   world holds and then catches up smoothly instead of jumping. `modloader.log` names each stall (which
-  direction, how long, held up or lost) and whether the connection is direct or relayed by Steam.
+  direction, how long, and whether the other game stalled itself or the messages were held up or lost
+  on the way) and whether the connection is direct or relayed by Steam; when Steam's send queue holds
+  4 KB or more it also names what was sent reliably in the last two seconds (message types and
+  sizes), and a single message over 32 KB or a queue over 64 KB gets a log line of its own.
+  Each client also reports into the host's `modloader.log`: how smooth its frames were (every 10 s
+  when a frame took 50 ms or more, else once a minute; in battle with what mirroring the host's world
+  cost), how long it stalled when a screen changed and how much of that was the mod, and how often
+  and how far its own character was corrected. At most 8 lines a minute per client.
   Spawn markers (where the next enemies appear) and the life bars of bosses and elites are mirrored too,
   and so are explosions, screen shake, level-up / heal / material texts, the icon and number over
   a character whose stat changed (evolution, a mutation fruit, an item's gain), the crates a player
@@ -40,7 +47,29 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   gets the game's menu (its character stands still meanwhile), a client its own copy for options and
   the codex; restart / end run stay with the host, and a client's *Quit* asks to leave the lobby.
 - **Shop, level-ups, crates:** clients load the real screens with the host's rolled options (via the game's
-  own save/resume path) and mirror every player's cursor.
+  own save/resume path) and mirror every player's cursor. The run state travels in parts (the common
+  part, and per player its weapons and items and the rest) and each client gets only the parts it
+  lacks: a page flip or a Go no longer resends the whole run (in a late 4-player test run 0.75 KB
+  instead of 30 KB per client), a level-up choice only that player's part (7.6 KB), and a client only
+  parses and rebuilds the players that changed (a level-up choice: 29 instead of 150 ms there). The
+  next wave's start does the same: after the shop it sends only the common part (3.3 instead of
+  30 KB per client in that run), and a client's run work before it loads the battle drops from
+  about 145 to 4 ms; a player who starts the wave hurt (weird ghost, hourglass) is no longer healed
+  on clients. The
+  level-up / crate panels then redo only that player's stats, and its gear page only when its items or
+  weapons changed: a level-up choice or reroll applies in about 40 instead of 320 to 365 ms there, a
+  crate item in about 110 instead of 300 to 345 ms (these panels were where clients dropped to 5 to
+  8 FPS). A purchase still sends that player's whole item list (about as much as before). While
+  Steam still has more than 24 KB queued for a client, the host does not pile the next shop or panel
+  state on top: that client gets the newest state once the queue has room (at most 2 s later), one
+  message for every change it missed (three quick changes in a test run: 13.8 KB instead of
+  21.9 KB). When the shop or the panels close, the host logs what they sent (`modloader.log`:
+  "Shop 12: 28 states, ...", and "Shop state held 3 times for <name>, longest ... ms" for each
+  client it held). A change of the run its quick check did not see still goes out within 1 s, and
+  the warning names what changed ("shop run state changed without a change of its fingerprint:
+  p0.effects.stat_max_hp; sent"): please include such lines in a report. (The misses earlier
+  sessions logged late in a run came from item descriptions shown on the host, which changed how
+  the game saves those items; they no longer do.)
 - **Your own level-up / crate panel runs on your machine:** cursor, pages (upgrades / gear / stats) and
   item popups react at once; only the decision (choose, reroll, take, recycle, ban) goes to the host,
   which checks it against what your panel shows and applies it. It follows the device you use: with a
@@ -191,10 +220,19 @@ one, about the same ping as the direct route).
   the game's GodotSteam cannot set it, a warning says so and Steam picks the route itself. While
   relayed, the connection lines read `relayed via …` and never `direct`.
 
+**Send rate:** the mod lets Steam send up to 512 KB/s per player instead of Steam's default 256 KB/s,
+with no launch option needed. Steam paces everything at that rate, so a large update (the whole run,
+for example 250 KB in the shop late in a run) used to hold up everything behind it for almost a
+second; at 512 KB/s it takes half of that, and far less since the run travels in parts. The rate only matters while data is waiting.
+The host's setting is the one that counts, so a host running this version already helps.
+`modloader.log` says at startup `Send rate: up to 512 KB/s (Steam's default is 256)`, or warns
+that Steam's default stays if Steam refuses the setting.
+
 ## Tests
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
-run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, shop locks (per slot, also after a buy; the own press shown at once), the own shop
+run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the run state in parts (which parts each change sends, the client building the same run from
+them, resyncs, a body replaced while pending, a missing part, a client held while Steam's queue to it is full getting the union of what it missed; a wave's start after the shop carrying only the common part, the client's run then the host's, a start queued while a scene loads), shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), another mod's shop intent (registered, applied once, sent from the own panel only), level-up/crate
 panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade, the gear page rebuilt by the host's run changes under the own and a mirrored cursor, a cursor whose control is freed), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), the mouse wheel scrolling only the mouse player's own panel (shop, level-up, character selection; host and client) and the right stick in character selection (own panel, mirrored positions on a client), "Player N" above the join hint, shop UI sounds, the lobby
 in the game's menus (the title screen's Host lobby button and player frame, kicking, a client in its own main menu
@@ -213,7 +251,13 @@ prediction needs no correction short of that, plus malformed redundancy fields a
 network stalls (a 400 ms snapshot gap in the replayed battle keeps the own player's
 prediction and holds the world, the render delay on a good connection, through a stall, under recurring
 lateness and after a long outage, gap log lines for snapshots and inputs, the session's path and what
-followed a failed session).
+followed a failed session);
+the reliable traffic named in the log (labels with their counts and bytes, the two-second window, the
+queue size from which slow answer and gap lines name it, the rate limit of the burst line, nothing kept
+after a peer left);
+a client's reports to the host's log (frame windows from fed frame times, a scene change's stall with
+the mod's share in it, corrections over a step; the host's lines, malformed reports dropped, the line
+budget; a replayed battle's real stall and mirror cost).
 
 The tests are named suites (`SUITES` in `mod_main.gd`), each passing on its own: `tools/check.sh -s <suite>`
 runs one, and `shards.txt` groups them into the game processes a full check runs side by side.

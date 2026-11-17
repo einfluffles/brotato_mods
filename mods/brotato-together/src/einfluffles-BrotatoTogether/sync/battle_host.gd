@@ -1,6 +1,15 @@
 extends Node
 # Host: while the battle scene (main.tscn) runs, mirror it to clients.
-# - BATTLE_START (reliable) with the full run state + entity type table, also for late joiners
+# - BATTLE_START (reliable) with the run state + entity type table, also for late joiners. The run
+#   travels in parts, each client gets only those it lacks (sync/run_parts.gd: the record of
+#   what each peer was sent, shared with ShopSync and UpgradesSync; protocol 25). It is the run
+#   as the battle scene entered the tree (_on_node_added), before main._ready started the wave:
+#   that sets every player's health to its start value (a player part), and the client's own
+#   main._ready does the same to the run it gets. After a shop state a start so carries only
+#   what Go changed: the wave (the common part "c"), a player's parts only when Go took one of
+#   its items (hourglass, lifeform scanner). A peer that becomes ready mid-wave gets the run as
+#   it is then, every part (_on_peer_ready). The sends of one start are logged in one line
+#   ("Battle 3 start: 2 states, 2 with run parts (1.6 KB: c 2), ...", RunParts.Sender.close).
 # - SNAPSHOT (unreliable) at SNAPSHOT_HZ with players, entities and wave time
 # - BATTLE_END (reliable) when the battle scene goes away
 # - section pause_battle of the state stream while the battle is paused (state_key)
@@ -16,9 +25,7 @@ const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
-const RunStateCodec := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
-)
+const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
@@ -60,6 +67,7 @@ var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
 var snapshot_bytes := 0  # size of the last snapshot, for the lobby page
 var pause_control: Node = null  # who paused (section pause_battle)
+var run_sender = null  # RunParts.Sender, shared with ShopSync and UpgradesSync (set by mod_main.gd)
 
 var _main: Node = null
 var _battle_live := false  # between _start_battle and _end_battle
@@ -81,15 +89,20 @@ var _feedback = FeedbackMirror.new()  # explosions, bonus gold, wave end (protoc
 var _looks = Looks.new()
 var _facing = Facing.new()
 var _battle_scene = BattleScene.new()  # weapons at wave start, sent speeds
+var _run_cache = RunCache.new("battle")  # the run of the BATTLE_START being sent, in parts
+var _entry_id := 0  # the battle scene whose entry _run_cache holds the run of (0: none)
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
 	session = netplay_session
 	input_sync = remote_input
 	session.connect("peer_ready", self, "_on_peer_ready")
+	session.connect("peer_removed", self, "_watch_entry")
+	session.transport.connect("lobby_left", self, "_watch_entry", [-1])
 	state_stream.register_provider(StateStream.PAUSE_BATTLE, self)
 	RunData.connect("stat_added", self, "_on_stat_changed", [1])
 	RunData.connect("stat_removed", self, "_on_stat_changed", [-1])
+	_watch_entry()
 
 
 func _ready() -> void:
@@ -155,6 +168,7 @@ func _start_battle(main: Node) -> void:
 	_main = main
 	_battle_live = true
 	_battle_id += 1
+	_watch_entry()
 	# The scene change frees the battle before the next _process could compare scenes.
 	main.connect("tree_exited", self, "_on_battle_scene_exited", [_battle_id], CONNECT_ONESHOT)
 	_paused = false
@@ -184,6 +198,7 @@ func _start_battle(main: Node) -> void:
 	for steam_id in session.peers:
 		if session.peers[steam_id].ready:
 			_send_battle_start(steam_id, start)
+	run_sender.close(_run_cache)
 
 
 # The game floats an icon and a number over the player for these (FloatingTextManager).
@@ -197,11 +212,38 @@ func _on_battle_scene_exited(battle_id: int) -> void:
 		_end_battle()
 
 
+# The battle scene's entry is watched between battles while the host has a ready peer (gone: a
+# peer that is leaving, -1: the lobby is gone): inside a battle every pooled projectile that
+# comes back would call _on_node_added, and solo play has no handler for every node.
+func _watch_entry(gone := 0) -> void:
+	var on := false
+	if gone != -1 and not _battle_live and session.is_host():
+		for steam_id in session.peers:
+			on = on or (steam_id != gone and session.peers[steam_id].ready)
+	var tree := get_tree()
+	if tree == null or on == tree.is_connected("node_added", self, "_on_node_added"):
+		return
+	if on:
+		tree.connect("node_added", self, "_on_node_added")
+	else:
+		tree.disconnect("node_added", self, "_on_node_added")
+
+
+# The battle scene enters the tree, its _ready has not run yet: the run of its BATTLE_START
+# (_battle_start_body).
+func _on_node_added(node: Node) -> void:
+	if node.filename == BATTLE_SCENE:
+		_run_cache.clear()
+		_run_cache.refresh(self)
+		_entry_id = node.get_instance_id()
+
+
 # Nothing of a wave outlives it: endless runs play a hundred of them.
 func _end_battle() -> void:
 	ModLoaderLog.info("Battle %s ended" % _battle_id, LOG_NAME)
 	_main = null
 	_battle_live = false
+	_watch_entry()
 	_types.clear()
 	_records.clear()
 	_fresh_ids.clear()
@@ -218,13 +260,24 @@ func _end_battle() -> void:
 		session.broadcast_reliable(Protocol.Msg.BATTLE_END, {"battle_id": _battle_id})
 
 
+# Its run has every part (what a client with nothing needs: tests); _send_battle_start narrows
+# it to what the peer lacks. The run the scene entered with for the first body of a battle
+# (_on_node_added), else serialized now (a peer joining mid-wave, a battle the host loaded
+# without peers). The cache is cleared after the sends (RunParts.Sender.close): no run text is
+# kept through the battle.
 func _battle_start_body() -> Dictionary:
 	var types_by_idx := {}
 	for path in _types:
 		types_by_idx[_types[path]] = path
+	_run_cache.title = "Battle %d start" % _battle_id
+	var entered: bool = is_instance_valid(_main) and _entry_id == _main.get_instance_id()
+	if not entered or _run_cache.parts.empty():
+		_run_cache.clear()
+		_run_cache.refresh(self)
+	_entry_id = 0
 	return {
 		"battle_id": _battle_id,
-		"run": RunStateCodec.encode(),
+		"run": _run_cache.all(),
 		"types": types_by_idx,
 		"colors": CoopService.bt_slot_colors.duplicate(),
 		"holes": BattleScene.hole_layout(_main),
@@ -232,9 +285,16 @@ func _battle_start_body() -> Dictionary:
 	}
 
 
+# Every part: the peer may have lost its store (a new process) or missed a body. ShopSync and
+# UpgradesSync forget it too in this emission (RunParts.Sender.forget: once per idle frame, so
+# their call does not drop the record made here). Between battles: the next battle scene's entry
+# is watched from now on.
 func _on_peer_ready(steam_id: int) -> void:
 	if session.is_host() and is_in_battle():
+		run_sender.forget(steam_id)
 		_send_battle_start(steam_id, _battle_start_body())
+		run_sender.close(_run_cache)
+	_watch_entry()
 
 
 # Section pause_battle: active while this battle is paused (a joining peer gets it on peer_ready
@@ -252,11 +312,17 @@ func state_body(_section: int):
 	return {"battle_id": _battle_id, "by": by[0], "by_id": by[1]}
 
 
-# Each client also learns which player slot it controls (-1: spectator).
+# Each client also learns which player slot it controls (-1: spectator), and gets the run parts
+# it lacks: sent directly, not through the state stream, so recorded as sent at once.
 func _send_battle_start(steam_id: int, start: Dictionary) -> void:
 	var body := start.duplicate()
 	body["you"] = _player_index_of(steam_id)
+	body.erase("run")
+	var view_bytes := var2bytes(body).size()
+	run_sender.offer(_run_cache)
+	body["run"] = run_sender.run_for(steam_id)
 	session.send_reliable(steam_id, Protocol.Msg.BATTLE_START, body)
+	run_sender.commit(steam_id, view_bytes)
 
 
 func _player_index_of(steam_id: int) -> int:

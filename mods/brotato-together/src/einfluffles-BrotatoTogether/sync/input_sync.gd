@@ -93,8 +93,8 @@ var _menu_presses = PressCounter.new()
 var _stick_device := -1  # the slot device _drive_local_stick drove last (-1: none)
 
 # host: steam_id -> {seq, last_msec, released, buttons: RemoteButtons, queue: [[seq, move]...],
-# applied, ack, move, dropped_to, and for the log: filled, caught_up, dropped, next_log_msec} (see
-# _apply_input, _tick_movement)
+# applied, ack, move, dropped_to, and for the log: filled, caught_up, dropped, dropped_moving,
+# next_log_msec} (see _apply_input, _tick_movement)
 var _remote := {}
 # host: steam_id -> StreamGaps of its INPUT stream (logs the stalls)
 var _input_gaps := {}
@@ -255,7 +255,7 @@ func sample_local() -> Array:
 	history.append([_seq, move])
 	if history.size() > HISTORY_SIZE:
 		history.pop_front()
-	return [_seq, move, aim[1], buttons, counts, aim[0], previous]
+	return [_seq, move, aim[1], buttons, counts, aim[0], previous, OS.get_ticks_msec()]
 
 
 # The moves of the up to REDUNDANCY inputs right before seq (oldest first), from [seq, move]
@@ -424,12 +424,12 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 		_apply_input(steam_id, body)
 
 
-# Protocol 16 bodies only (7 fields): compat.gd already turns away other protocols at HELLO, and a
+# Protocol 22 bodies only (8 fields): compat.gd already turns away other protocols at HELLO, and a
 # body of another shape is dropped whole, like any malformed one.
 func _apply_input(steam_id: int, body) -> void:
 	if (
 		typeof(body) != TYPE_ARRAY
-		or body.size() != 7
+		or body.size() != 8
 		or typeof(body[0]) != TYPE_INT
 		or typeof(body[1]) != TYPE_VECTOR2
 		or typeof(body[2]) != TYPE_VECTOR2
@@ -438,6 +438,7 @@ func _apply_input(steam_id: int, body) -> void:
 		or typeof(body[5]) != TYPE_INT
 		or typeof(body[6]) != TYPE_VECTOR2_ARRAY
 		or body[6].size() > REDUNDANCY
+		or typeof(body[7]) != TYPE_INT
 		or not _finite(body[1])
 	):
 		return
@@ -459,6 +460,7 @@ func _apply_input(steam_id: int, body) -> void:
 			"filled": 0,
 			"caught_up": 0,
 			"dropped": 0,
+			"dropped_moving": 0,
 			"next_log_msec": 0,
 		}
 	var state: Dictionary = _remote[steam_id]
@@ -506,8 +508,8 @@ static func _queue_movement(state: Dictionary, seq: int, move: Vector2) -> bool:
 		at -= 1
 	queue.insert(at, [seq, move])
 	if queue.size() > MAX_BACKLOG:
+		_count_dropped(state, [queue.front()])
 		state.dropped_to = queue.pop_front()[0]
-		state.dropped += 1
 		return at > 0
 	return true
 
@@ -619,19 +621,30 @@ func _release_timed_out() -> void:
 			VirtualDevices.release_analog(devices[steam_id])
 			state.buttons.release_held()
 			if not state.queue.empty():  # normally drained long before
-				state.dropped += state.queue.size()
+				_count_dropped(state, state.queue)
 				state.dropped_to = int(max(state.dropped_to, state.queue[-1][0]))
 				state.queue.clear()
 			state.move = Vector2.ZERO
 			state.released = true
 
 
-# host: one line when redundancy filled in missing inputs, or a backlog was caught up or dropped
-# (the client's own player then blends back by that many steps): once the queue is back to normal,
-# at most one per RECOVERY_LOG_INTERVAL_MSEC (the counts add up meanwhile). With the input gap
-# line (note_input_gap) it shows what a stall cost.
+# Queued inputs the host never takes. Only the moving ones cost the client a correction: it
+# predicted a step for them; a standing one moves neither side.
+static func _count_dropped(state: Dictionary, inputs: Array) -> void:
+	state.dropped += inputs.size()
+	for input in inputs:
+		if input[1] != Vector2.ZERO:
+			state.dropped_moving += 1
+
+
+# host: one line when redundancy filled in missing inputs, a backlog was caught up, or moving
+# inputs were dropped (the client's own player then blends back by that many steps): once the queue
+# is back to normal, at most one per RECOVERY_LOG_INTERVAL_MSEC (the counts add up meanwhile).
+# Dropped standing inputs alone (the timeout clearing a queue of them) cost nothing: no line. With
+# the input gap line (note_input_gap) it shows what a stall cost.
 func _log_recovery(steam_id: int, state: Dictionary) -> void:
-	if state.filled + state.caught_up + state.dropped == 0:
+	if state.filled + state.caught_up + state.dropped_moving == 0:
+		state.dropped = 0
 		return
 	var now := OS.get_ticks_msec()
 	if state.queue.size() > MAX_WAITING + 1 or now < state.next_log_msec:
@@ -640,23 +653,38 @@ func _log_recovery(steam_id: int, state: Dictionary) -> void:
 	last_recovery_line = (
 		"Input from %s: %d missing input(s) filled in from later packets, %d step(s) caught up"
 		% [steam_id, state.filled, state.caught_up]
-		+ ", %d dropped (corrected on the client)" % state.dropped
+		+ (
+			", %d dropped, %d of them moving (corrected on the client)"
+			% [state.dropped, state.dropped_moving]
+		)
 	)
 	ModLoaderLog.info(last_recovery_line, LOG_NAME)
 	state.filled = 0
 	state.caught_up = 0
 	state.dropped = 0
+	state.dropped_moving = 0
 
 
-# Host: a stall in a client's INPUT stream is logged (sync/stream_gaps.gd); the seq counts the
-# client's physics steps, which gives the time it sent them at.
+# Host: a stall in a client's INPUT stream is logged (sync/stream_gaps.gd), with the client's clock
+# at sending (field 7) and the seq (one per physics step of the client), which tell its own stalls
+# from inputs held up or lost on the way. Called before _apply_input: when the timeout released
+# the player during the gap, the line says so.
 func note_input_gap(steam_id: int, body) -> void:
-	if typeof(body) != TYPE_ARRAY or body.empty() or typeof(body[0]) != TYPE_INT:
+	if (
+		typeof(body) != TYPE_ARRAY
+		or body.size() != 8
+		or typeof(body[0]) != TYPE_INT
+		or typeof(body[7]) != TYPE_INT
+	):
 		return
 	if not _input_gaps.has(steam_id):
-		_input_gaps[steam_id] = StreamGaps.new("input from %s" % steam_id)
-	var sent_msec: int = body[0] * 1000 / Engine.iterations_per_second
-	_input_gaps[steam_id].note(session, steam_id, sent_msec, LOG_NAME)
+		var gaps = StreamGaps.new("input from %s" % steam_id)
+		gaps.step_msec = 1000.0 / Engine.iterations_per_second
+		gaps.redundancy = REDUNDANCY
+		_input_gaps[steam_id] = gaps
+	var released: bool = _remote.has(steam_id) and _remote[steam_id].released
+	var extra := "; buttons released" if released else ""
+	_input_gaps[steam_id].note(session, steam_id, body[7], LOG_NAME, extra, false, body[0])
 
 
 # Mappings kept from an earlier lobby (see _on_lobby_left) only matter while their slot exists.

@@ -1,13 +1,14 @@
 extends Reference
-# Host: the run state a state stream section carries, serialized only when it can have changed.
-# One per provider: ShopSync (section shop) and UpgradesSync (section upgrades, the level-up /
-# crate panels). Serializing it (ProgressData.get_run_state, serialize_run_state, JSON.print)
-# grows with the run's items: 2.6 ms for a small 2-player run, 29 / 58 ms for a late endless run
-# with 2 / 4 players (250 items each), three quarters of it JSON.print (shop_change_tests.gd and
-# upgrades_change_tests.gd measure it). The stream checks every 0.1 s, so the check itself must
-# not serialize: a whole key costs 0.05 - 0.3 ms there (shop / panels).
+# Host: the run state a state stream section carries, serialized only when it can have changed,
+# in parts (sync/run_parts.gd). One per provider: ShopSync (section shop) and UpgradesSync
+# (section upgrades, the level-up / crate panels). Serializing it (ProgressData.get_run_state,
+# serialize_run_state, JSON.print) grows with the run's items: 2.6 ms for a small 2-player run,
+# 29 / 58 ms for a late endless run with 2 / 4 players (250 items each), three quarters of it
+# JSON.print (shop_change_tests.gd and upgrades_change_tests.gd measure it). The stream checks
+# every 0.1 s, so the check itself must not serialize: a whole key costs 0.05 - 0.3 ms there
+# (shop / panels).
 #
-# refresh(screen, save_args, extra) brings json / rev up to date and serializes only when
+# refresh(screen, save_args, extra) brings parts / rev up to date and serializes only when
 # - the fingerprint changed: cheap values that every mutation of the run the game does on that
 #   screen moves, whose cost does not grow with the item lists. The shared part (RunData and
 #   every player: fingerprint() names them) is here; the caller adds its screen's part: the
@@ -15,38 +16,49 @@ extends Reference
 #   panel processes);
 # - a check was forced: after an applied intent and after peer_ready (force());
 # - the safety net is due (SAFETY_NET_MSEC since the last serialization): it catches what the
-#   fingerprint cannot see (a stat or effect written directly, by another mod say). Its check
-#   skips JSON.print: the serialized dictionary's hash() is compared first (1.2 / 8 / 15 ms in
-#   the runs above), and only a different hash prints and compares the text. (Equal hashes of
-#   different content, 1 in 2^32, would wait for the next change of the fingerprint.) A change
-#   found while the fingerprint stayed the same is a miss of the fingerprint: logged as a
-#   warning (missed) and sent like any other.
-# rev counts the changes of json (the stream's key carries it, so the key changes exactly when
-# the body's run does); pack() compresses json once per rev, for the key's check and every
-# resend of the same state. Only text and ints are kept, never a game object; clear() once the
-# screen is gone drops the text.
+#   fingerprint cannot see (a stat or effect written directly, by another mod say). A change
+#   found while the fingerprint stayed the same is a miss of the fingerprint: sent like any
+#   other and logged as a warning (missed, last_miss) that names what changed: the parts whose
+#   text changed, parsed again and compared by RunParts.changed_paths ("p1.effects.stat_max_hp,
+#   c.tracked_item_effects[0].<item hash>"; the first MISS_PATHS, then "+N more"). Only a miss
+#   pays for that (a JSON.parse of the old and the new text of each changed part).
+# The serialized dictionary is split (RunParts.split: "c", per player "g<p>" and "p<p>") and each
+# part's hash() compared with the last one of its key (1.2 / 8 / 15 ms for the whole run in the
+# runs above, a quarter of the text's cost): only a part whose hash changed is printed to JSON,
+# and only one whose text changed too is compressed and gets a new id (RunParts.entry), so a
+# purchase packs the common part and the buyer's two, a level-up choice one. (The hash alone
+# also moves when a value's type or its last bits change, which the text does not show: seen on
+# both players' weapons right after a shop came up. Equal hashes of different content, 1 in
+# 2^32, would wait for the next change of that part.) rev counts the changes of the part ids
+# (the stream's key carries it, so the key changes exactly when the body's run does). Only text,
+# bytes and ints are kept, never a game object; clear() once the screen is gone drops them.
 
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
+const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:RunCache"
 # 1 s: what the fingerprint cannot see is at most that late, and the late 4-player run's check
 # (15 ms, about one frame) costs 1.5 % of the host's time on the screen.
 const SAFETY_NET_MSEC := 1000
+const MISS_DEPTH := 4  # path levels the miss warning names: down to a weapon's field
+const MISS_PATHS := 6  # paths the miss warning lists
 
-var label := ""  # the screen, for the miss warning
-var json := ""  # the run state's JSON text as of the last change
-var rev := 0  # bumped whenever json changes
+var label := ""  # the screen, for the miss warning and RunParts.Sender's counters
+var title := ""  # the screen as its provider names it (the log line when it closes)
+# key -> RunParts.entry ({hash, id, size, data, text}) of the run state as of the last change, in
+# RunParts.split's order
+var parts := {}
+var rev := 0  # bumped whenever an id of parts changes
 var serialized := 0  # run states serialized (tests)
-var packs := 0  # run states compressed (tests)
+var packs := 0  # parts compressed (tests)
 var missed := 0  # changes only a forced check or the safety net found (tests)
+var last_miss := ""  # the warning of the last miss (tests)
 
-var _screen_id := 0  # instance id of the screen json belongs to (0: none)
-var _hash := 0  # hash() of the serialized run state json was printed from
+var _screen_id := 0  # instance id of the screen parts belong to (0: none)
 var _fingerprint := []
 var _checked_msec := 0
 var _force_frame := -1  # a check from this idle frame on, whatever the fingerprint says
-var _packed := {}
 
 
 func _init(screen_label := "run") -> void:
@@ -61,22 +73,20 @@ func force(frames_ahead := 0) -> void:
 
 # Called on every check (or frame) while the screen is not up: nothing to do once cleared.
 func clear() -> void:
-	if _screen_id == 0 and json == "":
+	if _screen_id == 0 and parts.empty():
 		return
-	json = ""
+	parts = {}
 	_screen_id = 0
-	_hash = 0
 	_fingerprint = []
-	_packed = {}
 	_force_frame = -1
 
 
-# Returns whether json changed. screen: the node the run state is shown on (another one starts
+# Returns whether parts changed. screen: the node the run state is shown on (another one starts
 # over); save_args: ProgressData.get_run_state's arguments (the shop's, [] elsewhere); extra:
 # the caller's part of the fingerprint (ints and floats only).
 func refresh(screen: Object, save_args := [], extra := []) -> bool:
 	var fingerprint := fingerprint(save_args, extra)
-	var same_screen: bool = screen.get_instance_id() == _screen_id and json != ""
+	var same_screen: bool = screen.get_instance_id() == _screen_id and not parts.empty()
 	var frame := Engine.get_idle_frames()
 	var forced: bool = _force_frame >= 0 and frame >= _force_frame
 	var now := OS.get_ticks_msec()
@@ -92,30 +102,82 @@ func refresh(screen: Object, save_args := [], extra := []) -> bool:
 	_checked_msec = now
 	var data := RunStateCodec.serialize(save_args)
 	serialized += 1
-	var data_hash := data.hash()
-	if same_screen and data_hash == _hash:
-		return false
-	_hash = data_hash
-	var text := JSON.print(data)
-	if text == json:
+	var fresh := {}
+	var changed := false
+	var split := RunParts.split(data)
+	for key in split:
+		var part_hash := hash(split[key])
+		var old = parts.get(key)
+		if old != null and old.hash == part_hash:
+			fresh[key] = old
+			continue
+		var text := JSON.print(split[key])
+		if old != null and text == old.text:
+			old.hash = part_hash  # a value's type or last bits moved, not its text: same id
+			fresh[key] = old
+			continue
+		fresh[key] = RunParts.entry(split[key], part_hash, text)
+		packs += 1
+		changed = changed or old == null or old.id != fresh[key].id
+	changed = changed or fresh.size() != parts.size()
+	var before := parts
+	parts = fresh
+	if not changed:
 		return false
 	if unchanged:
 		missed += 1
-		ModLoaderLog.warning(
-			"%s run state changed without a change of its fingerprint; sent" % label, LOG_NAME
+		last_miss = (
+			"%s run state changed without a change of its fingerprint: %s; sent"
+			% [label, miss_text(miss_paths(before, fresh))]
 		)
-	json = text
+		ModLoaderLog.warning(last_miss, LOG_NAME)
 	rev += 1
-	_packed = {}
 	return true
 
 
-# json compressed (RunStateCodec.pack), once per rev. A copy: callers may keep or change it.
-func pack() -> Dictionary:
-	if _packed.empty():
-		_packed = RunStateCodec.pack(json)
-		packs += 1
-	return _packed.duplicate()
+# What moved between two sets of parts ({key: RunParts.entry}): the parts whose id changed (or
+# that came or went), their old and new text parsed and compared (RunParts.changed_paths).
+static func miss_paths(before: Dictionary, after: Dictionary) -> Array:
+	var old := {}
+	var new := {}
+	for key in after:
+		var was = before.get(key)
+		if was == null or was.id != after[key].id:
+			new[key] = JSON.parse(after[key].text).result
+			if was != null:
+				old[key] = JSON.parse(was.text).result
+	for key in before:
+		if not after.has(key):
+			old[key] = JSON.parse(before[key].text).result
+	return RunParts.changed_paths(old, new, MISS_DEPTH)
+
+
+# "a, b, c, d, e, f, +3 more" (MISS_PATHS paths at most); "no value" when the texts differ but
+# not what they parse to.
+static func miss_text(paths: Array) -> String:
+	if paths.empty():
+		return "no value"
+	var text := ", ".join(PoolStringArray(paths.slice(0, int(min(paths.size(), MISS_PATHS)) - 1)))
+	if paths.size() > MISS_PATHS:
+		text += ", +%d more" % (paths.size() - MISS_PATHS)
+	return text
+
+
+# The length of the run state's JSON text, all parts (tests, log lines).
+func text_size() -> int:
+	var size := 0
+	for key in parts:
+		size += parts[key].id[1]
+	return size
+
+
+# Every part in the wire format (RunParts header): what a client with nothing needs.
+func all() -> Dictionary:
+	var run := {"ids": {}, "parts": {}}
+	for key in parts:
+		run.ids[key] = parts[key].id
+		run.parts[key] = {"size": parts[key].size, "data": parts[key].data}
+	return run
 
 
 # The shared part: everything a mutation of the run moves, as cheap values (ints and floats

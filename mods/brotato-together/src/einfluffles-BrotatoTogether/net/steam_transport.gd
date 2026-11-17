@@ -42,6 +42,12 @@ const RELAY_ARG := "+bt_relay"
 # names, with the Steamworks SDK's numbers when the class does not list them.
 const CONFIG_ICE_ENABLE := ["NETWORKING_CONFIG_P2P_TRANSPORT_ICE_ENABLE", 104]
 const CONFIG_ICE_DISABLE := ["NETWORKING_CONFIG_P2P_TRANSPORT_ICE_DISABLE", 0]
+# ESteamNetworkingConfigValue SendRateMin / SendRateMax (bytes per second), looked up the same way.
+# Both names are in Brotato's GodotSteam 3.31; the numbers are steamnetworkingtypes.h's.
+const CONFIG_SEND_RATE_MIN := ["NETWORKING_CONFIG_SEND_RATE_MIN", 10]
+const CONFIG_SEND_RATE_MAX := ["NETWORKING_CONFIG_SEND_RATE_MAX", 11]
+const SEND_RATE := 524288  # bytes per second, for both (see apply_send_rate)
+const STEAM_SEND_RATE := 262144  # Steam's default for both
 
 const LinkWatch := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/link_watch.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:Transport"
@@ -60,6 +66,8 @@ var kicked := {}
 
 var relay_only := false  # Steam's direct route is off (see apply_route)
 var route_note := ""  # what apply_route logged (tests)
+var send_rate := 0  # bytes per second apply_send_rate set (0: Steam's default)
+var send_rate_note := ""  # what apply_send_rate logged (tests)
 var join_presence := ""  # the "connect" rich presence we advertise ("" = no Join button)
 var _lobby_tag := ""
 var _next_send_warning_msec := 0
@@ -87,6 +95,7 @@ func setup(lobby_tag: String) -> bool:
 	_connect_steam("network_messages_session_failed", "_on_session_failed")
 	steam.initRelayNetworkAccess()
 	apply_route(Array(OS.get_cmdline_args()))
+	apply_send_rate()
 	_clear_join_presence()  # never inherit a Join button from an earlier (crashed) session
 	_check_launch_args()
 	return true
@@ -130,6 +139,40 @@ func apply_route(args: Array) -> bool:
 	link_watch.relay_only = true
 	_log_route("Route: sessions go through Steam's relays only (%s)" % why)
 	return true
+
+
+# Steam paces each session at a fixed rate and does not measure the line: a session starts at
+# 4380 B per round trip, clamped to [SendRateMin, SendRateMax], and keeps it
+# (GameNetworkingSockets, SNP_InitializeConnection / SNP_ClampSendRate). With a ping above
+# 4380 B / min (17 ms at 256 KB/s) that is SendRateMin, which is why steamnetworkingtypes.h says
+# to set both to the same value: a higher max alone does next to nothing. Steam's default,
+# 256 KB/s for both, made 250 KB of reliable run state in the shop wait 954 ms, the snapshots and
+# pings behind it (docs/implementation.md, Send rate). The rate only paces a backlog; with nothing
+# queued nothing changes. Global and before any session, as apply_route; the sending that matters
+# is the host's, so one side alone helps. Without setGlobalConfigValueInt32, or when Steam
+# refuses, the mod goes on with Steam's default and says so. Max goes first: a refused min then
+# leaves about Steam's default (see above), never a min above the max.
+func apply_send_rate() -> bool:
+	send_rate = 0
+	if steam == null or not steam.has_method("setGlobalConfigValueInt32"):
+		_log_send_rate("this GodotSteam cannot set it")
+		return false
+	for entry in [CONFIG_SEND_RATE_MAX, CONFIG_SEND_RATE_MIN]:
+		var set = steam.setGlobalConfigValueInt32(_steam_constant(entry), SEND_RATE)
+		if set != true:
+			_log_send_rate("Steam refused %s (%s)" % [entry[0], set])
+			return false
+	send_rate = SEND_RATE
+	var rates := [SEND_RATE / 1024, STEAM_SEND_RATE / 1024]
+	send_rate_note = "Send rate: up to %s KB/s (Steam's default is %s)" % rates
+	ModLoaderLog.info(send_rate_note, LOG_NAME)
+	return true
+
+
+func _log_send_rate(why: String) -> void:
+	var text := "Send rate: %s; Steam's default of %s KB/s stays"
+	send_rate_note = text % [why, STEAM_SEND_RATE / 1024]
+	ModLoaderLog.warning(send_rate_note, LOG_NAME)
 
 
 func _log_route(text: String, warning := false) -> void:

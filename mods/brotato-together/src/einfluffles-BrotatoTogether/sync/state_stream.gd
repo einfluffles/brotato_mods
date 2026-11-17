@@ -4,7 +4,7 @@ extends Node
 # forgetting the key on peer_ready, per-peer sends, and "keep the latest state until the scene
 # is ready, then apply it".
 #
-# Host: register_provider(section, provider, interval) with a provider object that has
+# Host: register_provider(section, provider, interval, heavy) with a provider object that has
 #   state_key(section) -> String: what the section's state is right now, "" = inactive (nothing
 #     to send). Called every interval, so it must be cheap (text of the state, not the state
 #     packed). It must cover everything the body depends on, the per-peer part included.
@@ -13,10 +13,31 @@ extends Node
 #   state_patch(section, steam_id) -> Dictionary (optional): merged into a copy of the body for
 #     each peer (`you`). Split from state_body so the expensive part is built once per send
 #     without the provider caching anything; a patch needs a Dictionary body.
+#   state_sent(section, steam_id) (optional): called right after the section's body went to the
+#     peer (the patch built for it: sync/run_parts.gd records which run parts the peer has).
+#     message_for does not call it: a body built for a test was never sent.
 # flush(section, hold = false): check in the next idle frame whatever the interval (state
 # changed by deferred game code, like a shop intent); with hold, no check before that frame
 # either. mark_dirty(section, steam_id = 0: every ready peer): send the
 # current state again at the next check even when the key did not change.
+# heavy (RUN_SHOP, UPGRADES: bodies of up to 32 KB with run parts): a new state is not handed
+# to a peer whose Steam send queue already holds more than HOLD_BYTES of reliable data
+# (Transport.connection_status's pending_reliable, asked once per peer and check, only when a
+# heavy section sends). The peer stays dirty and the next check (interval) tries again; it then
+# gets the revision current at that time, one message for every change it missed: what Steam
+# has queued cannot be withdrawn, what was never handed to it can be replaced. The run parts
+# stay right because the provider builds a peer's patch (state_patch) and records it (state_sent)
+# only when that peer is actually sent to (sync/run_parts.gd computes the parts against what the
+# peer was last sent). Never held: a null body, a light section, a peer held for MAX_HOLD_MSEC
+# already, a peer Steam has no status for ({}: no Steam, tests). A resync target is held the
+# same way. Each peer's holds are counted per section and logged when the section turns
+# inactive (the screen closed).
+# Order across sections: a held heavy section reaches that peer after lighter sections sent in
+# the meantime (cursors, pause). The client applies each section on its own: a cursor that points
+# at a control not built yet stays pending until it resolves (sync/focus_sync.gd), and the
+# shop's controls are the same nodes before and after a shop state. The heavy sections keep
+# their order among themselves for a peer: both use the one run part record, which only ever
+# sees what was sent, in the order it was sent.
 # Only ready peers get anything; nothing is sent while not host. A key change bumps the
 # section's revision and goes to every ready peer; a section that turns inactive after having
 # been active sends a null body once. On peer_ready the peer gets every section again in section
@@ -40,6 +61,10 @@ extends Node
 #     returns null) drops the body with a warning; the other sections go on.
 #   clear_state(section) (optional): the host has no state for the section any more. Only called
 #     when the section had a state since the last clear.
+#   accept_state(section, body, revision) (optional): called once for every body that is not
+#     stale, as it arrives and before it becomes pending. For what must not wait for the apply:
+#     a pending body that a newer one replaces is never applied (the run parts it delivered are
+#     stored here, sync/run_parts.gd).
 # retry(): try every pending section now (e.g. on battle_entered). receive(message): one STATE
 # body, validated; the sender check (only the host) is in _on_message.
 # Revisions: a lower revision than the last one received for the section is stale and dropped;
@@ -71,10 +96,16 @@ const NAMES := [
 ]
 const DEFAULT_INTERVAL := 0.1
 const DEFAULT_TIMEOUT_SEC := 10.0
+# Heavy sections: a peer with more reliable bytes than this waiting in Steam's send queue gets
+# the next state later (about 94 ms of queue at Steam's default 262144 B/s).
+const HOLD_BYTES := 24 * 1024
+const MAX_HOLD_MSEC := 2000  # then sent anyway: a state late is better than none
 
 var session: Node = null
+var hold_lines := []  # host: the lines logged about holds when a heavy section closed last (tests)
 
-# host: section -> {provider, patched, interval, left, key, rev, flush_frame, dirty {steam_id}}
+# host: section -> {provider, patched, interval, left, key, rev, flush_frame, dirty {steam_id},
+#   heavy, holds {steam_id: msec its hold began}, held {steam_id: [holds, longest msec]}}
 var _providers := {}
 var _resyncs := {}  # host: steam_id -> true, peers that became ready since the last step
 # client: section -> {handler, clears, timeout_msec}
@@ -109,11 +140,17 @@ func step(delta: float) -> void:
 # --- host ---
 
 
-func register_provider(section: int, provider: Object, interval := DEFAULT_INTERVAL) -> void:
+func register_provider(
+	section: int, provider: Object, interval := DEFAULT_INTERVAL, heavy := false
+) -> void:
 	assert(section >= 0 and section < NAMES.size())
 	_providers[section] = {
+		"heavy": heavy,
+		"holds": {},
+		"held": {},
 		"provider": provider,
 		"patched": provider.has_method("state_patch"),
+		"sent": provider.has_method("state_sent"),
 		"interval": interval,
 		"left": 0.0,
 		"key": "",
@@ -197,10 +234,87 @@ func _check(section: int, entry: Dictionary, peers: Array, resend_to: int) -> vo
 	entry.dirty.clear()
 	if targets.empty() or (key == "" and entry.rev == 0):
 		return  # nobody to send to, or never active: nothing to clear
+	if entry.heavy and key != "":
+		targets = _unheld(entry, targets)
+		if targets.empty():
+			return  # every target held: no body built
 	var body = entry.provider.call("state_body", section) if key != "" else null
 	for peer in targets:
 		var message := [section, entry.rev, _patched(section, entry, body, peer)]
 		session.send_reliable(peer, Protocol.Msg.STATE, message)
+		if entry.sent:
+			entry.provider.call("state_sent", section, peer)
+		if entry.heavy:
+			_end_hold(entry, peer)
+	if entry.heavy and key == "" and not entry.held.empty():
+		_log_holds(section, entry)
+
+
+# The targets that get a heavy section now; the others (Steam's queue to them over HOLD_BYTES)
+# stay dirty for the next check. Asks Steam once per target, none for a target held too long.
+func _unheld(entry: Dictionary, targets: Array) -> Array:
+	var now := OS.get_ticks_msec()
+	var free := []
+	for peer in targets:
+		var since = entry.holds.get(peer)
+		if (since == null or now - since < MAX_HOLD_MSEC) and _queued(peer) > HOLD_BYTES:
+			if since == null:
+				entry.holds[peer] = now
+				var held: Array = entry.held.get(peer, [0, 0])
+				held[0] += 1
+				entry.held[peer] = held
+			entry.dirty[peer] = true
+		else:
+			free.append(peer)
+	return free
+
+
+# Reliable bytes waiting in Steam's send queue to the peer, -1 when Steam does not say.
+func _queued(peer: int) -> int:
+	var transport = session.transport
+	if transport == null or not transport.has_method("connection_status"):
+		return -1
+	var status = transport.connection_status(peer)
+	if typeof(status) != TYPE_DICTIONARY:
+		return -1
+	var pending = status.get("pending_reliable")
+	if typeof(pending) != TYPE_INT and typeof(pending) != TYPE_REAL:
+		return -1
+	return int(pending)
+
+
+func _end_hold(entry: Dictionary, peer: int) -> void:
+	var since = entry.holds.get(peer)
+	if since == null:
+		return
+	entry.holds.erase(peer)
+	var held: Array = entry.held[peer]
+	held[1] = int(max(held[1], OS.get_ticks_msec() - since))
+
+
+# One line per peer the section was held for since it turned active (the screen closed now). A
+# hold still open (the peer left meanwhile) counts until now.
+func _log_holds(section: int, entry: Dictionary) -> void:
+	for peer in entry.holds.keys():
+		_end_hold(entry, peer)
+	var what: String = NAMES[section].capitalize()
+	hold_lines.clear()
+	for peer in entry.held:
+		var held: Array = entry.held[peer]
+		var line := (
+			"%s state held %d times for %s, longest %d ms (Steam's queue over %d KB)"
+			% [what, held[0], _peer_name(peer), held[1], HOLD_BYTES / 1024]
+		)
+		ModLoaderLog.info(line, LOG_NAME)
+		hold_lines.append(line)
+	entry.held.clear()
+
+
+func _peer_name(steam_id: int) -> String:
+	var peer = session.peers.get(steam_id)
+	if typeof(peer) == TYPE_DICTIONARY and peer.has("name"):
+		return str(peer.name)
+	return str(steam_id)
 
 
 func _patched(section: int, entry: Dictionary, body, steam_id: int):
@@ -255,6 +369,7 @@ func register_handler(section: int, handler: Object, timeout_sec := DEFAULT_TIME
 	_handlers[section] = {
 		"handler": handler,
 		"clears": handler.has_method("clear_state"),
+		"accepts": handler.has_method("accept_state"),
 		"timeout_msec": int(timeout_sec * 1000.0),
 	}
 
@@ -287,6 +402,8 @@ func receive(message) -> void:
 			_handlers[section].handler.call("clear_state", section)
 		return
 	_live[section] = true
+	if _handlers[section].accepts:
+		_handlers[section].handler.call("accept_state", section, body, rev)
 	_pending[section] = {"body": body, "rev": rev, "msec": OS.get_ticks_msec()}
 	retry()
 
@@ -321,3 +438,5 @@ func _on_lobby_left() -> void:
 		entry.rev = 0
 		entry.flush_frame = -1
 		entry.dirty.clear()
+		entry.holds.clear()
+		entry.held.clear()
