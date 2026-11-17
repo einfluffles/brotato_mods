@@ -363,6 +363,36 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     ("P2PGrassGreenerCheck", every 10 s) and re-evaluates which one to use every second; with one route
     left it stops evaluating (`SelectTransport`: "no use evaluating other transports"). The relayed session
     above is the result of that experiment.
+  - Send rate (`Transport.apply_send_rate`, right after the route): `setGlobalConfigValueInt32` sets
+    `SendRateMax` and then `SendRateMin` (ESteamNetworkingConfigValue 11 and 10, GodotSteam's
+    `NETWORKING_CONFIG_SEND_RATE_MAX` / `_MIN`, looked up by name as for the route) to 1048576 B/s, at
+    startup before any session. Startup line: `Send rate: up to 1024 KB/s (Steam's default is 256)`. A
+    GodotSteam without the setter, or Steam refusing either value, is a warning
+    (`Send rate: ...; Steam's default of 256 KB/s stays`), `Transport.send_rate` stays 0, and the mod goes
+    on. No protocol change, the setting is local; the host does the sending that matters (run state,
+    snapshots), so a new host already helps with older clients.
+    Why: the setting was never touched, so Steam paced every session at its default 262144 B/s (all 820
+    slow-answer lines of the 43-wave session of 2026-11-16 read `rate 262144 B/s`). In the shop at wave
+    42, 251211 B of reliable run state were pending for each of two clients at once, and the slow-answer
+    lines showed `send queue 954330 us`: 251211 / 262144 B/s = 958 ms, with the snapshots and pings
+    queued behind it. At 1 MB/s the same backlog takes 240 ms.
+    Why min and max both: GameNetworkingSockets (`steamnetworkingsockets_snp.cpp`) does not estimate the
+    line. `SNP_InitializeConnection` starts a session at 4380 B per round trip and `SNP_ClampSendRate`
+    clamps that to [min, max] (min == max: exactly that rate); nothing raises it later. With a ping above
+    4380 B / min the rate is therefore the min: a higher max with min left at 256 KB/s would only help
+    pings under 17 ms, and a min below 1 MB/s would be the rate, not a safer start. `steamnetworkingtypes.h` says the same: "these two options should always be set to the
+    same value, to manually configure a specific send rate. The default value is 256K."
+    Slow uplinks: the rate only paces data that is waiting; with nothing queued nothing changes. A host
+    whose upload is below 8 Mbit/s sends a backlog faster than the line takes it, so the excess waits in
+    the router instead of in Steam's queue (or is dropped there and resent by Steam's reliability layer).
+    The backlog still leaves at the line's speed, which is not slower than before for any upload above
+    Steam's old 2 Mbit/s; snapshots behind a backlog wait in the router instead of in Steam.
+    Verified: the numbers in `steamnetworkingtypes.h` of GameNetworkingSockets (`SendRateMin = 10`,
+    `SendRateMax = 11`, `P2P_Transport_ICE_Enable = 104` beside them as a check) and the defaults in
+    `csteamnetworkingsockets.cpp` (`SendRateMin, 256*1024` and `SendRateMax, 256*1024`); the names in
+    Brotato.exe's strings (GodotSteam 3.31 lists `NETWORKING_CONFIG_SEND_RATE_MIN` and `_MAX`).
+    Not measurable headless: in the next session the slow-answer lines' `rate N B/s` must read 1048576
+    and `send queue` should be about a quarter of the old value for the same pending bytes.
   - Session path (`net/link_watch.gd`): once a second the transport asks GodotSteam's
     `getSessionConnectionInfo` for each lobby member and logs when the path changes: "connecting",
     "direct", "relayed via <POP> (peer's POP <POP>)" (`pop_relay` / `remote_pop` as data center codes, or
