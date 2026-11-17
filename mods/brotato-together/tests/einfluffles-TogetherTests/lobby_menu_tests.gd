@@ -4,7 +4,8 @@ extends Reference
 #  - title screen: the button among the game's that hosts a lobby behind the main menu, the
 #    frame with the players, Kick, Start leading to co-op; a client in its own main menu while
 #    the host is in its own; a failed lobby in the main menu's error label;
-#  - character selection: the Online toggle and Invite in the run options box, reached by
+#  - character selection: the Online toggle and Invite in a row at the top of the screen (its
+#    layout: online_layout_tests.gd), reached up from the run options box by keyboard, pad and
 #    player 1's FocusEmulator, inert on a client;
 #  - a client on a screen without a pause menu: pause opens the page as a popup, the game and
 #    the host get nothing meanwhile;
@@ -589,10 +590,13 @@ func _test_character_selection():
 	yield(_change_scene(MenuData.character_selection_scene), "completed")
 	var scene := _tree().current_scene
 	var coop: CheckButton = scene.get_node("%CoopButton")
-	var options: Control = coop.get_parent().get_node_or_null(OnlineOptions.NODE_NAME)
+	var zone: Control = scene.get_node("%ZoneSelectionButton")
+	var options: Control = scene.find_node(OnlineOptions.NODE_NAME, true, false)
+	var box: Control = scene.get_node("%RunOptionsPanel")
 	t._check(
-		options != null and options.get_index() == coop.get_index() + 1,
-		"selection: Online options below the Co-op toggle of the run options box"
+		options != null and options.rect_global_position.y < box.rect_global_position.y
+		and not scene.get_node("MarginContainer").is_a_parent_of(options),
+		"selection: Online options at the top, outside the game's layout (layout: coop_selection)"
 	)
 	if options == null:
 		return
@@ -604,24 +608,36 @@ func _test_character_selection():
 		"selection: without Steam the toggle is off, with the reason (%s)" % status.text
 	)
 	t._check(
-		toggle.rect_size == coop.rect_size and toggle.get_icon("off_disabled") == coop.get_icon("off"),
+		toggle.rect_size.y == OnlineOptions.HEIGHT
+		and toggle.get_icon("off_disabled") == coop.get_icon("off"),
 		"selection: and still looks like the game's (%s / %s)" % [toggle.rect_size, coop.rect_size]
+	)
+	t._check(
+		zone.focus_neighbour_top.is_empty(),
+		"selection: without Steam the zone button keeps the game's way up"
 	)
 	_fake_steam()
 	yield(_frames(1), "completed")
 	t._check(not toggle.disabled and not status.visible, "selection: with Steam it can be used")
 	t._check(
 		toggle.get_class() == coop.get_class() and toggle.get_font("font") == coop.get_font("font")
-		and toggle.rect_size == coop.rect_size,
+		and toggle.rect_size.y == OnlineOptions.HEIGHT,
 		"selection: the toggle looks like Co-op (%s / %s)" % [toggle.rect_size, coop.rect_size]
 	)
 	var panel: Control = scene.get_node("%RunOptionsPanel")
-	print("  info: run options box %s with the Online toggle" % [panel.rect_size])
+	print("  info: run options box %s, online row %s" % [panel.rect_size, options.get_global_rect()])
 
-	# Solo: Godot's focus, down from Co-op.
-	coop.grab_focus()
+	# Solo: Godot's focus, keyboard and pad: up from the zone button (top of the run options).
+	zone.grab_focus()
+	yield(_tap_key(KEY_UP), "completed")
+	t._check(scene.get_focus_owner() == toggle, "selection: up from the zone button is Online")
 	yield(_tap_key(KEY_DOWN), "completed")
-	t._check(scene.get_focus_owner() == toggle, "selection: down from Co-op is Online")
+	t._check(scene.get_focus_owner() == zone, "selection: and down from it the zone button again")
+	yield(_tap_pad(JOY_DPAD_UP), "completed")
+	t._check(scene.get_focus_owner() == toggle, "selection: pad up from the zone button is Online")
+	yield(_tap_pad(JOY_DPAD_DOWN), "completed")
+	t._check(scene.get_focus_owner() == zone, "selection: pad down: the zone button")
+	toggle.grab_focus()
 	t._check(not coop.pressed and not RunData.is_coop_run, "(control) solo so far")
 	toggle.pressed = true
 	yield(_frames(1), "completed")
@@ -634,24 +650,37 @@ func _test_character_selection():
 		invite.visible and status.text == "Online: 1 player" and toggle.pressed,
 		"selection: hosting -> Invite friends and the player count (%s)" % status.text
 	)
-	print("  info: run options box %s while hosting" % [panel.rect_size])
+	print(
+		"  info: run options box %s, Online %s, Invite friends %s, status %s while hosting"
+		% [panel.rect_size, toggle.get_global_rect(), invite.get_global_rect(),
+		status.get_global_rect()]
+	)
 
 	# Co-op: player 1's FocusEmulator, as for Endless / Co-op.
 	CoopService._add_player(KEYBOARD, CoopService.PlayerType.KEYBOARD_AND_MOUSE)
 	yield(_frames(2), "completed")
 	var emulator = Utils.get_focus_emulator(0, scene)
-	emulator.focused_control = coop
-	yield(_tap_action("ui_down", KEYBOARD), "completed")
+	emulator.focused_control = zone
+	yield(_tap_action("ui_up", KEYBOARD), "completed")
 	t._check(emulator.focused_control == toggle, "selection: player 1's cursor reaches Online")
+	yield(_tap_action("ui_right", KEYBOARD), "completed")
+	t._check(emulator.focused_control == invite, "selection: and Invite friends next to it")
 	yield(_tap_action("ui_down", KEYBOARD), "completed")
-	t._check(emulator.focused_control == invite, "selection: and Invite friends below it")
+	t._check(emulator.focused_control == zone, "selection: down from it: the zone button")
+	for player in range(1, 4):
+		var other = Utils.get_focus_emulator(player, scene)
+		t._check(
+			other._find_control_base_data(toggle) == null,
+			"selection: player %d's cursor never enters the row" % (player + 1)
+		)
+	emulator.focused_control = invite
 	yield(_tap_action("ui_accept", KEYBOARD), "completed")
 	t._check(_steam.invited == [LOBBY], "selection: Invite friends opens Steam's invite dialog")
 	session._add_peer(HOST)
 	yield(_frames(1), "completed")
 	t._check(status.text == "Online: 2 players", "selection: status counts the lobby's players")
 	session.peers.clear()
-	yield(_tap_action("ui_up", KEYBOARD), "completed")
+	yield(_tap_action("ui_left", KEYBOARD), "completed")
 	yield(_tap_action("ui_accept", KEYBOARD), "completed")
 	t._check(
 		not transport.is_active() and not toggle.pressed and not invite.visible,

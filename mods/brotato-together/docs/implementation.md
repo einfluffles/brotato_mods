@@ -1081,18 +1081,34 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `FocusEmulator` there is no Godot focus owner, and the page's own `null.grab_focus()` only passes in
     release builds. When the page is hidden (back, the pause menu closed, the wave ended) the question is
     dropped (a visible `MenuConfirm` takes every `ui_cancel`) and a pending invite declined.
-  - Character selection (`ui/online_options.gd`, added below `%CoopButton` in the run options box): an
-    *Online* `CheckButton` with the Co-op toggle's font and hover style (on: `host()` and, if it is off,
-    `CoopButton.pressed = true`, the game's own switch to co-op; off: `leave()`; shown pressed while
-    hosting or while Steam creates the lobby), *Invite friends* while hosting, and a status line
-    (`Online: N players`, `Online: needs Steam`, the last error). The box is a focus base of
-    `FocusEmulator1` only, so player 1's cursor finds them below Co-op (the grid's `focus_neighbour_top`
-    still leads to Co-op) and nobody else's does. A press that comes from a remote player holding slot 1
-    (`FocusEmulatorSignal.get_player_index` -> a virtual device) is ignored. Hidden and inert while
-    `session.is_client()`. The game's theme has no icons for a disabled `CheckButton`; the toggle gets the
-    normal ones as overrides (else it is 18 px lower than its neighbours). Cost: the box (500 px minimum)
-    grows while hosting, by 23 px without the Ban toggle (measured) and by about 100 px with it (about
-    15 px when not hosting); the character grid below gives that up and scrolls.
+  - Character selection (`ui/online_options.gd`): a row at the top of the screen, level with the Back
+    button, the DLC bar and the colour hint, left of the hint and above the title (x 795..1457, y 22..72
+    in the game's 1920x1080 layout; hint at 1481..1888, title from y 75, DLC bar with all DLCs up to
+    x 608). It holds an *Online* `CheckButton` with the Co-op toggle's font, icons and hover style (on:
+    `host()` and, if it is off, `CoopButton.pressed = true`, the game's own switch to co-op; off:
+    `leave()`; shown pressed while hosting or while Steam creates the lobby), *Invite friends* while
+    hosting, and a status line (`Online: N players`, `Online: needs Steam`, the last error; clipped, the
+    whole text in its tooltip). A child of the scene root anchored to its top right corner, like the
+    colour hint, so the game's containers lay out as without the mod. Its first place, under Co-op in the
+    run options box, needed more than the box has: the box's content is 435 px with the Ban toggle
+    against its 500 px minimum, one toggle row is 80 px. The box grew by 23 px with a one-line status
+    and by 104 px with a long one (measured), the row of player panels with it, and the character grid
+    lost that height and scrolled (75 px). The row's three controls have fixed widths (220 / 190 / 220,
+    texts clipped) and its styles no vertical padding (`_fit_height`: the 100x50 switch icon sets the
+    height, also under the FocusEmulator's focus style), so more players or a longer text move nothing.
+    Focus: the row is one more focus base of `FocusEmulator1` only (appended at runtime to
+    `focus_base_data` and `_focus_base_nodes`), so player 1's cursor reaches it and nobody else's does;
+    up from `%ZoneSelectionButton` (the top of the run options box) is *Online*
+    (`focus_neighbour_top`, set while the toggle can be used and given back otherwise), down from the
+    row is the zone button again, left / right move along the row. Solo, Godot's own focus follows
+    the same neighbours (keyboard and pad). A press that comes from a remote player holding slot 1
+    (`FocusEmulatorSignal.get_player_index` -> a virtual device) is
+    ignored. Hidden and inert while `session.is_client()`. The game's theme has no icons for a disabled
+    `CheckButton`; the toggle gets the normal ones as overrides. Tests (`online_layout_tests.gd`, from
+    the colour hint's check): player panels and grid get the same rects with and without the row, the
+    grid scrolls no further, the controls are on screen and over nothing, at 1920x1080, 2560x1440,
+    1920x1200 (1280x720: layout only, the game's own row is wider than that screen), hosting, with a
+    four-player count, an error and a long status.
   - Popup (`ui/lobby_popup.gd`): the same page (`framed`: a panel on the dimmed screen, CanvasLayer 128)
     for a client on a screen without a pause menu (`popup_on_pause`: `session.is_client()` and the scene
     has no `_pause_menu` and is not the title screen: the waiting screen, mirrored selection screens). `LobbyMenu._poll_pause` opens it

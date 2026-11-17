@@ -18,6 +18,9 @@ const VirtualDevices := preload(
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
+const OnlineLayoutTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/online_layout_tests.gd"
+)
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
 # Viewport sizes the colour hint is checked at (16:9 and 16:10).
 const SIZES := [Vector2(1920, 1080), Vector2(2560, 1440), Vector2(1280, 720), Vector2(1920, 1200)]
@@ -40,6 +43,7 @@ func run(test_mod: Node, together: Node):
 	yield(_frames(2), "completed")
 	_test_join_hints(scene)
 	yield(check_hint_layout(t, together.coop_selection, scene, "host"), "completed")
+	yield(OnlineLayoutTests.new().run(t, scene), "completed")
 	yield(_test_color_picks(scene), "completed")
 	_test_color_mirror(together, scene)
 	yield(_test_locked(scene), "completed")
@@ -142,7 +146,11 @@ func check_hint_layout(test_mod: Node, coop_selection: Node, scene: Node, where:
 
 
 func _stretch(size: Vector2) -> void:
-	_tree().set_screen_stretch(SceneTree.STRETCH_MODE_2D, SceneTree.STRETCH_ASPECT_KEEP, size)
+	_stretch_tree(_tree(), size)
+
+
+static func _stretch_tree(tree: SceneTree, size: Vector2) -> void:
+	tree.set_screen_stretch(SceneTree.STRETCH_MODE_2D, SceneTree.STRETCH_ASPECT_KEEP, size)
 
 
 # Rects of the layout's children and the character grid; how far the grid scrolls.

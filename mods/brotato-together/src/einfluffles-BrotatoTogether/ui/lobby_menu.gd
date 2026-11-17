@@ -6,7 +6,7 @@ extends Node
 #  - The "Online co-op" page (ui/lobby_page.gd) is put into the page stack of every pause menu,
 #    behind a button added to its main page next to the game's own.
 #    (Both found when the scene changes: no script extension of the menus.)
-#  - Character selection gets the Online toggle in its run options (ui/online_options.gd).
+#  - Character selection gets the Online toggle in a row at the top (ui/online_options.gd).
 #  - A client on a screen without a pause menu (the waiting screen, the mirrored selection
 #    screens) has no game menu to open: releasing pause there opens the page as a popup
 #    (ui/lobby_popup.gd). open() falls back to it too.
