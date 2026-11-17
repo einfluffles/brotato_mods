@@ -48,6 +48,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   A correction (the host disagrees) is blended out (`PREDICTION_ERROR_DECAY`, 12/s); the steps of the
   inputs sent since the last frame are motion, not a correction (counted as one until protocol 16, they
   pulled the display back by the newest step on every snapshot: a lag of a few steps while running).
+  None after the wave's end either: `main.clean_up_room` stops the host's players
+  (`Player.on_room_cleanup`: `_can_move` false) until the level-ups or the shop, in the call that sets
+  `_cleaning_up`, so every snapshot from then on carries `EVENT_WAVE_END` (state, repeated; `BattleHost`
+  sends snapshots on). The client takes it on arrival (`_note_wave_end`, not at render time like the
+  label) and shows the host's position for the rest of that battle: the inputs in flight blend back once,
+  then the player stands. Predicted on, every held input ran ahead and every snapshot pulled the player
+  back (33 to 93 corrections in the window of a wave's end against 5 to 20 mid-wave, largest about a
+  round trip of running). No wire change: the event has been there since protocol 11. A dead player is
+  shown at the host's position anyway; nothing else stops a player mid-wave (`_move_locked` is enemies'
+  only).
 - Render delay (`sync/render_delay.gd`): 100 ms behind the newest snapshot on a good connection (room for
   ~67 ms of lateness; nothing changes there). When the newest snapshot is all there is, render time holds on
   it (the delay grows by as long as the stall lasts, up to 500 ms) instead of running past it: the world
@@ -454,7 +464,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     - Corrections: in `_predict_own`, a new `_own_error` longer than one step at the player's speed is
       counted per window, the largest with the snapshot's age (how much later it came than the fastest
       snapshot so far, plus half the round trip), the inputs not acked yet and the speed. Only
-      observed: the prediction maths are unchanged.
+      observed: the prediction maths are unchanged. A correction still blending out counts again on each
+      snapshot while it is longer than a step (a 40 px one about five times). Until the client stopped
+      predicting at the wave's end (see "Own-player prediction" above), the window of every wave's end
+      had 33 to 93 of them.
     - Host: the sender must be a ready peer; every value must be a number (int or float, not NaN) and is
       clamped, or the report is dropped (debug line). One info line per part, the client named as the
       other session lines name it:
