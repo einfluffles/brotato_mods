@@ -759,7 +759,9 @@ func _mirror_view(shop: Node, you: int, pages) -> void:
 	for p in RunData.get_player_count():
 		var panel = shop._get_coop_player_container(p)
 		var page := _int_at(pages, p)
-		if p != you and page >= 0 and panel.carousel.index != page:
+		# Clamped: the damage page may be off here (ui/damage_views.gd).
+		var shown := int(min(page, panel.carousel._get_max_index()))
+		if p != you and page >= 0 and panel.carousel.index != shown:
 			panel.carousel.index = page
 		var endless = panel.get("_endless_button")
 		if endless != null and endless.visible and endless.pressed != RunData.is_endless_run:

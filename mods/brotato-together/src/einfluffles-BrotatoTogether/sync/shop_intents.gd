@@ -113,9 +113,12 @@ static func apply_focus(shop: Node, p: int, page, target) -> void:
 	var emulator = Utils.get_focus_emulator(p, shop)
 	if emulator == null:
 		return
-	var panel = shop._get_coop_player_container(p)
-	if typeof(page) == TYPE_INT and page >= 0 and page != panel.carousel.index:
-		panel.carousel.index = page  # the setter clamps and shows that page
+	var carousel = shop._get_coop_player_container(p).carousel
+	# Compared clamped: a page this machine cannot show (the damage page with the meter off here)
+	# would otherwise run the setter again with every state.
+	var known: bool = typeof(page) == TYPE_INT and page >= 0
+	if known and min(page, carousel._get_max_index()) != carousel.index:
+		carousel.index = page  # the setter clamps and shows that page
 	var control = FocusTargets.resolve(target, shop, p)
 	if control is Control and control.is_visible_in_tree() and emulator.focused_control != control:
 		emulator.focused_control = control

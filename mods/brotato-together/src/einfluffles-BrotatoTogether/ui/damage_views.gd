@@ -5,21 +5,28 @@ extends Node
 #   first: the wave's total, in co-op the player's share of the team's, and the damage per
 #   second. The second, smaller: the two strongest sources as icon and number, and the biggest
 #   single hit.
-# - In the shop: a button next to each player's reroll button. While a player's cursor rests on
-#   it (or the mouse, or the focus in the solo shop), the board of the wave before is up over
-#   that player's shop items: three tiles (the wave's total with, in co-op, the share of the
-#   team's; damage per second; biggest hit with its source), and the sources with icon, name
-#   over a bar against the strongest, number and share. Nothing is pressed and nothing pauses: the
-#   board belongs to the panel of the player who looks at it, the others shop on, and because
-#   cursors are mirrored (ui/focus_targets.gd: "shop_damage") every machine shows whose board
-#   is up.
+# - In the co-op shop and the co-op end of run: a fourth page "Damage" in each player's carousel
+#   (after Shop / Items and the two Stats pages), reached like the others with LB / RB or the
+#   arrows. The panels build it in their own _ready (extensions/ui/coop_*_player_container.gd
+#   call add_page), before any page from the network is applied. Online the page index travels
+#   like the game's own pages (shop_sync, shop_intents, menu_sync).
+# - In the solo shop and the solo end of run: a third tab "Damage" (an icon) in the stats panel
+#   next to Primary / Secondary; LB / RB cycle through the three (extensions/ui/stats_container.gd).
+# The board on a page or tab is the wave before: three tiles (the wave's total with, in co-op,
+# the share of the team's; damage per second; biggest hit with its source), and the sources with
+# icon, name over a bar against the strongest, number and share.
 # Numbers from 10,000 on are short (12.3K, 4.56M, 7.89B): late runs deal billions.
-# All of it is gone while the meter is switched off on this machine (DamageMeter.shown).
+# All of it is gone while the meter is switched off on this machine (DamageMeter.shown): the
+# page can no longer be reached (carousel.max_index) and a player on it goes back one page; the
+# solo tab is hidden and an open one falls back to Primary.
 
 const BATTLE_SCENE := "res://main.tscn"
+const SOLO_END_RUN := "res://ui/menus/run/end_run.tscn"
 const ROW_NAME := "DamageRow"
-const BUTTON_NAME := "DamageButton"
-const BOARD_NAME := "DamageBoard"
+const PAGE_NAME := "DamagePage"
+const HEADING_NAME := "DamageHeading"
+const LIST_NAME := "DamageList"
+const PAGE_TITLE := "Damage"
 const ICON := "res://ui/icons/misc/weapon_icon.png"
 const TOTAL_ICON := "res://items/stats/percent_damage.png"
 const DPS_ICON := "res://items/stats/attack_speed.png"
@@ -36,23 +43,21 @@ const BOARD_ICON := Vector2(32, 32)
 const BAR_HEIGHT := 6
 const AMOUNT_WIDTH := 84
 const SHARE_WIDTH := 56
-const BUTTON_WIDTH := 60
+const PAGE_MARGIN := 10
 const SHORT_FROM := 10000
 const UNITS := ["K", "M", "B", "T", "Q"]
 const MUTED := Color(0.7, 0.7, 0.7)
 const DPS_COLOR := Color(0.6, 0.85, 1.0)
 const HIT_COLOR := Color(1.0, 0.8, 0.35)
-const PANEL_COLOR := Color(0.08, 0.08, 0.08, 0.96)
 const LINE_COLOR := Color(1, 1, 1, 0.12)
 const BAR_BACK := Color(1, 1, 1, 0.1)
-const REROLL_RIGHT_META := "brotato_together_reroll_right"  # reroll's own neighbour, on the button
+const PAGE_META := "brotato_together_damage_page"  # on a container: the page's carousel index
 
 var meter: Node = null  # sync/damage_meter.gd (set by mod_main.gd)
 
 var _scene_id := 0
 var _rows := []  # per player: the HUD row, or null
-var _boards := []  # per player: [button, board], or null
-var _shop: Node = null
+var _views := []  # [holder, list]: a carousel container (page) or a StatsContainer (solo tab)
 var _hud_small: DynamicFont = null
 
 
@@ -64,20 +69,23 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	var scene := get_tree().current_scene
 	var scene_id := scene.get_instance_id() if scene != null else 0
-	if scene_id != _scene_id:
-		_scene_id = scene_id
-		_rows = []
-		_boards = []
-		_shop = null
-		if scene != null and scene.filename == BATTLE_SCENE:
-			_build_rows(scene)
-		elif scene != null and scene.has_method("_get_reroll_button"):
-			# Told by what it can do: naming the shop's classes here would load base_shop.gd
-			# while the mods load, which breaks the game's shop scripts.
-			_shop = scene
-			call_deferred("_build_boards", scene)  # after the shop's own _ready wiring
-	if _shop != null:
-		_show_boards()
+	if scene_id == _scene_id:
+		return
+	_scene_id = scene_id
+	_rows = []
+	if scene == null:
+		return
+	if scene.filename == BATTLE_SCENE:
+		_build_rows(scene)
+	elif _is_solo_shop(scene) or scene.filename == SOLO_END_RUN:
+		add_tab(scene.get_node_or_null("%StatsContainer"))
+
+
+# Told by what it can do: naming the shop's classes here would load base_shop.gd while the mods
+# load, which breaks the game's shop scripts.
+static func _is_solo_shop(scene: Node) -> bool:
+	var shop: bool = scene.has_method("_get_reroll_button")
+	return shop and not scene.has_method("_get_coop_player_container")
 
 
 # 1,234 up to SHORT_FROM, then three digits and a unit: 12.3K, 456K, 7.89M.
@@ -170,92 +178,77 @@ func _small_font() -> DynamicFont:
 	return _hud_small
 
 
-# --- shop ---
+# --- the pages and the tab ---
 
 
-func _build_boards(shop: Node) -> void:
-	if not is_instance_valid(shop) or shop != _shop:
+# A co-op player container (shop or end of run): a heading and a page at the end of its
+# carousel. Called from the container's own _ready.
+func add_page(container: Control) -> void:
+	var carousel = container.get("carousel")
+	if carousel == null or container.has_meta(PAGE_META):
 		return
-	for p in RunData.get_player_count():
-		var reroll: Control = shop._get_reroll_button(p)
-		var slots: Control = shop._get_shop_items_container(p)
-		if reroll.get_parent().has_node(BUTTON_NAME):
-			_boards.append(null)
-			continue
-		var button := Button.new()
-		button.name = BUTTON_NAME
-		button.icon = load(ICON)
-		button.expand_icon = true
-		button.focus_mode = Control.FOCUS_ALL
-		button.rect_min_size = Vector2(BUTTON_WIDTH, reroll.rect_size.y)
-		button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		reroll.get_parent().add_child_below_node(reroll, button)
-		# Reached from the reroll button; up and down lead where they do from there.
-		button.focus_neighbour_left = button.get_path_to(reroll)
-		button.focus_neighbour_right = button.get_path_to(button)
-		for side in ["focus_neighbour_top", "focus_neighbour_bottom"]:
-			var path: NodePath = reroll.get(side)
-			var target = null if path.is_empty() else reroll.get_node_or_null(path)
-			if target != null:
-				button.set(side, button.get_path_to(target))
-		button.set_meta(REROLL_RIGHT_META, reroll.focus_neighbour_right)
-		var board := _board()
-		if slots.get_parent() is PanelContainer:
-			slots.get_parent().add_child(board)  # co-op: the board fills the slots' place
-		else:
-			board.set_as_toplevel(true)  # solo: laid over the slots when it comes up
-			slots.add_child(board)
-		_boards.append([button, board])
+	var headings: Node = carousel.get_node("%Headings")
+	var content: Node = carousel.get_node("%Content")
+	var heading: Label = headings.get_child(headings.get_child_count() - 1).duplicate()
+	heading.name = HEADING_NAME
+	heading.text = PAGE_TITLE
+	heading.visible = false
+	headings.add_child(heading)
+	var page := MarginContainer.new()
+	page.name = PAGE_NAME
+	page.anchor_right = 1.0
+	page.anchor_bottom = 1.0
+	page.visible = false
+	page.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for side in ["margin_left", "margin_right", "margin_top"]:
+		page.add_constant_override(side, PAGE_MARGIN)
+	var list := _board_list()
+	list.size_flags_vertical = 0  # its own height, at the top
+	page.add_child(list)
+	content.add_child(page)
+	container.set_meta(PAGE_META, headings.get_child_count() - 1)
+	carousel.index = carousel.index  # the setter: arrows for the new last page
+	_add_view(container, list)
+
+
+# The solo stats panel (shop, end of run): a third tab. StatsContainer is extended
+# (extensions/ui/stats_container.gd) and inert until this arms it.
+func add_tab(stats: Node) -> void:
+	if stats == null or not stats.has_method("bt_add_tab") or stats.bt_has_tab():
+		return
+	var page := MarginContainer.new()
+	page.name = PAGE_NAME
+	page.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	page.add_child(_board_list())
+	stats.bt_add_tab(page, load(ICON))
+	_add_view(stats, page.get_child(0))
+
+
+func _add_view(holder: Control, list: Control) -> void:
+	_drop_view(holder)
+	_views.append([holder, list])
+	holder.connect("tree_exiting", self, "_drop_view", [holder], CONNECT_ONESHOT)
 	_fill()
-	_apply_shown()
 
 
-# The switch: the buttons come and go, and reroll's way to the right with them. A cursor that
-# rests on a button that goes moves to reroll.
-func _apply_shown() -> void:
-	if not is_instance_valid(_shop):
-		return
-	for p in _boards.size():
-		if _boards[p] == null or not is_instance_valid(_boards[p][0]):
-			continue
-		var button: Button = _boards[p][0]
-		var reroll: Control = _shop._get_reroll_button(p)
-		button.visible = meter.shown
-		if meter.shown:
-			reroll.focus_neighbour_right = reroll.get_path_to(button)
-			continue
-		reroll.focus_neighbour_right = button.get_meta(REROLL_RIGHT_META)
-		var emulator = Utils.get_focus_emulator(p, _shop)
-		if emulator != null and emulator.focused_control == button:
-			emulator.focused_control = reroll
-		elif button.has_focus():
-			reroll.grab_focus()
+# A screen that goes takes its views along: no reference to a freed node stays here.
+func _drop_view(holder: Control) -> void:
+	var kept := []
+	for view in _views:
+		if is_instance_valid(view[0]) and view[0] != holder:
+			kept.append(view)
+	_views = kept
 
 
 # The board: List > Tiles (Total: the wave over total and team share; Dps; Hit), a line,
 # Sources (MAX_SOURCES rows of Icon, Text > Name over Bar, Amount, Share).
-func _board() -> PanelContainer:
-	var board := PanelContainer.new()
-	board.name = BOARD_NAME
-	board.visible = false
-	board.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var style := StyleBoxFlat.new()
-	style.bg_color = PANEL_COLOR
-	style.border_color = LINE_COLOR
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(8)
-	style.set_default_margin(MARGIN_LEFT, 16)
-	style.set_default_margin(MARGIN_RIGHT, 16)
-	style.set_default_margin(MARGIN_TOP, 12)
-	style.set_default_margin(MARGIN_BOTTOM, 12)
-	board.add_stylebox_override("panel", style)
+func _board_list() -> VBoxContainer:
 	var font: Font = load(BOARD_FONT)
 	var small: Font = load(BOARD_SMALL_FONT)
 	var list := VBoxContainer.new()
-	list.name = "List"
+	list.name = LIST_NAME
 	list.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	list.add_constant_override("separation", 8)
-	board.add_child(list)
 	var tiles := _line("Tiles", BoxContainer.ALIGN_BEGIN, 12)
 	var total := _tile("Total", "", TOTAL_ICON, Color.white)
 	total.get_node("Line").add_child(_label(small, "Share", MUTED))
@@ -299,11 +292,11 @@ func _board() -> PanelContainer:
 		share.rect_min_size.x = SHARE_WIDTH
 		row.add_child(share)
 		sources.add_child(row)
-	return board
+	return list
 
 
 # A tile: a caption over icon and value (Caption, Line > Icon, Value). Narrow enough for three
-# in a row in a four-player shop panel.
+# in a row in a four-player panel.
 func _tile(tile_name: String, caption: String, icon_path: String, color: Color) -> VBoxContainer:
 	var tile := VBoxContainer.new()
 	tile.name = tile_name
@@ -334,8 +327,7 @@ func _bar() -> ProgressBar:
 	return bar
 
 
-func _fill_board(board: PanelContainer, entry: Array, team_share: int, hit: Array) -> void:
-	var list: Node = board.get_node("List")
+func _fill_board(list: Node, entry: Array, team_share: int, hit: Array) -> void:
 	var wave: int = meter.board.get("wave", 0)
 	var tiles: Node = list.get_node("Tiles")
 	tiles.get_node("Total/Caption").text = Text.text("WAVE", [str(wave)])
@@ -371,26 +363,23 @@ func _fill_board(board: PanelContainer, entry: Array, team_share: int, hit: Arra
 		row.get_node("Share").text = "%d%%" % share
 
 
-# A board is up while its player's cursor rests on the button (solo: while it has the focus).
-func _show_boards() -> void:
-	if not is_instance_valid(_shop):
-		_shop = null
+# The switch: the page stays in the carousel but past its max_index; a player on it goes back
+# one page, as if they had pressed LB. The solo tab is hidden.
+func _apply_shown(holder: Control) -> void:
+	if holder.has_method("bt_set_tab_enabled"):
+		holder.bt_set_tab_enabled(meter.shown)
 		return
-	for p in _boards.size():
-		if _boards[p] == null:
-			continue
-		var button: Button = _boards[p][0]
-		var emulator = Utils.get_focus_emulator(p, _shop)
-		var cursor = emulator.focused_control if emulator != null else null
-		var up: bool = cursor == button or button.has_focus() or button.is_hovered()
-		var board: Control = _boards[p][1]
-		up = up and meter.shown and button.is_visible_in_tree()
-		if board.visible != up:
-			if up and board.is_set_as_toplevel():
-				var slots: Control = board.get_parent()
-				board.rect_global_position = slots.rect_global_position
-				board.rect_size = slots.rect_size
-			board.visible = up
+	var carousel = holder.carousel
+	var page: int = holder.get_meta(PAGE_META)
+	var limit := -1 if meter.shown else page - 1
+	if carousel.max_index == limit:
+		return
+	carousel.max_index = limit
+	if not meter.shown and carousel.index >= page:
+		carousel.index = page - 1
+		holder._on_Carousel_index_changed(carousel.index)
+	else:
+		carousel.index = carousel.index  # the setter: arrows for the new last page
 
 
 # --- both ---
@@ -402,18 +391,32 @@ func _fill() -> void:
 	var team := 0
 	for entry in players:
 		team += entry[0]
-	for p in int(max(_rows.size(), _boards.size())):
-		var entry: Array = players[p] if p < players.size() else [0, []]
-		var hit: Array = hits[p] if p < hits.size() else [0, ""]
-		# In co-op: the player's part of what the team dealt, else -1.
-		var share := -1
-		if players.size() > 1 and team > 0:
-			share = int(round(100.0 * entry[0] / team))
-		if p < _rows.size() and _rows[p] != null and is_instance_valid(_rows[p]):
-			_fill_row(_rows[p], entry, share, hit)
-		if p < _boards.size() and _boards[p] != null and is_instance_valid(_boards[p][1]):
-			_fill_board(_boards[p][1], entry, share, hit)
-	_apply_shown()
+	for p in _rows.size():
+		if _rows[p] != null and is_instance_valid(_rows[p]):
+			_fill_row(_rows[p], _entry(players, p), _share(players, p, team), _hit(hits, p))
+	for view in _views:
+		if not is_instance_valid(view[0]):
+			continue
+		var holder: Control = view[0]
+		var p: int = holder.get("player_index") if holder.get("player_index") != null else 0
+		p = int(max(0, p))
+		_fill_board(view[1], _entry(players, p), _share(players, p, team), _hit(hits, p))
+		_apply_shown(holder)
+
+
+static func _entry(players: Array, p: int) -> Array:
+	return players[p] if p < players.size() else [0, []]
+
+
+static func _hit(hits: Array, p: int) -> Array:
+	return hits[p] if p < hits.size() else [0, ""]
+
+
+# In co-op: the player's part of what the team dealt, else -1.
+static func _share(players: Array, p: int, team: int) -> int:
+	if players.size() < 2 or team <= 0:
+		return -1
+	return int(round(100.0 * _entry(players, p)[0] / team))
 
 
 static func _line(line_name: String, align: int, separation: int) -> HBoxContainer:

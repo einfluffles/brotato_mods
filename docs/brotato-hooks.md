@@ -45,6 +45,12 @@ decompiled sources at the time of writing and will drift between game versions �
   `Utils.is_player_action_pressed/released(event, i, action)` → checks `"%s_%s" % [action, device]`.
   Users: `base_shop.gd`, `base_selection.gd`, `weapon_selection.gd`, `upgrades_ui_player_container.gd`,
   `item_popup.gd`, `coop_item_popup.gd`, `carousel.gd`.
+- **Carousel pages** (`ui/menus/global/carousel.gd`, per player panel in the co-op shop, level-up and end
+  of run): one page per child of `%Headings`, shown with the `%Content` child of the same index; LB / RB
+  (`ltrigger` / `rtrigger`, which also cover LT / RT) and the arrows step through them. A page added by
+  code (a heading plus a content child) is reached like the game's own; `max_index >= 0` caps the pages
+  without removing any, and the `index` setter clamps. The solo screens have no carousel: their
+  `StatsContainer` toggles Primary / Secondary on the same triggers.
 - **Injection:** `Input.parse_input_event(InputEventAction{action="ui_accept_<vdev>", pressed=…, device=<vdev>})`
   — `device` must be set: `CoopService._input` treats device 0 as the keyboard. Parsed events are buffered
   and flushed by the platform once per frame, so `Input.is_action_pressed` updates on the next frame (the

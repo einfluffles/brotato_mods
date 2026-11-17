@@ -555,8 +555,12 @@ func _apply_pages(scene: Node, pages) -> void:
 	var containers: Array = scene.player_containers
 	for p in min(RunData.get_player_count(), min(pages.size(), containers.size())):
 		var carousel = containers[p].carousel
-		if typeof(pages[p]) == TYPE_INT and pages[p] >= 0 and carousel.index != pages[p]:
-			carousel.index = pages[p]
+		var page = pages[p]
+		if typeof(page) != TYPE_INT or page < 0:
+			continue
+		# Clamped: the damage page may be off here (ui/damage_views.gd).
+		if carousel.index != min(page, carousel._get_max_index()):
+			carousel.index = page
 
 
 func _on_lobby_left(transport: Node) -> void:

@@ -27,6 +27,9 @@ const EXTENSIONS := [
 	"extensions/ui/character_selection.gd",
 	"extensions/ui/weapon_selection.gd",
 	"extensions/ui/difficulty_selection.gd",
+	"extensions/ui/stats_container.gd",
+	"extensions/ui/coop_shop_player_container.gd",
+	"extensions/ui/coop_end_run_player_container.gd",
 ]
 
 var transport: Node = null
