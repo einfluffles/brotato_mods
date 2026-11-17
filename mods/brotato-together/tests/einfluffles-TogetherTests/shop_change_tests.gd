@@ -5,7 +5,8 @@ extends Reference
 # once, serialized once and only its changed run parts compressed; view-only changes (Go, page,
 # colours, meca roll) go out without serializing; an unchanged shop serializes nothing between
 # safety-net checks; a change only the safety net can see (a stat written directly) still goes
-# out and counts as missed; an applied intent goes out in the next frame, serialized once;
+# out and counts as missed, its warning naming the stat; an applied intent goes out in the next
+# frame, serialized once;
 # peer_ready resends every part without compressing again. Prints the cost of a check before
 # and after in a small and in late runs. The client's side of a changed state: its per-player
 # keys follow the part ids (which panels it rebuilds), and what a whole run state costs it.
@@ -261,6 +262,14 @@ func _test_safety_net() -> void:
 		),
 		"shop change: the safety net sends it once and reports a miss"
 	)
+	var warning: String = (
+		"%s run state changed without a change of its fingerprint: p0.effects.stat_max_hp; sent"
+		% _cache.label
+	)
+	_t._check(
+		_cache.last_miss == warning,
+		"shop change: the miss warning names the stat written directly (%s)" % _cache.last_miss
+	)
 	_run = _run_of(sent)
 	RunData.remove_stat(Keys.stat_max_hp_hash, 1, 0)
 	_age_safety_net()
@@ -367,6 +376,7 @@ func _late_run(players: int):
 	_build_run(players, LATE_ITEMS)
 	yield(_enter_shop(), "completed")
 	_measure("late endless run, %d players, %d items each" % [players, LATE_ITEMS], 5)
+	_measure_miss("late endless run, %d players" % players)
 
 
 # Prints the cost of a check: before (the run serialized to JSON on every check, as the key was),
@@ -407,6 +417,43 @@ func _measure(label: String, slow_calls: int) -> void:
 		% [label, before, now, net, change, _cache.text_size()]
 	)
 	_measure_client(label, slow_calls <= 5)
+
+
+# What naming a miss costs on top of the check that finds it (RunCache.miss_paths: the changed
+# parts' old and new text parsed and compared): a stat ("p" part) and a weapon's field ("g"
+# part, the big one), both written directly; the warning names both down to the field.
+func _measure_miss(label: String) -> void:
+	var section := StateStream.RUN_SHOP
+	_cache.force()
+	_sync.state_key(section)
+	var before: Dictionary = _cache.parts
+	var missed: int = _cache.missed
+	var weapon = RunData.players_data[0].weapons[0]
+	RunData.add_stat(Keys.stat_max_hp_hash, 1, 0)
+	weapon.dmg_dealt_last_wave += 1
+	_cache.force()
+	var started := OS.get_ticks_usec()
+	_sync.state_key(section)
+	var check := OS.get_ticks_usec() - started
+	started = OS.get_ticks_usec()
+	var paths := RunCache.miss_paths(before, _cache.parts)
+	var naming := OS.get_ticks_usec() - started
+	var expected := ["g0.weapons[0].dmg_dealt_last_wave", "p0.effects.stat_max_hp"]
+	_t._check(
+		_cache.missed == missed + 1 and paths == expected,
+		"%s: a miss names the stat and the weapon's field (%s)" % [label, ", ".join(paths)]
+	)
+	print(
+		(
+			"  info: shop miss, %s: naming it %d usec, on top of its check %d usec"
+			% [label, naming, check]
+		)
+	)
+	RunData.remove_stat(Keys.stat_max_hp_hash, 1, 0)
+	weapon.dmg_dealt_last_wave -= 1
+	_cache.force()
+	_sync.state_key(section)
+	_cache.missed = missed
 
 
 # What a whole run state costs a client before its panels are rebuilt (each state before parts,

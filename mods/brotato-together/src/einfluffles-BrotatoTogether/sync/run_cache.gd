@@ -17,8 +17,11 @@ extends Reference
 # - a check was forced: after an applied intent and after peer_ready (force());
 # - the safety net is due (SAFETY_NET_MSEC since the last serialization): it catches what the
 #   fingerprint cannot see (a stat or effect written directly, by another mod say). A change
-#   found while the fingerprint stayed the same is a miss of the fingerprint: logged as a
-#   warning (missed) and sent like any other.
+#   found while the fingerprint stayed the same is a miss of the fingerprint: sent like any
+#   other and logged as a warning (missed, last_miss) that names what changed: the parts whose
+#   text changed, parsed again and compared by RunParts.changed_paths ("p1.effects.stat_max_hp,
+#   c.tracked_item_effects[0].<item hash>"; the first MISS_PATHS, then "+N more"). Only a miss
+#   pays for that (a JSON.parse of the old and the new text of each changed part).
 # The serialized dictionary is split (RunParts.split: "c", per player "g<p>" and "p<p>") and each
 # part's hash() compared with the last one of its key (1.2 / 8 / 15 ms for the whole run in the
 # runs above, a quarter of the text's cost): only a part whose hash changed is printed to JSON,
@@ -38,6 +41,8 @@ const LOG_NAME := "einfluffles-BrotatoTogether:RunCache"
 # 1 s: what the fingerprint cannot see is at most that late, and the late 4-player run's check
 # (15 ms, about one frame) costs 1.5 % of the host's time on the screen.
 const SAFETY_NET_MSEC := 1000
+const MISS_DEPTH := 4  # path levels the miss warning names: down to a weapon's field
+const MISS_PATHS := 6  # paths the miss warning lists
 
 var label := ""  # the screen, for the miss warning and RunParts.Sender's counters
 var title := ""  # the screen as its provider names it (the log line when it closes)
@@ -48,6 +53,7 @@ var rev := 0  # bumped whenever an id of parts changes
 var serialized := 0  # run states serialized (tests)
 var packs := 0  # parts compressed (tests)
 var missed := 0  # changes only a forced check or the safety net found (tests)
+var last_miss := ""  # the warning of the last miss (tests)
 
 var _screen_id := 0  # instance id of the screen parts belong to (0: none)
 var _fingerprint := []
@@ -114,16 +120,47 @@ func refresh(screen: Object, save_args := [], extra := []) -> bool:
 		packs += 1
 		changed = changed or old == null or old.id != fresh[key].id
 	changed = changed or fresh.size() != parts.size()
+	var before := parts
 	parts = fresh
 	if not changed:
 		return false
 	if unchanged:
 		missed += 1
-		ModLoaderLog.warning(
-			"%s run state changed without a change of its fingerprint; sent" % label, LOG_NAME
+		last_miss = (
+			"%s run state changed without a change of its fingerprint: %s; sent"
+			% [label, miss_text(miss_paths(before, fresh))]
 		)
+		ModLoaderLog.warning(last_miss, LOG_NAME)
 	rev += 1
 	return true
+
+
+# What moved between two sets of parts ({key: RunParts.entry}): the parts whose id changed (or
+# that came or went), their old and new text parsed and compared (RunParts.changed_paths).
+static func miss_paths(before: Dictionary, after: Dictionary) -> Array:
+	var old := {}
+	var new := {}
+	for key in after:
+		var was = before.get(key)
+		if was == null or was.id != after[key].id:
+			new[key] = JSON.parse(after[key].text).result
+			if was != null:
+				old[key] = JSON.parse(was.text).result
+	for key in before:
+		if not after.has(key):
+			old[key] = JSON.parse(before[key].text).result
+	return RunParts.changed_paths(old, new, MISS_DEPTH)
+
+
+# "a, b, c, d, e, f, +3 more" (MISS_PATHS paths at most); "no value" when the texts differ but
+# not what they parse to.
+static func miss_text(paths: Array) -> String:
+	if paths.empty():
+		return "no value"
+	var text := ", ".join(PoolStringArray(paths.slice(0, int(min(paths.size(), MISS_PATHS)) - 1)))
+	if paths.size() > MISS_PATHS:
+		text += ", +%d more" % (paths.size() - MISS_PATHS)
+	return text
 
 
 # The length of the run state's JSON text, all parts (tests, log lines).

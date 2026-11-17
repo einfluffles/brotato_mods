@@ -645,7 +645,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   (1.2 / 8 / 15 ms in the runs above: 1.5 % of the host's time at worst); a different hash prints and
   compares the text. A change found while the fingerprint stayed the same (a stat or effect written
   directly, e.g. by another mod; the game's own come with a fingerprint change) is logged as a warning
-  and sent. A change costs one serialization + zstd (2.9 / 30 / 63 ms).
+  and sent. The warning names what changed, so a gap in the fingerprint can be found from a log:
+  `RunCache.miss_paths` parses the old and new text of each part whose id changed and
+  `RunParts.changed_paths` lists the paths whose `hash()` differs, 4 levels deep, keys the game hashed
+  by their names, arrays with their sizes, at most 6 then "+N more" ("shop run state changed without
+  a change of its fingerprint: g0.weapons[0].dmg_dealt_last_wave, p0.effects.stat_max_hp; sent").
+  Only a miss pays for it: about 20 ms in the late 2 / 4-player runs when the miss is in a `g` part
+  (two parses of its text), on top of the check. (A 43-wave, three-player session logged 7 misses in
+  the shop between waves 18 and 40, then without names; reading the game's shop code found no value
+  that the shop's own actions write without moving the fingerprint, so it stays as it is until a log
+  names one.) A change costs one serialization + zstd (2.9 / 30 / 63 ms).
   Since protocol 8 the state also carries per player a panel revision (`seqs`) and the carousel page
   (`pages`), and for each client its own player index (`you`, so the message is sent per peer). The client
   rebuilds per player and per part: `ShopSync.player_keys` keys the player's whole data (the ids of its
@@ -802,7 +811,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     rerolls and done: every decision moves it, also the host's own and absent players' presses that no
     intent forces), in the check after an applied intent (`force()`; not for a meca roll; the handlers
     change the run before they return, only a held ban (`holding_button`) ends later and is found by the
-    fingerprint), after `peer_ready`, and by the 1 s safety net (hash first, a miss is logged); only
+    fingerprint), after `peer_ready`, and by the 1 s safety net (hash first, a miss is logged with the
+    paths that changed); only
     its changed parts are packed, and each peer gets only the parts it lacks (see Run state in parts).
     `body()` refreshes too, so a body built without a key (tests, `message_for`) still
     has a run as new as its fingerprint. Pages, revisions, meca rolls and resyncs reuse it: 0.15 / 0.3 ms

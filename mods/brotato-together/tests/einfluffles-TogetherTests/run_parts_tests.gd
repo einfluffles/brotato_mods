@@ -12,6 +12,7 @@ extends Reference
 # - peer_ready sends every part to that peer and only the change to the other; message_for
 #   records nothing; a body replaced while pending leaves the store complete; a missing part
 #   asks the host for a resync and applies nothing; the shop's counters for its log line.
+# RunParts.changed_paths (what the host's miss warning names) and the warning's list of paths.
 # Prints the bytes per page flip, Go, lock, reroll, purchase and level-up choice, the host's
 # time per change and a client's time per changed state, before (the whole run in every body,
 # parsed and deserialized whole) and now.
@@ -24,6 +25,7 @@ const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
+const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const StateStreamTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/state_stream_tests.gd"
 )
@@ -72,6 +74,7 @@ func run(t: Node, together: Node):
 	var saved_colors: Array = CoopService.bt_slot_colors.duplicate()
 	var saved_holding: bool = ProgressData.settings.holding_button
 	ProgressData.settings.holding_button = false
+	_test_changed_paths()
 	together.shop_sync.set_process(false)  # driven by hand (no Steam session)
 	together.battle_host.set_process(false)
 	for players in [2, 4]:
@@ -313,6 +316,55 @@ func _panel_tests():
 	tests._sync = _together.upgrades_sync
 	tests._cache = _together.upgrades_sync.run_cache
 	return tests
+
+
+# --- RunParts.changed_paths and the list in the miss warning (RunCache.miss_text) ---
+
+
+func _test_changed_paths() -> void:
+	var hp := str(Keys.stat_max_hp_hash)
+	var old := {"p1": {"effects": {hp: 10, "x": 1}, "gold": 5}, "c": {"wave": 3}}
+	var new := {"p1": {"effects": {hp: 12, "x": 1}, "gold": 5}, "c": {"wave": 3}}
+	var hp_path := ["p1.effects.stat_max_hp"]
+	_expect_paths("nested dictionary, a hashed key by its name", old, new, 3, hp_path)
+	var items := [{"id": "a"}, {"id": "b"}]
+	old = {"g0": {"items": items, "weapons": [{"t": 1}, {"t": 2}]}}
+	new = {"g0": {"items": items + [{"id": "c"}], "weapons": [{"t": 1}, {"t": 2}]}}
+	_expect_paths("array grown", old, new, 3, ["g0.items (2 -> 3)"])
+	new = {"g0": {"items": items.duplicate(true), "weapons": [{"t": 1}, {"t": 3}]}}
+	_expect_paths("array element changed", old, new, 3, ["g0.weapons[1]"])
+	_expect_paths("array element changed, one level deeper", old, new, 4, ["g0.weapons[1].t"])
+	old = {"c": {"a": {"b": {"c": 1}}, "l": [[1], [2]], "same": [1]}}
+	new = {"c": {"a": {"b": {"c": 2}}, "l": [[1], [3]], "same": [1]}}
+	_expect_paths("depth cut", old, new, 2, ["c.a", "c.l (2)"])
+	_expect_paths("no depth cut", old, new, 4, ["c.a.b.c", "c.l[1][0]"])
+	old = {"c": {"gone": 1, "kind": 1, "same": "x"}}
+	new = {"c": {"kind": "1", "same": "x", "come": 2}}
+	var expected := ["c.kind", "c.come (added)", "c.gone (removed)"]
+	_expect_paths("keys added and removed, a type changed", old, new, 3, expected)
+	_expect_paths("nothing changed", new, new.duplicate(true), 3, [])
+	var many := []
+	for i in 9:
+		many.append("p%d" % i)
+	_t._check(
+		RunCache.miss_text(many) == "p0, p1, p2, p3, p4, p5, +3 more",
+		"changed paths: more than 6 in the miss warning end with +N more"
+	)
+	_t._check(
+		(
+			RunCache.miss_text(many.slice(0, 5)) == "p0, p1, p2, p3, p4, p5"
+			and RunCache.miss_text([]) == "no value"
+		),
+		"changed paths: 6 or fewer in the miss warning are all listed"
+	)
+
+
+func _expect_paths(label: String, old, new, depth: int, expected: Array) -> void:
+	var paths := RunParts.changed_paths(old, new, depth)
+	_t._check(
+		paths == expected,
+		"changed paths: %s (%s)" % [label, ", ".join(PoolStringArray(paths))]
+	)
 
 
 # --- helpers ---

@@ -116,6 +116,54 @@ static func pack_all(data: Dictionary) -> Dictionary:
 	return run
 
 
+# The paths under which old and new differ (hash() differs), for a log line: dictionary keys
+# joined by ".", array elements as "[i]". A path ends where the values differ in type or are
+# no dictionaries or arrays, depth levels down ("p1.effects.stat_max_hp"), or at an array whose
+# size changed, with both sizes ("g0.items (250 -> 251)"); an array cut by depth keeps its size
+# ("c.tracked_item_effects (4)"). A key on one side only: " (added)" / " (removed)". A key the
+# game hashed from a name shows that name (_path). Only RunCache's miss warning calls it: one
+# hash() per value it walks into.
+static func changed_paths(old, new, depth := 3) -> Array:
+	var paths := []
+	_changed_paths(old, new, "", depth, paths)
+	return paths
+
+
+static func _changed_paths(old, new, path: String, depth: int, paths: Array) -> void:
+	if typeof(old) == typeof(new) and hash(old) == hash(new):
+		return
+	if typeof(old) == TYPE_DICTIONARY and typeof(new) == TYPE_DICTIONARY and depth > 0:
+		for key in new:
+			var sub := _path(path, key)
+			if old.has(key):
+				_changed_paths(old[key], new[key], sub, depth - 1, paths)
+			else:
+				paths.append(sub + " (added)")
+		for key in old:
+			if not new.has(key):
+				paths.append(_path(path, key) + " (removed)")
+		return
+	if typeof(old) == TYPE_ARRAY and typeof(new) == TYPE_ARRAY:
+		if old.size() != new.size():
+			paths.append("%s (%d -> %d)" % [path, old.size(), new.size()])
+		elif depth > 0:
+			for i in new.size():
+				_changed_paths(old[i], new[i], "%s[%d]" % [path, i], depth - 1, paths)
+		else:
+			paths.append("%s (%d)" % [path, new.size()])
+		return
+	paths.append(path)
+
+
+# A key the game hashed (Keys.generate_hash: effects, tracked item effects; a string of digits
+# once parsed from JSON) by its name.
+static func _path(path: String, key) -> String:
+	var name := str(key)
+	if name.is_valid_integer() and Keys.hash_to_string.has(int(name)):
+		name = Keys.hash_to_string[int(name)]
+	return name if path == "" else "%s.%s" % [path, name]
+
+
 # Same keys and ids (dictionaries compare by reference in Godot 3).
 static func same_ids(a, b) -> bool:
 	if typeof(a) != TYPE_DICTIONARY or typeof(b) != TYPE_DICTIONARY or a.size() != b.size():
