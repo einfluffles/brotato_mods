@@ -37,6 +37,7 @@ const ShopTextTests := preload("res://mods-unpacked/einfluffles-TogetherTests/sh
 const ShopModIntentTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_mod_intent_tests.gd"
 )
+const ShopGearTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_gear_tests.gd")
 const PISTOL := "weapon_pistol_1"
 const WheelScrollTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/wheel_scroll_tests.gd"
@@ -52,6 +53,7 @@ var _locks = ShopLockTests.new()
 var _texts = ShopTextTests.new()
 var _wheel = null  # WheelScrollTests, kept alive across its yields
 var _mods = ShopModIntentTests.new()
+var _gear = ShopGearTests.new()  # kept alive across its yields
 
 
 func run(t: Node, together: Node):
@@ -94,6 +96,7 @@ func _host_part(together: Node):
 	_shop = _t.get_tree().current_scene
 	_sync._host_shop = _shop
 	_sync._shop_id = 11
+	ShopGearTests.host_anvil(self)
 	_capture("start")
 	var start: Dictionary = _states.start
 	_t._check(_sync._player_index_of(_t.FAKE_PEER) == REMOTE, "host knows the peer's player")
@@ -112,6 +115,7 @@ func _host_part(together: Node):
 	yield(_host_weapon_intents(), "completed")
 	_host_ready_intents()
 	_mods.host(self)
+	yield(_gear.host(self), "completed")
 	_capture("remote_changed")  # only the remote player's part differs from "start"
 	RunData.add_weapon(pistol, 0)
 	_capture("own_gear_changed")
@@ -396,6 +400,7 @@ func _client_part(together: Node):
 	_shop = shop
 	var emulator = Utils.get_focus_emulator(0, shop)
 	_t._check(local.active and local.you == 0, "own shop panel runs locally")
+	ShopGearTests.client_anvil(self, [PISTOL, PISTOL])
 	_t._check(
 		_input._local_buttons != null and _input._local_buttons.device == _t.DEVICE,
 		"local buttons drive the own slot's device in the shop"
@@ -447,6 +452,7 @@ func _client_part(together: Node):
 	yield(_client_view(together, emulator, node), "completed")
 	_locks.client_other(self)
 	yield(_client_states(emulator, node), "completed")
+	_gear.client(self, shop)
 	_texts.client(self, shop)
 	var panels := [shop._get_coop_player_container(0), shop._get_coop_player_container(REMOTE)]
 	yield(_wheel.check_wheel("shop, client", panels[0], panels[1]), "completed")
