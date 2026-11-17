@@ -58,6 +58,9 @@ const ShopChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_change_tests.gd"
 )
 const RunPartsTests := preload("res://mods-unpacked/einfluffles-TogetherTests/run_parts_tests.gd")
+const BattleStartTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/battle_start_tests.gd"
+)
 const UpgradesChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_change_tests.gd"
 )
@@ -125,6 +128,7 @@ const SUITES := [
 	"state_stream",
 	"shop_change",
 	"run_parts",
+	"battle_start",
 	"cursor_key",
 	"upgrades_change",
 	"lobby_menu",
@@ -404,6 +408,13 @@ func _suite_shop_change(together: Node):
 # what a change costs on the wire, on the host and on a client before and now.
 func _suite_run_parts(together: Node):
 	_suite = RunPartsTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+# BATTLE_START carries only the run parts a client lacks: bytes per client and the client's
+# time before change_scene, before and now.
+func _suite_battle_start(together: Node):
+	_suite = BattleStartTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

@@ -1,18 +1,16 @@
 extends Node
 # Client: mirror the host's battle.
-# BATTLE_START -> apply run state, load main.tscn in puppet mode (simulation frozen right after
-# main._ready, before its first physics frame). SNAPSHOTs are buffered and rendered
-# INTERP_DELAY_MSEC in the past, interpolating between the two snapshots around render time:
-# smooth motion at any fps, independent of the 30 Hz network rate.
+# BATTLE_START -> apply its run state (in parts: sync/battle_run.gd), load main.tscn in puppet
+# mode (simulation frozen right after main._ready, before its first physics frame). SNAPSHOTs
+# are buffered and rendered INTERP_DELAY_MSEC in the past, interpolating between the two
+# snapshots around render time: smooth motion at any fps, independent of the 30 Hz network rate.
 
 signal battle_entered
 signal battle_left
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
-const RunStateCodec := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
-)
+const BattleRun := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_run.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
@@ -88,6 +86,7 @@ const LOADING_TIMEOUT_MSEC := 10000  # a scene that never got ready must not blo
 var session: Node = null
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
+var run_store = null  # RunParts.Store, shared with ShopSync and UpgradesSync (set by mod_main.gd)
 var interp_lag_msec := 0  # render time vs newest snapshot, for the lobby page
 
 var _battle_id := 0
@@ -154,7 +153,8 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 		return
 	match msg_type:
 		Protocol.Msg.BATTLE_START:
-			_on_battle_start(body)
+			if BattleRun.take(run_store, body):  # as it arrives, also when adopted or queued
+				_on_battle_start(body)
 		Protocol.Msg.BATTLE_END:
 			if typeof(body) != TYPE_DICTIONARY:
 				return
@@ -212,7 +212,7 @@ func _on_battle_start(body) -> void:
 	if loading:
 		_queued_start = body
 		return
-	var state := RunStateCodec.decode(body.get("run"))
+	var state := BattleRun.state(run_store, body)
 	if state.empty():
 		ModLoaderLog.error("Invalid run state in BATTLE_START", LOG_NAME)
 		return
@@ -226,7 +226,7 @@ func _on_battle_start(body) -> void:
 
 	CoopService.bt_apply_remote_colors(body.get("colors"))
 	Puppet.set_active(true)
-	RunStateCodec.apply(state)
+	BattleRun.apply(state)
 	VirtualDevices.fill_puppet_slots(RunData.get_player_count())
 	get_tree().paused = false
 	# Only until the battle scene is ready: no node_added handler for every node otherwise.

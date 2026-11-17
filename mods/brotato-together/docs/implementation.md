@@ -7,6 +7,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Run state travels the save-file path: `ProgressData.get_run_state()` → `ProgressDataLoaderV3.serialize_run_state`
   → `JSON.print` → zstd; client: `JSON.parse` → `deserialize_run_state` → `RunData.resume_from_state`.
   The JSON step is required: the deserializers expect string keys / float numbers (~5 KB for 2 players).
+  BATTLE_START carries it in parts, only those the client lacks (protocol 25: see Run state in parts).
 - Client loads `main.tscn` itself; `SceneTree.node_added` (connected only from BATTLE_START until the scene
   is ready — no handler for every node otherwise, also in the shop) + the scene's `ready` signal freeze it right after
   `main._ready()` (before the first physics frame): `main.set_process(false)` (pause/aim),
@@ -444,7 +445,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     - Scene change: the longest frame within 3 s of a change of `current_scene` (the frame before the
       change counts too), with the mod's share of that frame from timing marks:
       `ClientReport.mark(label, usec)`, static (the node registers itself with `Engine.set_meta`; no
-      static variables in Godot 3), in `RunStateCodec.parse`, `deserialize` and `apply` and around
+      static variables in Godot 3), in `RunStateCodec.parse`, `deserialize` and `apply` (BATTLE_START
+      since protocol 25: `BattleRun.state`, the run parts not parsed yet and `state_for`) and around
       `_freeze` in `BattleClient._on_battle_scene_ready` (puppet setup). The host's line ends with the
       rest, the game's part. Measured headless (small two-player run, `client_report` suite): the
       battle scene change stalls 284 ms, of which run parse 0.5, deserialize 2.6, apply 1.4 and
@@ -593,6 +595,47 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the same 250 items, so the whole run compresses across players, while `g0` alone does not (in a
     real run the players' items differ). What is left on a client is mostly the changed player's
     `PlayerRunData.deserialize` (its 250 items), which a change of `p<p>` alone needs too.
+  - BATTLE_START (protocol 25): its run goes through the same `RunParts.Sender` (`BattleHost`, a
+    `RunCache` of its own labelled `battle`). Sent directly, not through the stream: `_send_battle_start`
+    offers the cache, puts in `run_for(peer)` and commits at once. The run is the one the battle scene
+    entered the tree with (`SceneTree.node_added`, connected between battles only, when a peer is
+    ready): `main._ready` then starts the wave, which sets every player's health to its start value
+    (`hp_start_wave`, `hp_start_next_wave`) and writes it into the player's part, and the client's own
+    `main._ready` does the same to the run it gets. Serialized after `_ready`, as before, every player
+    hurt in the last wave sent its `p` part again (8 KB each in the late test runs). So after a shop
+    only `c` goes: the wave, `shop_effects_checked`, the shop's fields gone; a player's parts only when
+    Go took one of its items (hourglass, lifeform scanner, `BaseShop._on_GoButton_pressed`). A peer that
+    becomes ready mid-wave gets the run as it is then (`forget` first, then every part): only the
+    first start of a battle uses the run from the scene's entry, and a battle the host loaded with
+    nobody ready serializes when the start is built.
+    Client (`sync/battle_run.gd`): `take` ingests as the message arrives, also a start that is only
+    adopted (a resync of the battle the client is in) or queued (a scene still loading), so the store
+    sees every body in the order the host sent it; a missing part asks for a resync and the start is
+    dropped (the resync sends it again with every part). A queued start keeps its ids (the store keeps
+    two versions per key) and runs `state_for` on them when its turn comes. `BattleRun.state` marks run
+    parse (the parts not parsed yet) and deserialize (`state_for`) for the scene-change report.
+    Measured (late test runs, 2 / 4 players, every player hurt; `battle_start_tests.gd`):
+
+    | | before | now |
+    |---|---|---|
+    | BATTLE_START per client | 27.9 / 30.4 KB (run 26.4 / 28.5 KB) | 3.1 / 3.3 KB (run 1.5 / 1.6 KB) |
+    | client: run parse, deserialize, apply | 14.5, 75.1, 6.4 / 25.5, 112.1, 7.0 ms | 0.2, 0.2, 2.0 / 0.2, 0.1, 3.7 ms |
+    | client: `_on_battle_start` up to `change_scene` | 220 / 240 ms | 87 / 95 ms |
+    | host: `_start_battle` | 37 / 77 ms (`RunStateCodec.encode`) | 1.4 / 0.7 ms |
+    | host: the run packed in parts as the scene enters | - | 31 to 36 / 60 to 86 ms |
+
+    The rest of the message (type table, weapon slots, colours) is 1.6 to 1.9 KB. The rest of the
+    client's time up to `change_scene` is not the run's: 85 to 125 ms in these runs, before and
+    now (the stash of its own save not counted). The host packs about as long as it encoded before,
+    now in the frame of the scene change instead of the first frame of the battle.
+    Wave start on the client, before and now: before, the client applied the run after the host's
+    `main._ready` and ran its own on top. A player who starts the wave hurt on the host (weird ghost,
+    hourglass) was healed on the client (`hp_start_wave` again, the host had already reset
+    `hp_start_next_wave`); now the client runs the wave start once, like the host, and its run is the
+    host's after it (checked). The candy bag's random stats at wave start (`main._ready`,
+    `gain_random_primary_stats_on_go_to_next_wave`) are rolled on each machine: before, the client
+    added its roll to the host's, now it has its own roll instead of the host's. Either way the next
+    state with that player's parts (the level-up panels, the shop) brings the host's.
   - Log: when the shop or the panels close, one host line per screen, e.g. "Shop 40: 28 states, 20 with
     run parts (501.9 KB: c 11, g0 5, p0 14, g1 3, p1 5, g2 3, p2 3, g3 3, p3 3), 8 view only (5.3 KB),
     largest 110.5 KB" (`Sender.close`, counted per peer and send: the test's late 4-player shop with two
