@@ -90,6 +90,7 @@ const InputAckTests := preload("res://mods-unpacked/einfluffles-TogetherTests/in
 const NetworkStallTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
 )
+const TrafficTests := preload("res://mods-unpacked/einfluffles-TogetherTests/traffic_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -123,6 +124,7 @@ const SUITES := [
 	"upgrades_change",
 	"lobby_menu",
 	"network_stalls",
+	"traffic",
 	"progress",
 ]
 const FAKE_PEER := 4242
@@ -418,6 +420,11 @@ func _suite_lobby_menu(together: Node):
 # runs in battle_loopback.
 func _suite_network_stalls(together: Node) -> void:
 	NetworkStallTests.new(self).run(together)
+
+
+# What went out reliably to a peer, for the slow answer, gap and burst lines (net/traffic.gd).
+func _suite_traffic(_together: Node) -> void:
+	TrafficTests.new(self).run()
 
 
 # Character selection: the menu mirror leaves the scene with two co-op players that the grid and

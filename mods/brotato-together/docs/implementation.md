@@ -328,6 +328,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   and Steam's own numbers from `getSessionConnectionInfo`: its ping, send queue time, pending and unacked
   bytes, send rate, quality), at most once a second per peer: it tells a stalled frame on either side from
   the network and from a full send queue.
+- Reliable traffic (`net/traffic.gd`, for the log only): `Session.send_reliable` notes every message with
+  its encoded size, per peer in two one-second buckets of label -> count and bytes. The label is the
+  message type (`Protocol.Msg`'s name), for STATE with the section (`StateStream.NAMES`): "STATE shop".
+  When Steam's reliable queue holds 4 KB or more, `Session.steam_status_text` (slow answer and gap lines)
+  adds what went out in the current and the previous second, largest total first, at most 4, as count x
+  mean size: "; reliable in the last 2 s: STATE shop 3 x 13.1 KB, UI_SOUNDS 4 x 0.2 KB" (before the path).
+  A line of its own ("Reliable burst to ...: STATE upgrades of 39.1 KB queued, 70.2 KB pending; reliable in
+  the last 2 s: ...") when one message is larger than 32 KB or the queue holds more than 64 KB right after
+  a send, at most one per peer in 5 s; Steam's queue (`getSessionConnectionInfo`) is only asked when such
+  a line may follow. Noting costs about 2.2 us per message headless (`traffic_tests.gd`); nothing is
+  kept for a peer that left or after the lobby. Why: a 43-wave session of 2026-11-16 had reliable
+  backlogs of 20 to 250 KB in the shop and 55 to 76 s into battles, and which messages they were could
+  only be guessed from their timing.
 - Stall diagnostics, for the log only (a PING a second only sees stalls longer than a second's share):
   - Gaps (`sync/stream_gaps.gd`): a client logs when the host's snapshots stop for 200 ms or more, the host
     when a client's INPUT stream does (per client). Timed by Steam's receive time (`Session.arrival_msec`), so
