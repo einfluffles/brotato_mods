@@ -88,18 +88,19 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   (both written to the log).
   Other mods can add shop decisions of their own that reach the host the same way
   ([brotato:trade](../brotato-trade) does, for giving items and weapons to other players).
-- **Damage meter:** during a wave, a row at each player's life bar shows what that player has
-  dealt in the wave and the two strongest weapons or items. In the shop, a button next to each
-  reroll button puts up the board of the wave before over that player's shop items for as long
-  as the cursor rests on it: total, and every source with name, number and share. Nothing pauses
+- **Damage meter:** during a wave, two lines at each player's life bar show what that player
+  has dealt in the wave, the damage per second, the two strongest weapons or items and the
+  biggest single hit. Big numbers stay short (12.3K, 4.57M, 7.89B). In the shop, a button next
+  to each reroll button puts up the board of the wave before over that player's shop items for
+  as long as the cursor rests on it: total, damage per second, biggest hit with the weapon or
+  item that dealt it, and every source with name, a bar, number and share. Nothing pauses
   and nobody else is held up; the others see whose board is up, like any other cursor. The host
   measures (from the game's own counters) and every client shows the host's numbers. In co-op
   the row and the board also show each player's share of the team's damage. It also works
   offline, solo shop included. **Options → Gameplay → Damage meter** switches it off or on for
   your machine (kept in the Mod Loader's config; the game has no settings screen for mods). After the [Damage Meter](https://steamcommunity.com/sharedfiles/filedetails/?id=3578347192)
   mod by Oudstand, which is no longer needed next to this mod (with both, each shows its own).
-  Not taken over: its other options, damage per second, and the separate entry for charmed
-  enemies.
+  Not taken over: its other options and the separate entry for charmed enemies.
 - **Selection screens / end of run:** clients see the game's own character, weapon and difficulty
   selection and end-of-run screens, showing what the host's show: the host's grid (so local
   unlocks/DLC don't matter), every player's cursor, panel and ready state, the zone, the join

@@ -1615,6 +1615,18 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `[total, sources as [my_id, count, damage]]`: the 2 strongest while the wave runs (what the
   HUD shows), the 10 strongest in the measurement taken when the battle scene leaves (the
   shop's board).
+- Biggest hit: the one hook into the fight. The meter connects to the battle's `EntitySpawner`
+  (`enemy_spawned`, `neutral_spawned`) and through it to each unit's `took_damage` (once per
+  unit: the spawner's pools hand the same nodes out again). The value is `full_dmg_value`, what
+  the floating damage text shows (not capped at the enemy's health, unlike the counters).
+  Per player, from `TakeDamageArgs.from_player_index`, the biggest with its source: a weapon's
+  own tracking key (an item that counts its damage), else the weapon's `my_id` from
+  `weapon_pos`, else the hitbox's tracking key, else none ("" on the wire, no icon). A hit costs
+  a comparison; the source is looked up only for a new biggest one.
+- Wave time (damage per second = total / time): the meter's own count of frame time while
+  `main`'s `WaveTimer` runs and the tree is not paused. The timer stops when the wave is over,
+  so the collecting at the end does not count; a boss wave that ends early ends there too.
+  On the wire to 0.1 s; a client shows no damage per second before a second has passed.
 - Cost (`damage_meter_tests.gd`, late endless run, 4 players with 6 weapons and 250 items each,
   headless container): 6.5 ms per measurement at first, twice a second, and 2156 B per update.
   It walked every item and every counter and looked each counter's item up in the item list.
@@ -1628,16 +1640,27 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   the board changed; a peer that joins gets it with the resync. The client checks the body
   strictly (`DamageMeter.clean`: at most 4 players, 10 sources, ids up to 96 characters, no
   negative numbers) and resolves ids against `ItemService.items / weapons / characters`.
-- HUD: an `HBoxContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
-  bars sit at the bottom; right-aligned for players 2 and 4): icon and total, in co-op the
-  player's share of the team's total, then icon and number of the two strongest sources.
-  Hidden while the total is 0; mouse ignored.
+  `time` and `hits` were added later without a protocol bump: `clean` takes a board without
+  them (time 0, no hits) and an older client drops them, so either side may be older. With
+  them, the board changes with every measurement while a wave runs (the time moves), so it is
+  sent every 0.5 s then; 760 B for 4 players in a late run.
+- Numbers: up to 9,999 as they are, then three digits and a unit (`DamageViews.short`: 12.3K,
+  456K, 7.89M, then B, T, Q), rounding into the next digit or unit included.
+- HUD: a `VBoxContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
+  bars sit at the bottom; right-aligned for players 2 and 4). Line `Main`: damage icon and
+  total (outlined 26), in co-op the player's share of the team's (grey) and the damage per
+  second (blue), both in a 20 px copy of the outlined font. Line `Detail`: icon and number of
+  the two strongest sources, the crit icon and the biggest hit (gold). Hidden while the total
+  is 0; a part with nothing to show is hidden, so the line keeps no gap; mouse ignored.
 - Shop: a `Button` after each player's reroll button (reached with right from reroll; up /
   down lead where they do from reroll) and the board, a `PanelContainer`: in the co-op shop a
   child of the panel that holds the player's `ShopItemsContainer`, so it fills the place of the
   shop items; in the solo shop (the slots sit in a row there) a top-level child of the slots'
   container, laid over its rect when it comes up, so the layout does not move. The board
-  (title: wave, total, share; a row per source) is visible while that player's `FocusEmulator`
+  (header: wave and, in co-op, the share of the team's; three tiles with a caption over icon
+  and value: total, DPS, biggest hit with its source's icon, about 360 px wide so they fit a
+  four-player panel; a line; a row per source: icon, name in its tier colour, a bar against the
+  strongest source in that colour, number, share) is visible while that player's `FocusEmulator`
   rests on the button, the button has the focus (solo) or the mouse is on it (polled each
   frame): no press, no modal state, no pause. The shop is told by `_get_reroll_button`, not by
   class: naming `BaseShop` in a script that loads with the mod loads `base_shop.gd` too early
@@ -1665,7 +1688,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `user://mod_configs/einfluffles-BrotatoTogether/settings.json` from the first change: the
   loader's "default" config cannot be written). The label is English only.
 - Not taken over from the mod: its other options (opacity, number of sources, ungrouped
-  weapons), damage per second, the "charmed enemies" entry (it extends `Enemy.take_damage`),
+  weapons), the "charmed enemies" entry (it extends `Enemy.take_damage`),
   dart traps (the game ships them without a tracking key).
 - Open: the row and the board are checked as nodes, texts and rects in the headless tests
   (`damage_meter_tests.gd`), not seen on a real screen; the mouse on the button is untested.
