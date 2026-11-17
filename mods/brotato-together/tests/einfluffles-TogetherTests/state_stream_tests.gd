@@ -4,9 +4,11 @@ extends Reference
 # applies. Then the mod's own stream: created before the sync modules, given to each of them.
 #  - host: change key and interval, per-peer bodies built once, dirty, flush, resync on
 #    peer_ready in section order (next step, after what other peer_ready handlers send), inactive
-#    -> null once, nothing while not host
+#    -> null once, nothing while not host, the state_sent hook (after each send, not by
+#    message_for)
 #  - client: pending until the handler accepts, retry(), superseding, revisions, timeout, clear,
-#    section order, malformed STATE, senders other than the host, a broken handler, lobby_left
+#    section order, malformed STATE, senders other than the host, a broken handler, lobby_left,
+#    the accept_state hook (every body that is not stale, as it arrives, before it is pending)
 #  - host -> client in one process (message_for -> receive) and the idle cost per frame
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
@@ -37,12 +39,16 @@ class FakeSession:
 	var peers := {}
 	var host := true
 	var sent := []  # [steam_id, msg_type, body], the body as it comes off the wire
+	var resyncs_asked := 0  # ask_resync calls (sync/run_parts.gd: a missing run part)
 
 	func is_host() -> bool:
 		return host
 
 	func is_client() -> bool:
 		return not host
+
+	func ask_resync() -> void:
+		resyncs_asked += 1
 
 	func send_reliable(steam_id: int, msg_type: int, body = null) -> void:
 		sent.append([steam_id, msg_type, bytes2var(var2bytes(body), false)])
@@ -85,6 +91,33 @@ class Probe:
 		cleared.append(section)
 
 
+# Provider and handler with the optional hooks: when each send was recorded, what arrived.
+class Hooked:
+	extends Reference
+	var key := ""
+	var body = null
+	var accept := true
+	var stream: Node = null
+	var events := []  # ["sent", section, steam_id, messages sent so far] | ["accept", ...] | ...
+
+	func state_key(_section: int) -> String:
+		return key
+
+	func state_body(_section: int):
+		return body
+
+	func state_sent(section: int, steam_id: int) -> void:
+		events.append(["sent", section, steam_id, stream.session.sent.size()])
+
+	func accept_state(section: int, state, revision: int) -> void:
+		events.append(["accept", section, state, revision, stream.is_pending(section)])
+
+	func apply_state(section: int, state, revision: int) -> bool:
+		if accept:
+			events.append(["apply", section, state, revision])
+		return accept
+
+
 # A module that sends from its own peer_ready (as BattleHost sends BATTLE_START).
 class Joiner:
 	extends Reference
@@ -109,6 +142,7 @@ func run(test_mod: Node, together: Node):
 	_test_wiring(together)
 	_test_changes()
 	_test_per_peer()
+	_test_hooks()
 	_test_dirty()
 	yield(_test_flush(), "completed")
 	_test_resync()
@@ -224,6 +258,48 @@ func _test_per_peer() -> void:
 	t._check(_same(sent, expected), "per-peer patch, not-ready peer skipped: %s" % [sent])
 	t._check(
 		probe.builds == 1 and not probe.body.has("you"), "shared body built once, left untouched"
+	)
+
+
+# state_sent: once per peer, right after its send (sync/run_parts.gd records what the peer
+# has); not for a body message_for builds. accept_state: every body that is not stale as it
+# arrives, before it is pending (also one a newer body replaces before it is applied), never a
+# stale one or a null.
+func _test_hooks() -> void:
+	var stream := _stream(true, [P1, P2])
+	var hooked := Hooked.new()
+	hooked.stream = stream
+	hooked.key = "a"
+	hooked.body = {"x": 1}
+	stream.register_provider(StateStream.RUN_SHOP, hooked, 0.1)
+	stream.message_for(StateStream.RUN_SHOP, P1)
+	t._check(hooked.events.empty(), "state_sent: not for a body message_for builds")
+	stream.step(0.0)
+	var expected := [["sent", 0, P1, 1], ["sent", 0, P2, 2]]
+	t._check(
+		_same(hooked.events, expected), "state_sent: per peer after its send: %s" % [hooked.events]
+	)
+	stream.step(1.0)
+	t._check(hooked.events.size() == 2, "state_sent: nothing sent, nothing called")
+	var client := _stream(false, [])
+	var handler := Hooked.new()
+	handler.stream = client
+	handler.accept = false
+	client.register_handler(StateStream.UPGRADES, handler)
+	client.receive([StateStream.UPGRADES, 1, {"v": 1}])
+	client.receive([StateStream.UPGRADES, 2, {"v": 2}])
+	client.receive([StateStream.UPGRADES, 1, {"v": 0}])  # stale
+	handler.accept = true
+	client.step(0.016)
+	client.receive([StateStream.UPGRADES, 3, null])
+	expected = [
+		["accept", 1, {"v": 1}, 1, false],
+		["accept", 1, {"v": 2}, 2, true],  # the first one is pending, this one not yet
+		["apply", 1, {"v": 2}, 2],
+	]
+	t._check(
+		_same(handler.events, expected),
+		"accept_state: each body as it arrives, the replaced one too: %s" % [handler.events]
 	)
 
 

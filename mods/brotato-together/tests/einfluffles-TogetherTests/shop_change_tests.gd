@@ -2,13 +2,14 @@ extends Reference
 # Suite shop_change: the host serializes the shop's run state only when it can have changed
 # (sync/run_cache.gd). On a stream of its own (fake session, stepped by hand) and the real
 # co-op shop: every kind of change the game makes in the shop moves the fingerprint and goes out
-# once, serialized and compressed once; view-only changes (Go, page, colours, meca roll) go out
-# without serializing; an unchanged shop serializes nothing between safety-net checks; a change
-# only the safety net can see (a stat written directly) still goes out and counts as missed; an
-# applied intent goes out in the next frame, serialized once; peer_ready resends without
-# compressing again. Prints the cost of a check before and after in a small and in late runs.
-# The client's side of a changed state: its per-player keys follow the content (which panels it
-# rebuilds), and what the state costs it before any panel is rebuilt.
+# once, serialized once and only its changed run parts compressed; view-only changes (Go, page,
+# colours, meca roll) go out without serializing; an unchanged shop serializes nothing between
+# safety-net checks; a change only the safety net can see (a stat written directly) still goes
+# out and counts as missed; an applied intent goes out in the next frame, serialized once;
+# peer_ready resends every part without compressing again. Prints the cost of a check before
+# and after in a small and in late runs. The client's side of a changed state: its per-player
+# keys follow the part ids (which panels it rebuilds), and what a whole run state costs it.
+# (What a change sends and costs in parts: run_parts_tests.gd.)
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -20,6 +21,7 @@ const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
+const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const PEER := 4343
 const REMOTE := 1  # the player whose intents the host applies
@@ -33,7 +35,10 @@ var _sync: Node = null
 var _cache = null  # ShopSync.run_cache
 var _shop: Node = null
 var _stream: Node = null  # the host stream of this suite
-var _run := PoolByteArray()  # the run bytes last sent
+var _run := ""  # the run part ids last sent (var2str)
+var _client = RunParts.Store.new()  # what a client has of the run, from what was sent
+var _client_ok := true  # no body named a part the client lacked
+var _client_ids := {}  # the run part ids last sent
 
 
 func run(t: Node, together: Node):
@@ -76,6 +81,7 @@ func _small_run():
 	_stream.setup(session)
 	_stream.register_provider(StateStream.RUN_SHOP, _sync, _sync.CHECK_INTERVAL)
 	_sync.state_stream = _stream  # host_apply_intent flushes this one
+	_sync.run_sender.forget(PEER)  # the client has nothing yet
 	var serialized: int = _cache.serialized
 	_stream.step(1.0)
 	var sent := _take()
@@ -279,6 +285,7 @@ func _test_intent():
 	}
 	var serialized: int = _cache.serialized
 	var packs: int = _cache.packs
+	var parts: int = _cache.parts.size()
 	_t._check(_sync.host_apply_intent(_shop, REMOTE, intent), "shop change: buy intent applied")
 	_stream.step(1.0)
 	var early := _take()
@@ -293,9 +300,10 @@ func _test_intent():
 			and not sent[0][2].slots[REMOTE][slot]
 			and _run_of(sent) != _run
 			and _cache.serialized == serialized + 1
-			and _cache.packs == packs + 1
+			and _cache.packs > packs
+			and _cache.packs < packs + parts
 		),
-		"shop change: an applied intent goes out in the next frame, serialized and packed once"
+		"shop change: an applied intent goes out in the next frame, serialized once, some parts packed"
 	)
 	_run = _run_of(sent)
 	yield(_buy_delay(), "completed")
@@ -320,9 +328,10 @@ func _test_intent():
 	_take()
 
 
-# ShopSync's own peer_ready handler forces a check, and the stream's resync (queued for its next
-# step, after every peer_ready handler) is that check: the new peer gets the true run state,
-# serialized once and not compressed again when nothing changed.
+# ShopSync's own peer_ready handler forces a check and forgets what the peer has, and the
+# stream's resync (queued for its next step, after every peer_ready handler) is that check: the
+# new peer gets the true run state, every part of it, serialized once and not compressed again
+# when nothing changed.
 func _test_peer_ready() -> void:
 	var serialized: int = _cache.serialized
 	var packs: int = _cache.packs
@@ -335,6 +344,10 @@ func _test_peer_ready() -> void:
 	_t._check(
 		sent.size() == 1 and _run_of(sent) == _run and _cache.packs == packs,
 		"shop change: peer_ready resends the same run, not compressed again"
+	)
+	_t._check(
+		sent.size() == 1 and sent[0][2].run.parts.size() == _cache.parts.size(),
+		"shop change: peer_ready resends every run part"
 	)
 	_t._check(
 		_cache.serialized == serialized + 1,
@@ -391,15 +404,16 @@ func _measure(label: String, slow_calls: int) -> void:
 			"  info: shop check, %s: before %.0f usec per check, now %.0f usec unchanged;"
 			+ " safety net %.0f usec once a second; a change %.0f usec (%d B of JSON)"
 		)
-		% [label, before, now, net, change, _cache.json.length()]
+		% [label, before, now, net, change, _cache.text_size()]
 	)
 	_measure_client(label, slow_calls <= 5)
 
 
-# What a changed state costs a client before its panels are rebuilt: the JSON parsed, the
-# players' keys (before: as JSON text), the game's deserializer. In one frame, for every client.
+# What a whole run state costs a client before its panels are rebuilt (each state before parts,
+# now the first one and a resync): the JSON parsed, the players' keys (before parts: as JSON
+# text), the game's deserializer. In one frame, for every client.
 func _measure_client(label: String, late: bool) -> void:
-	var payload: Dictionary = _cache.pack()
+	var payload := RunStateCodec.encode(_sync.shop_args(_shop))
 	var started := OS.get_ticks_usec()
 	var raw := RunStateCodec.parse(payload)
 	var parse := OS.get_ticks_usec() - started
@@ -410,8 +424,10 @@ func _measure_client(label: String, late: bool) -> void:
 		var offered := [_sync._at(raw.shop_items, p), _sync._at(raw.item_steals, p)]
 		texts.append(to_json(data) + to_json([data.weapons, data.items]) + to_json(offered))
 	var before := OS.get_ticks_usec() - started
+	var ids: Dictionary = _cache.all().ids
+	var common: Dictionary = RunParts.split(raw).c
 	started = OS.get_ticks_usec()
-	var keys: Array = _sync.player_keys(raw)
+	var keys: Array = _sync.player_keys(ids, common)
 	var now := OS.get_ticks_usec() - started
 	started = OS.get_ticks_usec()
 	RunStateCodec.deserialize(raw)
@@ -431,42 +447,47 @@ func _measure_client(label: String, late: bool) -> void:
 
 
 # The client rebuilds a panel only when its part of the run state changed
-# (ShopSync.player_keys): the keys follow the content, nested values included.
+# (ShopSync.player_keys): the keys follow the ids of the player's run parts and the content of
+# its offered items, nested values included.
 func _test_client_keys() -> void:
-	var payload: Dictionary = RunStateCodec.encode(_sync.shop_args(_shop))
-	var raw := RunStateCodec.parse(payload)
-	var keys: Array = _sync.player_keys(raw)
-	var again: Array = _sync.player_keys(RunStateCodec.parse(payload))
+	var data := RunStateCodec.serialize(_sync.shop_args(_shop))
+	var parts := RunParts.split(data)
+	var ids: Dictionary = RunParts.pack_all(data).ids
+	var raw: Dictionary = JSON.parse(JSON.print(parts.c)).result
+	var keys: Array = _sync.player_keys(ids, raw)
+	var again: Array = _sync.player_keys(RunParts.pack_all(data).ids, raw.duplicate(true))
 	_t._check(
 		keys.size() == 2 and var2str(keys) == var2str(again),
-		"player keys: the same state parsed twice gives the same keys"
+		"player keys: the same state packed twice gives the same keys"
 	)
-	raw.players_data[0]["bt_test"] = 1.0
-	var data: Array = _sync.player_keys(raw)
+	parts.p0["bt_test"] = 1.0
+	ids.p0 = RunParts.entry(parts.p0, hash(parts.p0)).id
+	var player: Array = _sync.player_keys(ids, raw)
 	_t._check(
 		(
-			data[0].data != keys[0].data
-			and data[0].gear == keys[0].gear
-			and data[0].items == keys[0].items
-			and var2str(data[1]) == var2str(keys[1])
+			player[0].data != keys[0].data
+			and player[0].gear == keys[0].gear
+			and player[0].items == keys[0].items
+			and var2str(player[1]) == var2str(keys[1])
 		),
 		"player keys: a value of one player changes that player's data key only"
 	)
-	var weapons: Array = raw.players_data[1].weapons
+	var weapons: Array = parts.g1.weapons
 	weapons[0] = [weapons[0], 1.0]
-	var gear: Array = _sync.player_keys(raw)
+	ids.g1 = RunParts.entry(parts.g1, hash(parts.g1)).id
+	var gear: Array = _sync.player_keys(ids, raw)
 	_t._check(
 		(
-			gear[1].gear != data[1].gear
-			and gear[1].data != data[1].data
-			and gear[1].items == data[1].items
-			and var2str(gear[0]) == var2str(data[0])
+			gear[1].gear != player[1].gear
+			and gear[1].data != player[1].data
+			and gear[1].items == player[1].items
+			and var2str(gear[0]) == var2str(player[0])
 		),
 		"player keys: a change inside a weapon changes its owner's gear and data keys"
 	)
 	var offered: Array = raw.shop_items[0]
 	offered[0] = [offered[0], 1.0]
-	var items: Array = _sync.player_keys(raw)
+	var items: Array = _sync.player_keys(ids, raw)
 	_t._check(
 		(
 			items[0].items != gear[0].items
@@ -519,13 +540,14 @@ func _end_stream(together: Node) -> void:
 	_stream = null
 
 
-# One check after a change of the run state: sent once, serialized and packed once, found by
-# the fingerprint (the safety net is not due).
+# One check after a change of the run state: sent once, serialized once, found by the
+# fingerprint (the safety net is not due), only some parts packed again.
 func _expect_run(label: String, change: FuncRef = null) -> void:
 	if change != null:
 		change.call_func()
 	var serialized: int = _cache.serialized
 	var packs: int = _cache.packs
+	var parts: int = _cache.parts.size()
 	_cache._checked_msec = OS.get_ticks_msec()
 	_stream.step(1.0)
 	var sent := _take()
@@ -535,13 +557,15 @@ func _expect_run(label: String, change: FuncRef = null) -> void:
 			sent.size() == 1
 			and run != _run
 			and _cache.serialized == serialized + 1
-			and _cache.packs == packs + 1
+			and _cache.packs > packs
+			and _cache.packs < packs + parts
 			and _cache.missed == 0
 		),
-		"shop change: %s detected, serialized and packed once" % label
+		"shop change: %s detected, serialized once, some parts packed" % label
 	)
 	if sent.size() == 1:
 		_run = run
+	_check_client("shop change: " + label)
 
 
 # One check after a change of the view only: sent once, the run not serialized.
@@ -554,6 +578,7 @@ func _expect_view(label: String) -> void:
 		sent.size() == 1 and _run_of(sent) == _run and _cache.serialized == serialized,
 		"shop change: %s goes out without serializing the run" % label
 	)
+	_check_client("shop change: " + label)
 
 
 func _add_gold() -> void:
@@ -582,20 +607,34 @@ func _offered(p: int) -> Node:
 	return _shop._get_shop_items_container(p).get_shop_item_node(_offered_slot(p))
 
 
-# The run bytes of the last message sent, empty if none.
-func _run_of(sent: Array) -> PoolByteArray:
+# The run part ids of the last message sent (var2str), "" if none.
+func _run_of(sent: Array) -> String:
 	if sent.empty() or typeof(sent[-1][2]) != TYPE_DICTIONARY:
-		return PoolByteArray()
-	return sent[-1][2].run.data
+		return ""
+	return var2str(sent[-1][2].run.ids)
 
 
-# What the host sent since the last call, as [steam_id, revision, body].
+# What the host sent since the last call, as [steam_id, revision, body]. The client's store
+# takes each body's run parts, as a client does.
 func _take() -> Array:
 	var messages := []
 	for sent in _stream.session.sent:
 		messages.append([sent[0], sent[2][1], sent[2][2]])
+		if typeof(sent[2][2]) == TYPE_DICTIONARY:
+			_client_ok = _client.ingest(sent[2][2].run) and _client_ok
+			_client_ids = sent[2][2].run.ids
 	_stream.session.sent.clear()
 	return messages
+
+
+# The client's run parts, joined and printed, are the host's run state as JSON (no part
+# missing, every value as the whole text had it).
+func _check_client(label: String) -> void:
+	var text := JSON.print(RunParts.join(_client.raws(_client_ids)))
+	_t._check(
+		_client_ok and text == RunStateCodec.encode_json(_sync.shop_args(_shop)),
+		"%s: the client's run parts make the host's run state" % label
+	)
 
 
 # ShopItemsContainer ignores presses for 0.05 s after a buy, steal or dismantle.

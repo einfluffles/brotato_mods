@@ -108,14 +108,26 @@ func _ready() -> void:
 	focus_sync.state_stream = state_stream
 	focus_sync.setup(session)
 
+	# The run state of the shop and the level-up panels in parts, only those a client lacks: one
+	# record of what each peer has (host) and one store of what this client has, for both.
+	var run_parts := _load_script("sync/run_parts.gd")
+	var run_sender = run_parts.Sender.new()
+	run_sender.setup(session)
+	var run_store = run_parts.Store.new()
+	run_store.setup(session)
+
 	shop_sync = _add("sync/shop_sync.gd", "ShopSync")
 	shop_sync.state_stream = state_stream
+	shop_sync.run_sender = run_sender
+	shop_sync.run_store = run_store
 	shop_sync.setup(session)
 	shop_sync.input_sync = input_sync
 	shop_sync.focus_sync = focus_sync
 
 	upgrades_sync = _add("sync/upgrades_sync.gd", "UpgradesSync")
 	upgrades_sync.state_stream = state_stream
+	upgrades_sync.run_sender = run_sender
+	upgrades_sync.run_store = run_store
 	upgrades_sync.setup(session, battle_host, battle_client)
 	upgrades_sync.focus_sync = focus_sync
 	upgrades_sync.input_sync = input_sync

@@ -13,6 +13,9 @@ extends Node
 #   state_patch(section, steam_id) -> Dictionary (optional): merged into a copy of the body for
 #     each peer (`you`). Split from state_body so the expensive part is built once per send
 #     without the provider caching anything; a patch needs a Dictionary body.
+#   state_sent(section, steam_id) (optional): called right after the section's body went to the
+#     peer (the patch built for it: sync/run_parts.gd records which run parts the peer has).
+#     message_for does not call it: a body built for a test was never sent.
 # flush(section, hold = false): check in the next idle frame whatever the interval (state
 # changed by deferred game code, like a shop intent); with hold, no check before that frame
 # either. mark_dirty(section, steam_id = 0: every ready peer): send the
@@ -40,6 +43,10 @@ extends Node
 #     returns null) drops the body with a warning; the other sections go on.
 #   clear_state(section) (optional): the host has no state for the section any more. Only called
 #     when the section had a state since the last clear.
+#   accept_state(section, body, revision) (optional): called once for every body that is not
+#     stale, as it arrives and before it becomes pending. For what must not wait for the apply:
+#     a pending body that a newer one replaces is never applied (the run parts it delivered are
+#     stored here, sync/run_parts.gd).
 # retry(): try every pending section now (e.g. on battle_entered). receive(message): one STATE
 # body, validated; the sender check (only the host) is in _on_message.
 # Revisions: a lower revision than the last one received for the section is stale and dropped;
@@ -114,6 +121,7 @@ func register_provider(section: int, provider: Object, interval := DEFAULT_INTER
 	_providers[section] = {
 		"provider": provider,
 		"patched": provider.has_method("state_patch"),
+		"sent": provider.has_method("state_sent"),
 		"interval": interval,
 		"left": 0.0,
 		"key": "",
@@ -201,6 +209,8 @@ func _check(section: int, entry: Dictionary, peers: Array, resend_to: int) -> vo
 	for peer in targets:
 		var message := [section, entry.rev, _patched(section, entry, body, peer)]
 		session.send_reliable(peer, Protocol.Msg.STATE, message)
+		if entry.sent:
+			entry.provider.call("state_sent", section, peer)
 
 
 func _patched(section: int, entry: Dictionary, body, steam_id: int):
@@ -255,6 +265,7 @@ func register_handler(section: int, handler: Object, timeout_sec := DEFAULT_TIME
 	_handlers[section] = {
 		"handler": handler,
 		"clears": handler.has_method("clear_state"),
+		"accepts": handler.has_method("accept_state"),
 		"timeout_msec": int(timeout_sec * 1000.0),
 	}
 
@@ -287,6 +298,8 @@ func receive(message) -> void:
 			_handlers[section].handler.call("clear_state", section)
 		return
 	_live[section] = true
+	if _handlers[section].accepts:
+		_handlers[section].handler.call("accept_state", section, body, rev)
 	_pending[section] = {"body": body, "rev": rev, "msec": OS.get_ticks_msec()}
 	retry()
 

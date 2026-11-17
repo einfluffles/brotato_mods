@@ -3,12 +3,12 @@ extends Reference
 # (section upgrades) only when it can have changed (UpgradesSync.run_cache, sync/run_cache.gd).
 # On a stream of its own (fake session, stepped by hand) and the host's real battle scene with
 # its panels up (the wave cleaned up as the game does before them): every kind of change the
-# panels make to the run is detected and goes out once, serialized and compressed once; pages,
-# revisions and meca rolls go out without serializing; an unchanged run serializes nothing
-# between safety-net checks; a change only the safety net can see goes out and counts as missed;
-# an applied intent forces the next check; peer_ready resends without compressing again; the
-# cache is gone with the battle. Prints the cost of a send before and after, and of a typical
-# level-up sequence, in a small and in late runs.
+# panels make to the run is detected and goes out once, serialized once and only its changed
+# run parts compressed; pages, revisions and meca rolls go out without serializing; an unchanged
+# run serializes nothing between safety-net checks; a change only the safety net can see goes
+# out and counts as missed; an applied intent forces the next check; peer_ready resends every
+# part without compressing again; the cache is gone with the battle. Prints the cost of a send
+# before and after, and of a typical level-up sequence, in a small and in late runs.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -20,6 +20,7 @@ const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
+const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const PEER := 4545
 const PISTOL := "weapon_pistol_1"
@@ -36,7 +37,10 @@ var _cache = null  # UpgradesSync.run_cache
 var _main: Node = null
 var _ui: Node = null
 var _stream: Node = null  # the host stream of this suite
-var _run := PoolByteArray()  # the run bytes last sent
+var _run := ""  # the run part ids last sent (var2str)
+var _client = RunParts.Store.new()  # what a client has of the run, from what was sent
+var _client_ok := true  # no body named a part the client lacked
+var _client_ids := {}  # the run part ids last sent
 
 
 func run(t: Node, together: Node):
@@ -74,6 +78,7 @@ func _small_run():
 	_show([[_crate(0), _crate(0)], [_crate(1)]], [[_level(0, 2), _level(0, 3)], [_level(1, 2)]])
 	_measure("small run, 2 players", 20)
 	_cache.clear()  # as when the panels come up
+	_sync.run_sender.forget(PEER)  # the client has nothing yet
 	var serialized: int = _cache.serialized
 	_stream.step(1.0)
 	var sent := _take()
@@ -269,6 +274,10 @@ func _test_peer_ready() -> void:
 		),
 		"upgrades change: peer_ready resends the same run, checked once, not compressed again"
 	)
+	_t._check(
+		sent.size() == 1 and sent[0][2].run.parts.size() == _cache.parts.size(),
+		"upgrades change: peer_ready resends every run part"
+	)
 	_stream.step(1.0)
 	_t._check(
 		_take().empty() and _cache.serialized == serialized + 1 and _cache.packs == packs,
@@ -276,14 +285,18 @@ func _test_peer_ready() -> void:
 	)
 	var body: Dictionary = _sync.state_body(StateStream.UPGRADES)
 	_t._check(
-		body.run.data == _run and _cache.serialized == serialized + 1 and _cache.packs == packs,
+		(
+			var2str(body.run.ids) == _run
+			and _cache.serialized == serialized + 1
+			and _cache.packs == packs
+		),
 		"upgrades change: a body built alone reuses the run"
 	)
 	RunData.add_gold(1, 0)
 	body = _sync.state_body(StateStream.UPGRADES)  # no state_key before it
 	_t._check(
-		body.run.data != _run and _cache.packs == packs + 1,
-		"upgrades change: a body built alone after a change carries the new run"
+		var2str(body.run.ids) != _run and _cache.packs == packs + 1,
+		"upgrades change: a body built alone after a change carries the new run (one part)"
 	)
 	_stream.step(1.0)
 	_run = _run_of(_take())
@@ -291,7 +304,9 @@ func _test_peer_ready() -> void:
 
 func _test_lobby_left() -> void:
 	_sync._on_lobby_left()
-	_t._check(_cache.json == "" and _cache._screen_id == 0, "upgrades change: lobby_left drops it")
+	_t._check(
+		_cache.parts.empty() and _cache._screen_id == 0, "upgrades change: lobby_left drops it"
+	)
 	_stream.step(1.0)
 	var sent := _take()
 	_t._check(
@@ -322,8 +337,8 @@ func _late_run(players: int):
 
 # A typical level-up sequence, on the stream: every player looks at its gear page and back,
 # takes its crate item, rerolls and chooses twice; player 0 presses on the host, the others send
-# intents; a peer joins in the middle. Counts the sends (each encoded the run before) and the
-# time the stream's checks take now.
+# intents; a peer joins in the middle. Counts the sends (each encoded the run before), the
+# serializations and parts compressed now, and the time the stream's checks take now.
 func _sequence(label: String, players: int, encode: float):
 	var serialized: int = _cache.serialized
 	var packs: int = _cache.packs
@@ -361,15 +376,15 @@ func _sequence(label: String, players: int, encode: float):
 	print(
 		(
 			"  info: upgrades sequence, %s: %d sends, before %d encodes (%.0f ms);"
-			+ " now %d encodes, %d checks without one, %.0f ms in the stream's checks"
+			+ " now %d serializations, %d parts compressed, %.0f ms in the stream's checks"
 		)
 		% [
 			label,
 			sends,
 			sends,
 			sends * encode / 1000.0,
+			_cache.serialized - serialized,
 			_cache.packs - packs,
-			_cache.serialized - serialized - (_cache.packs - packs),
 			usec / 1000.0,
 		]
 	)
@@ -422,7 +437,7 @@ func _measure(label: String, slow_calls: int) -> float:
 			+ " now key %.0f usec unchanged (capture %.0f), a send reusing the run %.0f usec,"
 			+ " safety net %.0f usec once a second, a change %.0f usec (%d B of JSON)"
 		)
-		% [label, before, key, capture, reuse, net, change, _cache.json.length()]
+		% [label, before, key, capture, reuse, net, change, _cache.text_size()]
 	)
 	return before
 
@@ -433,13 +448,12 @@ func _measure(label: String, slow_calls: int) -> float:
 # The next scene replaces the battle (nobody calls a cleanup): the cache is dropped and keeps
 # nothing of the wave.
 func _test_battle_end():
-	_t._check(_cache.json != "", "upgrades change: a run is cached while the panels show")
+	_t._check(not _cache.parts.empty(), "upgrades change: a run is cached while the panels show")
 	yield(_blank_scene(), "completed")
 	_t._check(
 		not _together.battle_host.is_in_battle()
-		and _cache.json == ""
+		and _cache.parts.empty()
 		and _cache._screen_id == 0
-		and _cache._packed.empty()
 		and _cache._fingerprint.empty(),
 		"upgrades change: the cache is gone with the battle"
 	)
@@ -581,13 +595,14 @@ func _expect_intent(label: String, p: int, kind: String, id: String, fields := {
 	_expect_run(label)
 
 
-# One check after a change of the run state: sent once, serialized and packed once, found by
-# the fingerprint or the forced check (the safety net is not due).
+# One check after a change of the run state: sent once, serialized once, found by the
+# fingerprint or the forced check (the safety net is not due), only some parts packed again.
 func _expect_run(label: String, change: FuncRef = null) -> void:
 	if change != null:
 		change.call_func()
 	var serialized: int = _cache.serialized
 	var packs: int = _cache.packs
+	var parts: int = _cache.parts.size()
 	_cache._checked_msec = OS.get_ticks_msec()
 	_stream.step(1.0)
 	var sent := _take()
@@ -597,13 +612,15 @@ func _expect_run(label: String, change: FuncRef = null) -> void:
 			sent.size() == 1
 			and run != _run
 			and _cache.serialized == serialized + 1
-			and _cache.packs == packs + 1
+			and _cache.packs > packs
+			and _cache.packs < packs + parts
 			and _cache.missed == 0
 		),
-		"upgrades change: %s detected, serialized and packed once" % label
+		"upgrades change: %s detected, serialized once, some parts packed" % label
 	)
 	if sent.size() == 1:
 		_run = run
+	_check_client("upgrades change: " + label)
 
 
 # One check after a change of the view only: sent once, the run not serialized.
@@ -622,6 +639,7 @@ func _expect_view(label: String) -> void:
 		),
 		"upgrades change: %s goes out without serializing the run" % label
 	)
+	_check_client("upgrades change: " + label)
 
 
 func _add_gold() -> void:
@@ -632,20 +650,34 @@ func _age_safety_net() -> void:
 	_cache._checked_msec = OS.get_ticks_msec() - RunCache.SAFETY_NET_MSEC
 
 
-# The run bytes of the last message sent, empty if none.
-func _run_of(sent: Array) -> PoolByteArray:
+# The run part ids of the last message sent (var2str), "" if none.
+func _run_of(sent: Array) -> String:
 	if sent.empty() or typeof(sent[-1][2]) != TYPE_DICTIONARY:
-		return PoolByteArray()
-	return sent[-1][2].run.data
+		return ""
+	return var2str(sent[-1][2].run.ids)
 
 
-# What the host sent since the last call, as [steam_id, revision, body].
+# What the host sent since the last call, as [steam_id, revision, body]. The client's store
+# takes each body's run parts, as a client does.
 func _take() -> Array:
 	var messages := []
 	for sent in _stream.session.sent:
 		messages.append([sent[0], sent[2][1], sent[2][2]])
+		if typeof(sent[2][2]) == TYPE_DICTIONARY:
+			_client_ok = _client.ingest(sent[2][2].run) and _client_ok
+			_client_ids = sent[2][2].run.ids
 	_stream.session.sent.clear()
 	return messages
+
+
+# The client's run parts, joined and printed, are the host's run state as JSON (no part
+# missing, every value as the whole text had it).
+func _check_client(label: String) -> void:
+	var text := JSON.print(RunParts.join(_client.raws(_client_ids)))
+	_t._check(
+		_client_ok and text == RunStateCodec.encode_json(),
+		"%s: the client's run parts make the host's run state" % label
+	)
 
 
 func _button_delay():

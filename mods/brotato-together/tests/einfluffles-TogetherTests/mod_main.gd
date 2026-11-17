@@ -57,6 +57,7 @@ const ShopLoopbackTests := preload(
 const ShopChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_change_tests.gd"
 )
+const RunPartsTests := preload("res://mods-unpacked/einfluffles-TogetherTests/run_parts_tests.gd")
 const UpgradesChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_change_tests.gd"
 )
@@ -120,6 +121,7 @@ const SUITES := [
 	"selection",
 	"state_stream",
 	"shop_change",
+	"run_parts",
 	"cursor_key",
 	"upgrades_change",
 	"lobby_menu",
@@ -391,6 +393,13 @@ func _suite_state_stream(together: Node):
 func _suite_shop_change(together: Node):
 	coop_run(2)
 	_suite = ShopChangeTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+# The run state of the shop and the level-up panels in parts, only those a client lacks, with
+# what a change costs on the wire, on the host and on a client before and now.
+func _suite_run_parts(together: Node):
+	_suite = RunPartsTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

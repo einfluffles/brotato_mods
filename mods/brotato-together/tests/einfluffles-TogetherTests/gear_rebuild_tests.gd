@@ -11,6 +11,7 @@ extends Reference
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
+const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
@@ -150,7 +151,7 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 # player's page is mirrored from it (its gear page while these tests look at it).
 static func _with_run(msg: Dictionary, other_page := 1) -> Dictionary:
 	var changed := msg.duplicate()
-	changed.run = bytes2var(var2bytes(RunStateCodec.encode()), false)
+	changed.run = bytes2var(var2bytes(RunParts.pack_all(RunStateCodec.serialize())), false)
 	changed.pages = [msg.pages[0], other_page]
 	return changed
 

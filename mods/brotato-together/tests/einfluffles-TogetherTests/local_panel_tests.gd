@@ -23,6 +23,7 @@ const CursorTargetTests := preload(
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
+const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const GearRebuildTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/gear_rebuild_tests.gd"
@@ -572,7 +573,7 @@ func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
 	own.focus_emulator.focused_control = list.get_element(2)
 	RunData.players_data[1].weapons.remove(2)
 	var answer: Dictionary = msg.duplicate(true)
-	answer.run = bytes2var(var2bytes(RunStateCodec.encode()), false)
+	answer.run = bytes2var(var2bytes(RunParts.pack_all(RunStateCodec.serialize())), false)
 	answer.seqs[1] += 1
 	panels.apply(main, answer)
 	yield(t.get_tree(), "idle_frame")

@@ -218,6 +218,23 @@ func request_resync(steam_id: int) -> void:
 		peers[steam_id].resync = true
 
 
+# Client: the host's state named something this client lacks (a run part, sync/run_parts.gd).
+# HELLO again: the host takes a HELLO from a ready peer as a missed WELCOME and resyncs it fully
+# (request_resync, at most once per RESYNC_INTERVAL_MSEC); asked at most that often from here too
+# (the host's entry's last_resync_msec, unused on a client otherwise).
+func ask_resync() -> void:
+	if not is_ready_client():
+		return
+	var host: Dictionary = peers[transport.host_id]
+	var now := OS.get_ticks_msec()
+	if now - host.last_resync_msec < RESYNC_INTERVAL_MSEC:
+		return
+	host.last_resync_msec = now
+	ModLoaderLog.info("Asking the host for a full resync", LOG_NAME)
+	var persona: String = transport.get_persona_name(transport.local_id)
+	send_reliable(transport.host_id, Protocol.Msg.HELLO, Compat.local_info(persona))
+
+
 func _add_peer(steam_id: int) -> Dictionary:
 	if not peers.has(steam_id):
 		peers[steam_id] = {

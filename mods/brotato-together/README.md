@@ -43,7 +43,13 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   gets the game's menu (its character stands still meanwhile), a client its own copy for options and
   the codex; restart / end run stay with the host, and a client's *Quit* asks to leave the lobby.
 - **Shop, level-ups, crates:** clients load the real screens with the host's rolled options (via the game's
-  own save/resume path) and mirror every player's cursor.
+  own save/resume path) and mirror every player's cursor. The run state travels in parts (the common
+  part, and per player its weapons and items and the rest) and each client gets only the parts it
+  lacks: a page flip or a Go no longer resends the whole run (in a late 4-player test run 0.75 KB
+  instead of 30 KB per client), a level-up choice only that player's part (7.6 KB), and a client only
+  parses and rebuilds the players that changed (a level-up choice: 29 instead of 150 ms there). A
+  purchase still sends that player's whole item list (about as much as before). When the shop or
+  the panels close, the host logs what they sent (`modloader.log`: "Shop 12: 28 states, ...").
 - **Your own level-up / crate panel runs on your machine:** cursor, pages (upgrades / gear / stats) and
   item popups react at once; only the decision (choose, reroll, take, recycle, ban) goes to the host,
   which checks it against what your panel shows and applies it. It follows the device you use: with a
@@ -205,7 +211,8 @@ that Steam's default stays if Steam refuses the setting.
 ## Tests
 
 `tests/einfluffles-TogetherTests` is a dev-only mod run by `tools/check.sh` (never packaged): virtual input,
-run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, shop locks (per slot, also after a buy; the own press shown at once), the own shop
+run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the run state in parts (which parts each change sends, the client building the same run from
+them, resyncs, a body replaced while pending, a missing part), shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), another mod's shop intent (registered, applied once, sent from the own panel only), level-up/crate
 panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade, the gear page rebuilt by the host's run changes under the own and a mirrored cursor, a cursor whose control is freed), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), the mouse wheel scrolling only the mouse player's own panel (shop, level-up, character selection; host and client) and the right stick in character selection (own panel, mirrored positions on a client), "Player N" above the join hint, shop UI sounds, the lobby
 in the game's menus (the title screen's Host lobby button and player frame, kicking, a client in its own main menu

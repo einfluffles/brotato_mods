@@ -46,11 +46,12 @@ enum Msg {
 	PROGRESS,
 	# host -> client: [section, revision, body or null (the section has no state now)], see
 	# sync/state_stream.gd; each section's body is described where it is built (shop:
-	# sync/shop_sync.gd, pause_shop: sync/pause_control.gd)
+	# sync/shop_sync.gd, pause_shop: sync/pause_control.gd). The run state of sections shop and
+	# upgrades travels in parts, only those the client lacks (sync/run_parts.gd; protocol 23)
 	STATE,
 }
 
-const VERSION := 22
+const VERSION := 23
 # How long one side carries on without the other's stream (snapshots on a client, INPUT on the
 # host) before it counts as gone rather than late. Both ends share it: a client predicts its own
 # player for that long without snapshots (sync/battle_client.gd PREDICTION_STALE_MSEC), and the

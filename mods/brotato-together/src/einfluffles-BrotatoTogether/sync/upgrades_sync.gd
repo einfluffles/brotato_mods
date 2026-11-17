@@ -5,7 +5,8 @@ extends Node
 #   UPGRADES section (sync/state_stream.gd; see body() for the fields): run state + per player
 #   what its panel shows, a panel revision, the carousel page and the meca upgrade rolls. The
 #   run state is serialized only when it can have changed (run_cache, sync/run_cache.gd, as in
-#   the shop): a page, a revision, a meca roll or a resend reuses the last one.
+#   the shop): a page, a revision, a meca roll or a resend reuses the last one. It travels in
+#   parts, per peer only those it lacks (sync/run_parts.gd: a level-up choice is one part).
 # Client: shows those options in its own copy of the panels; nothing is rolled locally.
 #   Its OWN panel runs here: its buttons drive its slot's FocusEmulator locally
 #   (InputSync.set_local_device), so cursor, pages (upgrades / gear / stats), popups and the
@@ -37,6 +38,10 @@ const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
+const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
+const UpgradesGear := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_gear.gd"
+)
 const CHECK_INTERVAL := 0.1
 # A state can wait for the puppet battle scene to load (on a rejoin the stream's resync comes
 # right after BATTLE_START, which starts the load); it used to wait for battle_entered without
@@ -72,6 +77,8 @@ var focus_sync: Node = null
 var input_sync: Node = null
 var last_intent := {}  # client: the last decision sent (also read by the tests)
 var run_cache = RunCache.new("upgrades")  # host: the run state, serialized on change
+var run_sender = null  # host: RunParts.Sender, shared with ShopSync (set by mod_main.gd)
+var run_store = null  # client: RunParts.Store, shared with ShopSync (set by mod_main.gd)
 
 # host
 var _seq_ui_id := 0  # instance id of the UpgradesUI the revisions belong to
@@ -80,11 +87,12 @@ var _seq_keys := []
 # Intents that came while the host was paused: [UpgradesUI instance id, player, msg], applied in
 # order once it resumes (see host_apply_intent).
 var _held := []
+var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 
 # client
 var _guarded_ui: Node = null  # the puppet UpgradesUI whose decision signals are rewired
 var _applied := {}  # player index -> key of the entry last applied
-var _run_key := []
+var _run_key := {}  # the run part ids RunData has
 var _own: Node = null  # this client's own container
 var _own_seq := -1
 var _own_item_id := ""
@@ -122,7 +130,7 @@ func _process(_delta: float) -> void:
 	if ui == null:
 		# Panels closed or battle over (also without peers, when the stream asks nothing): the
 		# run's text does not outlive the wave.
-		run_cache.clear()
+		run_sender.close(run_cache)
 	_apply_held(ui)
 	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
 	var showing: bool = session.is_host() and ui != null
@@ -162,10 +170,11 @@ func _showing_ui():
 func state_key(_section: int) -> String:
 	var ui = _showing_ui()
 	if ui == null:
-		run_cache.clear()
+		run_sender.close(run_cache)
 		return ""
 	var players := capture(ui)
 	_update_seqs(ui, players)
+	run_cache.title = "Level-up panels, battle %d" % battle_host._battle_id
 	run_cache.refresh(ui, [], _options(ui))
 	var golds := []
 	for p in RunData.get_player_count():
@@ -181,7 +190,8 @@ func state_body(_section: int):
 	return body(capture(ui)) if ui != null else null
 
 
-# battle_id, run (RunStateCodec), and per player:
+# battle_id, run (sync/run_parts.gd: every part here, state_patch narrows it to what the peer
+# lacks), and per player:
 #   players: ["none"] | ["done"] | ["upgrades", [upgrade ids], level, reroll_price]
 #     | ["item", json, id]
 #   seqs: the panel revision (bumped when it shows something new; an intent names it)
@@ -195,14 +205,26 @@ func body(players: Array) -> Dictionary:
 	var ui = battle_host._main.get("_coop_upgrades_ui")
 	_update_seqs(ui, players)
 	run_cache.refresh(ui, [], _options(ui))
-	return {
+	run_sender.offer(run_cache)
+	var body := {
 		"battle_id": battle_host._battle_id,
-		"run": run_cache.pack(),
 		"players": players,
 		"seqs": _seqs.duplicate(),
 		"pages": _pages(ui, players.size()),
 		"mecas": _mecas(ui),
 	}
+	_view_bytes = var2bytes(body).size()
+	body["run"] = run_cache.all()
+	return body
+
+
+# The run parts the peer lacks (state_sent records them as sent).
+func state_patch(_section: int, steam_id: int) -> Dictionary:
+	return {"run": run_sender.run_for(steam_id)}
+
+
+func state_sent(_section: int, steam_id: int) -> void:
+	run_sender.commit(steam_id, _view_bytes)
 
 
 static func _pages(ui: Node, count: int) -> Array:
@@ -403,11 +425,12 @@ func _host_ui(msg):
 	return _showing_ui()
 
 
-# A peer that (re)joins must get the true run state: the stream's resync for it (its next step,
-# after every peer_ready handler) is a check that serializes it; a difference found goes to
-# everyone. (Harmless on a client: only the host's state_key refreshes.)
-func _on_peer_ready(_steam_id: int) -> void:
+# A peer that (re)joins must get the true run state, every part of it: the stream's resync for
+# it (its next step, after every peer_ready handler) is a check that serializes it; a
+# difference found goes to everyone. (Harmless on a client: only the host's state_key refreshes.)
+func _on_peer_ready(steam_id: int) -> void:
 	run_cache.force()
+	run_sender.forget(steam_id)
 
 
 func _on_lobby_left() -> void:
@@ -478,6 +501,13 @@ func _on_battle_entered() -> void:
 	state_stream.retry()
 
 
+# StateStream: every body as it arrives, also one a newer body replaces before it is applied:
+# its run parts are stored now (a missing one asks the host for a full resync).
+func accept_state(_section: int, state, _revision: int) -> void:
+	if typeof(state) == TYPE_DICTIONARY:
+		run_store.take(state.get("run"), "level-up")
+
+
 # StateStream handler. false keeps the state pending in the stream: its battle has not started
 # here yet (not expected: a rejoin's resync follows its BATTLE_START) or its puppet scene is
 # still loading. Applied again on a resync: apply() only rebuilds what changed.
@@ -512,7 +542,10 @@ func apply(main: Node, msg: Dictionary) -> void:
 		return
 	var you: int = battle_client._you
 	_guard(ui, you)
-	var run_changed := _apply_run(msg.get("run"))
+	var run = _apply_run(msg.get("run"))
+	if run == null:
+		return  # a run part is missing: nothing applied, the host resyncs this client
+	var run_changed: bool = run
 	ui.show()
 	var seqs = msg.get("seqs")
 	var pages = msg.get("pages")
@@ -521,11 +554,11 @@ func apply(main: Node, msg: Dictionary) -> void:
 		if typeof(entry) != TYPE_ARRAY or entry.empty() or typeof(entry[0]) != TYPE_STRING:
 			continue
 		var container = ui._get_player_container(p)
-		var slot := _weapon_slot(ui, container, p)  # before anything is rebuilt
+		var slot := UpgradesGear.weapon_slot(ui, container, p)  # before anything is rebuilt
 		var in_popup: bool = ui._popup_manager._elements_pressed[p] != null
 		var gear_cursor := []
 		if run_changed:
-			gear_cursor = _rebuild_gear(ui, container, p)
+			gear_cursor = UpgradesGear.rebuild_gear(ui, container, p)
 			container.update_stats()
 			container._update_gold_label()
 		var seq: int = _int_at(seqs, p)
@@ -538,9 +571,9 @@ func apply(main: Node, msg: Dictionary) -> void:
 			_show_entry(container, p, entry)
 		var on_weapon := false
 		if rebuilt or run_changed:
-			on_weapon = _refresh_weapons(ui, container, p, slot, p == you)
+			on_weapon = UpgradesGear.refresh_weapons(ui, container, p, slot, p == you)
 		# After the crate list's refresh, which closes a popup opened from the gear.
-		var on_gear: bool = not on_weapon and _put_gear_cursor(container, gear_cursor)
+		var on_gear: bool = not on_weapon and UpgradesGear.put_gear_cursor(container, gear_cursor)
 		if rebuilt and p == you:
 			_own_seq = seq
 			_own_item_id = entry[2] if entry[0] == "item" and entry.size() == 3 else ""
@@ -572,7 +605,7 @@ func _on_battle_left() -> void:
 	_local_panel = null  # a child of the scene's UpgradesUI
 	_meca.detach()
 	_applied = {}
-	_run_key = []
+	_run_key = {}
 
 
 # The own panel stops taking local input. Gives up only this screen's device and cursor: a stop
@@ -603,151 +636,17 @@ func _show_entry(container, p: int, entry: Array) -> void:
 				_show_item(container, entry[1], entry[2])
 
 
-# UpgradesUI._show_next_player_options refreshes the crate weapons list (only there for a
-# player whose crates give weapons) on the host; a puppet never runs it. The run state brings
-# new weapon objects, so the list is rebuilt with it. A cursor that was in the list (slot)
-# keeps its place; returns whether it did.
-static func _refresh_weapons(ui: Node, container: Node, p: int, slot: int, own: bool) -> bool:
-	if not ui._weapons_inventory_enabled[p]:
+# The run state is only re-applied (and the inventories and stats rebuilt) when its part ids
+# changed. Returns whether it was, null when a part is missing (or the run malformed).
+func _apply_run(run):
+	var ids = run_store.ids_for(run)
+	if RunParts.same_ids(ids, _run_key):
 		return false
-	var elements = container.crate_weapons_container._elements
-	var emulator = container.focus_emulator
-	if _is_child_of(emulator.focused_control, elements):
-		emulator.focused_control = null  # its element is freed now; slot puts it back
-	ui._refresh_weapons_inventory(p)
-	var list = container.crate_weapons_container
-	var count: int = list.get_element_count()
-	if slot < 0 or count == 0:
-		return false
-	var element = list.get_element(int(min(slot, count - 1)))
-	if element == null or not element.is_visible_in_tree():
-		return false
-	if own:
-		Utils.focus_player_control(element, p, container.focus_emulator)
-	else:
-		container.focus_emulator.focused_control = element  # mirrored, like FocusSync
-	return true
-
-
-# The slot in p's crate weapons list its cursor is on, or its popup was opened from; -1 when
-# the cursor is elsewhere.
-static func _weapon_slot(ui: Node, container: Node, p: int) -> int:
-	if not ui._weapons_inventory_enabled[p]:
-		return -1
-	var elements = container.crate_weapons_container._elements
-	var pressed = ui._popup_manager._elements_pressed[p]
-	for control in [pressed, container.focus_emulator.focused_control]:
-		if _is_child_of(control, elements):
-			return control.get_index()
-	return -1
-
-
-# update_inventory frees every element of the gear page (weapons and items) and builds new
-# ones. Nothing may keep an old one: a FocusEmulator whose control was freed crashes a released
-# game (extensions/ui/focus_emulator.gd), and a focus neighbour naming one makes the game's
-# Inventory log "Node not found" for each element it relinks. So the cursor is taken off first
-# (returned: where it was, [] when not in the gear; _put_gear_cursor puts it back), and the
-# game's way back to the gear page (_resume_inventory_control_focus) and the gear's focus
-# neighbours move to the new elements.
-static func _rebuild_gear(ui: Node, container: Node, p: int) -> Array:
-	var emulator = container.focus_emulator
-	var cursor := _gear_place(container, emulator.focused_control)
-	if not cursor.empty():
-		emulator.focused_control = null
-	else:
-		# In the popup opened from a gear element: the crate list's refresh closes it.
-		cursor = _gear_place(container, ui._popup_manager._elements_pressed[p])
-	var resume := _gear_place(container, container._resume_inventory_control_focus)
-	container.update_inventory()
-	if not resume.empty():
-		container._resume_inventory_control_focus = _gear_element(container, resume)
-	_relink_gear(container)
-	return cursor
-
-
-# The cursor back on the rebuilt gear (see _gear_element). Returns whether it is there.
-static func _put_gear_cursor(container: Node, place: Array) -> bool:
-	var element = _gear_element(container, place)
-	if element == null or not element.is_visible_in_tree() or container.item_popup._focused:
-		return false
-	if container.focus_emulator.focused_control != element:
-		container.focus_emulator.focused_control = element
-	return true
-
-
-static func _gear_inventories(container: Node) -> Array:
-	var gear = container.player_gear_container
-	return [gear.weapons_container._elements, gear.items_container._elements]
-
-
-# [inventory (0 weapons, 1 items), element index, item id] of a gear element, else [].
-static func _gear_place(container: Node, control) -> Array:
-	var inventories := _gear_inventories(container)
-	for i in inventories.size():
-		if _is_child_of(control, inventories[i]):
-			var item = control.item
-			return [i, control.get_index(), item.my_id if item != null else ""]
-	return []
-
-
-# The element of the rebuilt gear that stands for place: the same item (the one nearest its
-# old index; items are shown newest first, so a new item moves the others on), else the one at
-# the same index (the last one if there are fewer). null when that inventory is empty.
-static func _gear_element(container: Node, place: Array):
-	if place.empty():
-		return null
-	var inventory: Node = _gear_inventories(container)[place[0]]
-	var best = null
-	var best_distance := 0
-	for element in inventory.get_children():
-		if element.is_queued_for_deletion() or element.item == null:
-			continue
-		var distance := int(abs(element.get_index() - place[1]))
-		if element.item.my_id == place[2] and (best == null or distance < best_distance):
-			best = element
-			best_distance = distance
-	var count: int = inventory.get_child_count()
-	if best == null and count > 0:
-		best = inventory.get_child(int(min(place[1], count - 1)))
-	return best
-
-
-# The gear's focus neighbours after a rebuild. On the gear page the game's own links are redone
-# (CoopUpgradesUIPlayerContainer._set_focus_neighbours, which the game runs on a page change
-# only: weapons to the last item and items to the first weapon, by node path). On another page
-# a path to a freed element is dropped; the page change links it again.
-static func _relink_gear(container: Node) -> void:
-	var gear = container.player_gear_container
-	for inventory in [gear.weapons_container, gear.items_container]:
-		_drop_dead_neighbours(inventory)
-		_drop_dead_neighbours(inventory._elements)
-	if container.carousel.index == 1 and gear.items_container.get_element_count() > 0:
-		container._set_focus_neighbours()
-
-
-static func _drop_dead_neighbours(control: Control) -> void:
-	for margin in [MARGIN_LEFT, MARGIN_TOP, MARGIN_RIGHT, MARGIN_BOTTOM]:
-		var path := control.get_focus_neighbour(margin)
-		if not path.is_empty() and control.get_node_or_null(path) == null:
-			control.set_focus_neighbour(margin, NodePath(""))
-
-
-static func _is_child_of(control, parent: Node) -> bool:
-	return is_instance_valid(control) and control.get_parent() == parent
-
-
-# The run state is only re-applied (and the inventories and stats rebuilt) when it changed.
-func _apply_run(payload) -> bool:
-	var key := []
-	if typeof(payload) == TYPE_DICTIONARY and typeof(payload.get("data")) == TYPE_RAW_ARRAY:
-		key = [payload.get("size"), hash(payload.data)]
-	if not key.empty() and key == _run_key:
-		return false
-	var state := RunStateCodec.decode(payload)
+	var state: Dictionary = run_store.state_for(ids)
 	if state.empty():
-		return false
+		return null
 	RunStateCodec.apply(state)
-	_run_key = key
+	_run_key = ids
 	return true
 
 
@@ -760,7 +659,7 @@ func _guard(ui: Node, you: int) -> void:
 		return
 	_guarded_ui = ui
 	_applied = {}
-	_run_key = []
+	_run_key = {}
 	_own = null
 	_own_seq = -1
 	_own_item_id = ""
@@ -804,7 +703,7 @@ static func _disconnect(source: Object, signal_name: String, target: Object, met
 
 
 # This client's panel shows new options: it takes local control (or gives it up when done).
-# on_weapon: the cursor kept its place in the crate weapons list (see _refresh_weapons).
+# on_weapon: the cursor kept its place in the crate weapons list (see UpgradesGear.refresh_weapons).
 func _on_own_panel_changed(ui: Node, container: Node, kind: String, on_weapon := false) -> void:
 	if kind != "upgrades" and kind != "item":
 		stop_local("own panel shows %s" % kind)
