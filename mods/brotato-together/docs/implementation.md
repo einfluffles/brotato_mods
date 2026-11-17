@@ -1655,22 +1655,48 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   second (blue), both in a 20 px copy of the outlined font. Line `Detail`: icon and number of
   the two strongest sources, the crit icon and the biggest hit (gold). Hidden while the total
   is 0; a part with nothing to show is hidden, so the line keeps no gap; mouse ignored.
-- Shop: a `Button` after each player's reroll button (reached with right from reroll; up /
-  down lead where they do from reroll) and the board, a `PanelContainer`: in the co-op shop a
-  child of the panel that holds the player's `ShopItemsContainer`, so it fills the place of the
-  shop items; in the solo shop (the slots sit in a row there) a top-level child of the slots'
-  container, laid over its rect when it comes up, so the layout does not move. The board
-  (three tiles with a caption over icon and value: the wave over the total and, in co-op, the
-  share of the team's; DPS; biggest hit with its source's icon. Estimated at about 340 px, for
-  the four-player panel's 403 (two players: 810). A line, then a row per source: icon, name in
-  its tier colour over a bar against the strongest source in that colour, number, share. The
-  bar sits under the name so the name keeps room in a narrow panel) is visible while that player's `FocusEmulator`
-  rests on the button, the button has the focus (solo) or the mouse is on it (polled each
-  frame): no press, no modal state, no pause. The shop is told by `_get_reroll_button`, not by
-  class: naming `BaseShop` in a script that loads with the mod loads `base_shop.gd` too early
-  and the game's shop scripts no longer parse (seen in the tests). `ui/focus_targets.gd` knows the button as `shop_damage`, so the
-  cursor on it travels like every other (`SHOP_FOCUS` to the host, the cursors section to the
-  other clients) and every machine shows the board in that player's panel.
+- The board: three tiles with a caption over icon and value (the wave over the total and, in
+  co-op, the share of the team's; DPS; biggest hit with its source's icon; estimated at about
+  340 px, for the four-player panel's 403), a line, then a row per source: icon, name in its
+  tier colour over a bar against the strongest source in that colour, number, share. The bar
+  sits under the name so the name keeps room in a narrow panel. `DamageViews._board_list`
+  builds it, `_fill_board` fills it for the panel's `player_index` (0 in solo).
+- Co-op shop and co-op end of run (protocol 26): a fourth carousel page. A `Carousel` takes as
+  many pages as `%Headings` has children (`_get_max_index`, unless `max_index` is set), and the
+  index setter shows heading and `%Content` child of the same index. `add_page` appends a copy
+  of the last heading ("Damage") and a `DamagePage` (`MarginContainer`, full rect, the list at
+  the top) and runs the setter again for the arrows. It is called from the containers' own
+  `_ready` (`extensions/ui/coop_shop_player_container.gd`,
+  `extensions/ui/coop_end_run_player_container.gd`): the page has to exist before a page index
+  from the network is applied, or the setter clamps it to 2. The game's focus handling after a
+  page change already treats every page past the stats alike: with a gamepad the cursor waits on
+  Go (shop) or nowhere (end of run), without one on the arrows. Online nothing new travels: a
+  client's own page goes to the host in `SHOP_FOCUS` (`shop_intents.apply_focus`), the host's
+  states carry every player's page (`shop_sync` `pages`, `menu_sync` `pages`), and each machine
+  builds the page from its own copy of the board. The receivers compare a page clamped to what
+  this machine shows, so a page it cannot show (meter off here) does not run the setter with
+  every state. An older peer would clamp page 3 to 2, hence the protocol bump.
+- Solo shop and solo end of run: no carousel, a stats panel with Primary / Secondary tabs that
+  the game toggles on LB / RB (`StatsContainer._input`). `extensions/ui/stats_container.gd`
+  adds a third tab, inert until `DamageViews.add_tab` arms it (`_process` finds the solo shop by
+  `_get_reroll_button` without `_get_coop_player_container`, the solo end of run by its scene
+  file), so the pause menu, the level-up screen and the co-op stats pages keep two tabs. The tab
+  is a copy of Secondary without its signals, an icon with a tooltip. The row has 360 px inside
+  the panel's 400 and the game's tabs take 150 + 180 + 10, so while the tab is on they give up
+  a little (145 + 165 + 40 + 2 x 5 = 360) and the panel keeps its width; off, the game's widths
+  come back. Its page goes after `SecondaryStats`. Focus handed to the hidden tab (the shop
+  restores the focus from before a pause, in which the meter may have gone off) moves on to
+  Primary. The extension's `_input` runs before the game's (Godot 3 multilevel calls,
+  derived first), notes the trigger, and `update_tab` steps through three tabs instead of
+  toggling two: RB forward, LB back, around at the ends. Secondary leads right to the tab, the
+  tab right to the panel's right neighbour (Go in the shop). The shop and the board are told by
+  methods, not by class: naming `BaseShop` in a script that loads with the mod loads
+  `base_shop.gd` too early and the game's shop scripts no longer parse (seen in the tests).
+- Views: `DamageViews._views` holds [container or stats panel, list]; each drops itself when
+  its panel leaves the tree (`tree_exiting`), so no reference to a freed node stays.
+- Before (PR #63 and earlier): a button next to each reroll button, with the board laid over
+  the shop items while a cursor rested on it, mirrored as cursor target `shop_damage`. The board
+  had about 190 px of height there and grew the panel; the page has the panel's full height.
 - Under load (`damage_meter_tests.gd`, crowded wave: 350 enemies, twelve fast pistols, 60 ms
   added to every frame, about 3 frames a second): the total rises in every second and equals,
   to the point, the health the enemies lost (kills: their whole health; enemies the game
@@ -1683,22 +1709,32 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   sounds like the game's; set again in `init()`, which runs every time the page opens). The
   game's own Mods menu only lists the installed mods and the Mod Loader has a config store but
   no screen, so the switch sits with the game's display options, in the main menu and in the
-  pause menu alike. It is this machine's: off, the row, the buttons and the boards are gone
-  here (a cursor on a button moves to reroll, and reroll's way to the right is its old one);
-  a host with peers measures on, because each client decides for itself, a machine without
-  peers stops measuring. Another player's cursor on a button this machine hides is not shown
-  here (and not passed on, when this machine is the host). Stored with `session/settings.gd`
+  pause menu alike. It is this machine's: off, the rows are gone here, the carousels' last page
+  is the one before the damage page (`carousel.max_index`; a player on it goes back one page,
+  through the container's own `_on_Carousel_index_changed`), and the solo tab is hidden (an
+  open one falls back to Primary). A host with peers measures on, because each client decides
+  for itself; a machine without peers stops measuring. Online, a host with the meter off shows
+  a client on the damage page on the page before and passes that on; at the end of run, where
+  the host's carousels move for everyone, nobody reaches the page then (accepted: the host
+  switched the meter off). The other way round (host on, a client off), the host's carousel for
+  that client can stand on the damage page while the client shows the page before; the
+  client's first LB then moves only the host's. A keyboard player whose cursor is on an arrow
+  that the switch disables gets the other arrow. Stored with `session/settings.gd`
   in the Mod Loader's config (`config_schema` in `manifest.json`, default on;
   `user://mod_configs/einfluffles-BrotatoTogether/settings.json` from the first change: the
   loader's "default" config cannot be written). The label is English only.
 - Not taken over from the mod: its other options (opacity, number of sources, ungrouped
   weapons), the "charmed enemies" entry (it extends `Enemy.take_damage`),
   dart traps (the game ships them without a tracking key).
-- Open: the row and the board are checked as nodes, texts and rects in the headless tests
-  (`damage_meter_tests.gd`), not seen on a real screen; the mouse on the button is untested.
-  Widths cannot be checked there: headless, labels measure 0 px wide. The board grows the
-  player's panel while it is up when there are more sources than the slots' height holds (as
-  before); not seen yet whether that looks right with four players.
+- Tests (`damage_meter_tests.gd`): the page in each co-op carousel, reached with the arrows,
+  the cursor on Go after it, a page 3 from the network, the switch (back one page, no way
+  further, a page 3 from the network shows page 2, on again); the co-op end of run; the solo
+  tab with real gamepad events (RB RB RB LB: Secondary, Damage, Primary, Damage), the switch,
+  the solo end of run, and a bare stats panel that keeps two tabs. `menu_puppet_tests.gd`: a
+  client's end of run shows the host's page 3.
+- Open: checked as nodes, texts and rects in the headless tests, not seen on a real screen.
+  Widths cannot be checked there: headless, labels measure 0 px wide (the solo tab row and the
+  tiles in a four-player panel are estimates).
 
 ## Remote input, pause, absent players
 

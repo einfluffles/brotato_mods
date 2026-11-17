@@ -23,7 +23,7 @@ extends Reference
 const SCENE := "scene"
 const INDEXED := ["shop_item", "up_option"]
 const SHOP_ANCHORS := [
-	"shop_item", "shop_reroll", "shop_damage", "shop_go", "shop_popup", "shop_gear", "shop_panel"
+	"shop_item", "shop_reroll", "shop_go", "shop_popup", "shop_gear", "shop_panel"
 ]
 const UPGRADE_ANCHORS := [
 	"up_option", "up_reroll", "up_popup", "up_weapons", "up_gear", "up_panel"
@@ -161,10 +161,6 @@ static func _anchor(root: Node, anchor: String, p: int, k: int) -> Node:
 				node = list[k]
 		"shop_reroll":
 			node = _shop_call(root, "_get_reroll_button", p)
-		"shop_damage":  # the damage meter's button (ui/damage_views.gd), next to reroll
-			var reroll = _shop_call(root, "_get_reroll_button", p)
-			if reroll != null and reroll.get_parent() != null:
-				node = reroll.get_parent().get_node_or_null("DamageButton")
 		"shop_go":
 			node = _shop_call(root, "_get_go_button", p)
 		"shop_popup":

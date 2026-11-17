@@ -1,14 +1,14 @@
 extends Reference
 # Damage meter (sync/damage_meter.gd, ui/damage_views.gd): what a player's weapons and items
 # dealt, read off the game's counters; the biggest hit and the wave's time; the short numbers;
-# the board as the state stream carries it; the row in the wave's HUD; the button and board in
-# the co-op shop, up while a player's cursor rests on the button. Driven from mod_main.gd
-# (two-player co-op run); checks go through its _check.
+# the board as the state stream carries it; the row in the wave's HUD; the damage page in the
+# co-op shop's and end of run's carousels, the third stats tab in the solo shop and end of run,
+# and the switch. Driven from mod_main.gd (two-player co-op run); checks go through its _check.
 
 const DamageMeter := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_meter.gd")
 const DamageViews := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/damage_views.gd")
-const FocusTargets := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+const ShopIntents := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_intents.gd"
 )
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -39,6 +39,7 @@ func run(together: Node):
 	_test_board(meter)
 	yield(_test_hud(meter, item), "completed")
 	yield(_test_shop(item), "completed")
+	yield(_test_coop_end_run(), "completed")
 	yield(_test_crowded_wave(meter), "completed")
 	_test_cost(meter)
 	yield(_test_solo_shop(meter), "completed")
@@ -221,44 +222,50 @@ func _test_hud(meter: Node, item):
 	_t._check(dps.visible and dps.text == "123/s", "and the damage per second (%s)" % dps.text)
 
 
-# The button next to reroll and the board over the shop items.
+# The co-op shop: a fourth page "Damage" in each player's carousel, reached with the arrows (LB /
+# RB on a gamepad), with that player's board of the wave before.
 func _test_shop(item):
 	_t.get_tree().change_scene(RunData.get_shop_scene_path())
 	for _i in 4:
 		yield(_t.get_tree(), "idle_frame")
 	var shop := _t.get_tree().current_scene
-	var buttons := []
-	var boards := []
+	var panels := []
 	for p in 2:
-		var reroll: Control = shop._get_reroll_button(p)
-		var button = reroll.get_parent().get_node_or_null(DamageViews.BUTTON_NAME)
-		buttons.append(button)
-		var slots_panel: Node = shop._get_shop_items_container(p).get_parent()
-		boards.append(slots_panel.get_node_or_null(DamageViews.BOARD_NAME))
-		if button != null:
-			_t._check(
-				reroll.get_node_or_null(reroll.focus_neighbour_right) == button
-				and button.get_index() == reroll.get_index() + 1,
-				"player %d: the button sits next to reroll and is reached from it" % p
-			)
-	_t._check(not (null in buttons) and not (null in boards), "each shop panel has button and board")
-	if null in buttons or null in boards:
-		return
-	_t._check(not boards[0].visible and not boards[1].visible, "no board is up by itself")
-	_t._check(_t.get_tree().paused == false, "and nothing is paused")
-	var emulator = Utils.get_focus_emulator(1, shop)
-	var before = emulator.focused_control
-	emulator.focused_control = buttons[1]
+		var panel: Node = shop._get_coop_player_container(p)
+		panels.append(panel)
+		var carousel: Node = panel.carousel
+		var page = carousel.get_node("%Content").get_node_or_null(DamageViews.PAGE_NAME)
+		var heading = carousel.get_node("%Headings").get_node_or_null(DamageViews.HEADING_NAME)
+		_t._check(
+			page != null and heading != null and carousel._get_max_index() == 3
+			and page.get_index() == 3 and heading.get_index() == 3,
+			"player %d: the carousel has a fourth page, Damage" % p
+		)
+		if page == null or heading == null:
+			return
+		_t._check(
+			carousel.index == 0 and not page.visible and heading.text == DamageViews.PAGE_TITLE,
+			"player %d: the shop page shows first, the damage page waits" % p
+		)
+	var carousel: Node = panels[1].carousel
+	for _i in 3:
+		carousel._on_ArrowRight_pressed()
 	yield(_t.get_tree(), "idle_frame")
 	yield(_t.get_tree(), "idle_frame")
-	_t._check(boards[1].visible and not boards[0].visible, "a cursor on the button: that board is up")
-	_t._check(not _t.get_tree().paused, "the shop runs on meanwhile")
-	var slots: Control = shop._get_shop_items_container(1)
+	var page: Control = _page(panels[1])
 	_t._check(
-		boards[1].get_global_rect().encloses(slots.get_global_rect().grow(-2)),
-		"over that player's shop items %s" % [boards[1].get_global_rect()]
+		carousel.index == 3 and page.visible and _heading(panels[1]).visible
+		and panels[0].carousel.index == 0 and not _page(panels[0]).visible,
+		"three pages on (RB RB RB): player 2's damage page, player 1 still shops"
 	)
-	var list: Node = boards[0].get_node("List")
+	_t._check(carousel.arrow_right.disabled, "the last page: no way further right")
+	_t._check(not _t.get_tree().paused, "nothing pauses")
+	var cursor = Utils.get_focus_emulator(1, shop).focused_control
+	_t._check(
+		not carousel.are_trigger_buttons_active() or cursor == shop._get_go_button(1),
+		"with a gamepad the cursor waits on Go, as on the stats pages (%s)" % [cursor]
+	)
+	var list: Node = _list(panels[0])
 	var tiles: Node = list.get_node("Tiles")
 	var title: String = tiles.get_node("Total/Caption").text
 	var share: Label = tiles.get_node("Total/Line/Share")
@@ -282,25 +289,32 @@ func _test_shop(item):
 	)
 	_t._check(row.get_node("Text/Bar").value == 1000, "the strongest source's bar is full")
 	if item != null:
-		var theirs: Node = boards[1].get_node("List/Sources").get_child(0)
+		var theirs: Node = _list(panels[1]).get_node("Sources").get_child(0)
 		var item_icon: Texture = theirs.get_node("Icon").texture
-		_t._check(theirs.visible and item_icon == item.icon, "an item's row: its icon")
-	var target: Array = FocusTargets.describe(buttons[1], shop, 1)
-	_t._check(
-		not target.empty() and FocusTargets.resolve(target, shop, 1) == buttons[1],
-		"the cursor on it is mirrored: the others see whose board is up %s" % [target]
-	)
-	emulator.focused_control = before
-	yield(_t.get_tree(), "idle_frame")
-	yield(_t.get_tree(), "idle_frame")
-	_t._check(not boards[1].visible, "the board goes when the cursor leaves")
-	yield(_test_switch(shop, buttons, boards), "completed")
+		_t._check(theirs.visible and item_icon == item.icon, "player 2's page: its own item")
+	# Online the page index travels like the game's own pages: a client's page on the host.
+	ShopIntents.apply_focus(shop, 0, 3, [])
+	_t._check(panels[0].carousel.index == 3, "a page 3 from the network shows the damage page")
+	ShopIntents.apply_focus(shop, 0, 0, [])
+	yield(_test_switch(shop, panels), "completed")
 
 
-# Options > Gameplay has the switch; off, the buttons and boards are gone (a cursor on one moves
-# to reroll, and reroll leads where it did before), and the setting is kept.
-func _test_switch(shop: Node, buttons: Array, boards: Array):
-	var meter: Node = buttons[0].get_node(MenuOptionsButton.METER)
+func _page(panel: Node) -> Control:
+	return panel.carousel.get_node("%Content").get_node(DamageViews.PAGE_NAME) as Control
+
+
+func _heading(panel: Node) -> Control:
+	return panel.carousel.get_node("%Headings").get_node(DamageViews.HEADING_NAME) as Control
+
+
+func _list(panel: Node) -> Node:
+	return _page(panel).get_node(DamageViews.LIST_NAME)
+
+
+# Options > Gameplay has the switch; off, the damage page cannot be reached (a player on it goes
+# back to the page before), and the setting is kept.
+func _test_switch(shop: Node, panels: Array):
+	var meter: Node = shop.get_node(MenuOptionsButton.METER)
 	var options: Node = load("res://ui/menus/pages/menu_options.tscn").instance()
 	shop.add_child(options)
 	var gameplay: Node = options.boss_hp_bar_button.get_parent()
@@ -313,30 +327,56 @@ func _test_switch(shop: Node, buttons: Array, boards: Array):
 	if not toggle is CheckButton:
 		options.free()
 		return
-	var emulator = Utils.get_focus_emulator(1, shop)
-	var reroll: Control = shop._get_reroll_button(1)
-	emulator.focused_control = buttons[1]
-	yield(_t.get_tree(), "idle_frame")
+	var carousel: Node = panels[1].carousel
+	_t._check(carousel.index == 3, "player 2 is on the damage page")
 	toggle.pressed = false
 	yield(_t.get_tree(), "idle_frame")
 	yield(_t.get_tree(), "idle_frame")
-	var gone: bool = not buttons[0].visible and not buttons[1].visible and not boards[1].visible
-	_t._check(not meter.shown and gone, "switched off: no buttons, no board")
-	var right = reroll.get_node_or_null(reroll.focus_neighbour_right)
 	_t._check(
-		emulator.focused_control == reroll and right != buttons[1],
-		"the cursor that was on a button is on reroll, which no longer leads to it"
+		not meter.shown and carousel.index == 2 and carousel._get_max_index() == 2
+		and not _page(panels[1]).visible,
+		"switched off: player 2 is back on the page before, the last one now"
 	)
+	carousel._on_ArrowRight_pressed()
+	_t._check(carousel.index == 2, "and RB leads no further")
+	_t._check(panels[0].carousel.index == 0, "player 1's page stays")
+	ShopIntents.apply_focus(shop, 1, 3, [])
+	_t._check(carousel.index == 2, "a page 3 from the network shows the page before")
 	_t._check(Settings.read(DamageMeter.SETTING, true) == false, "the switch is kept in the config")
 	toggle.pressed = true
 	yield(_t.get_tree(), "idle_frame")
-	right = reroll.get_node_or_null(reroll.focus_neighbour_right)
+	carousel._on_ArrowRight_pressed()
 	_t._check(
-		meter.shown and buttons[1].visible and right == buttons[1],
-		"switched on again: the buttons are back"
+		meter.shown and carousel._get_max_index() == 3 and carousel.index == 3,
+		"switched on again: the damage page is back"
 	)
 	_t._check(Settings.read(DamageMeter.SETTING, false) == true, "and so is the setting")
 	options.free()
+
+
+# The co-op end of run: the same page in each player's carousel, the last wave's board.
+func _test_coop_end_run():
+	_t.get_tree().change_scene(RunData.get_end_run_scene_path())
+	for _i in 3:
+		yield(_t.get_tree(), "idle_frame")
+	var scene := _t.get_tree().current_scene
+	var containers: Array = scene.player_containers
+	var found := true
+	for p in 2:
+		var carousel: Node = containers[p].carousel
+		found = found and carousel._get_max_index() == 3
+		found = found and carousel.get_node("%Content").has_node(DamageViews.PAGE_NAME)
+	_t._check(found, "the co-op end of run has the damage page for each player")
+	if not found:
+		return
+	for _i in 3:
+		containers[0].carousel._on_ArrowRight_pressed()
+	yield(_t.get_tree(), "idle_frame")
+	var total: String = _list(containers[0]).get_node("Tiles/Total/Line/Value").text
+	_t._check(
+		containers[0].carousel.index == 3 and _page(containers[0]).visible and total == "1,234",
+		"three pages on: the last wave's board (%s)" % total
+	)
 
 
 # A kill took all of the enemy's health; one the game removed (its cap on enemies) had lost what
@@ -475,8 +515,8 @@ func _test_cost(meter: Node) -> void:
 	)
 
 
-# The solo shop: the button next to reroll, the board laid over the shop items while the button
-# has the focus.
+# The solo shop: a third tab in the stats panel next to Primary / Secondary, the board on it. LB /
+# RB (real gamepad events) cycle through the three; the mouse reaches it too; the switch hides it.
 func _test_solo_shop(meter: Node):
 	CoopService.clear_coop_players()
 	RunData.reset()
@@ -488,33 +528,105 @@ func _test_solo_shop(meter: Node):
 	# After the battle scene before it is gone: leaving, it measured its own last word.
 	meter.apply_state(StateStream.DAMAGE, {"wave": 2, "players": [[50, [[PISTOL, 1, 50]]]]}, 0)
 	var shop := _t.get_tree().current_scene
-	var reroll: Control = shop._get_reroll_button(0)
-	var slots: Control = shop._get_shop_items_container(0)
-	var button = reroll.get_parent().get_node_or_null(DamageViews.BUTTON_NAME)
-	var board = slots.get_node_or_null(DamageViews.BOARD_NAME)
-	_t._check(button != null and board != null and not board.visible, "the solo shop has them too")
-	if button == null or board == null:
+	var stats: Node = shop.get_node("%StatsContainer")
+	var row: Node = stats._primary_tab.get_parent()
+	var tab = row.get_node_or_null("DamageTab")
+	var page = stats._secondary_stats.get_parent().get_node_or_null(DamageViews.PAGE_NAME)
+	_t._check(
+		tab is Button and page != null and tab.get_index() == stats._secondary_tab.get_index() + 1
+		and not page.visible,
+		"the solo shop's stats panel has a third tab after Secondary"
+	)
+	if not tab is Button or page == null:
 		return
-	var around: Rect2 = slots.get_parent().get_global_rect()
-	button.grab_focus()
-	yield(_t.get_tree(), "idle_frame")
-	yield(_t.get_tree(), "idle_frame")
 	_t._check(
-		board.visible and board.get_global_rect().intersects(slots.get_global_rect()),
-		"the focus on the button puts the board over the shop items %s" % [board.get_global_rect()]
+		stats._secondary_tab.get_node_or_null(stats._secondary_tab.focus_neighbour_right) == tab
+		and tab.get_node_or_null(tab.focus_neighbour_left) == stats._secondary_tab,
+		"reached from Secondary with right"
 	)
+	tab.emit_signal("pressed")
 	_t._check(
-		slots.get_parent().get_global_rect() == around,
-		"without moving the shop's layout"
+		page.visible and not stats._primary_stats.visible and not stats._secondary_stats.visible
+		and not stats._general_stats.visible,
+		"pressed: the board instead of the stats"
 	)
-	var total: String = board.get_node("List/Tiles/Total/Line/Value").text
-	var share: Label = board.get_node("List/Tiles/Total/Line/Share")
+	var list: Node = page.get_node(DamageViews.LIST_NAME)
+	var total: String = list.get_node("Tiles/Total/Line/Value").text
+	var share: Label = list.get_node("Tiles/Total/Line/Share")
 	_t._check(total == "50" and not share.visible, "with the wave's total, no share alone")
 	_t._check(
-		board.get_node("List/Tiles/Hit/Line/Value").text == "-",
+		list.get_node("Tiles/Hit/Line/Value").text == "-",
 		"a board without hits (an older host's): no biggest hit"
 	)
-	reroll.grab_focus()
+	stats.update_tab(stats.Tab.PRIMARY)
+	var seen := []
+	for button in [JOY_R, JOY_R, JOY_R, JOY_L]:
+		yield(_press_joypad(button), "completed")
+		seen.append(_solo_tab(stats, page))
+	_t._check(
+		seen == ["secondary", "damage", "primary", "damage"],
+		"RB steps Primary, Secondary, Damage and around, LB back %s" % [seen]
+	)
+	# Widths of buttons and gaps (texts measure 0 px headless): the row still fits the panel.
+	var width: float = row.get_combined_minimum_size().x
+	_t._check(width <= 360, "the three tabs fit the panel's 360 px row (%d)" % width)
+	tab.grab_focus()
+	meter.set_shown(false)
 	yield(_t.get_tree(), "idle_frame")
+	_t._check(
+		not tab.visible and _solo_tab(stats, page) == "primary",
+		"switched off: no tab, the open one falls back to Primary"
+	)
+	_t._check(stats._primary_tab.has_focus(), "the focus on the tab moves to Primary")
+	_t._check(
+		stats._primary_tab.rect_min_size.x == 150 and row.get_constant("separation") == 10,
+		"and the row has the game's widths again"
+	)
+	tab.grab_focus()  # what the shop does after a pause in which the meter went off
 	yield(_t.get_tree(), "idle_frame")
-	_t._check(not board.visible, "and it goes with the focus")
+	_t._check(stats._primary_tab.has_focus(), "focus handed to the hidden tab goes on to Primary")
+	seen = []
+	for button in [JOY_R, JOY_R]:
+		yield(_press_joypad(button), "completed")
+		seen.append(_solo_tab(stats, page))
+	_t._check(seen == ["secondary", "primary"], "and the triggers toggle two tabs again %s" % [seen])
+	meter.set_shown(true)
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(tab.visible, "switched on again: the tab is back")
+	yield(_test_solo_end_run(), "completed")
+
+
+func _press_joypad(button: int):
+	for pressed in [true, false]:
+		var event := InputEventJoypadButton.new()
+		event.device = 0
+		event.button_index = button
+		event.pressed = pressed
+		Input.parse_input_event(event)
+		yield(_t.get_tree(), "idle_frame")
+
+
+static func _solo_tab(stats: Node, page: Node) -> String:
+	if page.visible:
+		return "damage"
+	return "primary" if stats._primary_stats.visible else "secondary"
+
+
+# The solo end of run: the same tab, and a stats panel elsewhere (a bare one) stays as it was.
+func _test_solo_end_run():
+	_t.get_tree().change_scene(RunData.get_end_run_scene_path())
+	for _i in 3:
+		yield(_t.get_tree(), "idle_frame")
+	var stats: Node = _t.get_tree().current_scene.get_node("%StatsContainer")
+	var tab = stats._primary_tab.get_parent().get_node_or_null("DamageTab")
+	_t._check(tab is Button and tab.visible, "the solo end of run has the tab too")
+	var bare: Node = load("res://ui/menus/shop/stats_container.tscn").instance()
+	_t.get_tree().current_scene.add_child(bare)
+	yield(_t.get_tree(), "idle_frame")
+	var buttons: int = bare._primary_tab.get_parent().get_child_count()
+	yield(_press_joypad(JOY_R), "completed")
+	_t._check(
+		buttons == 2 and bare.focused_tab == bare.Tab.SECONDARY,
+		"any other stats panel: two tabs, RB toggles them as the game does"
+	)
+	bare.free()

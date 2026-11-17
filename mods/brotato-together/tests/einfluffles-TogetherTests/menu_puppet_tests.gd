@@ -493,6 +493,13 @@ func _client_end_run():
 		"end of run: the host's players and their items"
 	)
 	t._check(containers[1].carousel.index == 1, "end of run: P2 looks at its stats page")
+	_menus._apply_pages(scene, [0, 3])
+	var page = containers[1].carousel.get_node("%Content").get_node_or_null("DamagePage")
+	t._check(
+		containers[1].carousel.index == 3 and page != null and page.visible,
+		"end of run: the host's page 3 shows P2's damage page on the client"
+	)
+	_menus._apply_pages(scene, [0, 1])
 	_cursors(END_RUN, scene)
 	scene._on_NewRunButton_pressed()
 	scene._on_RestartButton_pressed()
