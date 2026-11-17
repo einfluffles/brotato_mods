@@ -60,7 +60,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   the panels close, the host logs what they sent (`modloader.log`: "Shop 12: 28 states, ...").
   A change of the run its quick check did not see still goes out within 1 s, and the warning names
   what changed ("shop run state changed without a change of its fingerprint:
-  p0.effects.stat_max_hp; sent"): please include such lines in a report.
+  p0.effects.stat_max_hp; sent"): please include such lines in a report. (The misses earlier
+  sessions logged late in a run came from item descriptions shown on the host, which changed how
+  the game saves those items; they no longer do.)
 - **Your own level-up / crate panel runs on your machine:** cursor, pages (upgrades / gear / stats) and
   item popups react at once; only the decision (choose, reroll, take, recycle, ban) goes to the host,
   which checks it against what your panel shows and applies it. It follows the device you use: with a

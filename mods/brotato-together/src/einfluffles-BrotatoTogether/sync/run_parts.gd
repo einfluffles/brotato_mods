@@ -45,6 +45,7 @@ extends Reference
 # gear_changed(p): what that state_for moved against the one before it (also over bodies
 # replaced while pending).
 
+const EffectArgs := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/effect_args.gd")
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
@@ -411,6 +412,7 @@ class Store:
 			gear[p] = not same_gear
 			input.players_data.append(merge(rest, player_gear).duplicate(true))
 		var state: Dictionary = ProgressDataLoaderV3.new().deserialize_run_state(input)
+		EffectArgs.settle(state, false)  # its effects came with their custom args
 		var fresh = state.get("players_data")
 		if typeof(fresh) != TYPE_ARRAY or fresh.size() != changed.size():
 			return {}  # no run state (a player that is not one)

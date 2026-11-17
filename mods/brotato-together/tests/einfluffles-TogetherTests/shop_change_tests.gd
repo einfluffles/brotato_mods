@@ -5,8 +5,10 @@ extends Reference
 # once, serialized once and only its changed run parts compressed; view-only changes (Go, page,
 # colours, meca roll) go out without serializing; an unchanged shop serializes nothing between
 # safety-net checks; a change only the safety net can see (a stat written directly) still goes
-# out and counts as missed, its warning naming the stat; an applied intent goes out in the next
-# frame, serialized once;
+# out and counts as missed, its warning naming the stat; a description shown (Effect.get_text
+# adding custom args to an effect two players own) changes no part, and the client's copy shows
+# the same text without doubled args; an applied intent goes out in the next frame, serialized
+# once;
 # peer_ready resends every part without compressing again. Prints the cost of a check before
 # and after in a small and in late runs. The client's side of a changed state: its per-player
 # keys follow the part ids (which panels it rebuilds), and what a whole run state costs it.
@@ -23,6 +25,9 @@ const RunStateCodec := preload(
 )
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
+const EffectArgs := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/effect_args.gd"
+)
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const PEER := 4343
 const REMOTE := 1  # the player whose intents the host applies
@@ -98,6 +103,7 @@ func _small_run():
 	yield(_test_dismantle(), "completed")
 	yield(_test_meca(), "completed")
 	_test_safety_net()
+	_test_shown_text()
 	yield(_test_intent(), "completed")
 	_test_peer_ready()
 
@@ -278,6 +284,80 @@ func _test_safety_net() -> void:
 	_cache.missed = 0
 
 
+# A description shown between two checks: Effect.get_text adds the effect's custom args the
+# first time, and the effect is shared by both owners of the item. No run part changes, nothing
+# goes out, no miss (sync/effect_args.gd). The client's copy came with the args: its own
+# description adds none (no doubled args) and reads the same.
+func _test_shown_text() -> void:
+	var found := _unshown_args_item()
+	_t._check(not found.empty(), "shop change: an item whose effect adds custom args when shown")
+	if found.empty():
+		return
+	var item = found[0]
+	var effect = item.effects[found[1]]
+	for p in 2:
+		RunData.add_item(item, p)
+	_expect_run("an item with custom args bought by two players")
+	var serialized: int = _cache.serialized
+	var missed: int = _cache.missed
+	_cache._checked_msec = OS.get_ticks_msec()
+	_cache.last_miss = ""
+	var text: String = effect.get_text(0)
+	_age_safety_net()
+	_stream.step(1.0)
+	var sent := _take()
+	_t._check(
+		sent.empty() and _cache.serialized == serialized + 1 and _cache.missed == missed,
+		"shop change: a description shown changes no run part (%s)" % _cache.last_miss
+	)
+	_run = _run_of(sent) if not sent.empty() else _run
+	var state: Dictionary = _client.state_for(_client_ids)
+	var copy = null
+	if not state.empty():
+		var items: Array = state.players_data[1].items
+		copy = items[items.size() - 1].effects[found[1]]
+	_t._check(
+		(
+			copy != null
+			and copy.get_text(0) == text
+			and copy.custom_args.size() == effect.custom_args.size()
+		),
+		"shop change: the client's copy of the effect shows the same text without doubled args"
+	)
+	for p in 2:
+		RunData.remove_item(item, p)
+	_stream.step(1.0)
+	_run = _run_of(_take())
+	_cache.missed = missed
+
+
+# A copy of an item with an effect whose description adds custom args, none of them shown yet
+# (not shared with the game's item): [item, index of that effect], [] if there is none.
+func _unshown_args_item() -> Array:
+	for base in ItemService.items:
+		var index := -1
+		for i in base.effects.size():
+			var probe = base.effects[i].duplicate()
+			probe.custom_args = []
+			probe._add_custom_args()
+			if not probe.custom_args.empty():
+				index = i
+				break
+		if index < 0:
+			continue
+		var item = base.duplicate()
+		item.effects = []
+		for effect in base.effects:
+			var copy = effect.duplicate()
+			copy.custom_args = effect.custom_args.duplicate()
+			copy._custom_args_added = false
+			if effect._custom_args_added:
+				copy._remove_custom_args()
+			item.effects.append(copy)
+		return [item, index]
+	return []
+
+
 # An applied intent: no check in its own frame, one in the next, which serializes once (forced,
 # whatever the fingerprint says) and sends the complete state.
 func _test_intent():
@@ -377,6 +457,7 @@ func _late_run(players: int):
 	yield(_enter_shop(), "completed")
 	_measure("late endless run, %d players, %d items each" % [players, LATE_ITEMS], 5)
 	_measure_miss("late endless run, %d players" % players)
+	_measure_settle("late endless run, %d players" % players)
 
 
 # Prints the cost of a check: before (the run serialized to JSON on every check, as the key was),
@@ -417,6 +498,19 @@ func _measure(label: String, slow_calls: int) -> void:
 		% [label, before, now, net, change, _cache.text_size()]
 	)
 	_measure_client(label, slow_calls <= 5)
+
+
+# What making every effect's custom args the same costs each serialization (EffectArgs.settle:
+# a walk over every effect the run state serializes, each shared one once).
+func _measure_settle(label: String) -> void:
+	var state: Dictionary = ProgressData.callv("get_run_state", _sync.shop_args(_shop))
+	var started := OS.get_ticks_usec()
+	var added := EffectArgs.settle(state, true)
+	var usec := OS.get_ticks_usec() - started
+	print(
+		"  info: effect args, %s: %d usec per serialization (%d effects given args)"
+		% [label, usec, added]
+	)
 
 
 # What naming a miss costs on top of the check that finds it (RunCache.miss_paths: the changed
@@ -636,17 +730,20 @@ func _age_safety_net() -> void:
 	_cache._checked_msec = OS.get_ticks_msec() - RunCache.SAFETY_NET_MSEC
 
 
-# An active slot of player p offering an item (no weapon slot rules) when there is one.
+# An active slot of player p that a press buys: an item when there is one, else a weapon the
+# player can take; never a meca item (a press only asks for its effect choice). Random rolls
+# offered one of those first and the purchase then bought nothing. -1 when there is none.
 func _offered_slot(p: int) -> int:
 	var container = _shop._get_shop_items_container(p)
 	var fallback := -1
 	for slot in container._shop_items.size():
 		var node = container.get_shop_item_node(slot)
-		if not node.active or node.item_data == null:
+		if not node.active or node.item_data == null or node.item_data.is_meca:
 			continue
 		if node.item_data.get_category() == Category.ITEM:
 			return slot
-		fallback = slot
+		if fallback < 0 and container._can_weapon_be_bought(node):
+			fallback = slot
 	return fallback
 
 

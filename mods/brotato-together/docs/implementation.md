@@ -651,10 +651,22 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   by their names, arrays with their sizes, at most 6 then "+N more" ("shop run state changed without
   a change of its fingerprint: g0.weapons[0].dmg_dealt_last_wave, p0.effects.stat_max_hp; sent").
   Only a miss pays for it: about 20 ms in the late 2 / 4-player runs when the miss is in a `g` part
-  (two parses of its text), on top of the check. (A 43-wave, three-player session logged 7 misses in
-  the shop between waves 18 and 40, then without names; reading the game's shop code found no value
-  that the shop's own actions write without moving the fingerprint, so it stays as it is until a log
-  names one.) A change costs one serialization + zstd (2.9 / 30 / 63 ms).
+  (two parses of its text), on top of the check. A change costs one serialization + zstd (2.9 / 30 /
+  63 ms).
+  Effects' custom args (`sync/effect_args.gd`): `Effect.get_text` adds an effect's custom args
+  (`_add_custom_args`: burn chance, burning, turret, fire puddle, carbon bow, temp stats per
+  interval) the first time its description is shown, and `serialize()` writes them. Effects are
+  shared resources (every copy of an item, the shop's offered items), so a tooltip, an offered flame
+  turret or a gear page shown on the host changed the serialized gear of every player owning that
+  effect without any change of the run: the 7 misses a 43-wave, three-player session logged in the
+  shop between waves 18 and 40, and the flaky run parts checks (a reroll that carried every `g` part,
+  depending on which items it offered). `RunStateCodec.serialize` now gives every effect it serializes
+  its custom args first (`EffectArgs.settle(state, true)`, as showing its text would; each effect
+  once: 2.4 / 3.0 ms per serialization in the late 2 / 4-player runs, never in the fingerprint check),
+  so a description shown later changes nothing. A client marks the effects it deserializes from such a
+  state as having them (`RunStateCodec.deserialize`, `RunParts.Store.state_for`), so its own tooltip
+  does not add them a second time. (A second copy would read the same: every added arg is USUAL value
+  and format with a NEUTRAL sign, and the game's own resume has that duplicate.)
   Since protocol 8 the state also carries per player a panel revision (`seqs`) and the carousel page
   (`pages`), and for each client its own player index (`you`, so the message is sent per peer). The client
   rebuilds per player and per part: `ShopSync.player_keys` keys the player's whole data (the ids of its

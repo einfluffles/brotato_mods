@@ -10,6 +10,7 @@ extends Reference
 const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
 )
+const EffectArgs := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/effect_args.gd")
 const MAX_UNCOMPRESSED_SIZE := 8 * 1024 * 1024
 
 
@@ -26,9 +27,11 @@ static func encode_json(shop_args := []) -> String:
 
 
 # The run state as the save file has it before JSON.print (plain data, about a quarter of the
-# cost of the text: sync/run_cache.gd compares its hash() first).
+# cost of the text: sync/run_cache.gd compares its hash() first). Every effect in it carries its
+# custom args, whether its text was shown or not (sync/effect_args.gd).
 static func serialize(shop_args := []) -> Dictionary:
 	var state: Dictionary = ProgressData.callv("get_run_state", shop_args)
+	EffectArgs.settle(state, true)
 	return ProgressDataLoaderV3.new().serialize_run_state(state)
 
 
@@ -68,6 +71,7 @@ static func deserialize(raw: Dictionary) -> Dictionary:
 		return {}
 	var started := OS.get_ticks_usec()
 	var state: Dictionary = ProgressDataLoaderV3.new().deserialize_run_state(raw)
+	EffectArgs.settle(state, false)  # its custom args came with it
 	ClientReport.mark(ClientReport.Mark.DESERIALIZE, OS.get_ticks_usec() - started)
 	return state
 
