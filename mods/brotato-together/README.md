@@ -109,13 +109,12 @@ Everyone subscribes to the Workshop item (and unsubscribes from other online/co-
 The mod has no menu, hotkey or overlay of its own: online play sits in the game's menus and is used
 like them (mouse, keyboard, gamepad).
 
-- **Character selection:** a dark panel at the top right, styled like the game's DLC bar at the
-  top left, holds the *Change colour* hint (co-op) and an **Online** toggle; up from the zone
-  button at the top of the run options box reaches the toggle (mouse, keyboard, pad, player 1's
-  cursor in co-op). Switching it on hosts a lobby (and switches co-op on); *Invite friends* (Steam
-  overlay) next to it can then be used, and a quiet status line shows the number of players in
-  the lobby. Switching it off leaves the lobby. The panel takes no room from the game's own
-  layout: the player panels and the character grid sit where they do without the mod.
+- **Character selection:** the run options box's Co-op row has three values: *Off* (solo),
+  *Local* (the game's co-op) and *Online* (co-op and a lobby you host). It is a dropdown like the
+  zone's above it, in the place of the game's Co-op toggle, so the screen keeps its layout.
+  Choosing *Off* or *Local* while online leaves the lobby. While you host, the player slot the
+  next player takes shows *Invite friends* (Steam overlay) and the number of players in the lobby,
+  under "Hold ... to join"; with keyboard or pad, player 1 gets there with left from the Co-op row.
 - **Main menu → Host lobby** (below *Start*) opens a lobby without leaving the main menu: you can
   still go through options, the codex and the other pages while it is up. A small frame next to the
   buttons lists who is in the lobby (with ping), and the button becomes *Invite friends*. As the
@@ -200,8 +199,8 @@ run-state round trip, a client borrowing the host's DLC (and giving it back exac
 panel running locally (intents applied or rejected on the host, nothing changed on the client), level-up/crate
 panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade, the gear page rebuilt by the host's run changes under the own and a mirrored cursor, a cursor whose control is freed), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), the mouse wheel scrolling only the mouse player's own panel (shop, level-up, character selection; host and client) and the right stick in character selection (own panel, mirrored positions on a client), "Player N" above the join hint, shop UI sounds, the lobby
 in the game's menus (the title screen's Host lobby button and player frame, kicking, a client in its own main menu
-while the host is in its own, the pause menu page, the Online toggle of character selection (and that it
-moves nothing in the layout), the client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam), the wave-failed prompt and the battle -> shop transition on clients, which screen drives a client's own
+while the host is in its own, the pause menu page, the Co-op row and the slot invite of character selection (and that they
+move nothing in the layout), the client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam), the wave-failed prompt and the battle -> shop transition on clients, which screen drives a client's own
 input from the level-up panels to the shop (a host pause across the change, late level-up stops, a lost device, a shop pause that ended with its shop), the Esc menu
 of an online wave (host and client), and wave cleanup: object counts across several waves on host and
 client, no references to freed nodes, duplicate / queued battle starts, plus what a late endless wave

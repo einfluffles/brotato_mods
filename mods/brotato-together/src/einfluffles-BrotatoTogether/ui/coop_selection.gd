@@ -7,12 +7,12 @@ extends Node
 # Solo play is untouched (nothing here runs outside a co-op run).
 
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
-const TopBar := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/top_bar.gd")
 const SLOT_LABEL := "BrotatoTogetherSlotLabel"
 const COLOR_HINT := "BrotatoTogetherColorHint"
 const COLOR_ACTION := "ui_info"
-const ICON_SIZE := 28  # key glyphs in the top bar's row (its controls are 32 px high)
-const ICON_GAP := 6
+const ICON_SIZE := 40
+const HINT_MARGIN := 32  # from the screen's right edge, like the Back button's from the left
+const HINT_TOP := 26  # the DLC bar's top in co-op (ItemSetBar.horizontal_position)
 
 var _scene: Node = null
 var _color_hint: Control = null
@@ -85,15 +85,28 @@ func _update_color_hint(scene: Node, count: int) -> void:
 		_color_hint.visible = RunData.is_coop_run and count > 0
 
 
-# "[F] / [Y]  Change colour" with the game's own key glyphs, first in the mod's panel at the top
-# right (ui/top_bar.gd), with the online controls: outside the game's containers (under the title
-# it pushed the grid down until it scrolled), in the panel's font and height.
+# "[F] / [Y]  Change colour" with the game's own key glyphs, in the free strip at the top right:
+# level with the Back button and the DLC bar (top left), above the title (y 75 in the game's
+# 1920x1080 layout). A child of the scene root, anchored to its top right corner, so it takes no
+# space in the game's containers (under the title it pushed the grid down until it scrolled).
 func _add_color_hint(scene: Node) -> Control:
 	if scene.get_node_or_null("MarginContainer/VBoxContainer/Title") == null:
 		return null
 	var row := color_hint_row()
 	row.name = COLOR_HINT
-	TopBar.get_or_add(scene).add_part(row, TopBar.HINT)
+	row.anchor_left = 1.0
+	row.anchor_right = 1.0
+	row.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	row.margin_left = -HINT_MARGIN
+	row.margin_right = -HINT_MARGIN
+	row.margin_top = HINT_TOP
+	row.margin_bottom = HINT_TOP + ICON_SIZE  # grows to the label's height (~46): ends by y 75
+	# Drawn right after the Back button: under the cursors (focus emulators) and popups.
+	var back: Node = scene.get_node_or_null("BackButton")
+	if back != null:
+		scene.add_child_below_node(back, row)
+	else:
+		scene.add_child(row)
 	return row
 
 
@@ -101,25 +114,20 @@ static func color_hint_row() -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGN_CENTER
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.rect_min_size.y = TopBar.CONTROL_HEIGHT
-	row.add_constant_override("separation", ICON_GAP)
+	row.add_constant_override("separation", 10)
 	add_icon(row, CoopService.get_input_type_key_texture(
 		COLOR_ACTION, CoopService.PlayerType.KEYBOARD_AND_MOUSE, 0
 	))
-	_add_label(row, "/")
+	var slash := Label.new()
+	slash.text = "/"
+	row.add_child(slash)
 	add_icon(row, CoopService.get_input_type_key_texture(
 		COLOR_ACTION, CoopService.PlayerType.GAMEPAD_XBOX, 0
 	))
-	_add_label(row, "Change colour")
-	return row
-
-
-static func _add_label(row: Control, text: String) -> void:
 	var label := Label.new()
-	label.text = text
-	label.add_font_override("font", TopBar.font())
-	label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	label.text = "Change colour"
 	row.add_child(label)
+	return row
 
 
 static func add_icon(row: Control, texture: Texture) -> void:

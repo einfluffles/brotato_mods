@@ -1,14 +1,15 @@
 extends Reference
-# The mod's panel at the top right of the host's co-op character selection (ui/top_bar.gd): the
-# colour hint (ui/coop_selection.gd) and the Online toggle, Invite friends and the lobby status
-# (ui/online_options.gd).
-#  - Layout: the player panels and the character grid get the same rects as without the online
-#    controls (a client's copy, vanilla co-op), the grid scrolls no further, the controls are on
-#    screen and cover nothing.
-#  - Look: one panel with the DLC bar's style, top and strip (with the Back button); the hint and
-#    the online controls in one font, one height and on one line; clear of the title.
-# Checked at the viewport sizes of the colour hint's check (coop_selection_tests.gd), in the worst
-# case: hosting, with a long status line. How the cursor reaches them: lobby_menu_tests.gd.
+# What the mod adds to the host's co-op character selection takes no space from the game's
+# layout (ui/coop_mode.gd, ui/slot_invite.gd):
+#  - the Co-op row (Off / Local / Online) takes the place and the rect of the game's Co-op toggle:
+#    the run options box, its other rows, the player panels and the grid get their vanilla rects,
+#    the grid scrolls no further;
+#  - Invite friends and the lobby status in the next free player slot: every slot keeps its rect,
+#    nothing of it is over "Player N", the join hint or the join progress, and it stays inside
+#    its slot and on screen, also with a long status line;
+#  - their texts are shown whole (the row's three values, the button; the usual status lines).
+# Checked at the viewport sizes of the colour hint's check (coop_selection_tests.gd). How the
+# cursor reaches them and what the values do: lobby_menu_tests.gd.
 # Run from coop_selection_tests.gd on the host's co-op character selection (no Steam).
 
 # coop_selection_tests.gd preloads this file: loaded when used (no cyclic preload).
@@ -16,43 +17,46 @@ const HELPERS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/coop_select
 const CoopSelection := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_selection.gd"
 )
-const OnlineOptions := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/online_options.gd"
-)
-const TopBar := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/top_bar.gd")
-# Status lines the row must hold without growing: the longest count, an error, and a long text
+const CoopMode := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_mode.gd")
+const SlotInvite := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/slot_invite.gd")
+# Status lines the slot must hold without growing: the longest count, an error, and a long text
 # like a translation or Steam's error message would be.
 const STATUSES := [
 	"Online: 4 players",
 	"! createLobby failed",
 	"Online: a much longer status line than any of the mod's own, as a translation could be",
 ]
-const MIN_TITLE_GAP := 5.0  # between the panel and the title label (its letters start ~9 px lower)
-const ROUNDING := 1.0  # px: the 1920x1200 layout is scaled by a fraction
 
 var t: Node = null  # the test mod: _check()
-var helpers = null  # coop_selection_tests.gd: SIZES, _layout_rects(), _neighbours()
+var helpers = null  # coop_selection_tests.gd: SIZES, _layout_rects(), _stretch_tree()
 
 
-func run(test_mod: Node, scene: Node):
+func run(test_mod: Node, scene: Node, where := "host"):
 	t = test_mod
 	helpers = load(HELPERS_PATH)
-	var options: Control = scene.find_node(OnlineOptions.NODE_NAME, true, false)
-	var bar: Control = scene.get_node_or_null(TopBar.NODE_NAME)
+	var coop: Control = scene.get_node("%CoopButton")
+	var mode: OptionButton = coop.get_parent().get_node_or_null(CoopMode.NODE_NAME)
 	t._check(
-		options != null and options.visible and bar != null and bar.is_a_parent_of(options),
-		"online options (host): shown, in the top bar"
+		mode != null and mode.visible and not coop.visible
+		and mode.get_index() == coop.get_index() + 1,
+		"co-op row (%s): in the place of the game's Co-op toggle, which is hidden" % where
 	)
-	if options == null or bar == null:
+	if mode == null:
 		yield(_frames(1), "completed")
 		return
+	var panels: Array = scene._get_coop_join_panels()
+	var slot: int = CoopService.connected_players.size()
+	var invite: Control = panels[slot].get_node_or_null(SlotInvite.NODE_NAME)
 	t._check(
-		not scene.get_node("MarginContainer").is_a_parent_of(bar),
-		"online options (host): outside the game's layout containers"
+		invite != null and panels[slot].visible and not invite.visible,
+		"slot invite (%s): in slot %d, hidden without a lobby" % [where, slot + 1]
 	)
-	options.set_process(false)  # it sets what it shows every frame
-	options._invite.disabled = false  # hosting
-	var dlc: Node = scene.get_node_or_null("%ItemSetBar")  # as co-op lays it out, see the hint's
+	if invite == null:
+		yield(_frames(1), "completed")
+		return
+	mode.set_process(false)  # it sets what is shown every frame
+	invite.button.visible = true  # hosting
+	var dlc: Node = scene.get_node_or_null("%ItemSetBar")  # as co-op lays it out
 	var vertical: bool = dlc != null and not dlc._horizontal
 	if vertical:
 		dlc.set_horizontal(true)
@@ -61,18 +65,17 @@ func run(test_mod: Node, scene: Node):
 		ProjectSettings.get_setting("display/window/size/height")
 	)
 	var failures := []
-	var look := []
-	var skipped := []
 	for size in helpers.SIZES:
 		for status in STATUSES:
-			options._status.text = status
+			invite.set_status(status)
 			helpers._stretch_tree(t.get_tree(), size)
-			options.visible = false
+			_vanilla(mode, coop, invite, true)
 			yield(_frames(3), "completed")
-			var vanilla: Dictionary = helpers._layout_rects(scene)
-			options.visible = true
+			var vanilla := _rects(scene)
+			var toggle: Rect2 = coop.get_global_rect()
+			_vanilla(mode, coop, invite, false)
 			yield(_frames(3), "completed")
-			var shown: Dictionary = helpers._layout_rects(scene)
+			var shown := _rects(scene)
 			var at := "%dx%d, %s" % [size.x, size.y, status]
 			if shown.rects != vanilla.rects:
 				failures.append("%s: layout moved (%s vs %s)" % [at, shown.rects, vanilla.rects])
@@ -80,41 +83,35 @@ func run(test_mod: Node, scene: Node):
 				failures.append(
 					"%s: grid scrolls %d instead of %d" % [at, shown.scroll, vanilla.scroll]
 				)
-			if _wide_enough(size):
-				failures += _overlaps(scene, bar, options, at)
-				look += _look(scene, bar, options, at)
-			elif not size in skipped:
-				skipped.append(size)
+			if mode.get_global_rect() != toggle:
+				failures.append("%s: co-op row %s, toggle %s" % [at, mode.get_global_rect(), toggle])
+			failures += _slot_overlaps(scene, panels[slot], invite, at, _wide_enough(size))
 	helpers._stretch_tree(t.get_tree(), base)
-	options._status.text = STATUSES[0]
+	invite.set_status(STATUSES[0])
 	yield(_frames(3), "completed")
 	var cut := []
-	for control in [options._toggle, options._invite, options._status]:
-		var room := text_room(control)
-		var text: Vector2 = control.get_font("font").get_string_size(control.text)
-		if text.x > room.x or text.y > room.y:
-			cut.append("%s %s in %s" % [control.text, text, room])
-	t._check(cut.empty(), "online options (host): texts shown whole %s" % [cut])
-	_print_rects(scene, bar, options, dlc, base)
+	for i in mode.get_item_count():
+		cut += _cut(mode, mode.get_item_text(i), _option_room(mode))
+	cut += _cut(invite.button, invite.button.text, text_room(invite.button))
+	cut += _cut(invite.status, invite.status.text, text_room(invite.status))
+	t._check(cut.empty(), "co-op row, slot invite (%s): texts shown whole %s" % [where, cut])
+	print(
+		"  info: at %s: co-op row %s (zone %s), slot %d %s: invite %s, button %s, status %s"
+		% [base, mode.get_global_rect(), scene.get_node("%ZoneSelectionButton").get_global_rect(),
+		slot + 1, panels[slot].get_global_rect(), invite.get_global_rect(),
+		invite.button.get_global_rect(), invite.status.get_global_rect()]
+	)
 	if vertical:
 		dlc.set_horizontal(false)
-	options._update()
-	options.set_process(true)
+	invite.visible = false
+	mode.set_process(true)
 	yield(_frames(3), "completed")
-	if not skipped.empty():
-		print(
-			"  info: online options: at %s the game's layout is wider than the screen;"
-			% [skipped] + " only the layout compared there"
-		)
 	t._check(
 		failures.empty(),
-		"online options (host): same layout, no extra grid scrolling, on screen, covers nothing,"
-		+ " at %s %s" % [helpers.SIZES, failures]
-	)
-	t._check(
-		look.empty(),
-		"top bar: the DLC bar's style, top and strip; colour hint and online controls in one"
-		+ " font, height and line; %s px or more above the title %s" % [MIN_TITLE_GAP, look]
+		"co-op row, slot invite (%s): vanilla rects for the box, its rows, the slots and the grid,"
+		% where
+		+ " no extra grid scrolling, the invite inside its slot over nothing, at %s %s"
+		% [helpers.SIZES, failures]
 	)
 
 
@@ -123,122 +120,84 @@ func _frames(count: int):
 		yield(t.get_tree(), "idle_frame")
 
 
-# The space a button's / label's text has: its size less the style's margins (and a toggle's
-# switch icon at the button's height).
-static func text_room(control: Control) -> Vector2:
-	var style: StyleBox = control.get_stylebox("normal")
-	var room: Vector2 = control.rect_size - style.get_minimum_size()
-	if control is Button and control.icon != null:
-		var icon: Vector2 = control.icon.get_size()
-		room.x -= icon.x * room.y / icon.y + control.get_constant("hseparation")
-	return room
+# vanilla: the game's Co-op toggle instead of the row, no invite.
+static func _vanilla(mode: Control, coop: Control, invite: Control, vanilla: bool) -> void:
+	mode.visible = not vanilla
+	coop.visible = vanilla
+	invite.visible = not vanilla
+
+
+# The layout's rects (coop_selection_tests.gd) plus the run options box, its rows but the Co-op
+# one, and the player slots.
+static func _rects(scene: Node) -> Dictionary:
+	var layout: Dictionary = load(
+		"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
+	)._layout_rects(scene)
+	var coop: Control = scene.get_node("%CoopButton")
+	var box: Control = scene.get_node("%RunOptionsPanel")
+	layout.rects.append([box.name, box.get_global_rect()])
+	for row in coop.get_parent().get_children():
+		if row is Control and row.visible and row != coop and row.name != CoopMode.NODE_NAME:
+			layout.rects.append([row.name, row.get_global_rect()])
+	var slots := "MarginContainer/VBoxContainer/DescriptionContainer/HBoxContainer"
+	for panel in scene.get_node(slots).get_children():
+		if panel is Control and panel.visible:
+			layout.rects.append([panel.name, panel.get_global_rect()])
+	return layout
+
+
+# The invite inside its slot, on screen (where the game's layout fits it), over none of the
+# slot's own parts ("Player N", the join hint, the join progress).
+static func _slot_overlaps(
+	scene: Node, panel: Control, invite: Control, at: String, on_screen: bool
+) -> Array:
+	var failures := []
+	var parts := [invite.button, invite.status]
+	var others := []
+	for name in [CoopSelection.SLOT_LABEL]:
+		others.append(panel.get_node_or_null(name))
+	others.append(panel.get("_coop_join_instructions"))
+	others.append(panel.get("_coop_join_progress"))
+	for part in parts:
+		var rect: Rect2 = part.get_global_rect()
+		if not panel.get_global_rect().encloses(rect):
+			failures.append("%s: %s %s outside its slot %s" % [
+				at, part.name, rect, panel.get_global_rect()
+			])
+		if on_screen and not scene.get_viewport().get_visible_rect().encloses(rect):
+			failures.append("%s: %s %s off screen" % [at, part.name, rect])
+		for other in others:
+			if other is Control and other.is_visible_in_tree():
+				if rect.intersects(other.get_global_rect()):
+					failures.append("%s: %s %s over %s %s" % [
+						at, part.name, rect, other.name, other.get_global_rect()
+					])
+	if invite.button.get_global_rect().intersects(invite.status.get_global_rect()):
+		failures.append("%s: the button over the status" % at)
+	return failures
 
 
 # The game lays out a 1920 px wide screen and stretches it to any window (2d / keep). Narrower
-# layouts (1280x720 here) have no room left of the colour hint: its own row of panels (1859 px)
-# runs off screen there too.
+# layouts (1280x720 here): its own row of panels (1859 px) runs off screen there.
 static func _wide_enough(size: Vector2) -> bool:
 	return size.x >= ProjectSettings.get_setting("display/window/size/width")
 
 
-# The panel and its visible parts: on screen, the parts apart from each other, none of them over
-# the screen's other parts (title, Back, DLC bar, run options box, player panels).
-func _overlaps(scene: Node, bar: Control, options: Control, at: String) -> Array:
-	var failures := []
-	var screen: Rect2 = scene.get_viewport().get_visible_rect()
-	var others: Array = helpers._neighbours(scene)
-	var hint: Control = scene.find_node(CoopSelection.COLOR_HINT, true, false)
-	var controls := []
-	for control in [options._toggle, options._invite, options._status, hint]:
-		if control != null and control.is_visible_in_tree():
-			controls.append(control)
-	if controls.size() != 4:
-		failures.append("%s: %d of 4 parts shown" % [at, controls.size()])
-	for i in controls.size():
-		var rect: Rect2 = controls[i].get_global_rect()
-		var name: String = controls[i].name
-		if not screen.encloses(rect):
-			failures.append("%s: %s %s off screen" % [at, name, rect])
-		for other in others + controls:
-			if other == controls[i] or not other.is_visible_in_tree():
-				continue
-			if other in controls and controls.find(other) < i:  # that pair was checked already
-				continue
-			if rect.intersects(other.get_global_rect()):
-				failures.append(
-					"%s: %s %s over %s %s" % [at, name, rect, other.name, other.get_global_rect()]
-				)
-	var panel: Rect2 = bar.get_global_rect()
-	if not screen.encloses(panel):
-		failures.append("%s: top bar %s off screen" % [at, panel])
-	for other in others:
-		if other.is_visible_in_tree() and panel.intersects(other.get_global_rect()):
-			failures.append(
-				"%s: top bar %s over %s %s" % [at, panel, other.name, other.get_global_rect()]
-			)
-	return failures
+static func _cut(control: Control, text: String, room: Vector2) -> Array:
+	var size: Vector2 = control.get_font("font").get_string_size(text)
+	if size.x > room.x or size.y > room.y:
+		return ["%s %s in %s" % [text, size, room]]
+	return []
 
 
-# One element: the DLC bar's panel style and top, within the strip of the Back button and the DLC
-# bar, clear of the title; the colour hint and the online controls in one font, one height, one
-# centre line, a separator between them.
-func _look(scene: Node, bar: Control, options: Control, at: String) -> Array:
-	var failures := []
-	var panel: Rect2 = bar.get_global_rect()
-	var back: Rect2 = scene.get_node("BackButton").get_global_rect()
-	var dlc: Control = scene.get_node_or_null("%ItemSetBar/Panel")
-	if dlc == null or not dlc.is_visible_in_tree():
-		failures.append("%s: no DLC bar to compare with" % at)
-		return failures
-	var strip: Rect2 = dlc.get_global_rect().merge(back)
-	if bar.get_stylebox("panel") != dlc.get_stylebox("panel"):
-		failures.append("%s: not the DLC bar's panel style" % at)
-	if abs(panel.position.y - dlc.get_global_rect().position.y) > ROUNDING:
-		failures.append("%s: top %s, the DLC bar's %s" % [at, panel, dlc.get_global_rect()])
-	if panel.position.y < strip.position.y or panel.end.y > strip.end.y:
-		failures.append("%s: %s outside the strip of Back / DLC bar %s" % [at, panel, strip])
-	var title: Rect2 = scene.get_node("MarginContainer/VBoxContainer/Title").get_global_rect()
-	if title.position.y - panel.end.y < MIN_TITLE_GAP:
-		failures.append("%s: %s ends %s px above the title %s" % [
-			at, panel, title.position.y - panel.end.y, title
-		])
-	var hint: Control = scene.find_node(CoopSelection.COLOR_HINT, true, false)
-	var parts := [options._toggle, options._invite, options._status]
-	for child in hint.get_children():
-		parts.append(child)
-	var line: float = options._toggle.get_global_rect().get_center().y
-	for part in parts:
-		var rect: Rect2 = part.get_global_rect()
-		if abs(rect.get_center().y - line) > ROUNDING:
-			failures.append("%s: %s centred at %s, not %s" % [at, part.name, rect, line])
-		if (part is Label or part is Button) and part.get_font("font") != TopBar.font():
-			failures.append("%s: %s in another font" % [at, part.name])
-	for part in [options._toggle, options._invite, hint]:
-		if abs(part.rect_size.y - TopBar.CONTROL_HEIGHT) > ROUNDING:
-			failures.append("%s: %s %s high, not %d" % [
-				at, part.name, part.rect_size.y, TopBar.CONTROL_HEIGHT
-			])
-	var separator: Control = bar._separator
-	var between: bool = (
-		separator.is_visible_in_tree()
-		and separator.get_global_rect().position.x >= hint.get_global_rect().end.x
-		and separator.get_global_rect().end.x <= options.get_global_rect().position.x
-	)
-	if not between:
-		failures.append("%s: no separator between the colour hint and the online controls" % at)
-	return failures
+# The space a button's / label's text has: its size less the style's margins.
+static func text_room(control: Control) -> Vector2:
+	var style: StyleBox = control.get_stylebox("normal")
+	return control.rect_size - style.get_minimum_size()
 
 
-func _print_rects(scene: Node, bar: Control, options: Control, dlc: Node, base: Vector2) -> void:
-	var hint: Control = scene.find_node(CoopSelection.COLOR_HINT, true, false)
-	var dlc_panel: Control = dlc.get_node("Panel") if dlc != null else null
-	var title: Control = scene.get_node("MarginContainer/VBoxContainer/Title")
-	print(
-		"  info: top bar at %s: panel %s (%s), colour hint %s, Online %s, Invite friends %s,"
-		% [base, bar.get_global_rect(), bar.get_stylebox("panel").resource_path,
-		hint.get_global_rect(), options._toggle.get_global_rect(),
-		options._invite.get_global_rect()]
-		+ " status %s; Back %s, DLC bar %s, title %s"
-		% [options._status.get_global_rect(), scene.get_node("BackButton").get_global_rect(),
-		dlc_panel.get_global_rect() if dlc_panel != null else null, title.get_global_rect()]
-	)
+# An OptionButton's: less its arrow and the arrow's margin as well.
+static func _option_room(button: OptionButton) -> Vector2:
+	var room := text_room(button)
+	room.x -= button.get_icon("arrow").get_width() + button.get_constant("arrow_margin")
+	return room

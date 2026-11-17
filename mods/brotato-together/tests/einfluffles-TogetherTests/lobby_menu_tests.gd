@@ -4,8 +4,8 @@ extends Reference
 #  - title screen: the button among the game's that hosts a lobby behind the main menu, the
 #    frame with the players, Kick, Start leading to co-op; a client in its own main menu while
 #    the host is in its own; a failed lobby in the main menu's error label;
-#  - character selection: the Online toggle and Invite in a row at the top of the screen (its
-#    layout: online_layout_tests.gd), reached up from the run options box by keyboard, pad and
+#  - character selection: Co-op Off / Local / Online and Invite friends in a free player slot
+#    (coop_mode_tests.gd; their layout: online_layout_tests.gd), by keyboard, pad, mouse and
 #    player 1's FocusEmulator, inert on a client;
 #  - a client on a screen without a pause menu: pause opens the page as a popup, the game and
 #    the host get nothing meanwhile;
@@ -15,10 +15,7 @@ extends Reference
 const Lifecycle := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
 )
-const TopBar := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/top_bar.gd")
-const OnlineOptions := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/online_options.gd"
-)
+const CoopModeTests := preload("res://mods-unpacked/einfluffles-TogetherTests/coop_mode_tests.gd")
 const LobbyPopup := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_popup.gd")
 const LobbyFrame := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_frame.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
@@ -41,6 +38,7 @@ var lobby: Node = null
 var transport: Node = null
 var session: Node = null
 var _steam = null  # FakeSteam
+var _mode_tests = null  # coop_mode_tests.gd
 
 
 class Probe:
@@ -586,136 +584,8 @@ func _test_failed_lobby():
 
 
 func _test_character_selection():
-	transport.steam = null
-	RunData.play_mode = RunData.PlayMode.SOLO
-	yield(_change_scene(MenuData.character_selection_scene), "completed")
-	var scene := _tree().current_scene
-	var coop: CheckButton = scene.get_node("%CoopButton")
-	var zone: Control = scene.get_node("%ZoneSelectionButton")
-	var options: Control = scene.find_node(OnlineOptions.NODE_NAME, true, false)
-	var box: Control = scene.get_node("%RunOptionsPanel")
-	t._check(
-		options != null and options.rect_global_position.y < box.rect_global_position.y
-		and not scene.get_node("MarginContainer").is_a_parent_of(options),
-		"selection: Online options at the top, outside the game's layout (layout: coop_selection)"
-	)
-	if options == null:
-		return
-	var toggle: Button = options._toggle
-	var invite: Button = options._invite
-	var status: Label = options._status
-	t._check(
-		toggle.disabled and status.visible and "Steam" in status.text and invite.disabled,
-		"selection: without Steam the toggle is off, with the reason (%s)" % status.text
-	)
-	t._check(
-		toggle.rect_size.y == TopBar.CONTROL_HEIGHT and toggle.icon == coop.get_icon("off"),
-		"selection: the game's switch icon, scaled to the top bar (%s)" % [toggle.rect_size]
-	)
-	t._check(
-		zone.focus_neighbour_top.is_empty(),
-		"selection: without Steam the zone button keeps the game's way up"
-	)
-	_fake_steam()
-	yield(_frames(1), "completed")
-	t._check(
-		not toggle.disabled and status.text == OnlineOptions.OFF_TEXT,
-		"selection: with Steam it can be used (%s)" % status.text
-	)
-	t._check(
-		toggle.get_font("font") == TopBar.font() and invite.get_font("font") == TopBar.font()
-		and status.get_font("font") == TopBar.font(),
-		"selection: the top bar's font for all three"
-	)
-	var panel: Control = scene.get_node("%RunOptionsPanel")
-	print("  info: run options box %s, online row %s" % [panel.rect_size, options.get_global_rect()])
-
-	# Solo: Godot's focus, keyboard and pad: up from the zone button (top of the run options).
-	zone.grab_focus()
-	yield(_tap_key(KEY_UP), "completed")
-	t._check(scene.get_focus_owner() == toggle, "selection: up from the zone button is Online")
-	yield(_tap_key(KEY_DOWN), "completed")
-	t._check(scene.get_focus_owner() == zone, "selection: and down from it the zone button again")
-	yield(_tap_pad(JOY_DPAD_UP), "completed")
-	t._check(scene.get_focus_owner() == toggle, "selection: pad up from the zone button is Online")
-	yield(_tap_pad(JOY_DPAD_DOWN), "completed")
-	t._check(scene.get_focus_owner() == zone, "selection: pad down: the zone button")
-	toggle.grab_focus()
-	t._check(not coop.pressed and not RunData.is_coop_run, "(control) solo so far")
-	toggle.pressed = true
-	yield(_frames(1), "completed")
-	t._check(
-		_steam.created == 1 and toggle.pressed and toggle.icon == coop.get_icon("on"),
-		"selection: Online on hosts a lobby, the switch shows on"
-	)
-	t._check(coop.pressed and RunData.is_coop_run, "selection: and switches co-op on")
-	t._check("creating" in status.text and status.visible, "selection: status while it is made")
-	transport._on_lobby_created(transport.RESULT_OK, LOBBY)
-	yield(_frames(2), "completed")
-	t._check(
-		not invite.disabled and status.text == "Online: 1 player" and toggle.pressed,
-		"selection: hosting -> Invite friends and the player count (%s)" % status.text
-	)
-	print(
-		"  info: run options box %s, Online %s, Invite friends %s, status %s while hosting"
-		% [panel.rect_size, toggle.get_global_rect(), invite.get_global_rect(),
-		status.get_global_rect()]
-	)
-
-	# Co-op: player 1's FocusEmulator, as for Endless / Co-op.
-	CoopService._add_player(KEYBOARD, CoopService.PlayerType.KEYBOARD_AND_MOUSE)
-	yield(_frames(2), "completed")
-	var emulator = Utils.get_focus_emulator(0, scene)
-	emulator.focused_control = zone
-	yield(_tap_action("ui_up", KEYBOARD), "completed")
-	t._check(emulator.focused_control == toggle, "selection: player 1's cursor reaches Online")
-	yield(_tap_action("ui_right", KEYBOARD), "completed")
-	t._check(emulator.focused_control == invite, "selection: and Invite friends next to it")
-	yield(_tap_action("ui_down", KEYBOARD), "completed")
-	t._check(emulator.focused_control == zone, "selection: down from it: the zone button")
-	for player in range(1, 4):
-		var other = Utils.get_focus_emulator(player, scene)
-		t._check(
-			other._find_control_base_data(toggle) == null,
-			"selection: player %d's cursor never enters the row" % (player + 1)
-		)
-	emulator.focused_control = invite
-	yield(_tap_action("ui_accept", KEYBOARD), "completed")
-	t._check(_steam.invited == [LOBBY], "selection: Invite friends opens Steam's invite dialog")
-	session._add_peer(HOST)
-	yield(_frames(1), "completed")
-	t._check(status.text == "Online: 2 players", "selection: status counts the lobby's players")
-	session.peers.clear()
-	yield(_tap_action("ui_left", KEYBOARD), "completed")
-	yield(_tap_action("ui_accept", KEYBOARD), "completed")
-	t._check(
-		not transport.is_active() and not toggle.pressed and invite.disabled,
-		"selection: Online off leaves the lobby"
-	)
-	t._check(coop.pressed, "selection: co-op stays as it is")
-
-	# A remote player who holds player 1's slot does not switch the host's lobby.
-	CoopService.connected_players[0][0] = VirtualDevices.FIRST
-	emulator.player_index = -1
-	emulator.player_index = 0
-	emulator.focused_control = toggle
-	yield(_tap_action("ui_accept", VirtualDevices.FIRST), "completed")
-	t._check(
-		_steam.created == 1 and not toggle.pressed, "selection: a remote player 1 changes nothing"
-	)
-
-	# A client's copy of the screen: hidden and inert.
-	_enter_lobby(HOST, [HOST])
-	yield(_frames(1), "completed")
-	t._check(not options.visible, "selection: hidden on a client")
-	toggle.emit_signal("toggled", true)
-	invite.emit_signal("pressed")
-	t._check(
-		_steam.created == 1 and transport.host_id == HOST and _steam.invited == [LOBBY],
-		"selection: inert on a client"
-	)
-	transport.leave_lobby()
-	CoopService.clear_coop_players()
+	_mode_tests = CoopModeTests.new()  # kept alive across its yields
+	yield(_mode_tests.run(self), "completed")
 
 
 # A client on a screen without a pause menu (here the mod's waiting screen).

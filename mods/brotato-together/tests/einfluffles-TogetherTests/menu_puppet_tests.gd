@@ -20,6 +20,9 @@ const PuppetMenu := preload(
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
+const OnlineLayoutTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/online_layout_tests.gd"
+)
 const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
@@ -345,6 +348,8 @@ func _client_characters():
 	t._check(join[3].instructions_visible, "characters: the last slot offers to join")
 	var hint := CoopSelectionTests.new()  # kept by this function while it waits
 	yield(hint.check_hint_layout(t, _coop_selection, scene, "client"), "completed")
+	var layout := OnlineLayoutTests.new()  # kept by this function while it waits
+	yield(layout.run(t, scene, "client"), "completed")
 
 	# Nothing is decided here.
 	FocusEmulatorSignal.emit(first, "pressed", 0)
