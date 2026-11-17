@@ -16,12 +16,13 @@ extends OptionButton
 # A remote player holding slot 1 changes nothing. On a client it shows the host's value (Online)
 # and takes no input.
 
+enum Mode { OFF, LOCAL, ONLINE }
+
 const SlotInvite := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/slot_invite.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const NODE_NAME := "BrotatoTogetherCoopMode"
-enum Mode { OFF, LOCAL, ONLINE }
 const VALUES := ["Off", "Local", "Online"]
 const NO_STEAM := "Online co-op needs Steam"
 
