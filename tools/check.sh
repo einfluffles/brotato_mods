@@ -9,7 +9,9 @@
 #
 # The tests mostly wait in real time, so a test mod can split itself into suites: it runs the ones
 # named in MOD_TEST_SUITES (comma-separated, empty: all), and its shards.txt lists one group of
-# suites per line. Each line gets its own game process, all of them at once.
+# suites per line. Each line gets its own game process, all of them at once. A line can end in
+# "+<mod folder>" (repeatable): that process also loads the mod in mods/<mod folder>/src, for
+# tests of one mod next to another ("together +brotato-together").
 #
 # Usage: tools/check.sh [-q] [-s suite[,suite...]] [mods/<folder> ...]
 #   -s  run only these suites, in one process
@@ -42,9 +44,11 @@ RUNTIME="${CONTAINER:-$(command -v podman > /dev/null 2>&1 && echo podman || ech
 if [ "$(basename "$RUNTIME")" = podman ]; then
   run_as=(--userns=keep-id)
   label=",z"  # shared label: several containers mount the same folders at once
+  empty_mods="/proj/mods-unpacked:notmpcopyup"  # podman would copy the folder's content in
 else
   run_as=(--user "$(id -u):$(id -g)")
   label=""
+  empty_mods="/proj/mods-unpacked"
 fi
 
 # The game reads ~17000 files while booting. Over a network-style mount (a Windows drive under WSL
@@ -74,12 +78,15 @@ if [ "$use_cache" = 1 ]; then
   fi
 fi
 
-# run_game <log> <suites> <mount args...>: one game process, output into <log>.
+# run_game <log> <suites> <mount args...>: one game process, output into <log>. mods-unpacked/ is
+# the process's own (a tmpfs): only the mods mounted for it exist there. The Mod Loader stops at a
+# mod folder without a manifest, which another mod's check would otherwise leave behind.
+mkdir -p "$GAME/mods-unpacked"
 run_game() {
   local log="$1" suites="$2"
   shift 2
   "$RUNTIME" run --rm "${run_as[@]}" -e HOME=/tmp -e MOD_TEST_SUITES="$suites" \
-    -v "$GAME:/proj${label:+:${label#,}}" "$@" \
+    -v "$GAME:/proj${label:+:${label#,}}" --tmpfs "$empty_mods" "$@" \
     brotato-modtools timeout 240 godot3 --path /proj --no-window > "$log" 2>&1
 }
 
@@ -118,26 +125,58 @@ for folder in "${folders[@]}"; do
   echo "== ${folder#$ROOT/}"
   mounts=()
   shards=()
+  extras=()  # per shard: the other mod folders its process loads, "+"-separated
+  only_extra=""
   for dir in "$folder"/src/*/ "$folder"/tests/*/; do
     id="$(basename "$dir")"
-    mkdir -p "$GAME/mods-unpacked/$id"
     mounts+=(-v "${dir%/}:/proj/mods-unpacked/$id:ro$label")
-    if [ -z "$only_suites" ] && [ -f "$dir/shards.txt" ]; then
-      while IFS= read -r line; do
-        line="$(echo "$line" | tr -d ' \t\r')"
-        case "$line" in "" | "#"*) ;; *) shards+=("$line") ;; esac
-      done < "$dir/shards.txt"
-    fi
+    [ -f "$dir/shards.txt" ] || continue
+    while IFS= read -r line; do
+      line="$(echo "$line" | tr -d ' \t\r')"
+      case "$line" in "" | "#"*) continue ;; esac
+      suites="${line%%+*}"
+      extra=""
+      [ "$suites" = "$line" ] || extra="${line#*+}"
+      if [ -z "$only_suites" ]; then
+        shards+=("$suites")
+        extras+=("$extra")
+      elif [ -n "$extra" ]; then
+        # -s: the named suites get the mods their shards ask for, each mod once (two suites
+        # from one line, or two lines naming the same mod, must not mount it twice).
+        for suite in ${only_suites//,/ }; do
+          case ",$suites," in *",$suite,"*) ;; *) continue ;; esac
+          for other in ${extra//+/ }; do
+            case "+$only_extra+" in *"+$other+"*) ;; *) only_extra="$only_extra+$other" ;; esac
+          done
+        done
+      fi
+    done < "$dir/shards.txt"
   done
-  [ ${#shards[@]} -gt 0 ] || shards=("$only_suites")  # one process: the named suites, or everything
+  if [ ${#shards[@]} -eq 0 ]; then  # one process: the named suites, or everything
+    shards=("$only_suites")
+    extras=("$only_extra")
+  fi
+  # Every extra mod is checked before the first process starts: none is left running behind.
+  for extra in "${extras[@]}"; do
+    for other in ${extra//+/ }; do
+      [ -d "$ROOT/mods/$other/src" ] || { echo "shards.txt: no mod in mods/$other" >&2; exit 2; }
+    done
+  done
 
   started=$(date +%s)
   logs=()
   pids=()
-  for suites in "${shards[@]}"; do
+  for i in "${!shards[@]}"; do
     log="$(mktemp "${TMPDIR:-/tmp}/mod-check.XXXXXX")"
     logs+=("$log")
-    run_game "$log" "$suites" "${mounts[@]}" &
+    shard_mounts=("${mounts[@]}")
+    for other in ${extras[$i]//+/ }; do
+      for dir in "$ROOT/mods/$other"/src/*/; do
+        id="$(basename "$dir")"
+        shard_mounts+=(-v "${dir%/}:/proj/mods-unpacked/$id:ro$label")
+      done
+    done
+    run_game "$log" "${shards[$i]}" "${shard_mounts[@]}" &
     pids+=($!)
   done
   wait "${pids[@]}"

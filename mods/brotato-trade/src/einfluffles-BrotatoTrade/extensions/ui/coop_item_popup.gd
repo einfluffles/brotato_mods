@@ -1,0 +1,185 @@
+extends "res://ui/menus/shop/coop_item_popup.gd"
+# The co-op popup of an inventory element gets a Trade button, between the game's own buttons
+# and Cancel. Pressing it lists the players who can take the item (trade/rules.gd), one button
+# each, in place of the other buttons; a player button asks for the trade (trade_requested),
+# Cancel leads back. The button only shows while somebody can take the item.
+# The game's popup has buttons for weapons only: an item gets Trade and Cancel here when it
+# can be given, and stays a plain card otherwise.
+# Only where trade_shop is set (extensions/ui/coop_shop.gd): the level-up screen's popups are
+# the same scene and stay as they are.
+
+signal trade_requested(item_data, to_player)
+
+const TRADE_TEXT := "Trade"
+const TRADE_TO_META := "trade_to"
+
+var trade_shop: Node = null  # answers trade_receivers / trade_combines
+
+var _trade_button: Button = null
+var _trade_players := []  # a button per possible receiver, shown while choosing
+var _trade_choosing := false
+
+
+func _ready() -> void:
+	_trade_button = _trade_add_button("TradeButton")
+	_trade_button.text = TRADE_TEXT
+	_trade_button.connect("pressed", self, "_on_trade_button_pressed")
+	for i in CoopService.UI_MAX_PLAYER_COUNT - 1:
+		var button := _trade_add_button("TradePlayer%d" % (i + 1))
+		button.expand_icon = true
+		button.connect("pressed", self, "_on_trade_player_pressed", [i])
+		_trade_players.append(button)
+
+
+# Cancel while the players are listed leads back to the buttons. The base _input, which Godot
+# runs right after this one, closes a focused popup on that press: not this time.
+func _input(event: InputEvent) -> void:
+	if _trade_choosing and _focused and Utils.is_player_cancel_pressed(event, player_index):
+		_focused = false
+		call_deferred("_trade_back", true)
+		get_viewport().set_input_as_handled()
+
+
+func should_show_buttons(item_data: ItemParentData, focused: bool) -> bool:
+	if .should_show_buttons(item_data, focused):
+		return true
+	if not buttons_enabled or not focused or item_data is WeaponData:
+		return false
+	return not _trade_receivers(item_data).empty()
+
+
+func cancel() -> void:
+	_trade_collapse()
+	.cancel()
+
+
+func _update_button_visibilities() -> void:
+	_trade_collapse()
+	var shown: bool = _item_data != null and should_show_buttons(_item_data, _focused)
+	if shown and not _item_data is WeaponData:
+		# The base goes on to ask RunData about combining and recycling a weapon.
+		_cancel_pending_upgrade()
+		for button in [_combine_button, _discard_button, _upgrade_button]:
+			if button != null:
+				button.hide()
+				button.focus_mode = FOCUS_NONE
+		_cancel_button.show()
+		_cancel_button.focus_mode = FOCUS_ALL if _focused else FOCUS_NONE
+	else:
+		._update_button_visibilities()
+	if _trade_button == null:
+		return
+	_trade_button.visible = shown and not _trade_receivers(_item_data).empty()
+	_trade_button.focus_mode = FOCUS_ALL if _trade_button.visible and _focused else FOCUS_NONE
+	_update_button_focus_neighbours()
+
+
+func _update_button_focus_neighbours() -> void:
+	var buttons := []
+	var all := [_combine_button, _upgrade_button, _discard_button, _trade_button, _cancel_button]
+	for button in all + _trade_players:
+		if button != null and button.visible:
+			buttons.push_back(button)
+	buttons.sort_custom(self, "_is_above_in_container")
+	for i in buttons.size():
+		var button: Control = buttons[i]
+		var above: Control = buttons[i - 1] if i > 0 else button
+		var below: Control = buttons[i + 1] if i < buttons.size() - 1 else button
+		button.focus_neighbour_top = button.get_path_to(above)
+		button.focus_neighbour_bottom = button.get_path_to(below)
+
+
+func _on_CancelButton_pressed() -> void:
+	if _trade_choosing:
+		_trade_back(false)
+		return
+	._on_CancelButton_pressed()
+
+
+func _on_trade_button_pressed() -> void:
+	var players := _trade_receivers(_item_data)
+	if players.empty():
+		_update_button_visibilities()
+		return
+	_trade_choosing = true
+	for button in [_combine_button, _upgrade_button, _discard_button, _trade_button]:
+		if button != null:
+			button.hide()
+			button.focus_mode = FOCUS_NONE
+	for i in _trade_players.size():
+		var button: Button = _trade_players[i]
+		button.visible = i < players.size()
+		button.focus_mode = FOCUS_ALL if button.visible and _focused else FOCUS_NONE
+		if button.visible:
+			_trade_label(button, players[i])
+	_update_button_focus_neighbours()
+	if _focused:
+		_trade_players[0].grab_focus()
+
+
+func _on_trade_player_pressed(index: int) -> void:
+	var button: Button = _trade_players[index]
+	if not _trade_choosing or _item_data == null or not button.has_meta(TRADE_TO_META):
+		return
+	var item = _item_data
+	var to: int = button.get_meta(TRADE_TO_META)
+	_trade_collapse()
+	_focused = false
+	emit_signal("trade_requested", item, to)
+
+
+func _trade_receivers(item) -> Array:
+	if trade_shop == null or item == null or not is_instance_valid(trade_shop):
+		return []
+	return trade_shop.trade_receivers(item, player_index)
+
+
+# A button like the game's own in this popup, above Cancel.
+func _trade_add_button(node_name: String) -> Button:
+	var button := Button.new()
+	button.name = node_name
+	button.set_script(_cancel_button.get_script())  # the game's press and focus sounds
+	button.theme = _cancel_button.theme
+	button.add_font_override("font", _cancel_button.get_font("font"))
+	button.focus_neighbour_left = NodePath(".")
+	button.focus_neighbour_right = NodePath(".")
+	button.focus_mode = FOCUS_NONE
+	button.visible = false
+	var parent: Node = _cancel_button.get_parent()
+	parent.add_child(button)
+	parent.move_child(button, _cancel_button.get_index())
+	return button
+
+
+# "Player 2" in that player's colour with its character, and what happens to a weapon that
+# finds no free slot there.
+func _trade_label(button: Button, to: int) -> void:
+	button.set_meta(TRADE_TO_META, to)
+	button.text = Text.text("COOP_PLAYER", [str(to + 1)])
+	if trade_shop.trade_combines(_item_data, to):
+		button.text += " (%s)" % tr("MENU_COMBINE")
+	var character = RunData.get_player_character(to)
+	button.icon = character.get_icon() if character != null else null
+	button.add_color_override("font_color", CoopService.get_player_color(to))
+
+
+func _trade_collapse() -> void:
+	_trade_choosing = false
+	for button in _trade_players:
+		button.hide()
+		button.focus_mode = FOCUS_NONE
+
+
+# From the player list back to the popup's buttons, the cursor on Trade.
+func _trade_back(refocus: bool) -> void:
+	if refocus:
+		if not is_visible_in_tree() or _item_data == null:
+			return
+		_focused = true
+	_update_button_visibilities()
+	if not _focused:
+		return
+	if _trade_button.visible:
+		_trade_button.grab_focus()
+	else:
+		_cancel_button.grab_focus()

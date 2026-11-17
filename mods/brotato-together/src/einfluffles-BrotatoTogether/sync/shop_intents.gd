@@ -18,6 +18,7 @@ extends Reference
 # "discard"    index in the weapons weapon my_id  -
 # "meca_roll"  index in the weapons weapon my_id  -
 # "meca"       index in the weapons weapon my_id  option index (0 / 1) of the roll sent
+# another mod's (ShopSync.register_intent): slot, id and arg are its own to define
 # "go", "endless" and "lock" say what the player wants to be true: applying them twice changes
 # nothing, so they need no revision ("lock" names its item by slot and id; with the revision a
 # lock pressed right after a buy, before the new state arrived, was dropped). Everything else
@@ -25,6 +26,8 @@ extends Reference
 # once applied, except
 # "meca_roll": it only rolls (or finds) the two meca upgrade options the host keeps for that
 # weapon in its copy of the player's popup, sent back with the state (sync/meca_choice.gd).
+# Another mod's kind is a press like the game's own: checked against the revision, and its
+# handler(shop, player, slot, id, arg) -> bool decides and says whether it changed anything.
 
 enum { DROPPED, APPLIED, CHANGED }
 
@@ -34,11 +37,13 @@ const FocusTargets := preload(
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const SLOT_KINDS := ["buy", "steal", "ban", "dismantle"]
 const WEAPON_KINDS := ["combine", "discard", "meca_roll", "meca"]
+const OWN_KINDS := ["go", "endless", "lock", "reroll"] + SLOT_KINDS + WEAPON_KINDS
 
 
 # seq: the current revision of player p's panel. Returns DROPPED, APPLIED (nothing a press
 # could go stale on changed) or CHANGED (the caller bumps the revision).
-static func apply(shop: Node, p: int, msg: Dictionary, seq: int) -> int:
+# mod_kinds: other mods' kinds, kind -> [target, method].
+static func apply(shop: Node, p: int, msg: Dictionary, seq: int, mod_kinds := {}) -> int:
 	var kind = msg.get("kind")
 	var slot = msg.get("slot")
 	var id = msg.get("id")
@@ -79,6 +84,12 @@ static func apply(shop: Node, p: int, msg: Dictionary, seq: int) -> int:
 		# The popup's own signal: the shop's handler checks what may be combined / recycled.
 		popup.emit_signal("item_%s_button_pressed" % kind, weapon)
 		return CHANGED
+	if mod_kinds.has(kind):
+		var handler: Array = mod_kinds[kind]
+		if not is_instance_valid(handler[0]) or not handler[0].has_method(handler[1]):
+			return DROPPED
+		var changed = handler[0].call(handler[1], shop, p, slot, id, arg)
+		return CHANGED if typeof(changed) == TYPE_BOOL and changed else DROPPED
 	return DROPPED
 
 
