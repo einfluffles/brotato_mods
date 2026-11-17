@@ -38,6 +38,9 @@ const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sy
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const RenderDelay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/render_delay.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
+const ClientReport := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
+)
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -315,7 +318,9 @@ func _stop_watching_scenes() -> void:
 func _on_battle_scene_ready(main: Node) -> void:
 	_stop_watching_scenes()
 	_loading = false
+	var started := OS.get_ticks_usec()
 	_freeze(main)
+	ClientReport.mark(ClientReport.Mark.PUPPET_SETUP, OS.get_ticks_usec() - started)
 	# No battle: it ended while its scene loaded. Frozen until the next screen replaces it.
 	if _battle_id != 0:
 		_battle_scene.client_scene_ready(main)
@@ -460,6 +465,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 func _process(delta: float) -> void:
 	if not is_in_battle() or _buffer.empty():
 		return
+	var started := OS.get_ticks_usec()
 	var render_t: float = _render_delay.render_time(
 		OS.get_ticks_msec(), _clock_offset, _buffer[-1].t, delta
 	)
@@ -476,6 +482,7 @@ func _process(delta: float) -> void:
 	_apply_entities(from, to, alpha)
 	_apply_wave_timer(to.wave_time_left)
 	_fire_events(render_t)
+	ClientReport.mirror_cost(OS.get_ticks_usec() - started, _entities.size())
 
 
 func _apply_players(
@@ -521,6 +528,11 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 		# Clamped like the target: holding into the zone's edge is no correction either.
 		var moved := _in_zone(_own_display + _steps_since(player, _own_seq))
 		_own_error = moved - predicted
+		var ack: int = newest.players[i][PF.INPUT_ACK]
+		var late: float = OS.get_ticks_msec() - _clock_offset - newest.t
+		ClientReport.note_correction(
+			_own_error.length(), late, ClientReport.unacked(history, ack), player.get_move_speed()
+		)
 	_own_base_t = newest.t
 	_own_seq = history[-1][0] if not history.empty() else 0
 	_own_error *= exp(-delta * PREDICTION_ERROR_DECAY)

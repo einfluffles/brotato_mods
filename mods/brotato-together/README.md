@@ -20,6 +20,10 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   on the way) and whether the connection is direct or relayed by Steam; when Steam's send queue holds
   4 KB or more it also names what was sent reliably in the last two seconds (message types and
   sizes), and a single message over 32 KB or a queue over 64 KB gets a log line of its own.
+  Each client also reports into the host's `modloader.log`: how smooth its frames were (every 10 s
+  when a frame took 50 ms or more, else once a minute; in battle with what mirroring the host's world
+  cost), how long it stalled when a screen changed and how much of that was the mod, and how often
+  and how far its own character was corrected. At most 8 lines a minute per client.
   Spawn markers (where the next enemies appear) and the life bars of bosses and elites are mirrored too,
   and so are explosions, screen shake, level-up / heal / material texts, the icon and number over
   a character whose stat changed (evolution, a mutation fruit, an item's gain), the crates a player
@@ -234,7 +238,10 @@ lateness and after a long outage, gap log lines for snapshots and inputs, the se
 followed a failed session);
 the reliable traffic named in the log (labels with their counts and bytes, the two-second window, the
 queue size from which slow answer and gap lines name it, the rate limit of the burst line, nothing kept
-after a peer left).
+after a peer left);
+a client's reports to the host's log (frame windows from fed frame times, a scene change's stall with
+the mod's share in it, corrections over a step; the host's lines, malformed reports dropped, the line
+budget; a replayed battle's real stall and mirror cost).
 
 The tests are named suites (`SUITES` in `mod_main.gd`), each passing on its own: `tools/check.sh -s <suite>`
 runs one, and `shards.txt` groups them into the game processes a full check runs side by side.

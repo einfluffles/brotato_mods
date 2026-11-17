@@ -47,6 +47,7 @@ var retry_sync: Node = null
 var pickup_list: Node = null  # the HUD's picked-up crates on clients (sync/pickup_list.gd)
 var progress_share: Node = null  # what the host's run earns for the clients' own saves
 var damage_meter: Node = null  # what each player's weapons and items dealt (sync/damage_meter.gd)
+var client_report: Node = null  # a client's frame times and stalls for the host's log
 var coop_selection: Node = null  # join hints + colour picking on the co-op selection screen
 
 var _client_active := false
@@ -162,6 +163,9 @@ func _ready() -> void:
 	damage_views.name = "DamageViews"
 	damage_views.meter = damage_meter
 	add_child(damage_views)
+
+	client_report = _add("sync/client_report.gd", "ClientReport")
+	client_report.setup(session)
 
 	coop_selection = _add("ui/coop_selection.gd", "CoopSelection")
 

@@ -430,6 +430,41 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     "direct", "relayed via <POP> (peer's POP <POP>)" (`pop_relay` / `remote_pop` as data center codes, or
     the Relayed flag), "closed: <reason>". The peer's IP address is not logged. Slow answer and gap lines
     end with the current path.
+  - Client reports (`sync/client_report.gd`, protocol 24: CLIENT_REPORT, client to host, reliable,
+    numbers only): the host's log is the one at hand after a session, and it saw a client's frames only
+    through one PING a second, could not split a scene-change stall (150 to 700 ms per client in a 43-wave
+    session) into the mod's work and the game's load, and saw no correction of a client's own player.
+    A ready client measures, the host logs. The node runs first in every frame (`process_priority`
+    -1000), so the time between two of its `_process` calls holds a whole frame, a scene swap deferred to
+    the end of the frame included.
+    - Frames: per window of 10 s of unpaused frames in one scene: count, average, worst, frames of 50 ms
+      or more; in a battle also what `BattleClient._process` took (two lines there, `mirror_cost`) and
+      the most entities it mirrored. Sent when the worst frame took 50 ms or more, else once a minute.
+      A scene change ends the window (sent if it had a slow frame).
+    - Scene change: the longest frame within 3 s of a change of `current_scene` (the frame before the
+      change counts too), with the mod's share of that frame from timing marks:
+      `ClientReport.mark(label, usec)`, static (the node registers itself with `Engine.set_meta`; no
+      static variables in Godot 3), in `RunStateCodec.parse`, `deserialize` and `apply` and around
+      `_freeze` in `BattleClient._on_battle_scene_ready` (puppet setup). The host's line ends with the
+      rest, the game's part. Measured headless (small two-player run, `client_report` suite): the
+      battle scene change stalls 284 ms, of which run parse 0.5, deserialize 2.6, apply 1.4 and
+      puppet setup 0.3 ms.
+    - Corrections: in `_predict_own`, a new `_own_error` longer than one step at the player's speed is
+      counted per window, the largest with the snapshot's age (how much later it came than the fastest
+      snapshot so far, plus half the round trip), the inputs not acked yet and the speed. Only
+      observed: the prediction maths are unchanged.
+    - Host: the sender must be a ready peer; every value must be a number (int or float, not NaN) and is
+      clamped, or the report is dropped (debug line). One info line per part, the client named as the
+      other session lines name it:
+      `Client X entered main.tscn: stalled 640 ms (run parse 22, deserialize 78, apply 9, puppet setup 31, rest 500)`,
+      `Client X frames in main.tscn, 10 s: avg 17, worst 48, 0 over 50 ms; mirror avg 1.9, worst 6.2 ms; up to 412 entities`,
+      `Client X corrections, 10 s: 4 over a step, largest 38 px (snapshot 70 ms old, 6 inputs unacked, 420 px/s)`.
+      Scenes are sent as an index into a fixed list of the game's scene files ("another scene" for the
+      rest, "the waiting screen" for the client view).
+    - Budget: the Mod Loader keeps every log line in memory. A client sends at most 6 window lines and 2
+      scene lines a minute; a window that finds no room goes on and is sent with its whole length once
+      there is (e.g. "frames in main.tscn, 20 s"). The host logs at most 8 lines a minute per client and
+      says in the next line how many it left out.
   - `network_messages_session_failed` (GodotSteam 3.31: reason, steam id, state, debug message) is logged
     with the reason in words (5008: P2P rendezvous failed, ...). Sends use
     `SEND_AUTO_RESTART_BROKEN_SESSION`, so the next message opens a new session; a follow-up line says when

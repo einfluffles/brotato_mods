@@ -92,6 +92,9 @@ const NetworkStallTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
 )
 const TrafficTests := preload("res://mods-unpacked/einfluffles-TogetherTests/traffic_tests.gd")
+const ClientReportTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/client_report_tests.gd"
+)
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -128,6 +131,7 @@ const SUITES := [
 	"network_stalls",
 	"traffic",
 	"progress",
+	"client_report",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -441,6 +445,14 @@ func _suite_traffic(_together: Node) -> void:
 func _suite_progress(together: Node) -> void:
 	_suite = ProgressShareTests.new(self)
 	_suite.run(together)
+
+
+# A client's frame, stall and correction reports and the host's lines for them; ends with a
+# short battle the host records and a client replays.
+func _suite_client_report(together: Node):
+	coop_run(3)
+	_suite = ClientReportTests.new(self)
+	yield(_suite.run(together), "completed")
 
 
 func _suite_selection(together: Node):

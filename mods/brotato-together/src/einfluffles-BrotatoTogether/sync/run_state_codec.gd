@@ -4,7 +4,12 @@ extends Reference
 # The game's deserializers expect JSON-shaped data (string keys, float numbers), so the JSON step
 # is required, not cosmetic. Host: encode() and send reliably. Client: apply() before loading the
 # battle scene.
+# What parse, deserialize and apply take on a client goes into its scene-change report
+# (sync/client_report.gd).
 
+const ClientReport := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
+)
 const MAX_UNCOMPRESSED_SIZE := 8 * 1024 * 1024
 
 
@@ -40,6 +45,7 @@ static func decode(payload) -> Dictionary:
 # The run state as it was sent (JSON-shaped: string keys, serialized items), or {} if the
 # payload is invalid. For callers that compare parts of it before building game objects.
 static func parse(payload) -> Dictionary:
+	var started := OS.get_ticks_usec()
 	if (
 		typeof(payload) != TYPE_DICTIONARY
 		or typeof(payload.get("size")) != TYPE_INT
@@ -51,6 +57,7 @@ static func parse(payload) -> Dictionary:
 	var raw: PoolByteArray = payload.data.decompress(payload.size, File.COMPRESSION_ZSTD)
 	var text := raw.get_string_from_utf8()
 	var parsed := JSON.parse(text)
+	ClientReport.mark(ClientReport.Mark.PARSE, OS.get_ticks_usec() - started)
 	if parsed.error != OK or typeof(parsed.result) != TYPE_DICTIONARY:
 		return {}
 	return parsed.result
@@ -59,12 +66,17 @@ static func parse(payload) -> Dictionary:
 static func deserialize(raw: Dictionary) -> Dictionary:
 	if raw.empty():
 		return {}
-	return ProgressDataLoaderV3.new().deserialize_run_state(raw)
+	var started := OS.get_ticks_usec()
+	var state: Dictionary = ProgressDataLoaderV3.new().deserialize_run_state(raw)
+	ClientReport.mark(ClientReport.Mark.DESERIALIZE, OS.get_ticks_usec() - started)
+	return state
 
 
 # The game only refreshes its item-count caches when an item is added or removed there, and
 # resume_from_state reads them (LinkedStats): without the reset a client's stats that count
 # items would stay at what the first state gave.
 static func apply(state: Dictionary) -> void:
+	var started := OS.get_ticks_usec()
 	RunData.reset_run_caches()
 	RunData.resume_from_state(state)
+	ClientReport.mark(ClientReport.Mark.APPLY, OS.get_ticks_usec() - started)
