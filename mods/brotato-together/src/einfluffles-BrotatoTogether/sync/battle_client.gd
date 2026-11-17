@@ -550,17 +550,16 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 	_move(player, "p%s" % i, _own_display)
 
 
-# Where the own player gets from `from` with the inputs after seq (nowhere unless predicting).
-func _walk_since(player: Node2D, from: Vector2, seq: int) -> Vector2:
+# Where the own player gets from `from` with the inputs after seq, from history[first] on (nowhere
+# unless predicting).
+func _walk_since(player: Node2D, from: Vector2, seq: int, first := 0) -> Vector2:
 	if not _predicting():
 		return from
 	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
 	var history: Array = input_sync.history
-	var k := history.size()
-	while k > 0 and history[k - 1][0] > seq:
-		k -= 1
-	for j in range(k, history.size()):
-		from = BattleScene.step(player, from, history[j][1].normalized() * step, _motion_result)
+	for k in range(first, history.size()):
+		if history[k][0] > seq:
+			from = BattleScene.step(player, from, history[k][1].normalized() * step, _motion_result)
 	return from
 
 
@@ -586,16 +585,10 @@ func _note_wave_end(events: Array) -> void:
 # host's world or its players stand still (paused, the wave over, or no fresh snapshots): else the
 # client would walk through a frozen world and glide back.
 func _own_target(player: Node2D, entry: Array) -> Vector2:
-	var predicted: Vector2 = entry[PF.POSITION]
 	if not _predicting():
-		return predicted
-	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
-	var history: Array = input_sync.history
-	for k in range(max(0, history.size() - MAX_REPLAY_INPUTS), history.size()):
-		if history[k][0] > entry[PF.INPUT_ACK]:
-			var motion: Vector2 = history[k][1].normalized() * step
-			predicted = BattleScene.step(player, predicted, motion, _motion_result)
-	return _in_zone(predicted)
+		return entry[PF.POSITION]
+	var first: int = max(0, input_sync.history.size() - MAX_REPLAY_INPUTS)
+	return _in_zone(_walk_since(player, entry[PF.POSITION], entry[PF.INPUT_ACK], first))
 
 
 static func _in_zone(position: Vector2) -> Vector2:
