@@ -109,11 +109,12 @@ Everyone subscribes to the Workshop item (and unsubscribes from other online/co-
 The mod has no menu, hotkey or overlay of its own: online play sits in the game's menus and is used
 like them (mouse, keyboard, gamepad).
 
-- **Character selection:** an **Online** toggle sits at the top of the screen, left of the
-  *Change colour* hint and above the title; up from the zone button at the top of the run options
-  box reaches it (mouse, keyboard, pad, player 1's cursor in co-op). Switching it on hosts a lobby
-  (and switches co-op on); *Invite friends* (Steam overlay) appears next to it, with the number of
-  players in the lobby. Switching it off leaves the lobby. It takes no room from the game's own
+- **Character selection:** a dark panel at the top right, styled like the game's DLC bar at the
+  top left, holds the *Change colour* hint (co-op) and an **Online** toggle; up from the zone
+  button at the top of the run options box reaches the toggle (mouse, keyboard, pad, player 1's
+  cursor in co-op). Switching it on hosts a lobby (and switches co-op on); *Invite friends* (Steam
+  overlay) next to it can then be used, and a quiet status line shows the number of players in
+  the lobby. Switching it off leaves the lobby. The panel takes no room from the game's own
   layout: the player panels and the character grid sit where they do without the mod.
 - **Main menu → Host lobby** (below *Start*) opens a lobby without leaving the main menu: you can
   still go through options, the codex and the other pages while it is up. A small frame next to the

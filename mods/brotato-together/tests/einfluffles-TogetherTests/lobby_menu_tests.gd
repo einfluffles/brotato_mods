@@ -15,6 +15,7 @@ extends Reference
 const Lifecycle := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
 )
+const TopBar := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/top_bar.gd")
 const OnlineOptions := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/online_options.gd"
 )
@@ -600,17 +601,16 @@ func _test_character_selection():
 	)
 	if options == null:
 		return
-	var toggle: CheckButton = options._toggle
+	var toggle: Button = options._toggle
 	var invite: Button = options._invite
 	var status: Label = options._status
 	t._check(
-		toggle.disabled and status.visible and "Steam" in status.text and not invite.visible,
+		toggle.disabled and status.visible and "Steam" in status.text and invite.disabled,
 		"selection: without Steam the toggle is off, with the reason (%s)" % status.text
 	)
 	t._check(
-		toggle.rect_size.y == OnlineOptions.HEIGHT
-		and toggle.get_icon("off_disabled") == coop.get_icon("off"),
-		"selection: and still looks like the game's (%s / %s)" % [toggle.rect_size, coop.rect_size]
+		toggle.rect_size.y == TopBar.CONTROL_HEIGHT and toggle.icon == coop.get_icon("off"),
+		"selection: the game's switch icon, scaled to the top bar (%s)" % [toggle.rect_size]
 	)
 	t._check(
 		zone.focus_neighbour_top.is_empty(),
@@ -618,11 +618,14 @@ func _test_character_selection():
 	)
 	_fake_steam()
 	yield(_frames(1), "completed")
-	t._check(not toggle.disabled and not status.visible, "selection: with Steam it can be used")
 	t._check(
-		toggle.get_class() == coop.get_class() and toggle.get_font("font") == coop.get_font("font")
-		and toggle.rect_size.y == OnlineOptions.HEIGHT,
-		"selection: the toggle looks like Co-op (%s / %s)" % [toggle.rect_size, coop.rect_size]
+		not toggle.disabled and status.text == OnlineOptions.OFF_TEXT,
+		"selection: with Steam it can be used (%s)" % status.text
+	)
+	t._check(
+		toggle.get_font("font") == TopBar.font() and invite.get_font("font") == TopBar.font()
+		and status.get_font("font") == TopBar.font(),
+		"selection: the top bar's font for all three"
 	)
 	var panel: Control = scene.get_node("%RunOptionsPanel")
 	print("  info: run options box %s, online row %s" % [panel.rect_size, options.get_global_rect()])
@@ -641,13 +644,16 @@ func _test_character_selection():
 	t._check(not coop.pressed and not RunData.is_coop_run, "(control) solo so far")
 	toggle.pressed = true
 	yield(_frames(1), "completed")
-	t._check(_steam.created == 1 and toggle.pressed, "selection: Online on hosts a lobby")
+	t._check(
+		_steam.created == 1 and toggle.pressed and toggle.icon == coop.get_icon("on"),
+		"selection: Online on hosts a lobby, the switch shows on"
+	)
 	t._check(coop.pressed and RunData.is_coop_run, "selection: and switches co-op on")
 	t._check("creating" in status.text and status.visible, "selection: status while it is made")
 	transport._on_lobby_created(transport.RESULT_OK, LOBBY)
 	yield(_frames(2), "completed")
 	t._check(
-		invite.visible and status.text == "Online: 1 player" and toggle.pressed,
+		not invite.disabled and status.text == "Online: 1 player" and toggle.pressed,
 		"selection: hosting -> Invite friends and the player count (%s)" % status.text
 	)
 	print(
@@ -683,7 +689,7 @@ func _test_character_selection():
 	yield(_tap_action("ui_left", KEYBOARD), "completed")
 	yield(_tap_action("ui_accept", KEYBOARD), "completed")
 	t._check(
-		not transport.is_active() and not toggle.pressed and not invite.visible,
+		not transport.is_active() and not toggle.pressed and invite.disabled,
 		"selection: Online off leaves the lobby"
 	)
 	t._check(coop.pressed, "selection: co-op stays as it is")
