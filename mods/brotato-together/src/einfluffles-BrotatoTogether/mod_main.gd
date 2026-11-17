@@ -22,6 +22,7 @@ const EXTENSIONS := [
 	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
 	"extensions/ui/shop_item.gd",
 	"extensions/ui/pause_menu.gd",
+	"extensions/ui/menu_options.gd",
 	"extensions/ui/focus_emulator.gd",
 	"extensions/ui/character_selection.gd",
 	"extensions/ui/weapon_selection.gd",
@@ -44,6 +45,8 @@ var pause_control: Node = null
 var absent_players: Node = null
 var retry_sync: Node = null
 var pickup_list: Node = null  # the HUD's picked-up crates on clients (sync/pickup_list.gd)
+var progress_share: Node = null  # what the host's run earns for the clients' own saves
+var damage_meter: Node = null  # what each player's weapons and items dealt (sync/damage_meter.gd)
 var coop_selection: Node = null  # join hints + colour picking on the co-op selection screen
 
 var _client_active := false
@@ -136,6 +139,17 @@ func _ready() -> void:
 	pickup_list = _add("sync/pickup_list.gd", "PickupList")
 	pickup_list.state_stream = state_stream
 	pickup_list.setup(battle_host, battle_client)
+
+	progress_share = _add("session/progress_share.gd", "ProgressShare")
+	progress_share.setup(session)
+
+	damage_meter = _add("sync/damage_meter.gd", "DamageMeter")
+	damage_meter.state_stream = state_stream
+	damage_meter.setup(session)
+	var damage_views: Node = _load_script("ui/damage_views.gd").new()
+	damage_views.name = "DamageViews"
+	damage_views.meter = damage_meter
+	add_child(damage_views)
 
 	coop_selection = _add("ui/coop_selection.gd", "CoopSelection")
 
