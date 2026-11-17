@@ -337,7 +337,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   A line of its own ("Reliable burst to ...: STATE upgrades of 39.1 KB queued, 70.2 KB pending; reliable in
   the last 2 s: ...") when one message is larger than 32 KB or the queue holds more than 64 KB right after
   a send, at most one per peer in 5 s; Steam's queue (`getSessionConnectionInfo`) is only asked when such
-  a line may follow. Noting costs about 2.2 us per message headless (`traffic_tests.gd`); nothing is
+  a line may follow, and then after every message of 4 KB or more but after smaller ones at most once
+  per 250 ms per peer (`Traffic.query_due`): a shower of sounds or cursors costs no Steam call per send,
+  and a backlog built of small messages is still seen within a quarter second. Noting costs about 2.2 us per message headless (`traffic_tests.gd`); nothing is
   kept for a peer that left or after the lobby. Why: a 43-wave session of 2026-11-16 had reliable
   backlogs of 20 to 250 KB in the shop and 55 to 76 s into battles, and which messages they were could
   only be guessed from their timing.

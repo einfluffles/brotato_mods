@@ -17,8 +17,14 @@ const BACKLOG_TEXT_BYTES := 4096
 const BIG_MESSAGE_BYTES := 32768
 const BIG_BACKLOG_BYTES := 65536
 const LINE_INTERVAL_MSEC := 5000
+# Steam's queue is asked after every message of QUERY_MIN_BYTES or more (those make a backlog),
+# after smaller ones at most once per QUERY_INTERVAL_MSEC per peer: a stream of small messages
+# (sounds, cursors) costs no Steam call per send, and a backlog they build is still seen.
+const QUERY_MIN_BYTES := 4096
+const QUERY_INTERVAL_MSEC := 250
 
-# steam_id -> {second, now: {label: [count, bytes]}, before: {...}, next_line_msec}
+# steam_id -> {second, now: {label: [count, bytes]}, before: {...}, next_line_msec,
+# next_query_msec}
 var peers := {}
 var lines := 0  # standalone lines logged so far (tests)
 var last_line := ""
@@ -37,7 +43,11 @@ static func label(msg_type: int, body) -> String:
 func note(steam_id: int, text: String, size: int, now_msec: int) -> void:
 	if not peers.has(steam_id):
 		peers[steam_id] = {
-			"second": now_msec / BUCKET_MSEC, "now": {}, "before": {}, "next_line_msec": 0
+			"second": now_msec / BUCKET_MSEC,
+			"now": {},
+			"before": {},
+			"next_line_msec": 0,
+			"next_query_msec": 0,
 		}
 	var bucket: Dictionary = _roll(peers[steam_id], now_msec).now
 	if not bucket.has(text):
@@ -108,6 +118,17 @@ func burst_line(
 # Whether a standalone line for the peer may be logged now (the caller then asks Steam's queue).
 func line_due(steam_id: int, now_msec: int) -> bool:
 	return not peers.has(steam_id) or now_msec >= peers[steam_id].next_line_msec
+
+
+# After note(): whether Steam's queue may be asked for this send (see QUERY_MIN_BYTES).
+func query_due(steam_id: int, size: int, now_msec: int) -> bool:
+	if not peers.has(steam_id):
+		return true
+	var entry: Dictionary = peers[steam_id]
+	if size < QUERY_MIN_BYTES and now_msec < entry.next_query_msec:
+		return false
+	entry.next_query_msec = now_msec + QUERY_INTERVAL_MSEC
+	return true
 
 
 func forget(steam_id: int) -> void:

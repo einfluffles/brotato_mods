@@ -90,12 +90,13 @@ func send_reliable(steam_id: int, msg_type: int, body = null) -> void:
 
 
 # Noted for the log (net/traffic.gd); a message over 32 KB or a reliable queue over 64 KB gets a
-# line of its own, at most one per peer in 5 s (Steam's queue is only asked when one may follow).
+# line of its own, at most one per peer in 5 s (Steam's queue is only asked when one may follow,
+# and after small messages at most every 250 ms: Traffic.query_due).
 func _note_reliable(steam_id: int, msg_type: int, body, size: int) -> void:
 	var now := OS.get_ticks_msec()
 	var text := Traffic.label(msg_type, body)
 	traffic.note(steam_id, text, size, now)
-	if not traffic.line_due(steam_id, now):
+	if not traffic.line_due(steam_id, now) or not traffic.query_due(steam_id, size, now):
 		return
 	var pending := _pending_reliable(transport.connection_status(steam_id))
 	var peer_name: String = peers[steam_id].name if peers.has(steam_id) else str(steam_id)

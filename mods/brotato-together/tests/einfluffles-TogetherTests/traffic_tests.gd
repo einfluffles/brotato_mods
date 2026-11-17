@@ -53,6 +53,7 @@ func run() -> void:
 	_test_sums(session, transport)
 	_test_status_threshold(session, transport)
 	_test_burst_lines(session, transport)
+	_test_query_limit(session, transport)
 	_test_peer_left(session, transport)
 	_measure()
 	session.free()
@@ -168,6 +169,7 @@ func _test_burst_lines(session: Node, transport: FakeTransport) -> void:
 	session.send_reliable(PEER, Protocol.Msg.UI_SOUNDS, {"sounds": []})
 	_t._check(traffic.lines == lines, "64 KB pending is no burst yet")
 	transport.pending = Traffic.BIG_BACKLOG_BYTES + 1
+	traffic.peers[PEER].next_query_msec = 0  # 250 ms later
 	session.send_reliable(PEER, Protocol.Msg.UI_SOUNDS, {"sounds": []})
 	_t._check(
 		(
@@ -198,6 +200,32 @@ func _test_burst_lines(session: Node, transport: FakeTransport) -> void:
 	traffic.peers[PEER].next_line_msec = OS.get_ticks_msec()
 	session.send_reliable(PEER, Protocol.Msg.STATE, [StateStream.UPGRADES, 3, null])
 	_t._check(traffic.lines == lines + 2, "a small message on a short queue does not")
+
+
+# Small messages ask Steam's queue at most every 250 ms per peer, a message of 4 KB or more
+# always: a shower of sounds or cursors costs no Steam call per send.
+func _test_query_limit(session: Node, transport: FakeTransport) -> void:
+	var traffic = session.get("traffic")
+	if traffic == null or not traffic.has_method("query_due"):
+		_t._check(false, "small messages do not ask Steam on every send")
+		return
+	transport.pending = 0
+	traffic.peers[PEER].next_line_msec = 0
+	traffic.peers[PEER].next_query_msec = 0
+	var asked: int = transport.asked
+	for k in 10:
+		session.send_reliable(PEER, Protocol.Msg.UI_SOUNDS, {"sounds": [k]})
+	_t._check(
+		transport.asked == asked + 1,
+		"10 small messages at once ask Steam once (%d)" % [transport.asked - asked]
+	)
+	var body := [StateStream.RUN_SHOP, 4, {"run": PoolByteArray(_bytes(Traffic.QUERY_MIN_BYTES))}]
+	session.send_reliable(PEER, Protocol.Msg.STATE, body)
+	session.send_reliable(PEER, Protocol.Msg.STATE, body)
+	_t._check(
+		transport.asked == asked + 3,
+		"a message of 4 KB or more always asks (%d)" % [transport.asked - asked]
+	)
 
 
 func _test_peer_left(session: Node, transport: FakeTransport) -> void:
