@@ -94,6 +94,12 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   The Anvil's weapon upgrade at shop entry no longer builds a weapon in the still empty weapons
   row and frees it again ("combine: no inventory element for ..., the weapons row is out of sync"
   in the log, and a cursor sent to a control that was being freed).
+- **Axolotl crash fixed** (DLC 1, online and local co-op): once a player had bought an Axolotl,
+  the next Axolotl offered to another player (in the shop or a crate) made the game forget which
+  stats the bought one had swapped, and showing its text closed the game without an error. Its
+  text now names
+  that player's own highest and lowest stats, and `modloader.log` gets a warning
+  (`einfluffles-BrotatoTogether:Axolotl`) with what was found: please include it in a report.
 - **Damage meter:** during a wave, two lines at each player's life bar show what that player
   has dealt in the wave, the damage per second, the two strongest weapons or items and the
   biggest single hit. Big numbers stay short (12.3K, 4.57M, 7.89B). In the co-op shop and at
@@ -270,7 +276,10 @@ queue size from which slow answer and gap lines name it, the rate limit of the b
 after a peer left);
 a client's reports to the host's log (frame windows from fed frame times, a scene change's stall with
 the mod's share in it, corrections over a step; the host's lines, malformed reports dropped, the line
-budget; a replayed battle's real stall and mirror cost).
+budget; a replayed battle's real stall and mirror cost);
+the Axolotl's text in the state the game's own roll leaves its shared effect in during co-op (the
+shop's description of the offer, the owner's item, broken saved states; a normal Axolotl keeps the
+game's text).
 
 The tests are named suites (`SUITES` in `mod_main.gd`), each passing on its own: `tools/check.sh -s <suite>`
 runs one, and `shards.txt` groups them into the game processes a full check runs side by side.

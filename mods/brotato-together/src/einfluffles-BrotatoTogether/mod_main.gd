@@ -20,6 +20,7 @@ const EXTENSIONS := [
 	"extensions/singletons/utils.gd",
 	"extensions/entities/brachiosaurus_foot.gd",
 	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
+	"extensions/effects/swap_max_min_stat_effect.gd",
 	"extensions/ui/shop_item.gd",
 	"extensions/ui/coop_shop.gd",
 	"extensions/ui/shop.gd",
