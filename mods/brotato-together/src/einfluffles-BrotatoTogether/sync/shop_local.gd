@@ -448,6 +448,14 @@ func _on_own_meca_picked(weapon, index: int) -> void:
 	_shop._on_item_cancel_button_pressed(weapon, you)
 
 
+# Another mod's press on the own panel (ShopSync.send_intent). False: the panel is not local.
+func send_mod_intent(kind: String, slot: int, id: String, arg: int) -> bool:
+	if not active or _paused:
+		return false
+	_send_intent(kind, slot, id, arg)
+	return true
+
+
 func _send_slot_intent(kind: String, node: Node, arg := -1) -> void:
 	if node.item_data == null:
 		return

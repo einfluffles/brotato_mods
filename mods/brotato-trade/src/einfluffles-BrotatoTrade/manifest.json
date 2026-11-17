@@ -1,0 +1,22 @@
+{
+	"name": "BrotatoTrade",
+	"namespace": "einfluffles",
+	"version_number": "0.1.0",
+	"description": "brotato:trade — give items and weapons to other players in the co-op shop.",
+	"website_url": "",
+	"dependencies": [],
+	"extra": {
+		"godot": {
+			"authors": ["einfluffles"],
+			"optional_dependencies": ["einfluffles-BrotatoTogether"],
+			"compatible_game_version": [],
+			"compatible_mod_loader_version": ["6.3.0"],
+			"incompatibilities": [],
+			"load_before": [],
+			"tags": ["Utilities"],
+			"config_schema": {},
+			"description_rich": "",
+			"image": null
+		}
+	}
+}

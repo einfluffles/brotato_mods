@@ -1,0 +1,370 @@
+extends Reference
+# The co-op shop in plain local co-op (no brotato:together): the item popup's Trade button
+# and its list of players, driven with each player's own buttons, and what both panels show
+# after a hand-over. Three players: 0 gives, 1 already has the unique item, 2 has nothing.
+
+const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules.gd")
+
+var _t: Node = null
+var _shop: Node = null
+var _plain = null  # an item without a limit
+var _unique = null
+
+
+func run(t: Node):
+	_t = t
+	t.coop_run(3)
+	_plain = t.item_with_limit(-1)
+	_unique = t.item_with_limit(1)
+	RunData.add_item(_plain, 0)
+	RunData.add_item(_plain, 0)
+	RunData.add_item(_unique, 0)
+	RunData.add_item(_unique.duplicate(), 1)
+	for _i in 2:
+		RunData.add_weapon(t.weapon(), 0)
+	_shop = yield(t.open_shop(), "completed")
+	t.check(not t.has_node(t.TOGETHER), "this shop runs without brotato:together")
+	yield(_item_popup(), "completed")
+	yield(_back(), "completed")
+	yield(_give_item(), "completed")
+	yield(_unique_item(), "completed")
+	yield(_give_weapon(), "completed")
+	yield(_receiver_popup(), "completed")
+	_refusals()
+	yield(_other_popup(), "completed")
+	yield(_four_players(), "completed")
+
+
+# An item has no popup buttons in the game. Here it has Trade and Cancel.
+func _item_popup():
+	var popup = _popup(0)
+	var emulator = _emulator(0)
+	_t.check(popup.trade_shop == _shop, "the shop's item popups offer trading")
+	var character = _element(0, RunData.get_player_character(0))
+	emulator.focused_control = character
+	yield(_t.tap("ui_accept", 0), "completed")
+	_t.check(
+		not popup._focused and emulator.focused_control == character,
+		"an item nobody can take stays a plain card"
+	)
+	emulator.focused_control = _element(0, _plain)
+	yield(_t.frames(1), "completed")
+	_t.check(
+		popup.visible and popup._coop_inventory_hint.visible and not popup._trade_button.visible,
+		"an item that can be given shows the game's hint to open the popup"
+	)
+	yield(_t.tap("ui_accept", 0), "completed")
+	_t.check(popup._focused, "accept on it opens the popup")
+	_t.check(
+		(
+			popup._trade_button.visible
+			and popup._cancel_button.visible
+			and not popup._combine_button.visible
+			and not popup._discard_button.visible
+		),
+		"with Trade and Cancel and none of the weapon buttons"
+	)
+	_t.check(emulator.focused_control == popup._cancel_button, "the cursor starts on Cancel")
+	yield(_t.tap("ui_up", 0), "completed")
+	_t.check(emulator.focused_control == popup._trade_button, "Trade is the button above it")
+	yield(_t.tap("ui_accept", 0), "completed")
+	var buttons: Array = popup._trade_players
+	_t.check(
+		buttons[0].visible and buttons[1].visible and not buttons[2].visible,
+		"Trade lists the two other players"
+	)
+	_t.check(
+		_to(buttons[0]) == 1 and _to(buttons[1]) == 2 and "2" in buttons[0].text,
+		"in player order (%s, %s)" % [buttons[0].text, buttons[1].text]
+	)
+	_t.check(
+		not popup._trade_button.visible and popup._cancel_button.visible,
+		"in place of the Trade button, above Cancel"
+	)
+	_t.check(emulator.focused_control == buttons[0], "the cursor is on the first player")
+	yield(_t.tap("ui_down", 0), "completed")
+	_t.check(emulator.focused_control == buttons[1], "down: the next player")
+	yield(_t.tap("ui_down", 0), "completed")
+	_t.check(emulator.focused_control == popup._cancel_button, "then Cancel")
+
+
+# Cancel, as button and as key, leads from the players back to the popup's buttons.
+func _back():
+	var popup = _popup(0)
+	var emulator = _emulator(0)
+	yield(_t.tap("ui_accept", 0), "completed")
+	_t.check(
+		popup._focused and popup._trade_button.visible and not popup._trade_players[0].visible,
+		"the Cancel button closes the list, not the popup"
+	)
+	_t.check(emulator.focused_control == popup._trade_button, "the cursor is back on Trade")
+	yield(_press_delay(), "completed")
+	yield(_t.tap("ui_accept", 0), "completed")
+	_t.check(popup._trade_players[0].visible, "Trade opens the list again")
+	yield(_t.tap("ui_cancel", 0), "completed")
+	_t.check(
+		popup._focused and popup.visible and not popup._trade_players[0].visible,
+		"the cancel key closes the list, not the popup"
+	)
+	_t.check(emulator.focused_control == popup._trade_button, "with the cursor on Trade again")
+	yield(_t.tap("ui_cancel", 0), "completed")
+	_t.check(not popup._focused, "a second cancel closes the popup")
+	_t.check(emulator.focused_control == _element(0, _plain), "and the cursor is on the item again")
+
+
+func _give_item():
+	var popup = _popup(0)
+	var emulator = _emulator(0)
+	var other = _emulator(2)
+	var theirs: Control = _shop._get_go_button(2)
+	other.focused_control = theirs
+	var before: String = _t.ledger()
+	yield(_open_list(0, _plain), "completed")
+	yield(_t.tap("ui_accept", 0), "completed")  # the first player in the list: player 1
+	yield(_t.frames(2), "completed")
+	_t.check(
+		_count(0, _plain) == 1 and _count(1, _plain) == 1 and _count(2, _plain) == 0,
+		"the item went to the player picked, one copy of two"
+	)
+	_t.check(_t.ledger() == before, "nothing appeared or vanished")
+	_t.check(
+		not popup._focused and not _panel(0)._popup_dim_screen.visible,
+		"the giver's popup closed"
+	)
+	var given = _element(0, _plain)
+	_t.check(
+		given != null and given.current_number == 1 and emulator.focused_control == given,
+		"the giver's row shows one copy left, the cursor on it"
+	)
+	var received = _element(1, _plain)
+	_t.check(received != null and received.current_number == 1, "the receiver's row shows the item")
+	_t.check(other.focused_control == theirs, "a player who was not part of it keeps its cursor")
+	_cursors_valid("after giving an item")
+
+
+# Player 1 has the unique item: only player 2 is offered. Once everybody has one, nobody is.
+# A player whose shop offers it gets none either: the game counts offers towards the limit
+# when it rolls, and a buy checks nothing but the gold.
+func _unique_item():
+	var popup = _popup(0)
+	var offers: Array = _shop._get_shop_items_container(2)._shop_items
+	for node in offers:
+		if node.active and node.item_data == _unique:
+			node.set_shop_item(_plain)  # rolled by chance: out of the way
+	var slot = offers[0]
+	var rolled = slot.item_data
+	slot.set_shop_item(_unique)
+	_t.check(_shop.trade_receivers(_unique, 0).empty(), "nor to a player whose shop offers it")
+	_t.check(Rules.receivers(_unique, 0) == [2], "(the shop's offers make the difference)")
+	slot.set_shop_item(rolled)
+	yield(_open_list(0, _unique), "completed")
+	var buttons: Array = popup._trade_players
+	_t.check(
+		buttons[0].visible and not buttons[1].visible and _to(buttons[0]) == 2,
+		"a unique item is only offered to the player without it"
+	)
+	yield(_t.tap("ui_accept", 0), "completed")
+	yield(_t.frames(2), "completed")
+	_t.check(
+		_count(0, _unique) == 0 and _count(1, _unique) == 1 and _count(2, _unique) == 1,
+		"and goes there: one each now"
+	)
+	_t.check(_element(0, _unique) == null, "the giver's row no longer shows it")
+	var theirs = _element(2, _unique)
+	_t.check(_shop.trade_receivers(theirs.item, 2) == [0], "it could only go back to the giver")
+	RunData.add_item(_unique.duplicate(), 0)
+	_emulator(2).focused_control = theirs
+	yield(_t.tap("ui_accept", 2), "completed")
+	_t.check(not _popup(2)._focused, "everybody has one: no popup buttons for it")
+	_cursors_valid("after giving the unique item")
+
+
+func _give_weapon():
+	var popup = _popup(0)
+	var emulator = _emulator(0)
+	var before: String = _t.ledger()
+	var weapon = RunData.get_player_weapons_ref(0)[0]
+	emulator.focused_control = _element(0, weapon)
+	yield(_t.tap("ui_accept", 0), "completed")
+	_t.check(
+		popup._focused and popup._combine_button.visible and popup._discard_button.visible,
+		"a weapon's popup keeps the game's buttons"
+	)
+	_t.check(popup._trade_button.visible, "and has Trade as well")
+	yield(_t.tap("ui_up", 0), "completed")
+	_t.check(emulator.focused_control == popup._trade_button, "between Recycle and Cancel")
+	yield(_t.tap("ui_up", 0), "completed")
+	_t.check(emulator.focused_control == popup._discard_button, "(Recycle is above it)")
+	yield(_t.tap("ui_down", 0), "completed")
+	yield(_t.tap("ui_accept", 0), "completed")
+	_t.check(
+		not popup._combine_button.visible and not popup._discard_button.visible,
+		"the list of players replaces the weapon buttons too"
+	)
+	yield(_t.tap("ui_down", 0), "completed")
+	_t.check(_to(emulator.focused_control) == 2, "the cursor is on player 3")
+	yield(_t.tap("ui_accept", 0), "completed")
+	yield(_t.frames(2), "completed")
+	var theirs: Array = RunData.get_player_weapons_ref(2)
+	_t.check(
+		RunData.get_player_weapons_ref(0).size() == 1 and _t.ids(theirs) == [_t.PISTOL],
+		"the weapon went to player 3"
+	)
+	_t.check(_t.ledger() == before, "no weapon appeared or vanished")
+	_t.check(
+		_row(0, true).get_child_count() == 1 and _element(2, theirs[0]) != null,
+		"both weapon rows show it"
+	)
+	_t.check(
+		"(1/" in _shop._get_gear_container(2).weapons_container.get_label().text,
+		"and the receiver's row counts it"
+	)
+	_t.check(
+		not popup._focused and emulator.focused_control.get_parent() == _row(0, true),
+		"the giver's cursor is on its other weapon"
+	)
+	_cursors_valid("after giving a weapon")
+
+
+# The receiver has its own popup open when its rows are rebuilt.
+func _receiver_popup():
+	var theirs = _emulator(2)
+	var their_popup = _popup(2)
+	theirs.focused_control = _element(2, RunData.get_player_weapons_ref(2)[0])
+	yield(_t.tap("ui_accept", 2), "completed")
+	_t.check(their_popup._focused, "the receiver looks at its own weapon")
+	var weapon = RunData.get_player_weapons_ref(0)[0]
+	_t.check(_shop.trade_give(weapon, 0, 2), "meanwhile it is given another weapon")
+	yield(_t.frames(2), "completed")
+	_t.check(
+		not their_popup._focused and not _panel(2)._popup_dim_screen.visible,
+		"its popup closed with the old row"
+	)
+	_t.check(
+		theirs.focused_control != null and theirs.focused_control.get_parent() == _row(2, true),
+		"and its cursor is on a weapon of the new row"
+	)
+	_t.check(_row(2, true).get_child_count() == 2, "which shows both weapons")
+	_cursors_valid("after a hand-over to a player with an open popup")
+
+
+func _refusals() -> void:
+	var before: String = _t.ledger()
+	var weapon = RunData.get_player_weapons_ref(2)[0]
+	_t.get_tree().paused = true
+	_t.check(not _shop.trade_give(weapon, 2, 0), "nothing is given while the game is paused")
+	_t.get_tree().paused = false
+	_t.check(not _shop.trade_give(weapon, 1, 0), "nor by a player who does not own it")
+	_t.check(not _shop.trade_apply_request(true, 2, 0, "weapon_smg_1", 0), "nor on a wrong name")
+	_t.check(
+		not _shop.trade_apply_request(true, 2, 5, "weapon_smg_1", 0),
+		"nor from an empty place naming nothing the player owns"
+	)
+	_t.check(_t.ledger() == before, "refused hand-overs change nothing")
+	_cursors_valid("at the end")
+
+
+# The same popup scene outside the shop (the level-up screen has it per player): as in the game.
+func _other_popup():
+	var popup = load("res://ui/menus/shop/coop_item_popup.tscn").instance()
+	popup.buttons_enabled = true
+	_shop.add_child(popup)
+	yield(_t.frames(1), "completed")
+	var weapon = RunData.get_player_weapons_ref(2)[0]
+	var item = RunData.get_player_items_ref(1).back()
+	popup.display_item_data(weapon, _shop._get_go_button(0), true)
+	popup.focus()
+	_t.check(
+		popup._discard_button.visible and popup._cancel_button.visible,
+		"a popup outside the shop has the game's weapon buttons"
+	)
+	_t.check(not popup._trade_button.visible, "and no Trade")
+	_t.check(not popup.will_show_buttons_when_focused(item), "an item has no buttons there")
+	popup.hide()
+	popup.queue_free()
+	yield(_t.frames(1), "completed")
+
+
+# A full lobby: the last player's list names the three others.
+func _four_players():
+	_t.coop_run(4)
+	RunData.add_item(_plain, 3)
+	_shop = yield(_t.open_shop(), "completed")
+	var popup = _popup(3)
+	yield(_open_list(3, _plain), "completed")
+	var offered := []
+	for button in popup._trade_players:
+		if button.visible:
+			offered.append(_to(button))
+	_t.check(offered == [0, 1, 2], "with four players the list names the three others %s" % [offered])
+	yield(_t.tap("ui_down", 3), "completed")
+	yield(_t.tap("ui_down", 3), "completed")
+	yield(_t.tap("ui_accept", 3), "completed")
+	yield(_t.frames(2), "completed")
+	_t.check(_count(2, _plain) == 1 and _count(3, _plain) == 0, "and the third one gets the item")
+	_cursors_valid("in a four-player shop")
+
+
+# --- helpers ---
+
+
+# Accept on the item's element, then on Trade: the cursor ends on the first player.
+func _open_list(player: int, item):
+	var popup = _popup(player)
+	_emulator(player).focused_control = _element(player, item)
+	yield(_t.tap("ui_accept", player), "completed")
+	_emulator(player).focused_control = popup._trade_button
+	yield(_t.tap("ui_accept", player), "completed")
+
+
+# A button of the game ignores presses for 0.05 s after one.
+func _press_delay():
+	yield(_t.get_tree().create_timer(0.1), "timeout")
+
+
+# No cursor may rest on a control that is gone or hidden.
+func _cursors_valid(label: String) -> void:
+	var bad := []
+	for p in RunData.get_player_count():
+		var control = _emulator(p).focused_control
+		if control == null:
+			continue
+		if not is_instance_valid(control) or control.is_queued_for_deletion():
+			bad.append("player %d: freed" % (p + 1))
+		elif not control.is_visible_in_tree():
+			bad.append("player %d: hidden %s" % [p + 1, control.name])
+	_t.check(bad.empty(), "every cursor rests on a live control %s %s" % [label, bad])
+
+
+func _to(button) -> int:
+	return button.get_meta("trade_to") if button != null and button.has_meta("trade_to") else -1
+
+
+func _count(player: int, item) -> int:
+	return RunData.get_nb_item(item.my_id_hash, player, false)
+
+
+func _popup(player: int):
+	return _shop._get_item_popup(player)
+
+
+func _panel(player: int):
+	return _shop._get_coop_player_container(player)
+
+
+func _emulator(player: int):
+	return Utils.get_focus_emulator(player, _shop)
+
+
+func _row(player: int, weapons: bool) -> Node:
+	var gear = _shop._get_gear_container(player)
+	return gear.weapons_container._elements if weapons else gear.items_container._elements
+
+
+func _element(player: int, item):
+	for element in _row(player, item is WeaponData).get_children():
+		if element.is_queued_for_deletion() or element.item == null:
+			continue
+		if element.item == item or element.item.my_id == item.my_id:
+			return element
+	return null

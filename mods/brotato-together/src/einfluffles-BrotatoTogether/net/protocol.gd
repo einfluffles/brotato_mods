@@ -31,7 +31,7 @@ enum Msg {
 	# ui/focus_targets.gd target inside its own panel, []: none). Cosmetic: what the others see.
 	UPGRADE_FOCUS,
 	# client -> host: shop_id, seq (of the sender's panel), kind, slot, id, arg (the kinds are
-	# listed in sync/shop_intents.gd)
+	# listed in sync/shop_intents.gd; other mods add their own: ShopSync.register_intent)
 	SHOP_INTENT,
 	# client -> host: shop_id, page, target (like UPGRADE_FOCUS, inside the sender's shop panel)
 	SHOP_FOCUS,
@@ -48,7 +48,7 @@ enum Msg {
 	STATE,
 }
 
-const VERSION := 20
+const VERSION := 21
 # How long one side carries on without the other's stream (snapshots on a client, INPUT on the
 # host) before it counts as gone rather than late. Both ends share it: a client predicts its own
 # player for that long without snapshots (sync/battle_client.gd PREDICTION_STALE_MSEC), and the

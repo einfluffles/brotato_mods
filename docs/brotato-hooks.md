@@ -179,6 +179,32 @@ RNG is unseeded (`Utils._rng.randomize()`), so shops/upgrades **must** be rolled
   / (1 + `petrol_malus`); petrol is set per physics frame (`update_petrol_effect`), the slow decays in
   `Unit._physics_process`.
 
+### Inventory popup (shop)
+
+- `ui/menus/global/popup_manager.gd` (`BaseShop._popup_manager`) shows a player's `ItemPopup` for the
+  focused gear element and, on accept, focuses it (`_elements_pressed[p]`, `ItemPopup.focus()`, cursor on
+  Cancel) when `ItemPopup.will_show_buttons_when_focused(item)`. The game only says yes for weapons
+  (`should_show_buttons`), and `_update_button_visibilities` then asks `RunData.can_combine`, whose
+  parameter is typed `WeaponData`: buttons for an item need their own branch. Co-op: `CoopItemPopup`
+  (`coop_item_popup.tscn`, also one per player on the level-up screen), buttons in
+  `ItemPanelUI/MarginContainer/VBoxContainer` (Combine, Recycle, Cancel, Upgrade), up / down neighbours
+  rebuilt by `_update_button_focus_neighbours`; with two players `_ready` replaces the popup's outer box.
+- Closing: the popup's `item_cancel_button_pressed` -> `BaseShop._on_item_cancel_button_pressed`
+  (`_popup_manager.reset_focus(p)`, cursor back on the element; `CoopShop` hides the dim screen).
+  `ItemPopup._input` emits it on the player's `ui_cancel` while `_focused`. `_input` runs on every
+  script level, the extension's first: a script extension that clears `_focused` there keeps the base
+  from closing the popup on that press.
+- `grab_focus()` on a control inside a player's panel moves that player's `FocusEmulator` (each has its
+  own `CoopShopPlayerContainer` as focus base, `gui_focus_changed`); `Inventory.remove_element` ends in
+  one, so removing another player's element moves that player's cursor into its gear.
+- Gear rows: `PlayerGearContainer.set_weapons_data` / `set_items_data` free every element and build new
+  ones (`Inventory.clear_elements` removes them from the tree at once). Take a `FocusEmulator` off an
+  element first; plain items stack in one element (`current_number`).
+- Item objects are shared: shop pools hand out `ItemService`'s own `ItemData` objects
+  (`get_pool` copies the list, not the items), so one object can be in a player's `items` several
+  times and in several players' lists; a resumed run has a copy per entry. `RunData.add_weapon`
+  always copies. `RunData.remove_item` erases the item's appearances even when another copy stays.
+
 ## 11. Battlefield entities
 
 - No gameplay groups and **no stable entity ids** — everything is pooled (`main.gd :: get_node_from_pool` /
