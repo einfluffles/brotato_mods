@@ -346,13 +346,24 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - Stall diagnostics, for the log only (a PING a second only sees stalls longer than a second's share):
   - Gaps (`sync/stream_gaps.gd`): a client logs when the host's snapshots stop for 200 ms or more, the host
     when a client's INPUT stream does (per client). Timed by Steam's receive time (`Session.arrival_msec`), so
-    this game's own long frames are no gap. The sender's clock for the message (snapshot time; INPUT seq in
-    physics steps) tells "held up on the way" (sent at the usual pace, arriving together after the gap) from
-    "not sent or lost" (sent that far apart: the sender's frame stalled, or the messages were lost). With
+    this game's own long frames are no gap. The sender's clock for the message tells "held up on the way" (sent
+    at the usual pace, arriving together after the gap) from the rest. Snapshots carry the host's snapshot
+    time: the rest is "not sent or lost" (sent that far apart: the host's frame stalled, or the snapshots
+    were lost). INPUT (protocol 22) carries the client's `OS.get_ticks_msec()` at sending next to its seq
+    (one per physics step), which splits the rest: a client whose frame stalls runs no physics steps
+    meanwhile (Godot then runs at most 8 in one frame), so its clock jumps while its seq does not. When the
+    send time the seq steps don't account for is at least half the gap, the line reads "its game sent nothing
+    for N ms (its own stall)"; else a seq jump beyond the redundancy (more than 5) reads "N inputs lost on the
+    way"; else "held up on the way". The line names the seq step ("(seq +N)") and, when the 600 ms timeout
+    let go of the player during the gap, "; buttons released". Until protocol 22 the host took the send time
+    from the seq: in a three-player session of 43 waves every one of its 213 input gap lines (200 to 847 ms;
+    120 in the battle scene, 89 in the shop, most at a battle start or a shop entry) read "sent 16 or 17 ms
+    apart: held up on the way", though a client frame stalled at a scene change sends nothing and then its physics steps at once
+    (`network_stall_tests.gd` replays that: 650 ms without input, then 8 in one frame). With
     Steam's numbers, the session's path and the scene; the client's line also has the render delay. At most
     one line per 5 s per stream, the next one counts the gaps left out. A host pause is no gap. After a
     client's gap the host also logs what its movement queue made of it (inputs filled in from redundancy,
-    steps caught up, steps dropped; see "Remote input", Movement).
+    steps caught up, steps dropped and how many of them moved; see "Remote input", Movement).
   - Route (`Transport.apply_route`): relay-only by default. `setGlobalConfigValueInt32(
     P2P_Transport_ICE_Enable, disable)` at startup, before any session, so Steam has the relayed (SDR)
     route only. Launch option `+bt_direct` skips that and leaves Steam's default (ICE and SDR, Steam picks);
@@ -1396,7 +1407,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 
 - `INPUT` (unreliable, every physics frame): held mask + a 4-bit press counter per button
   (`sync/press_counter.gd`) + aim flags + (protocol 16) the moves of the 4 inputs before it
-  (`InputSync.REDUNDANCY`, a `PoolVector2Array`, 40 B). Host (`sync/remote_buttons.gd`): a press
+  (`InputSync.REDUNDANCY`, a `PoolVector2Array`, 40 B) + (protocol 22) the client's `OS.get_ticks_msec()` at
+  sending (only for the gap log, see "Stall diagnostics"). Host (`sync/remote_buttons.gd`): a press
   needs a counted edge (a button still held after the timeout release or at rejoin does nothing until
   released), a tap lost in a loss burst is replayed once, `ui_pause` is never held (delivered as press+release on the client's release,
   so timeouts/disconnects can't pause), held menu directions repeat like the game's pad echo (following
@@ -1409,8 +1421,9 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   - Redundancy (protocol 16): each INPUT carries the moves of the 4 inputs before it, and the host queues
     those still due (newer than the last taken or dropped, not queued yet). A lost packet, or up to 4 in a
     row, costs no step, and a late packet's move is already queued before its successor. Bodies are
-    checked strictly (7 fields, at most 4 finite moves, the move finite): anything else is dropped whole.
-    Protocol 15 builds (6 fields) are turned away at HELLO; the mod version has to match anyway, so an
+    checked strictly (8 fields, at most 4 finite moves, the move finite, the send time an int): anything
+    else is dropped whole. Protocol 15 builds (6 fields) and protocol 21 ones (7, no send time) are turned
+    away at HELLO; the mod version has to match anyway, so an
     optional field would never meet an older build.
   - Catch-up: more than `MAX_WAITING` (2) waiting only happens after a gap (the packets held up on the
     way arrive together). The client predicted all of those steps, so the host keeps up to `MAX_BACKLOG`
@@ -1426,8 +1439,12 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     released a player the client still showed running. Movement doesn't need it: with nothing queued the
     player stands, so it never runs on into a wall; a full backlog drains in about 20 ticks, well within.
   - Log: one line per catch-up or loss episode, at most one per 5 s per client, "Input from ...: N missing
-    input(s) filled in from later packets, N step(s) caught up, N dropped (corrected on the client)", next
-    to the input gap line (`sync/stream_gaps.gd`, see "Stall diagnostics").
+    input(s) filled in from later packets, N step(s) caught up, N dropped, M of them moving (corrected on the
+    client)", next to the input gap line (`sync/stream_gaps.gd`, see "Stall diagnostics"). Only a dropped
+    input that moves costs the client a correction (it predicted a step the host never takes); a standing
+    one moves neither side. The timeout clears 4 or 5 standing inputs at every battle start, which until
+    protocol 22 made a line of its own ("0 ... filled in, 0 ... caught up, 5 dropped"; 15 of the 228 lines in
+    the 43-wave session): drops of standing inputs alone log nothing now.
 - Client mode (`VirtualDevices.set_client_mode`): the client's InputService tracks pad vs. mouse like solo
   play, shows the mouse when it moves and doesn't emulate echo actions; the left stick is sent as menu
   directions.

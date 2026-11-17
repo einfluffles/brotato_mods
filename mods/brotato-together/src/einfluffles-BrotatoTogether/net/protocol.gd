@@ -10,7 +10,9 @@ enum Msg {
 	# client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons (held mask),
 	# presses (4-bit counter per button, sync/press_counter.gd), flags (sync/local_aim.gd),
 	# previous: PoolVector2Array (the moves of the up to InputSync.REDUNDANCY inputs right before
-	# seq, oldest first, so a lost packet's move still arrives with a later one; protocol 16)]
+	# seq, oldest first, so a lost packet's move still arrives with a later one; protocol 16),
+	# sent_msec (the client's OS.get_ticks_msec() when it sent it: the host's gap log tells the
+	# client's own stalls from inputs held up on the way, sync/stream_gaps.gd; protocol 22)]
 	INPUT,
 	# host -> client: battle_id, run (RunStateCodec), types {idx: scene_path}, colors (palette
 	# index per slot, CoopService extension; also in the shop and menu states)
@@ -48,7 +50,7 @@ enum Msg {
 	STATE,
 }
 
-const VERSION := 21
+const VERSION := 22
 # How long one side carries on without the other's stream (snapshots on a client, INPUT on the
 # host) before it counts as gone rather than late. Both ends share it: a client predicts its own
 # player for that long without snapshots (sync/battle_client.gd PREDICTION_STALE_MSEC), and the

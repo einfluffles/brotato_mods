@@ -649,7 +649,7 @@ func _find_by_id(elements: Array, my_id: String):
 func _send(input_sync: Node, move: Vector2, aim: Vector2, buttons: int) -> void:
 	_seq += 1
 	var counts: int = _presses.sample(buttons)
-	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons, counts, 0, PoolVector2Array()])
+	input_sync._apply_input(FAKE_PEER, [_seq, move, aim, buttons, counts, 0, PoolVector2Array(), 0])
 
 
 func _tap_key(scancode: int) -> void:

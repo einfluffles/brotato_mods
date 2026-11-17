@@ -16,10 +16,10 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   snapshots with interpolation (~100 ms behind); your own character is predicted locally and reconciled.
   Short network stalls (up to about half a second) are ridden out: your character keeps moving, and the
   world holds and then catches up smoothly instead of jumping. `modloader.log` names each stall (which
-  direction, how long, held up or lost) and whether the connection is direct or relayed by Steam; when
-  Steam's send queue holds 4 KB or more it also names what was sent reliably in the last two seconds
-  (message types and sizes), and a single message over 32 KB or a queue over 64 KB gets a log line of
-  its own.
+  direction, how long, and whether the other game stalled itself or the messages were held up or lost
+  on the way) and whether the connection is direct or relayed by Steam; when Steam's send queue holds
+  4 KB or more it also names what was sent reliably in the last two seconds (message types and
+  sizes), and a single message over 32 KB or a queue over 64 KB gets a log line of its own.
   Spawn markers (where the next enemies appear) and the life bars of bosses and elites are mirrored too,
   and so are explosions, screen shake, level-up / heal / material texts, the icon and number over
   a character whose stat changed (evolution, a mutation fruit, an item's gain), the crates a player
