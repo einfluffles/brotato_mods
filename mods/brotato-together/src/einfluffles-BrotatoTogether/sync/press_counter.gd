@@ -31,9 +31,10 @@ func on_event(event: InputEvent) -> void:
 			_latched |= 1 << i
 
 
-# held: buttons held right now. Returns the packed counters to send.
-func sample(held: int) -> int:
-	var pressed := (held & ~_prev) | (_latched & ~_prev & ~held)
+# held: buttons held right now; dropped: buttons whose presses count for nothing (still held
+# afterwards, they need a new press). Returns the packed counters to send.
+func sample(held: int, dropped := 0) -> int:
+	var pressed := ((held & ~_prev) | (_latched & ~_prev & ~held)) & ~dropped
 	for i in VirtualDevices.BUTTON_ACTIONS.size():
 		if pressed & (1 << i):
 			var shift: int = BITS * i

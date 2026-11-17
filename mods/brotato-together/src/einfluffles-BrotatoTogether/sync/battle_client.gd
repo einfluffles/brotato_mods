@@ -297,6 +297,8 @@ func _reset_battle_state() -> void:
 	_paused = false
 	_wave_over = false
 	_pause_text = ""
+	if input_sync != null:
+		input_sync.set_host_paused("battle", false)
 	_events.clear()
 	_feedback = FeedbackMirror.new()
 	SoundRelay.set_muted(false)
@@ -379,6 +381,8 @@ func _freeze(main: Node) -> void:
 # Host paused: snapshots stop, so say why the world froze.
 func _set_paused(paused: bool) -> void:
 	_paused = paused
+	if input_sync != null:
+		input_sync.set_host_paused("battle", paused and is_in_battle())
 	if not is_in_battle():
 		return
 	var text := _pause_text if _pause_text != "" else "Paused by the host"

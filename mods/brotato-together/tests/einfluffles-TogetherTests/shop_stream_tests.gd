@@ -152,7 +152,7 @@ func run_client(shop: Node) -> void:
 	var banner = shop.get_node_or_null(PauseControl.BANNER_NAME)
 	t._check(
 		local._paused and banner != null and banner.visible
-		and banner.get_node("Label").text == "Paused by the host",
+		and PauseControl.banner_label(banner).text == "Paused by the host",
 		"client: the host's pause from the stream shows the banner, own panel off"
 	)
 	stream.receive(bytes2var(var2bytes(unpaused_message), false))
