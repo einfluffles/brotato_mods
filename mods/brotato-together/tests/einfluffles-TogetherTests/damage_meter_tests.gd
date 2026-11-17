@@ -567,12 +567,24 @@ func _test_solo_shop(meter: Node):
 		seen == ["secondary", "damage", "primary", "damage"],
 		"RB steps Primary, Secondary, Damage and around, LB back %s" % [seen]
 	)
+	# Widths of buttons and gaps (texts measure 0 px headless): the row still fits the panel.
+	var width: float = row.get_combined_minimum_size().x
+	_t._check(width <= 360, "the three tabs fit the panel's 360 px row (%d)" % width)
+	tab.grab_focus()
 	meter.set_shown(false)
 	yield(_t.get_tree(), "idle_frame")
 	_t._check(
 		not tab.visible and _solo_tab(stats, page) == "primary",
 		"switched off: no tab, the open one falls back to Primary"
 	)
+	_t._check(stats._primary_tab.has_focus(), "the focus on the tab moves to Primary")
+	_t._check(
+		stats._primary_tab.rect_min_size.x == 150 and row.get_constant("separation") == 10,
+		"and the row has the game's widths again"
+	)
+	tab.grab_focus()  # what the shop does after a pause in which the meter went off
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(stats._primary_tab.has_focus(), "focus handed to the hidden tab goes on to Primary")
 	seen = []
 	for button in [JOY_R, JOY_R]:
 		yield(_press_joypad(button), "completed")

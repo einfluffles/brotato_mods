@@ -9,7 +9,10 @@ extends "res://ui/menus/shop/stats_container.gd"
 # of Secondary without its signals, an icon only (the row has no room for a third text tab).
 
 const BT_TAB := 2
-const BT_TAB_WIDTH := 50
+const BT_TITLE := "Damage"
+# The tab row has 360 px inside the panel's 400; the game's tabs take 150 + 180 + 10. With the
+# third tab they give up a little, so the panel keeps its width: 145 + 165 + 40 + 2 x 5 = 360.
+const BT_WIDTHS := [145, 165, 40]
 const BT_SEPARATION := 5
 
 var _bt_button: Button = null
@@ -17,6 +20,7 @@ var _bt_page: Control = null
 var _bt_enabled := false
 var _bt_current := 0  # Tab.PRIMARY, Tab.SECONDARY or BT_TAB
 var _bt_step := 0  # the trigger _input saw: -1 LB, 1 RB, 0 none
+var _bt_game_layout := []  # Primary's and Secondary's widths and the row's separation
 
 
 func bt_has_tab() -> bool:
@@ -32,31 +36,49 @@ func bt_add_tab(page: Control, icon: Texture) -> void:
 	_bt_button.text = ""
 	_bt_button.icon = icon
 	_bt_button.expand_icon = true
-	_bt_button.rect_min_size.x = BT_TAB_WIDTH
-	_buttons_container.add_constant_override("separation", BT_SEPARATION)
+	_bt_button.hint_tooltip = BT_TITLE
 	_buttons_container.add_child_below_node(_secondary_tab, _bt_button)
 	_bt_button.connect("pressed", self, "update_tab", [BT_TAB])
+	_bt_button.connect("focus_entered", self, "_bt_on_focus_entered")
+	_bt_game_layout = [
+		_primary_tab.rect_min_size.x,
+		_secondary_tab.rect_min_size.x,
+		_buttons_container.get_constant("separation"),
+	]
 	_bt_page = page
 	_bt_page.visible = false
 	_secondary_stats.get_parent().add_child_below_node(_secondary_stats, _bt_page)
-	_bt_enabled = true
 	_bt_current = focused_tab
 	_set_flat(_bt_button, false)
-	set_focus_neighbours()
+	_bt_enabled = false
+	bt_set_tab_enabled(true)
 
 
-# Off (the meter's switch): the tab is gone, an open one falls back to Primary.
+# Off (the meter's switch): the tab is gone, an open one falls back to Primary, and the row has
+# the game's widths again.
 func bt_set_tab_enabled(on: bool) -> void:
 	if _bt_button == null or on == _bt_enabled:
 		return
 	_bt_enabled = on
 	if not on and _bt_current == BT_TAB:
-		var had_focus := _bt_button.has_focus()
 		update_tab(Tab.PRIMARY)
-		if had_focus:
-			_primary_tab.grab_focus()
+	if not on and _bt_button.has_focus():
+		_primary_tab.grab_focus()
 	_bt_button.visible = on
+	_primary_tab.rect_min_size.x = BT_WIDTHS[0] if on else _bt_game_layout[0]
+	_secondary_tab.rect_min_size.x = BT_WIDTHS[1] if on else _bt_game_layout[1]
+	_bt_button.rect_min_size.x = BT_WIDTHS[2]
+	_buttons_container.add_constant_override(
+		"separation", BT_SEPARATION if on else _bt_game_layout[2]
+	)
 	set_focus_neighbours()
+
+
+# The hidden tab can still be handed the focus: the shop gives it back after a pause to whatever
+# had it before, and the meter may have been switched off in that pause.
+func _bt_on_focus_entered() -> void:
+	if not _bt_enabled:
+		_primary_tab.call_deferred("grab_focus")
 
 
 func _input(event: InputEvent) -> void:
@@ -84,7 +106,7 @@ func update_tab(tab: int) -> void:
 		return
 	_bt_current = BT_TAB
 	var focused = get_focus_owner()
-	if focused != null and focused.get_parent() in [_primary_stats, _secondary_stats]:
+	if focused != null and focused.get_parent() in [_general_stats, _primary_stats, _secondary_stats]:
 		_bt_button.grab_focus()
 	focused_tab = Tab.SECONDARY  # no focus loops over the hidden primary stats
 	_set_flat(_primary_tab, false)

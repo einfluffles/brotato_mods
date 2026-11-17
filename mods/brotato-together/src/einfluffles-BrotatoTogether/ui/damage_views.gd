@@ -380,6 +380,14 @@ func _apply_shown(holder: Control) -> void:
 		holder._on_Carousel_index_changed(carousel.index)
 	else:
 		carousel.index = carousel.index  # the setter: arrows for the new last page
+	# Without trigger glyphs the arrows take the cursor; one that is now the disabled end of the
+	# row hands it to the other, as the carousel does itself after a page change.
+	var emulator = Utils.get_focus_emulator(holder.player_index, get_tree().current_scene)
+	var arrows: Array = [carousel.arrow_left, carousel.arrow_right]
+	for k in 2:
+		if emulator != null and emulator.focused_control == arrows[k] and arrows[k].disabled:
+			if not arrows[1 - k].disabled:
+				emulator.focused_control = arrows[1 - k]
 
 
 # --- both ---

@@ -1681,9 +1681,12 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   adds a third tab, inert until `DamageViews.add_tab` arms it (`_process` finds the solo shop by
   `_get_reroll_button` without `_get_coop_player_container`, the solo end of run by its scene
   file), so the pause menu, the level-up screen and the co-op stats pages keep two tabs. The tab
-  is a copy of Secondary without its signals, an icon (the row has 370 px; Primary and
-  Secondary take 330 of them), so the panel grows by about 20 px. Its page goes after
-  `SecondaryStats`. The extension's `_input` runs before the game's (Godot 3 multilevel calls,
+  is a copy of Secondary without its signals, an icon with a tooltip. The row has 360 px inside
+  the panel's 400 and the game's tabs take 150 + 180 + 10, so while the tab is on they give up
+  a little (145 + 165 + 40 + 2 x 5 = 360) and the panel keeps its width; off, the game's widths
+  come back. Its page goes after `SecondaryStats`. Focus handed to the hidden tab (the shop
+  restores the focus from before a pause, in which the meter may have gone off) moves on to
+  Primary. The extension's `_input` runs before the game's (Godot 3 multilevel calls,
   derived first), notes the trigger, and `update_tab` steps through three tabs instead of
   toggling two: RB forward, LB back, around at the ends. Secondary leads right to the tab, the
   tab right to the panel's right neighbour (Go in the shop). The shop and the board are told by
@@ -1713,7 +1716,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   for itself; a machine without peers stops measuring. Online, a host with the meter off shows
   a client on the damage page on the page before and passes that on; at the end of run, where
   the host's carousels move for everyone, nobody reaches the page then (accepted: the host
-  switched the meter off). Stored with `session/settings.gd`
+  switched the meter off). The other way round (host on, a client off), the host's carousel for
+  that client can stand on the damage page while the client shows the page before; the
+  client's first LB then moves only the host's. A keyboard player whose cursor is on an arrow
+  that the switch disables gets the other arrow. Stored with `session/settings.gd`
   in the Mod Loader's config (`config_schema` in `manifest.json`, default on;
   `user://mod_configs/einfluffles-BrotatoTogether/settings.json` from the first change: the
   loader's "default" config cannot be written). The label is English only.
