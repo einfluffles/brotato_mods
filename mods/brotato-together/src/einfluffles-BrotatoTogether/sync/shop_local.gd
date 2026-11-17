@@ -168,6 +168,8 @@ func set_paused(paused: bool) -> void:
 	if paused != _paused:
 		ModLoaderLog.info("Host's shop pause: %s" % ("paused" if paused else "resumed"), LOG_NAME)
 	_paused = paused
+	if input_sync != null:
+		input_sync.set_host_paused("shop", paused)
 	_apply_device("host paused" if paused else "host resumed")
 	_apply_local_panel()
 

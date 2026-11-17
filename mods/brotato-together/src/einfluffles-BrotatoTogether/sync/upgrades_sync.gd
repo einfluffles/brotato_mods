@@ -123,7 +123,9 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	if is_instance_valid(_local_panel):
-		_local_panel.blocked = input_sync != null and input_sync.local_input_blocked
+		_local_panel.blocked = input_sync != null and (
+			input_sync.local_input_blocked or input_sync.is_host_paused()
+		)
 	if _local_active:
 		_report_own_focus()
 	var ui = _showing_ui()

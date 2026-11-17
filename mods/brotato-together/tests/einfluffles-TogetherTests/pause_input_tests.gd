@@ -9,6 +9,9 @@ const LocalAim := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/
 const PauseControl := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
 )
+const PressCounter := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/press_counter.gd"
+)
 const AbsentPlayers := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/absent_players.gd"
 )
@@ -51,6 +54,7 @@ func run():
 	_test_edges()
 	_test_pause_edges()
 	_test_echo()
+	_test_dropped_while_host_paused()
 	_probe.queue_free()
 	yield(_test_aim(), "completed")
 	yield(_test_pause_menu(), "completed")
@@ -252,6 +256,43 @@ func _tap_remote_pause():
 	VirtualDevices.press_button("ui_pause_%s" % DEVICE, DEVICE, false)
 	Input.flush_buffered_events()
 	yield(t.get_tree(), "idle_frame")
+
+
+# Client: while the host is paused a press goes nowhere and is not kept for after the pause; a
+# button still held then needs a new press. Pause still counts (the pauser resumes with it).
+func _test_dropped_while_host_paused() -> void:
+	var counter = PressCounter.new()
+	var dropped: int = input_sync.held_while_paused_mask()
+	var start: int = counter.sample(0)
+	t._check(counter.sample(ACCEPT, dropped) == start, "host paused: a press counts nothing")
+	t._check(counter.sample(ACCEPT) == start, "host resumed: the accept held since fires nothing")
+	counter.sample(0)
+	t._check(
+		PressCounter.presses_between(start, counter.sample(ACCEPT), 0) == 1,
+		"a new press after the pause counts"
+	)
+	var before: int = counter.sample(0, dropped)
+	t._check(
+		PressCounter.presses_between(before, counter.sample(PAUSE, dropped), VirtualDevices.PAUSE_INDEX)
+		== 1,
+		"host paused: pause still counts"
+	)
+
+	input_sync.set_host_paused("battle", true)
+	input_sync.set_host_paused("shop", true)
+	input_sync.set_host_paused("shop", false)
+	t._check(input_sync.is_host_paused(), "one owner's resume leaves the other's pause")
+	Input.action_press("ui_accept")
+	var body: Array = input_sync.sample_local()
+	t._check(body[3] & ACCEPT == 0, "host paused: the accept is not sent as held")
+	input_sync.set_host_paused("battle", false)
+	var after: Array = input_sync.sample_local()
+	Input.action_release("ui_accept")
+	t._check(
+		not input_sync.is_host_paused() and after[4] == body[4] and after[3] & ACCEPT,
+		"host resumed: held again, but no press for the host to replay"
+	)
+	input_sync.sample_local()
 
 
 # Client: focus loss / pad disconnect / pause never open the puppet scene's pause menu.
