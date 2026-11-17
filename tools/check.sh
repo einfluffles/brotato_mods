@@ -141,9 +141,13 @@ for folder in "${folders[@]}"; do
         shards+=("$suites")
         extras+=("$extra")
       elif [ -n "$extra" ]; then
-        # -s: the named suites get the mods their shards ask for.
+        # -s: the named suites get the mods their shards ask for, each mod once (two suites
+        # from one line, or two lines naming the same mod, must not mount it twice).
         for suite in ${only_suites//,/ }; do
-          case ",$suites," in *",$suite,"*) only_extra="$only_extra+$extra" ;; esac
+          case ",$suites," in *",$suite,"*) ;; *) continue ;; esac
+          for other in ${extra//+/ }; do
+            case "+$only_extra+" in *"+$other+"*) ;; *) only_extra="$only_extra+$other" ;; esac
+          done
         done
       fi
     done < "$dir/shards.txt"
@@ -152,6 +156,12 @@ for folder in "${folders[@]}"; do
     shards=("$only_suites")
     extras=("$only_extra")
   fi
+  # Every extra mod is checked before the first process starts: none is left running behind.
+  for extra in "${extras[@]}"; do
+    for other in ${extra//+/ }; do
+      [ -d "$ROOT/mods/$other/src" ] || { echo "shards.txt: no mod in mods/$other" >&2; exit 2; }
+    done
+  done
 
   started=$(date +%s)
   logs=()
@@ -161,7 +171,6 @@ for folder in "${folders[@]}"; do
     logs+=("$log")
     shard_mounts=("${mounts[@]}")
     for other in ${extras[$i]//+/ }; do
-      [ -d "$ROOT/mods/$other/src" ] || { echo "shards.txt: no mod in mods/$other" >&2; exit 2; }
       for dir in "$ROOT/mods/$other"/src/*/; do
         id="$(basename "$dir")"
         shard_mounts+=(-v "${dir%/}:/proj/mods-unpacked/$id:ro$label")
