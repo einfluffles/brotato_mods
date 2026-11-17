@@ -20,14 +20,20 @@ A trade is a gift: nothing is paid and the receiver is not asked.
 - **Trade only shows when somebody can take the item**, and the list only names those players.
   An item nobody can take has no popup buttons, as in the game.
 - **Items:** the item's limit holds. A player who has a unique item is not offered another, a
-  limited item (e.g. 3 of a kind) goes up to its limit.
+  limited item (e.g. 3 of a kind) goes up to its limit. What the receiver's shop offers right now
+  (locked or not) counts too, as when the game rolls the shop: a player whose shop offers the
+  unique item cannot be given one on top and then buy it as well.
 - **Weapons** follow the game's rules for buying one: it needs a free slot, or the receiver
   combines it with the same weapon into the next tier ("Player 2 (Combine)" in the list). With
   several weapons to combine with, a cursed one is used first. A receiver that takes no melee /
   ranged weapons or is limited to a tier is not offered; a giver whose weapons are locked cannot
   give any.
 - **Not tradable:** characters, items the game never offers in a shop or crate (builder turret,
-  tumor, hatched eggs, used-up leftovers) and items whose effect was spent when they were picked up.
+  tumor, hatched eggs, used-up leftovers) and items with an effect that giving them away does not
+  undo, which passing them back and forth would farm: Axolotl (its swap is done), the Leaps
+  (Evolution is multiplied anew), Handcuffs and Shackles (the cap is set anew), Bait, Lure,
+  Peacock, Celery Tea, Scarf, Weird Ghost and Hourglass (their next-wave effect is used up when
+  the wave starts, the receiver would get it again) and Dangerous Bunny (its free rerolls).
 - The receiver gets the item as it is (cursed stays cursed, a weapon keeps its tracked values).
   Buying effects do not run: no stat-gain triggers, no mutation on equip, no free reroll in the
   same shop.

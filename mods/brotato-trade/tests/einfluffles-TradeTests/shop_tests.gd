@@ -3,6 +3,8 @@ extends Reference
 # and its list of players, driven with each player's own buttons, and what both panels show
 # after a hand-over. Three players: 0 gives, 1 already has the unique item, 2 has nothing.
 
+const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules.gd")
+
 var _t: Node = null
 var _shop: Node = null
 var _plain = null  # an item without a limit
@@ -141,8 +143,20 @@ func _give_item():
 
 
 # Player 1 has the unique item: only player 2 is offered. Once everybody has one, nobody is.
+# A player whose shop offers it gets none either: the game counts offers towards the limit
+# when it rolls, and a buy checks nothing but the gold.
 func _unique_item():
 	var popup = _popup(0)
+	var offers: Array = _shop._get_shop_items_container(2)._shop_items
+	for node in offers:
+		if node.active and node.item_data == _unique:
+			node.set_shop_item(_plain)  # rolled by chance: out of the way
+	var slot = offers[0]
+	var rolled = slot.item_data
+	slot.set_shop_item(_unique)
+	_t.check(_shop.trade_receivers(_unique, 0).empty(), "nor to a player whose shop offers it")
+	_t.check(Rules.receivers(_unique, 0) == [2], "(the shop's offers make the difference)")
+	slot.set_shop_item(rolled)
 	yield(_open_list(0, _unique), "completed")
 	var buttons: Array = popup._trade_players
 	_t.check(
@@ -242,7 +256,10 @@ func _refusals() -> void:
 	_t.get_tree().paused = false
 	_t.check(not _shop.trade_give(weapon, 1, 0), "nor by a player who does not own it")
 	_t.check(not _shop.trade_apply_request(true, 2, 0, "weapon_smg_1", 0), "nor on a wrong name")
-	_t.check(not _shop.trade_apply_request(true, 2, 5, _t.PISTOL, 0), "nor from an empty place")
+	_t.check(
+		not _shop.trade_apply_request(true, 2, 5, "weapon_smg_1", 0),
+		"nor from an empty place naming nothing the player owns"
+	)
 	_t.check(_t.ledger() == before, "refused hand-overs change nothing")
 	_cursors_valid("at the end")
 

@@ -20,9 +20,10 @@ const LOG_NAME := "einfluffles-BrotatoTrade:Transfer"
 
 
 # {} when nothing was given, else: weapon (bool), received (the receiver's object), combined
-# (bool: merged into one of the receiver's weapons).
-static func give(item, from: int, to: int) -> Dictionary:
-	if not Rules.can_trade(item, from, to):
+# (bool: merged into one of the receiver's weapons). shop: the shop it happens in, whose offers
+# count towards an item's limit (Rules.can_receive).
+static func give(item, from: int, to: int, shop: Node = null) -> Dictionary:
+	if not Rules.can_trade(item, from, to, shop):
 		return {}
 	if Rules.is_weapon(item):
 		return _give_weapon(item, from, to)

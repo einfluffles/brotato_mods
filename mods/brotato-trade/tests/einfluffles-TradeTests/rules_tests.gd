@@ -138,29 +138,37 @@ func _bound_items() -> void:
 		"a character is not given away"
 	)
 	var bound = null
-	var spent = null
+	var spent := []  # lootable items whose hand-over would not undo itself
+	var successor = null  # a lootable item that turns into another, nothing spent
 	for item in ItemService.items:
-		if not item.can_be_looted and bound == null:
-			bound = item
-		for effect in item.effects:
-			if effect.get_id() in Rules.ONE_SHOT_EFFECTS and spent == null:
-				spent = item
+		if not item.can_be_looted:
+			bound = item if bound == null else bound
+		elif Rules.has_spent_effect(item):
+			spent.append(item)
+		elif item.replaced_by != null and successor == null:
+			successor = item
 	if bound != null:
 		RunData.players_data[0].items.push_back(bound)
 		_t.check(Rules.receivers(bound, 0).empty(), "%s is bound to its player" % bound.my_id)
-	if spent != null:
-		RunData.players_data[0].items.push_back(spent)
-		_t.check(Rules.receivers(spent, 0).empty(), "%s was spent when picked up" % spent.my_id)
-	if bound == null:
+	else:
 		print("  info: no item the game never offers here, bound items not tested")
-	if spent == null:
-		print("  info: no one-shot item without the DLCs, spent items not tested")
-	var hourglass = _t.find(ItemService.items, "item_hourglass")
-	if hourglass != null and hourglass.replaced_by != null:
-		RunData.add_item(hourglass, 0)
-		var ledger: String = _t.ledger()
-		_t.check(not Transfer.give(hourglass, 0, 1).empty(), "an item with a successor is given")
-		_t.check(_t.ledger() == ledger, "and the giver gets no leftover for it")
+	var given := []
+	for item in spent:
+		RunData.players_data[0].items.push_back(item)
+		if not Rules.receivers(item, 0).empty():
+			given.append(item.my_id)
+	_t.check(given.empty(), "%d items a hand-over would farm stay (%s)" % [spent.size(), given])
+	var ids: Array = _t.ids(spent)
+	for my_id in ["item_peacock", "item_lure", "item_weird_ghost", "item_bait", "item_handcuffs"]:
+		_t.check(my_id in ids, "%s is one of them" % my_id)
+	if successor == null:
+		# The game's (Hourglass) has a spent effect: a plain item with one stands in.
+		successor = _t.item_with_limit(-1).duplicate()
+		successor.replaced_by = _t.item_with_limit(1)
+	RunData.add_item(successor, 0)
+	var ledger: String = _t.ledger()
+	_t.check(not Transfer.give(successor, 0, 1).empty(), "an item with a successor is given")
+	_t.check(_t.ledger() == ledger, "and the giver gets no leftover for it")
 
 
 func _weapons() -> void:

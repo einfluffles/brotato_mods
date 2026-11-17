@@ -61,11 +61,14 @@ func _host(input: Node):
 	_t.check(_sync._kinds() == [ITEM, WEAPON], "the host takes trades as shop intents")
 	_capture("start")
 	_t.check(_states.start.get("kinds") == [ITEM, WEAPON], "and its state says so")
+	# A reroll's gold: the remote player's data changes, its gear does not.
+	RunData.add_gold(3, REMOTE)
+	_capture("rerolled")
 
 	var before: String = _t.ledger()
 	var slot: int = RunData.get_player_items_ref(REMOTE).find(_plain)
 	_t.check(not _apply(ITEM, slot, "item_none", 0), "a request naming another item is dropped")
-	_t.check(not _apply(ITEM, 99, _plain.my_id, 0), "one from an empty place too")
+	_t.check(not _apply(ITEM, 99, "item_none", 0), "one from an empty place too")
 	_t.check(not _apply(ITEM, slot, _plain.my_id, REMOTE), "nothing is given to oneself")
 	_t.check(not _apply(ITEM, slot, _plain.my_id, 7), "nor to a player who is not there")
 	var unique_slot: int = RunData.get_player_items_ref(REMOTE).find(_unique)
@@ -86,8 +89,11 @@ func _host(input: Node):
 	_t.check(_row_has(0, _plain), "the host's panels show it")
 
 	var weapon = RunData.get_player_weapons_ref(REMOTE)[1]
-	request = _intent(WEAPON, 1, weapon.my_id, 0)
-	_t.check(_sync.host_apply_intent(_shop, REMOTE, request), "a weapon trade is applied")
+	request = _intent(WEAPON, 7, weapon.my_id, 0)
+	_t.check(
+		_sync.host_apply_intent(_shop, REMOTE, request),
+		"a weapon trade is applied, found by its id when the slot is off"
+	)
 	_t.check(not _sync.host_apply_intent(_shop, REMOTE, request), "and only once")
 	var sizes := [
 		RunData.get_player_weapons_ref(0).size(), RunData.get_player_weapons_ref(REMOTE).size()
@@ -168,6 +174,42 @@ func _client():
 	_t.check(local.last_intent.empty(), "another player's popup sends nothing")
 	_t.check(_t.ledger() == before, "and still nothing changed here")
 
+	# A reroll changes the own player's data (gold) but not its gear: the client's run gets
+	# fresh objects, the gear rows keep their elements and the objects those show.
+	_receive(_states.rerolled)
+	yield(_t.frames(2), "completed")
+	var shown = _element(REMOTE, own).item
+	var shown_weapon = _weapon_element(REMOTE, 1).item
+	_t.check(
+		not RunData.get_player_items_ref(REMOTE).has(shown)
+		and not RunData.get_player_weapons_ref(REMOTE).has(shown_weapon),
+		"(after a reroll the gear rows show objects the run has no more)"
+	)
+	_t.check(_shop.trade_receivers(shown, REMOTE) == [0], "the old element still offers Trade")
+	_t.check(_shop.trade_receivers(shown_weapon, REMOTE) == [0], "an old weapon element too")
+	local.last_intent = {}
+	popup.emit_signal("trade_requested", shown, 0)
+	sent = local.last_intent
+	slot = RunData.get_player_items_ref(REMOTE).find(_owned(REMOTE, _plain.my_id))
+	_t.check(
+		slot >= 0 and sent.get("slot") == slot and sent.get("id") == _plain.my_id,
+		"a trade from it names the player's own item (%s)" % [sent]
+	)
+	local.last_intent = {}
+	popup.emit_signal("trade_requested", shown_weapon, 0)
+	sent = local.last_intent
+	var weapons: Array = RunData.get_player_weapons_ref(REMOTE)
+	var at: int = sent.get("slot", -1)
+	_t.check(
+		sent.get("kind") == WEAPON and at >= 0 and at < weapons.size(),
+		"and one from the weapon names one of the player's weapons (%s)" % [sent]
+	)
+	_t.check(
+		at >= 0 and at < weapons.size() and weapons[at].my_id == shown_weapon.my_id,
+		"with the same id"
+	)
+	_t.check(_t.ledger() == before, "nothing changed hands here either")
+
 	# A host without brotato:trade does not name the kinds: no Trade on this client.
 	var plain_host: Dictionary = _states.start.duplicate()
 	plain_host.kinds = []
@@ -245,6 +287,15 @@ func _element(player: int, item):
 			if element.item.my_id == item.my_id:
 				return element
 	return null
+
+
+func _weapon_element(player: int, index: int):
+	var row: Node = _shop._get_gear_container(player).weapons_container._elements
+	var shown := []
+	for element in row.get_children():
+		if not element.is_queued_for_deletion():
+			shown.append(element)
+	return shown[index] if index < shown.size() else null
 
 
 func _row_has(player: int, item) -> bool:

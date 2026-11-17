@@ -22,7 +22,7 @@ func _ready() -> void:
 func trade_receivers(item, from: int) -> Array:
 	if not Together.can_request(self, from):
 		return []
-	return Rules.receivers(item, from)
+	return Rules.receivers(_trade_own(item, from), from, self)
 
 
 # A weapon that finds no free slot there is combined with one of the receiver's.
@@ -34,7 +34,7 @@ func trade_combines(item, to: int) -> bool:
 func trade_give(item, from: int, to: int) -> bool:
 	if get_tree().paused or Together.is_puppet(self):
 		return false
-	var result: Dictionary = Transfer.give(item, from, to)
+	var result: Dictionary = Transfer.give(item, from, to, self)
 	if result.empty():
 		return false
 	_trade_refresh_player(from)
@@ -45,7 +45,9 @@ func trade_give(item, from: int, to: int) -> bool:
 
 
 # brotato:together, host: a remote player's request. slot is the object's place in the giver's
-# weapons / items and id its my_id; a request that does not name one object is dropped.
+# weapons / items and id its my_id. When the slot holds something else the first object with
+# that id is given (Rules.find_named, like brotato:together's own weapon intents); a request
+# naming nothing the giver owns is dropped.
 func trade_apply_request(weapon: bool, from: int, slot: int, id: String, to: int) -> bool:
 	if not Rules.is_player(from):
 		return false
@@ -54,18 +56,28 @@ func trade_apply_request(weapon: bool, from: int, slot: int, id: String, to: int
 		if weapon
 		else RunData.get_player_items_ref(from)
 	)
-	if slot < 0 or slot >= owned.size() or owned[slot].my_id != id:
-		return false
-	return trade_give(owned[slot], from, to)
+	var item = Rules.find_named(owned, slot, id)
+	return item != null and trade_give(item, from, to)
 
 
 func _on_trade_requested(item, to: int, from: int) -> void:
 	if Together.is_puppet(self):
-		Together.send(self, from, item, to)
+		Together.send(self, from, _trade_own(item, from), to)
 		# The view half of a decision, as after combine / recycle: the popup closes.
 		_on_item_cancel_button_pressed(item, from)
 	elif not trade_give(item, from, to):
 		_on_item_cancel_button_pressed(item, from)
+
+
+# The giver's object for the item an element or popup shows. A brotato:together client's run
+# gets fresh objects whenever a player's data changes (a reroll's gold), but its gear rows are
+# only built again when the gear itself changed: their elements may still show the objects of
+# an older state, which the player owns no more. Here they stand for the player's own.
+func _trade_own(item, from: int):
+	if item == null or not Together.is_puppet(self):
+		return item
+	var own = Rules.own_object(item, from)
+	return own if own != null else item
 
 
 # What the shop redoes for a player whose gear changed (the per-player part of a buy).
