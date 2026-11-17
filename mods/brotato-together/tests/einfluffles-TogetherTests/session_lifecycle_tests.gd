@@ -11,7 +11,7 @@ extends Reference
 #  - the ping is the network's round trip: not the frames either game let the messages wait
 #  - sessions are relayed by default (Steam's direct route off), +bt_direct opts out, +bt_relay is
 #    still accepted; a direct path while relay-only is on gets one warning per connection
-#  - Steam's send rate is raised to 1 MB/s (min and max), Steam's default when refused
+#  - Steam's send rate is raised to 512 KB/s (min and max), Steam's default when refused
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
@@ -615,7 +615,7 @@ func _test_relay_route(transport: Node) -> void:
 	_test_direct_under_relay()
 
 
-# Steam's send rate goes from its default 256 KB/s to 1 MB/s: SendRateMin (10) and SendRateMax
+# Steam's send rate goes from its default 256 KB/s to 512 KB/s: SendRateMin (10) and SendRateMax
 # (11) both, since Steam paces at the min for any real ping. Refused or not available: Steam's
 # default, said so, nothing claimed. The route's own setting is not touched.
 func _test_send_rate(transport: Node) -> void:
@@ -628,13 +628,16 @@ func _test_send_rate(transport: Node) -> void:
 		(
 			transport.apply_send_rate()
 			and transport.send_rate == rate
-			and rate == 1048576
+			and rate == 524288
 			and _steam.config_values.size() == 2
 			and _steam.config_values.get(10) == rate
 			and _steam.config_values.get(11) == rate
-			and transport.send_rate_note == "Send rate: up to 1024 KB/s (Steam's default is 256)"
+			and transport.send_rate_note == "Send rate: up to 512 KB/s (Steam's default is 256)"
 		),
-		"send rate: min and max set to 1 MB/s %s (%s)" % [_steam.config_values, transport.send_rate_note]
+		(
+			"send rate: min and max set to 512 KB/s %s (%s)"
+			% [_steam.config_values, transport.send_rate_note]
+		)
 	)
 	_steam.config_values.clear()
 	var relayed: bool = transport.apply_route([])

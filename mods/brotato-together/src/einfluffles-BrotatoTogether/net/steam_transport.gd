@@ -46,7 +46,7 @@ const CONFIG_ICE_DISABLE := ["NETWORKING_CONFIG_P2P_TRANSPORT_ICE_DISABLE", 0]
 # Both names are in Brotato's GodotSteam 3.31; the numbers are steamnetworkingtypes.h's.
 const CONFIG_SEND_RATE_MIN := ["NETWORKING_CONFIG_SEND_RATE_MIN", 10]
 const CONFIG_SEND_RATE_MAX := ["NETWORKING_CONFIG_SEND_RATE_MAX", 11]
-const SEND_RATE := 1048576  # bytes per second, for both (see apply_send_rate)
+const SEND_RATE := 524288  # bytes per second, for both (see apply_send_rate)
 const STEAM_SEND_RATE := 262144  # Steam's default for both
 
 const LinkWatch := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/link_watch.gd")

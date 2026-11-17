@@ -191,12 +191,12 @@ one, about the same ping as the direct route).
   the game's GodotSteam cannot set it, a warning says so and Steam picks the route itself. While
   relayed, the connection lines read `relayed via …` and never `direct`.
 
-**Send rate:** the mod lets Steam send up to 1 MB/s per player instead of Steam's default 256 KB/s,
+**Send rate:** the mod lets Steam send up to 512 KB/s per player instead of Steam's default 256 KB/s,
 with no launch option needed. Steam paces everything at that rate, so a large update (the whole run,
 for example 250 KB in the shop late in a run) used to hold up everything behind it for almost a
-second; at 1 MB/s it takes about a quarter of that. The rate only matters while data is waiting.
+second; at 512 KB/s it takes half of that, and far less since the run travels in parts. The rate only matters while data is waiting.
 The host's setting is the one that counts, so a host running this version already helps.
-`modloader.log` says at startup `Send rate: up to 1024 KB/s (Steam's default is 256)`, or warns
+`modloader.log` says at startup `Send rate: up to 512 KB/s (Steam's default is 256)`, or warns
 that Steam's default stays if Steam refuses the setting.
 
 ## Tests
