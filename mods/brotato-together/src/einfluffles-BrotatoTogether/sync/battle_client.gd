@@ -53,8 +53,9 @@ const WAVE_TIMER_TOLERANCE := 0.3
 # A killing blow's damage event arrives with the snapshot that drops the enemy, which the client
 # despawns a frame or two before replaying the event: keep the target findable for a moment.
 const DESPAWN_GRACE_MSEC := 1000
-# Own-player prediction only while the host's world moves: not while paused, not when the newest
-# snapshot is older than this (stall), and never more than MAX_REPLAY_INPUTS (0.75 s) ahead.
+# Own-player prediction only while the host's world moves: not while paused, not after the wave's
+# end, not when the newest snapshot is older than this (stall), and never more than
+# MAX_REPLAY_INPUTS (0.75 s) ahead.
 # Network stalls of 300 to 500 ms (seen every 20 to 50 s on some connections) are ridden out: at
 # 250 ms the player snapped back to the host's last position and jumped ahead again when the
 # snapshots came. Inputs still reach the host during a stall of the snapshots alone, so the
@@ -116,6 +117,7 @@ var _own_error := Vector2.ZERO
 var _own_display := Vector2.ZERO
 var _own_seq := 0  # newest own input the displayed position includes
 var _paused := false
+var _wave_over := false  # the host's wave ended: its players stand (_note_wave_end)
 var _pause_text := ""
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
@@ -293,6 +295,7 @@ func _reset_battle_state() -> void:
 	_has_clock = false
 	_you = -1
 	_paused = false
+	_wave_over = false
 	_pause_text = ""
 	_events.clear()
 	_feedback = FeedbackMirror.new()
@@ -458,6 +461,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 	for event in snapshot.events:
 		if _events.size() < MAX_QUEUED_EVENTS:
 			_events.append([snapshot.t, event])
+	_note_wave_end(snapshot.events)
 	while _buffer.size() > MAX_BUFFERED:
 		_buffer.pop_front()
 
@@ -554,14 +558,27 @@ func _steps_since(player: Node2D, seq: int) -> Vector2:
 	return motion
 
 
-# The host's world moves: not paused, and the newest snapshot is fresh.
+# The host's world moves: not paused, the wave not over, and the newest snapshot is fresh.
 func _predicting() -> bool:
-	return not _paused and OS.get_ticks_msec() - _newest_rx_msec <= PREDICTION_STALE_MSEC
+	var fresh: bool = OS.get_ticks_msec() - _newest_rx_msec <= PREDICTION_STALE_MSEC
+	return not _paused and not _wave_over and fresh
+
+
+# A snapshot's events say the host's wave is over (EVENT_WAVE_END, repeated state): the frame that
+# set main._cleaning_up also stopped its players (main.clean_up_room -> Player.on_room_cleanup:
+# _can_move false), and they stand until the shop or the level-ups replace the battle. So the own
+# player is no longer predicted either: it ran ahead on every held input and every snapshot pulled
+# it back. Taken on arrival, not at render time like the label (FeedbackMirror), and for the rest
+# of this battle (the next one starts with a fresh battle state).
+func _note_wave_end(events: Array) -> void:
+	for event in events:
+		if typeof(event) == TYPE_ARRAY and not event.empty() and typeof(event[0]) == TYPE_INT:
+			_wave_over = _wave_over or event[0] == Snapshot.EVENT_WAVE_END
 
 
 # Host position + the last MAX_REPLAY_INPUTS un-acked inputs; just the host position while the
-# host's world stands still (paused, or no fresh snapshots): else the client would walk through a
-# frozen world and glide back.
+# host's world or its players stand still (paused, the wave over, or no fresh snapshots): else the
+# client would walk through a frozen world and glide back.
 func _own_target(player: Node2D, entry: Array) -> Vector2:
 	var predicted: Vector2 = entry[PF.POSITION]
 	if not _predicting():

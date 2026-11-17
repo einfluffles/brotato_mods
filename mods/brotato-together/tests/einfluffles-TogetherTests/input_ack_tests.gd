@@ -13,6 +13,8 @@ extends Reference
 #    the client's own player blends back by exactly that much
 #  - the recovery line counts the dropped inputs that moved: the timeout clearing a queue of
 #    standing ones (every battle start) logs nothing
+#  - the wave ends with the stick held: the host's player stands, the client predicts nothing from
+#    then on (one blend back of the inputs in flight, no correction after it)
 # Plus malformed redundancy and send time fields and the protocol bumps (no protocol 15 or 21
 # client or body).
 
@@ -82,15 +84,20 @@ class Feeder:
 	var bodies := {}  # seq -> INPUT body
 	var tick := 0
 	# [tick, ack, host position, client display, released, HELD down on the device, msec,
-	# client target (host position + replay)]
+	# client target (host position + replay), the own player's walk motion]
 	var records := []
 	var aim_on_arrival := true
+	var wave_end := 0  # tick the host's wave ends in (0: never)
 
 	func _physics_process(delta: float) -> void:
 		tick += 1
 		input_sync._release_timed_out()  # input_sync.gd's own _physics_process, on a real host
 		if moves.has(tick):  # the client sends seq s in its tick s
 			client.input_sync.history.append([tick, moves[tick]])
+		if wave_end > 0 and tick >= wave_end:
+			if tick == wave_end:
+				player.on_room_cleanup()  # what main.clean_up_room does to each player
+			client._note_wave_end([[Snapshot.EVENT_WAVE_END, 0]])  # in every snapshot from now
 		var ack: int = input_sync.last_applied_seq(FAKE_PEER)
 		var entry := []
 		entry.resize(PF.size())
@@ -109,6 +116,7 @@ class Feeder:
 				Input.is_action_pressed("%s_%s" % [HELD, DEVICE]),
 				OS.get_ticks_msec(),
 				client._own_display - client._own_error,
+				client._own_motion(),
 			]
 		)
 		for seq in arrivals.get(tick, []):
@@ -156,6 +164,7 @@ func run(test_mod: Node, together: Node):
 		player.get_move_speed() / float(Engine.iterations_per_second) == step,
 		"the player's speed stayed the same during the streams"
 	)
+	yield(_test_wave_end(), "completed")  # last: player 1 stands for good after it
 	_test_redundant_moves()
 	_test_malformed()
 	_test_timeout_drops()
@@ -262,10 +271,69 @@ func _test_long_gap():
 	t._check(released, "1.2 s gap: the remote player lets go of its button and stick")
 
 
+# The wave ends while the stick is held: main.clean_up_room stops the players on the host
+# (Player.on_room_cleanup) and the same snapshot says the wave is over (EVENT_WAVE_END). The host
+# still acks every input but its player stands. The client stops predicting there: its target is
+# the host's position, the run-ahead of the inputs in flight blends back once (no snap) and no
+# later snapshot corrects it again. Live, every held input ran ahead and every snapshot pulled the
+# player back: 33 to 93 corrections in the window of a wave's end.
+func _test_wave_end():
+	var wave_end := 20
+	var moves := _moves([[40, -direction], [20, Vector2.ZERO]])
+	var feeder = yield(_stream(moves, _arrivals(moves, []), 70, 0, 0, wave_end), "completed")
+	var records: Array = feeder.records
+	var before: Array = records[wave_end - 2]
+	var at_end: Array = records[wave_end - 1]
+	t._check(
+		before[7].distance_to(before[2]) > step / 2.0,
+		(
+			"wave end: the client ran ahead of the host before it (%.1f px)"
+			% before[7].distance_to(before[2])
+		)
+	)
+	var host_moved := 0.0
+	var target_off := 0.0  # px between the client's target and the host's position
+	var grew := 0.0  # px the display moved away from the host's position in one tick
+	var walking := false
+	for k in range(wave_end - 1, records.size()):
+		var record: Array = records[k]
+		host_moved = max(host_moved, record[2].distance_to(at_end[2]))
+		target_off = max(target_off, record[7].distance_to(record[2]))
+		walking = walking or record[8] != Vector2.ZERO
+		if k > wave_end - 1:
+			var apart: float = record[3].distance_to(record[2])
+			grew = max(grew, apart - records[k - 1][3].distance_to(records[k - 1][2]))
+	t._check(host_moved < EPSILON, "wave end: the host's player stands (moved %.2f px)" % host_moved)
+	var ack: int = records[-1][1]
+	t._check(
+		ack == moves.size(),
+		"wave end: the host still acks every input (ack %d of %d)" % [ack, moves.size()]
+	)
+	t._check(
+		target_off < EPSILON,
+		"wave end: the client predicts nothing, its target is the host's (%.2f px)" % target_off
+	)
+	var blend := 1.0 - exp(-BattleClient.PREDICTION_ERROR_DECAY / Engine.iterations_per_second)
+	var jump: float = at_end[3].distance_to(before[3])
+	t._check(
+		jump <= blend * before[3].distance_to(at_end[2]) + EPSILON,
+		"wave end: the run-ahead blends back, no snap (%.2f px in the first tick)" % jump
+	)
+	t._check(grew < EPSILON, "wave end: no snapshot corrects the player again (%.2f px)" % grew)
+	t._check(not walking, "wave end: the own player stops walking with the host's")
+	var last_apart: float = records[-1][3].distance_to(records[-1][2])
+	t._check(
+		last_apart < EPSILON,
+		"wave end: the client shows the host's position (%.2f px apart)" % last_apart
+	)
+
+
 # Feeds the bodies of moves (built like InputSync.sample_local; HELD held from seq held_from on,
 # aiming up from seq aim_from on, 0: never) as they arrive, for the given ticks, on a fresh remote
-# player state and client copy.
-func _stream(moves: Dictionary, arrivals: Dictionary, ticks: int, held_from := 0, aim_from := 0):
+# player state and client copy. wave_end: the tick the host's wave ends in (0: never).
+func _stream(
+	moves: Dictionary, arrivals: Dictionary, ticks: int, held_from := 0, aim_from := 0, wave_end := 0
+):
 	input_sync._remote.erase(FAKE_PEER)
 	input_sync.last_recovery_line = ""
 	var client = BattleClient.new()
@@ -280,6 +348,7 @@ func _stream(moves: Dictionary, arrivals: Dictionary, ticks: int, held_from := 0
 	feeder.own = own
 	feeder.moves = moves
 	feeder.arrivals = arrivals
+	feeder.wave_end = wave_end
 	var sent := []
 	var press := 1 << (4 * VirtualDevices.BUTTON_ACTIONS.find(HELD))  # counts one press
 	for seq in range(1, moves.size() + 1):
