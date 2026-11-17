@@ -342,10 +342,11 @@ func _client_characters():
 	var join: Array = scene._get_coop_join_panels()
 	t._check(
 		join[2].visible and join[2]._coop_join_progress.visible
-		and int(join[2]._coop_join_progress.progress) == 50,
+		and join[2]._coop_join_progress.progress >= 50.0,
 		"characters: a joining player's hold progress in the next free slot"
 	)
 	t._check(join[3].instructions_visible, "characters: the last slot offers to join")
+	yield(_check_join_fill(state, join[2]._coop_join_progress), "completed")
 	var hint := CoopSelectionTests.new()  # kept by this function while it waits
 	yield(hint.check_hint_layout(t, _coop_selection, scene, "client"), "completed")
 	var layout := OnlineLayoutTests.new()  # kept by this function while it waits
@@ -404,6 +405,26 @@ func _client_characters():
 		CoopService.connected_players.size() == 2 and _menus.current() == scene,
 		"characters: two players again, on the same copy"
 	)
+
+
+# The host's join progress comes ten times a second: the wheel fills here in between, a late
+# state does not turn it back, a lower one is a new hold.
+func _check_join_fill(state: Dictionary, wheel: Node):
+	var restart: Dictionary = state.duplicate(true)
+	restart["join"] = [0.1]
+	t._check(_menus.show(restart), "characters: a new hold")
+	t._check(is_equal_approx(wheel.progress, 10.0), "characters: a new hold starts the wheel over")
+	for _i in 60:
+		yield(_tree(), "idle_frame")
+		if wheel.progress > 10.0:
+			break
+	var filled: float = wheel.progress
+	t._check(filled > 10.0, "characters: the wheel fills between the host's states (%s)" % filled)
+	var late: Dictionary = state.duplicate(true)
+	late["join"] = [0.1 + (filled - 10.0) / 200.0]
+	t._check(_menus.show(late), "characters: a state behind the wheel")
+	t._check(wheel.progress >= filled, "characters: the wheel does not run back")
+	t._check(_menus.show(state), "characters: the hold progress as before")
 
 
 func _client_weapons():
