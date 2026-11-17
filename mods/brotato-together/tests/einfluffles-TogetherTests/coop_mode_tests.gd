@@ -8,6 +8,8 @@ extends Reference
 #  - Invite friends and the status in the next free player slot while hosting, reached by player 1
 #    left from the Co-op row, opening Steam's invite dialog; players 2 to 4 never reach it;
 #  - a mouse over Invite friends and away again leaves it as it was (no stuck hover / focus look);
+#  - the Co-op and zone popups keep the zone theme's look when opened, hovered, picked from with
+#    the mouse in co-op and reopened, and player 1's cursor stays on the dropdown;
 #  - a remote player holding slot 1 changes nothing; a client's copy shows Online, inert.
 # The layout (vanilla rects, nothing over the slot's texts): online_layout_tests.gd.
 
@@ -20,6 +22,9 @@ const HOST := 2  # lobby_menu_tests.gd's
 const LOBBY := 99
 const KEYBOARD := 7
 const PRESS_DELAY_SEC := 0.1
+const POPUP_STATES := ["opened", "row hovered", "after a mouse pick", "reopened"]
+const POPUP_COLORS := ["font_color", "font_color_hover", "font_color_disabled", "font_color_accel"]
+const POPUP_ICONS := ["radio_checked", "radio_unchecked", "checked", "unchecked"]
 
 var s = null  # lobby_menu_tests.gd: t, transport, session, _steam and the input helpers
 
@@ -109,6 +114,24 @@ func run(suite):
 	invite = panels[1].get_node(SlotInvite.NODE_NAME)
 	t._check(_shown(panels) == [1], "selection: a player joined: the invite moves on a slot")
 	var emulator = Utils.get_focus_emulator(0, scene)
+	# The popups: the zone dropdown theme's look (a fresh PopupMenu under the zone dropdown) on first
+	# opening, with the mouse over a row, after a mouse pick (Godot then focuses the popup and
+	# player 1's FocusEmulator took it) and reopened; the cursor stays on the dropdown.
+	var fresh := PopupMenu.new()
+	zone.add_child(fresh)
+	var theme_look := _popup_look(fresh)
+	fresh.queue_free()
+	for button in [zone, mode]:
+		var looks: Array = yield(_popup_looks(button, emulator), "completed")
+		var differ := []
+		for i in looks.size():
+			if looks[i] != theme_look:
+				differ.append([POPUP_STATES[i], looks[i]])
+		t._check(
+			differ.empty() and emulator.focused_control == button,
+			"selection: the %s popup in the zone theme's look %s in every state %s, the cursor on"
+			% [button.name, theme_look, differ] + " its dropdown"
+		)
 	emulator.focused_control = mode
 	yield(s._tap_action("ui_left", KEYBOARD), "completed")
 	t._check(
@@ -226,3 +249,64 @@ static func _row_above(coop: Control) -> Control:
 		if row is BaseButton and row.visible:
 			above = row
 	return above
+
+
+# What a PopupMenu draws with: its font, font colours (and which are overridden), panel and
+# hover styles, check / radio icons.
+static func _popup_look(popup: PopupMenu) -> Array:
+	var overrides := []
+	for name in POPUP_COLORS + ["font_color_focus", "font_color_pressed"]:
+		if popup.has_color_override(name):
+			overrides.append(name)
+	var look := [["font", popup.get_font("font")], ["overrides", overrides]]
+	for name in POPUP_COLORS:
+		look.append([name, popup.get_color(name)])
+	for name in ["panel", "hover"]:
+		look.append([name, popup.get_stylebox(name)])
+	for name in POPUP_ICONS:
+		look.append([name, popup.get_icon(name)])
+	return look  # an Array: Godot 3 compares Dictionaries by reference
+
+
+# The popup's look opened with the mouse, with the mouse over the selected row, after picking that
+# row with the mouse (nothing changes), and opened again. Player 1's cursor starts on the button.
+func _popup_looks(button: OptionButton, emulator: Node):
+	var popup: PopupMenu = button.get_popup()
+	var row: int = button.selected
+	var looks := []
+	emulator.focused_control = button
+	s._mouse_click(button)
+	yield(s._frames(2), "completed")
+	looks.append(_popup_look(popup))
+	_mouse_on_row(popup, row, [])
+	yield(s._frames(2), "completed")
+	looks.append(_popup_look(popup))
+	_mouse_on_row(popup, row, [true, false])
+	yield(s._frames(3), "completed")
+	looks.append(_popup_look(popup))
+	s._mouse_click(button)
+	yield(s._frames(2), "completed")
+	looks.append(_popup_look(popup))
+	popup.hide()
+	yield(s._frames(2), "completed")
+	return looks
+
+
+# The mouse moved onto row `row` of an open popup, then pressed / released there (`presses`).
+static func _mouse_on_row(popup: PopupMenu, row: int, presses: Array) -> void:
+	var style: StyleBox = popup.get_stylebox("panel")
+	var height: float = (popup.rect_size.y - style.get_minimum_size().y) / popup.get_item_count()
+	var local := Vector2(popup.rect_size.x / 2.0, style.get_offset().y + height * (row + 0.5))
+	var canvas: Vector2 = popup.get_global_transform_with_canvas().xform(local)
+	var at: Vector2 = popup.get_viewport().get_final_transform().xform(canvas)
+	var motion := InputEventMouseMotion.new()
+	motion.position = at
+	motion.global_position = at
+	Input.parse_input_event(motion)
+	for pressed in presses:
+		var click := InputEventMouseButton.new()
+		click.button_index = BUTTON_LEFT
+		click.pressed = pressed
+		click.position = at
+		click.global_position = at
+		Input.parse_input_event(click)

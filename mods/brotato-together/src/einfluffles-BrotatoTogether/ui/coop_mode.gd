@@ -18,6 +18,7 @@ extends OptionButton
 
 enum Mode { OFF, LOCAL, ONLINE }
 
+const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const SlotInvite := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/slot_invite.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -34,6 +35,7 @@ var zone_button: OptionButton = null  # the game's, its look
 var _invites := []  # SlotInvite per CoopJoinPanel
 var _grid: Control = null
 var _shown: Control = null  # the SlotInvite on screen
+var _emulators := []  # the scene's FocusEmulators
 
 
 # Into the run options box of a character selection scene. Null if it has none.
@@ -65,6 +67,11 @@ func _ready() -> void:
 	coop_button.visible = false
 	connect("item_selected", self, "_on_item_selected")
 	connect("focus_entered", self, "_on_focus_entered")
+	_emulators = ScenePaths.find_focus_emulators(scene)
+	for button in [self, zone_button]:
+		button.get_popup().connect(
+			"focus_entered", self, "_keep_cursor_on", [button], CONNECT_DEFERRED
+		)
 	_grid = scene.get_node_or_null("%Inventory1")
 	if _grid != null:
 		_grid.focus_neighbour_top = _grid.get_path_to(self)
@@ -107,6 +114,8 @@ func current() -> int:
 
 
 func _update() -> void:
+	for button in [self, zone_button]:
+		_keep_cursor_on(button)
 	if coop_button.visible:
 		coop_button.visible = false
 	var client: bool = lobby.session.is_client()
@@ -194,3 +203,19 @@ func _on_focus_entered() -> void:
 func _on_invite_pressed(button: Control) -> void:
 	if _is_ours(button) and lobby.transport.is_host():
 		lobby.invite()
+
+
+# A dropdown's popup in the theme's look: player 1's cursor stays on the dropdown. A mouse press
+# in an open popup gives it Godot's focus, and a FocusEmulator takes a focused control inside its
+# focus bases (FocusEmulator._on_focus_changed; the popup is a child of its dropdown, inside the
+# run options box) and styles it as a focused button: its font_color becomes its
+# font_color_focus, which a PopupMenu does not have (black). The rows the mouse was not over were
+# black on black from then on, in the game's zone dropdown too. Run deferred on the popup's
+# focus (before the frame is drawn) and every frame.
+func _keep_cursor_on(button: OptionButton) -> void:
+	if not is_instance_valid(button):
+		return
+	var popup: PopupMenu = button.get_popup()
+	for emulator in _emulators:
+		if is_instance_valid(emulator) and emulator.focused_control == popup:
+			emulator.focused_control = button  # clears the popup's focus style

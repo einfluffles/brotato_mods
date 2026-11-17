@@ -1111,6 +1111,17 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     goes back to the character it left the grid from). Keyboard and pad in solo use Godot's focus
     and popup, player 1's FocusEmulator opens and walks the popup as for the zone dropdown. A remote
     player holding slot 1 changes nothing.
+    The popups (the row's and the game's zone dropdown's) keep the zone theme's look: its
+    `PopupMenu/styles/panel` (black 88 %), its default font (`font_26_outline_thick`), Godot's
+    default PopupMenu colours (text 0.88 grey, hovered 0.88, disabled 0.4 grey at 80 %: Online without
+    Steam is dim but readable) and radio icons; nothing is overridden. In co-op a mouse press in an
+    open popup gives it Godot's focus, and a FocusEmulator takes a focused control inside its focus
+    bases (`_on_focus_changed`; the popup is a child of its dropdown in the run options box) and
+    styles it as a focused button: `font_color` became the popup's `font_color_focus`, which a
+    PopupMenu does not have (black). Every row but the hovered one was black on black from then on,
+    in the game's zone dropdown too. `CoopMode._keep_cursor_on` moves such a cursor back to the
+    dropdown (which clears the popup's focus style), deferred on the popup's `focus_entered` (before
+    the frame is drawn) and every frame, for both dropdowns.
   - Invite friends and the lobby status (`ui/slot_invite.gd`) are in the player slot the next player
     takes (the game's `CoopJoinPanel` at `connected + connecting`, "Player N" on top and the
     hold-to-join hint in the middle), at the slot's bottom: a `MyMenuButton` in the theme the slot
