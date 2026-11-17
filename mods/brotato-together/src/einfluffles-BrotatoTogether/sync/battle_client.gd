@@ -1,18 +1,16 @@
 extends Node
 # Client: mirror the host's battle.
-# BATTLE_START -> apply run state, load main.tscn in puppet mode (simulation frozen right after
-# main._ready, before its first physics frame). SNAPSHOTs are buffered and rendered
-# INTERP_DELAY_MSEC in the past, interpolating between the two snapshots around render time:
-# smooth motion at any fps, independent of the 30 Hz network rate.
+# BATTLE_START -> apply its run state (in parts: sync/battle_run.gd), load main.tscn in puppet
+# mode (simulation frozen right after main._ready, before its first physics frame). SNAPSHOTs
+# are buffered and rendered INTERP_DELAY_MSEC in the past, interpolating between the two
+# snapshots around render time: smooth motion at any fps, independent of the 30 Hz network rate.
 
 signal battle_entered
 signal battle_left
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
-const RunStateCodec := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
-)
+const BattleRun := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_run.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
@@ -38,6 +36,9 @@ const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sy
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const RenderDelay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/render_delay.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
+const ClientReport := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
+)
 const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const BATTLE_SCENE := "res://main.tscn"
 const PF := Snapshot.PlayerField
@@ -85,6 +86,7 @@ const LOADING_TIMEOUT_MSEC := 10000  # a scene that never got ready must not blo
 var session: Node = null
 var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
 var input_sync: Node = null
+var run_store = null  # RunParts.Store, shared with ShopSync and UpgradesSync (set by mod_main.gd)
 var interp_lag_msec := 0  # render time vs newest snapshot, for the lobby page
 
 var _battle_id := 0
@@ -151,7 +153,8 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 		return
 	match msg_type:
 		Protocol.Msg.BATTLE_START:
-			_on_battle_start(body)
+			if BattleRun.take(run_store, body):  # as it arrives, also when adopted or queued
+				_on_battle_start(body)
 		Protocol.Msg.BATTLE_END:
 			if typeof(body) != TYPE_DICTIONARY:
 				return
@@ -209,7 +212,7 @@ func _on_battle_start(body) -> void:
 	if loading:
 		_queued_start = body
 		return
-	var state := RunStateCodec.decode(body.get("run"))
+	var state := BattleRun.state(run_store, body)
 	if state.empty():
 		ModLoaderLog.error("Invalid run state in BATTLE_START", LOG_NAME)
 		return
@@ -223,7 +226,7 @@ func _on_battle_start(body) -> void:
 
 	CoopService.bt_apply_remote_colors(body.get("colors"))
 	Puppet.set_active(true)
-	RunStateCodec.apply(state)
+	BattleRun.apply(state)
 	VirtualDevices.fill_puppet_slots(RunData.get_player_count())
 	get_tree().paused = false
 	# Only until the battle scene is ready: no node_added handler for every node otherwise.
@@ -315,7 +318,9 @@ func _stop_watching_scenes() -> void:
 func _on_battle_scene_ready(main: Node) -> void:
 	_stop_watching_scenes()
 	_loading = false
+	var started := OS.get_ticks_usec()
 	_freeze(main)
+	ClientReport.mark(ClientReport.Mark.PUPPET_SETUP, OS.get_ticks_usec() - started)
 	# No battle: it ended while its scene loaded. Frozen until the next screen replaces it.
 	if _battle_id != 0:
 		_battle_scene.client_scene_ready(main)
@@ -460,6 +465,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 func _process(delta: float) -> void:
 	if not is_in_battle() or _buffer.empty():
 		return
+	var started := OS.get_ticks_usec()
 	var render_t: float = _render_delay.render_time(
 		OS.get_ticks_msec(), _clock_offset, _buffer[-1].t, delta
 	)
@@ -476,6 +482,7 @@ func _process(delta: float) -> void:
 	_apply_entities(from, to, alpha)
 	_apply_wave_timer(to.wave_time_left)
 	_fire_events(render_t)
+	ClientReport.mirror_cost(OS.get_ticks_usec() - started, _entities.size())
 
 
 func _apply_players(
@@ -521,6 +528,11 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 		# Clamped like the target: holding into the zone's edge is no correction either.
 		var moved := _in_zone(_own_display + _steps_since(player, _own_seq))
 		_own_error = moved - predicted
+		var ack: int = newest.players[i][PF.INPUT_ACK]
+		var late: float = OS.get_ticks_msec() - _clock_offset - newest.t
+		ClientReport.note_correction(
+			_own_error.length(), late, ClientReport.unacked(history, ack), player.get_move_speed()
+		)
 	_own_base_t = newest.t
 	_own_seq = history[-1][0] if not history.empty() else 0
 	_own_error *= exp(-delta * PREDICTION_ERROR_DECAY)

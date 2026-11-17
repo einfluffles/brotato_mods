@@ -66,7 +66,7 @@ func _remote_pause_tap() -> void:
 	for packet in [[0, 0], [PAUSE, PAUSE_ONE], [0, PAUSE_ONE]]:
 		_seq += 1
 		var no_move := Vector2.ZERO
-		var body := [_seq, no_move, no_move, packet[0], packet[1], 0, PoolVector2Array()]
+		var body := [_seq, no_move, no_move, packet[0], packet[1], 0, PoolVector2Array(), 0]
 		input_sync._apply_input(FAKE_PEER, body)
 	Input.flush_buffered_events()
 

@@ -11,7 +11,10 @@ extends Reference
 #  - a 450 ms gap (packets held up on the way): no release, the host catches up, no correction
 #  - a 1.2 s gap: the player lets go of everything, the backlog beyond MAX_BACKLOG is dropped and
 #    the client's own player blends back by exactly that much
-# Plus malformed redundancy fields and the protocol bump (no protocol 15 client or body).
+#  - the recovery line counts the dropped inputs that moved: the timeout clearing a queue of
+#    standing ones (every battle start) logs nothing
+# Plus malformed redundancy and send time fields and the protocol bumps (no protocol 15 or 21
+# client or body).
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -155,6 +158,7 @@ func run(test_mod: Node, together: Node):
 	)
 	_test_redundant_moves()
 	_test_malformed()
+	_test_timeout_drops()
 	_test_protocol()
 
 	for feeder in _done:
@@ -243,7 +247,8 @@ func _test_long_gap():
 		"1.2 s gap: the host drops the oldest late inputs, keeps the newest %d (%d)" % [limit, kept]
 	)
 	_check_stream(feeder, "1.2 s gap", 1 + InputSync.CATCH_UP_PER_TICK, dropped)
-	_check_line(", %d dropped" % (dropped[1] - dropped[0] + 1), "1.2 s gap")
+	var count: int = dropped[1] - dropped[0] + 1
+	_check_line(", %d dropped, %d of them moving" % [count, count], "1.2 s gap")
 	var line: String = input_sync.last_recovery_line
 	t._check(not ", 0 step(s) caught up" in line, "1.2 s gap: the host caught up (%s)" % line)
 	var held_before := false
@@ -283,7 +288,7 @@ func _stream(moves: Dictionary, arrivals: Dictionary, ticks: int, held_from := 0
 		var held := 1 if holds else 0
 		var counts := press if holds else 0
 		var previous := InputSync.redundant_moves(sent, seq)
-		feeder.bodies[seq] = [seq, moves[seq], aim, held, counts, 0, previous]
+		feeder.bodies[seq] = [seq, moves[seq], aim, held, counts, 0, previous, seq * 16]
 		sent.append([seq, moves[seq]])
 	t.add_child(feeder)
 	while feeder.tick < ticks:
@@ -433,7 +438,7 @@ func _test_redundant_moves() -> void:
 
 func _test_malformed() -> void:
 	input_sync._remote.erase(FAKE_PEER)
-	var good := [1, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array()]
+	var good := [1, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array(), 16]
 	input_sync._apply_input(FAKE_PEER, good)
 	var nan := Vector2(NAN, 0.0)
 	var too_many := PoolVector2Array()
@@ -441,13 +446,17 @@ func _test_malformed() -> void:
 		too_many.append(Vector2.RIGHT)
 	var bad := {
 		"protocol 15 body (no redundancy)": [2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0],
-		"redundancy as an Array": [2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, [Vector2.RIGHT]],
-		"redundancy too long": [2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, too_many],
-		"NaN in the redundancy": [2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array([nan])],
+		"protocol 21 body (no send time)":
+		[2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array()],
+		"send time as a float": [2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array(), 32.0],
+		"redundancy as an Array": [2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, [Vector2.RIGHT], 32],
+		"redundancy too long": [2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, too_many, 32],
+		"NaN in the redundancy":
+		[2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array([nan]), 32],
 		"inf in the redundancy":
-		[2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array([Vector2(INF, 0.0)])],
-		"NaN move": [2, nan, Vector2.ZERO, 0, 0, 0, PoolVector2Array()],
-		"redundancy as a string": [2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, "x"],
+		[2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array([Vector2(INF, 0.0)]), 32],
+		"NaN move": [2, nan, Vector2.ZERO, 0, 0, 0, PoolVector2Array(), 32],
+		"redundancy as a string": [2, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, "x", 32],
 	}
 	for label in bad:
 		input_sync._apply_input(FAKE_PEER, bad[label])
@@ -456,7 +465,7 @@ func _test_malformed() -> void:
 		for input in state.queue:
 			queued = queued or input[0] != 1
 		t._check(state.seq == 1 and not queued, "malformed INPUT rejected: %s" % label)
-	var later := [3, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array([Vector2.UP])]
+	var later := [3, Vector2.RIGHT, Vector2.ZERO, 0, 0, 0, PoolVector2Array([Vector2.UP]), 48]
 	input_sync._apply_input(FAKE_PEER, later)
 	var state: Dictionary = input_sync._remote[FAKE_PEER]
 	var seqs := []
@@ -470,8 +479,42 @@ func _test_malformed() -> void:
 	VirtualDevices.release_all(DEVICE)
 
 
-# INPUT changed shape (protocol 16): a protocol 15 build is turned away at HELLO instead of
-# joining with inputs the host drops (see _test_malformed for its body).
+# The timeout clears what is still queued. At every battle start that was 4 or 5 standing inputs,
+# logged as "5 dropped (corrected on the client)" though nothing was: a standing input moves
+# neither side. Only moving ones cost the client a correction, and only they bring a line.
+func _test_timeout_drops() -> void:
+	for moving in [0, 3]:
+		input_sync._remote.erase(FAKE_PEER)
+		input_sync.last_recovery_line = ""
+		var first := [1, Vector2.ZERO, Vector2.ZERO, 0, 0, 0, PoolVector2Array(), 16]
+		input_sync._apply_input(FAKE_PEER, first)
+		var state: Dictionary = input_sync._remote[FAKE_PEER]
+		state.queue.clear()
+		for seq in range(2, 7):
+			var move := direction if seq - 2 < moving else Vector2.ZERO
+			InputSync._queue_movement(state, seq, move)
+		state.last_msec -= InputSync.INPUT_TIMEOUT_MSEC + 1
+		input_sync._release_timed_out()
+		input_sync._log_recovery(FAKE_PEER, state)
+		var line: String = input_sync.last_recovery_line
+		if moving == 0:
+			t._check(
+				state.released and state.queue.empty() and line == "",
+				"the timeout clears 5 standing inputs: no line (%s)" % line
+			)
+		else:
+			t._check(
+				", 5 dropped, 3 of them moving (corrected on the client)" in line,
+				"the timeout clears 3 moving and 2 standing inputs: %s" % line
+			)
+	input_sync._remote.erase(FAKE_PEER)
+	input_sync.last_recovery_line = ""
+	VirtualDevices.release_all(DEVICE)
+
+
+# INPUT changed shape (protocol 16: redundancy, protocol 22: the send time): an older build is
+# turned away at HELLO instead of joining with inputs the host drops (see _test_malformed for
+# their bodies).
 func _test_protocol() -> void:
 	var host := {
 		"version": Protocol.VERSION, "game_version": "1", "mod_version": "1", "dlcs": []
@@ -482,6 +525,11 @@ func _test_protocol() -> void:
 	t._check(
 		Protocol.VERSION >= 16 and "protocol" in Compat.incompatibility(host, client),
 		"protocol: a client without input redundancy (15) is refused (host %d)" % Protocol.VERSION
+	)
+	client.version = 21
+	t._check(
+		Protocol.VERSION >= 22 and "protocol" in Compat.incompatibility(host, client),
+		"protocol: a client without the INPUT send time (21) is refused (host %d)" % Protocol.VERSION
 	)
 	t._check(
 		BattleClient.PREDICTION_STALE_MSEC == InputSync.INPUT_TIMEOUT_MSEC,

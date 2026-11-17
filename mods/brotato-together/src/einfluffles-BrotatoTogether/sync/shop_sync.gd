@@ -3,8 +3,9 @@ extends Node
 # Host: owns every decision and the RNG. While coop_shop.tscn runs it provides section RUN_SHOP of
 #   the state stream (sync/state_stream.gd), sent whenever the shop or run state changes (the
 #   run state is serialized only when it can have changed: sync/run_cache.gd). Body:
-#   shop_id, run (RunStateCodec: the full run state incl. the shop's own save data: offered items,
-#   rerolls, steals), per player slots (the slot layout), locks (the lock per slot), go (the Go
+#   shop_id, run (the run state incl. the shop's own save data: offered items, rerolls, steals,
+#   in parts, per peer only those it lacks: sync/run_parts.gd; a body built alone carries them
+#   all), per player slots (the slot layout), locks (the lock per slot), go (the Go
 #   flag), seqs (a panel revision), pages (the carousel page) and mecas (the meca upgrade rolls
 #   its item popup remembers:
 #   [[weapon slot, weapon my_id, stat key hash, value, stat key hash, value]],
@@ -15,10 +16,11 @@ extends Node
 #   buttons, except pause, are kept off the virtual devices meanwhile.
 # Client: loads the real shop through the game's resume path (RunData.resumed_from_state_in_shop),
 #   so it shows exactly the host's items without rolling; later states are applied in place, and
-#   only for the players whose part changed. Its own panel runs locally and sends intents
-#   (sync/shop_local.gd); the other panels stay mirrored (cursors by FocusSync). Also handles
-#   section PAUSE_SHOP (provided by sync/pause_control.gd): the host's pause turns the own panel
-#   off and shows who paused.
+#   only for the players whose part changed. The run's parts are stored as they arrive
+#   (accept_state) and only the new ones are parsed and deserialized (RunParts.Store). Its own
+#   panel runs locally and sends intents (sync/shop_local.gd); the other panels stay mirrored
+#   (cursors by FocusSync). Also handles section PAUSE_SHOP (provided by sync/pause_control.gd):
+#   the host's pause turns the own panel off and shows who paused.
 
 signal shop_entered
 
@@ -45,6 +47,7 @@ const ShopIntents := preload(
 const ShopLocal := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_local.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
+const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
 const CHECK_INTERVAL := 0.1
@@ -58,6 +61,8 @@ var input_sync: Node = null setget set_input_sync
 var focus_sync: Node = null setget set_focus_sync
 var local = ShopLocal.new()  # client: this client's own panel
 var run_cache = RunCache.new("shop")  # host: the shop's run state, serialized on change
+var run_sender = null  # host: RunParts.Sender, shared with UpgradesSync (set by mod_main.gd)
+var run_store = null  # client: RunParts.Store, shared with UpgradesSync (set by mod_main.gd)
 var last_text := {}  # host: the last SHOP_TEXT sent (also read by the tests)
 
 # host
@@ -67,13 +72,14 @@ var _seq_shop_id := 0  # instance id of the shop the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel offers something new
 var _seq_keys := []
 var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method]
+var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 
 # client
 var _client_shop: Node = null
 var _loading_msec := -LOADING_TIMEOUT_MSEC  # when the puppet shop began to load (far back: not)
 var _client_shop_id := 0
-var _state := {}  # the run state RunData has, with the bytes it came from
-var _run_bytes := PoolByteArray()
+var _state := {}  # the run state RunData has, with the part ids it came from
+var _run_ids := {}
 var _state_keys := []
 var _applied := {}  # player index -> what its panel shows (player_keys entry + "slots")
 var _host_kinds := []  # other mods' intent kinds the host handles (its last state)
@@ -87,7 +93,7 @@ func setup(netplay_session: Node) -> void:
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
 	RunData.connect("stat_added", self, "_on_stat_added")
 	var timeout_sec := LOADING_TIMEOUT_MSEC / 1000.0
-	state_stream.register_provider(StateStream.RUN_SHOP, self, CHECK_INTERVAL)
+	state_stream.register_provider(StateStream.RUN_SHOP, self, CHECK_INTERVAL, true)
 	state_stream.register_handler(StateStream.RUN_SHOP, self, timeout_sec)
 	state_stream.register_handler(StateStream.PAUSE_SHOP, self, timeout_sec)
 
@@ -212,11 +218,12 @@ func _send_reroll_text(shop_id: int, p: int, stat: int, value: int, rerolls_befo
 # once per change) + everything else the body and the per-peer part are built from.
 func state_key(_section: int) -> String:
 	if _host_shop == null or not is_instance_valid(_host_shop):
-		run_cache.clear()
+		run_sender.close(run_cache)
 		return ""
 	if _host_shop != get_tree().current_scene:
-		run_cache.clear()
+		run_sender.close(run_cache)
 		return ""
+	run_cache.title = "Shop %d" % RunData.current_wave
 	run_cache.refresh(_host_shop, shop_args(_host_shop))
 	var parts := _shop_parts()
 	var rest := [
@@ -227,13 +234,14 @@ func state_key(_section: int) -> String:
 
 
 # Right after state_key in the same check, so refresh finds nothing new and the run is not
-# serialized again; called alone (tests), it still sees a change of the fingerprint.
+# serialized again; called alone (tests), it still sees a change of the fingerprint. Its run has
+# every part; state_patch narrows it to what the peer lacks.
 func state_body(_section: int) -> Dictionary:
 	run_cache.refresh(_host_shop, shop_args(_host_shop))
+	run_sender.offer(run_cache)
 	var parts := _shop_parts()
-	return {
+	var body := {
 		"shop_id": _shop_id,
-		"run": run_cache.pack(),
 		"slots": parts.slots,
 		"locks": parts.locks,
 		"go": parts.go,
@@ -243,6 +251,9 @@ func state_body(_section: int) -> Dictionary:
 		"colors": CoopService.bt_slot_colors.duplicate(),
 		"kinds": _kinds(),
 	}
+	_view_bytes = var2bytes(body).size()
+	body["run"] = run_cache.all()
+	return body
 
 
 func _kinds() -> Array:
@@ -251,9 +262,14 @@ func _kinds() -> Array:
 	return kinds
 
 
-# Each client also learns which player's panel is its own (-1: none).
+# Each client also learns which player's panel is its own (-1: none), and gets the run parts it
+# lacks (state_sent records them as sent).
 func state_patch(_section: int, steam_id: int) -> Dictionary:
-	return {"you": _player_index_of(steam_id)}
+	return {"you": _player_index_of(steam_id), "run": run_sender.run_for(steam_id)}
+
+
+func state_sent(_section: int, steam_id: int) -> void:
+	run_sender.commit(steam_id, _view_bytes)
 
 
 func _yous() -> Array:
@@ -314,12 +330,13 @@ func _shop_parts() -> Dictionary:
 	}
 
 
-# A peer that (re)joins must get the true run state: the next check serializes it. That check is
-# the stream's resync for the peer, which runs in its next step, after every peer_ready handler;
-# a difference it finds goes to everyone. (Harmless on a client: only the host's state_key
-# refreshes.)
-func _on_peer_ready(_steam_id: int) -> void:
+# A peer that (re)joins must get the true run state, every part of it: the next check serializes
+# it. That check is the stream's resync for the peer, which runs in its next step, after every
+# peer_ready handler; a difference it finds goes to everyone. (Harmless on a client: only the
+# host's state_key refreshes.)
+func _on_peer_ready(steam_id: int) -> void:
 	run_cache.force()
+	run_sender.forget(steam_id)
 
 
 # A remote player's decision, sent from its own panel (see sync/shop_intents.gd). Only applied
@@ -425,6 +442,13 @@ func client_show_text(body) -> bool:
 	return true
 
 
+# State stream: every RUN_SHOP body as it arrives, also one a newer body replaces before it is
+# applied: its run parts are stored now (a missing one asks the host for a full resync).
+func accept_state(section: int, body, _revision: int) -> void:
+	if section == StateStream.RUN_SHOP and typeof(body) == TYPE_DICTIONARY:
+		run_store.take(body.get("run"), "shop")
+
+
 # State stream handler: RUN_SHOP (the shop) and PAUSE_SHOP (the host's pause). False: the shop
 # is still loading, the stream keeps the latest body and _on_shop_ready retries it.
 func apply_state(section: int, body, _revision: int) -> bool:
@@ -441,23 +465,18 @@ func apply_state(section: int, body, _revision: int) -> bool:
 	if body.shop_id == _client_shop_id and _is_loading():
 		return false
 	var entering: bool = body.shop_id != _client_shop_id or not is_in_shop()
-	var run = body.get("run")
-	var bytes := PoolByteArray()
-	if typeof(run) == TYPE_DICTIONARY and typeof(run.get("data")) == TYPE_RAW_ARRAY:
-		bytes = run.data
-	# The bytes RunData already has (only a Go flag, a page or a revision changed, or a resync):
+	var ids = run_store.ids_for(body.get("run"))
+	# The parts RunData already has (only a Go flag, a page or a revision changed, or a resync):
 	# nothing to rebuild.
-	var run_changed: bool = entering or _state.empty() or bytes.empty() or bytes != _run_bytes
+	var run_changed: bool = entering or _state.empty() or not RunParts.same_ids(ids, _run_ids)
 	if run_changed:
-		var raw := RunStateCodec.parse(run)
-		var keys := player_keys(raw)  # before the game's deserializer touches it
-		var state := RunStateCodec.deserialize(raw)
+		var state: Dictionary = run_store.state_for(ids)
 		if state.empty() or not state.get("has_run_state", false):
-			ModLoaderLog.error("Invalid shop state", LOG_NAME)
+			ModLoaderLog.warning("Shop state without a complete run state; dropped", LOG_NAME)
 			return true
 		_state = state
-		_run_bytes = bytes
-		_state_keys = keys
+		_run_ids = ids
+		_state_keys = player_keys(ids, run_store.raws({"c": ids.get("c")}).c)
 	if entering:
 		_client_shop_id = body.shop_id
 		_enter_shop(_state)
@@ -498,23 +517,21 @@ func clear_state(section: int) -> void:
 			PauseControl.show_banner(_client_shop, false, "")
 
 
-# Per player, the parts of the sent run state that its panel is built from, as hashes of their
-# content: a panel is only rebuilt when its part differs from what it shows. (As JSON text they
-# cost a client as much as the host's JSON.print: 43 / 90 ms per changed state in a late 2 /
-# 4-player run, now 1 / 2 ms; shop_change_tests.gd. Different content with equal hashes, 1 in
-# 2^32, would leave a panel as it is until its next change, like RunCache's check on the host.)
-static func player_keys(raw: Dictionary) -> Array:
+# Per player, what of the sent run state its panel is built from: its run parts' ids (data: the
+# player's "p" and "g" parts, gear: "g"; sync/run_parts.gd) and a hash of its offered items (in
+# the common part as parsed). A panel is only rebuilt when its part differs from what it shows.
+# (As JSON text they cost a client as much as the host's JSON.print: 43 / 90 ms per changed
+# state in a late 2 / 4-player run, as hashes of the whole run 1 / 2 ms; now the ids are known.)
+static func player_keys(ids: Dictionary, common) -> Array:
 	var keys := []
-	var players = raw.get("players_data")
-	if typeof(players) != TYPE_ARRAY:
+	var raw: Dictionary = common if typeof(common) == TYPE_DICTIONARY else {}
+	var count = raw.get("players_data")
+	if typeof(count) != TYPE_INT and typeof(count) != TYPE_REAL:
 		return keys
-	for p in players.size():
-		var data = players[p]
-		var gear := []
-		if typeof(data) == TYPE_DICTIONARY:
-			gear = [data.get("weapons"), data.get("items")]
+	for p in int(count):
+		var gear = ids.get("g%d" % p)
 		var offered := [_at(raw.get("shop_items"), p), _at(raw.get("item_steals"), p)]
-		keys.append({"data": hash(data), "gear": hash(gear), "items": hash(offered)})
+		keys.append({"data": [ids.get("p%d" % p), gear], "gear": gear, "items": hash(offered)})
 	return keys
 
 
@@ -759,7 +776,7 @@ func _on_lobby_left() -> void:
 	_client_shop = null
 	_client_shop_id = 0
 	_state = {}
-	_run_bytes = PoolByteArray()
+	_run_ids = {}
 	_state_keys = []
 	_applied = {}
 	_host_kinds = []

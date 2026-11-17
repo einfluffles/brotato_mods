@@ -4,9 +4,11 @@ extends Reference
 # applies. Then the mod's own stream: created before the sync modules, given to each of them.
 #  - host: change key and interval, per-peer bodies built once, dirty, flush, resync on
 #    peer_ready in section order (next step, after what other peer_ready handlers send), inactive
-#    -> null once, nothing while not host
+#    -> null once, nothing while not host, the state_sent hook (after each send, not by
+#    message_for), heavy sections held while Steam's send queue to a peer is full
 #  - client: pending until the handler accepts, retry(), superseding, revisions, timeout, clear,
-#    section order, malformed STATE, senders other than the host, a broken handler, lobby_left
+#    section order, malformed STATE, senders other than the host, a broken handler, lobby_left,
+#    the accept_state hook (every body that is not stale, as it arrives, before it is pending)
 #  - host -> client in one process (message_for -> receive) and the idle cost per frame
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
@@ -27,6 +29,10 @@ class FakeTransport:
 	extends Reference
 	signal lobby_left
 	var host_id := 0
+	var statuses := {}  # steam_id -> what Steam says about the connection ({}: no Steam)
+
+	func connection_status(steam_id: int) -> Dictionary:
+		return statuses.get(steam_id, {})
 
 
 class FakeSession:
@@ -37,12 +43,16 @@ class FakeSession:
 	var peers := {}
 	var host := true
 	var sent := []  # [steam_id, msg_type, body], the body as it comes off the wire
+	var resyncs_asked := 0  # ask_resync calls (sync/run_parts.gd: a missing run part)
 
 	func is_host() -> bool:
 		return host
 
 	func is_client() -> bool:
 		return not host
+
+	func ask_resync() -> void:
+		resyncs_asked += 1
 
 	func send_reliable(steam_id: int, msg_type: int, body = null) -> void:
 		sent.append([steam_id, msg_type, bytes2var(var2bytes(body), false)])
@@ -85,6 +95,33 @@ class Probe:
 		cleared.append(section)
 
 
+# Provider and handler with the optional hooks: when each send was recorded, what arrived.
+class Hooked:
+	extends Reference
+	var key := ""
+	var body = null
+	var accept := true
+	var stream: Node = null
+	var events := []  # ["sent", section, steam_id, messages sent so far] | ["accept", ...] | ...
+
+	func state_key(_section: int) -> String:
+		return key
+
+	func state_body(_section: int):
+		return body
+
+	func state_sent(section: int, steam_id: int) -> void:
+		events.append(["sent", section, steam_id, stream.session.sent.size()])
+
+	func accept_state(section: int, state, revision: int) -> void:
+		events.append(["accept", section, state, revision, stream.is_pending(section)])
+
+	func apply_state(section: int, state, revision: int) -> bool:
+		if accept:
+			events.append(["apply", section, state, revision])
+		return accept
+
+
 # A module that sends from its own peer_ready (as BattleHost sends BATTLE_START).
 class Joiner:
 	extends Reference
@@ -109,7 +146,9 @@ func run(test_mod: Node, together: Node):
 	_test_wiring(together)
 	_test_changes()
 	_test_per_peer()
+	_test_hooks()
 	_test_dirty()
+	_test_hold()
 	yield(_test_flush(), "completed")
 	_test_resync()
 	yield(_test_resync_after_modules(), "completed")
@@ -181,6 +220,15 @@ func _test_wiring(together: Node) -> void:
 		if module.state_stream != stream:
 			missing.append(module.name)
 	t._check(missing.empty(), "every state module has the stream (missing: %s)" % [missing])
+	var heavy := []
+	for section in stream._providers:
+		if stream._providers[section].heavy:
+			heavy.append(section)
+	heavy.sort()
+	t._check(
+		heavy == [StateStream.RUN_SHOP, StateStream.UPGRADES],
+		"shop and upgrades are the heavy sections: %s" % [heavy]
+	)
 	t._check(Protocol.Msg.STATE == Protocol.Msg.size() - 1, "STATE is the last message")
 
 
@@ -227,6 +275,48 @@ func _test_per_peer() -> void:
 	)
 
 
+# state_sent: once per peer, right after its send (sync/run_parts.gd records what the peer
+# has); not for a body message_for builds. accept_state: every body that is not stale as it
+# arrives, before it is pending (also one a newer body replaces before it is applied), never a
+# stale one or a null.
+func _test_hooks() -> void:
+	var stream := _stream(true, [P1, P2])
+	var hooked := Hooked.new()
+	hooked.stream = stream
+	hooked.key = "a"
+	hooked.body = {"x": 1}
+	stream.register_provider(StateStream.RUN_SHOP, hooked, 0.1)
+	stream.message_for(StateStream.RUN_SHOP, P1)
+	t._check(hooked.events.empty(), "state_sent: not for a body message_for builds")
+	stream.step(0.0)
+	var expected := [["sent", 0, P1, 1], ["sent", 0, P2, 2]]
+	t._check(
+		_same(hooked.events, expected), "state_sent: per peer after its send: %s" % [hooked.events]
+	)
+	stream.step(1.0)
+	t._check(hooked.events.size() == 2, "state_sent: nothing sent, nothing called")
+	var client := _stream(false, [])
+	var handler := Hooked.new()
+	handler.stream = client
+	handler.accept = false
+	client.register_handler(StateStream.UPGRADES, handler)
+	client.receive([StateStream.UPGRADES, 1, {"v": 1}])
+	client.receive([StateStream.UPGRADES, 2, {"v": 2}])
+	client.receive([StateStream.UPGRADES, 1, {"v": 0}])  # stale
+	handler.accept = true
+	client.step(0.016)
+	client.receive([StateStream.UPGRADES, 3, null])
+	expected = [
+		["accept", 1, {"v": 1}, 1, false],
+		["accept", 1, {"v": 2}, 2, true],  # the first one is pending, this one not yet
+		["apply", 1, {"v": 2}, 2],
+	]
+	t._check(
+		_same(handler.events, expected),
+		"accept_state: each body as it arrives, the replaced one too: %s" % [handler.events]
+	)
+
+
 func _test_dirty() -> void:
 	var stream := _stream(true, [P1, P2])
 	var probe := _probe("u", {"v": 1})
@@ -243,6 +333,114 @@ func _test_dirty() -> void:
 	stream.step(0.11)
 	sent = _take(stream)
 	t._check(sent.size() == 2 and sent[0][1][1] == 1, "dirty for all: every ready peer")
+
+
+# Heavy sections (shop, upgrades) wait while Steam's send queue to a peer is over HOLD_BYTES:
+# that peer stays dirty and later gets the then-current revision in one message, the others get
+# every change. Never held: a null body, a light section, a peer held for MAX_HOLD_MSEC, a peer
+# Steam has no numbers for. A resync target is held the same way; the holds are logged per peer
+# when the section turns inactive. state_sent only for the peers sent to.
+func _test_hold() -> void:
+	var stream := _stream(true, [P1, P2])
+	var statuses: Dictionary = stream.session.transport.statuses
+	var over := {"pending_reliable": StateStream.HOLD_BYTES + 1}
+	var shop := Hooked.new()
+	shop.stream = stream
+	shop.key = "a"
+	shop.body = {"x": 1}
+	stream.register_provider(StateStream.RUN_SHOP, shop, 0.1, true)
+	var menu := _probe("m", {"m": 1})
+	stream.register_provider(StateStream.MENU, menu, 0.1)
+	stream.step(0.0)
+	_take(stream)
+	shop.events.clear()
+	statuses[P1] = over
+	for x in [2, 3, 4]:
+		shop.key = str(x)
+		shop.body = {"x": x}
+		stream.step(0.1)
+	var sent := _take(stream)
+	var expected := [
+		[P2, [StateStream.RUN_SHOP, 2, {"x": 2}]],
+		[P2, [StateStream.RUN_SHOP, 3, {"x": 3}]],
+		[P2, [StateStream.RUN_SHOP, 4, {"x": 4}]],
+	]
+	t._check(
+		_same(sent, expected),
+		"hold: three changes over the limit go to the other peer only: %s" % [sent]
+	)
+	var sent_to := []
+	for event in shop.events:
+		sent_to.append(event[2])
+	t._check(sent_to == [P2, P2, P2], "hold: state_sent only for the peer sent to: %s" % [sent_to])
+	t._check(
+		stream._providers[StateStream.RUN_SHOP].dirty.has(P1), "hold: the held peer stays dirty"
+	)
+	menu.key = "n"
+	stream.step(0.1)
+	sent = _take(stream)
+	t._check(
+		_same(sent, [[P1, [StateStream.MENU, 2, {"m": 1}]], [P2, [StateStream.MENU, 2, {"m": 1}]]]),
+		"hold: a light section is never held: %s" % [sent]
+	)
+	statuses[P1] = {"pending_reliable": StateStream.HOLD_BYTES}
+	stream.step(0.1)
+	sent = _take(stream)
+	t._check(
+		_same(sent, [[P1, [StateStream.RUN_SHOP, 4, {"x": 4}]]]),
+		"hold: under the limit, one message with the latest revision: %s" % [sent]
+	)
+	stream.step(0.1)
+	t._check(_take(stream).empty(), "hold: then nothing more")
+
+	statuses[P1] = over
+	shop.key = "5"
+	stream.step(0.1)
+	_take(stream)
+	stream._providers[StateStream.RUN_SHOP].holds[P1] -= StateStream.MAX_HOLD_MSEC
+	stream.step(0.1)
+	sent = _take(stream)
+	t._check(
+		sent.size() == 1 and sent[0][0] == P1 and sent[0][1][1] == 5,
+		"hold: sent anyway after MAX_HOLD_MSEC: %s" % [sent]
+	)
+	shop.key = "6"
+	stream.step(0.1)
+	_take(stream)
+	shop.key = ""
+	stream.step(0.1)
+	sent = _take(stream)
+	t._check(
+		_same(sent, [[P1, [StateStream.RUN_SHOP, 7, null]], [P2, [StateStream.RUN_SHOP, 7, null]]]),
+		"hold: a null body is not held: %s" % [sent]
+	)
+	var lines: Array = stream.hold_lines
+	t._check(
+		(
+			lines.size() == 1
+			and lines[0].begins_with("Shop state held 3 times for %d, longest " % P1)
+			and lines[0].ends_with(" ms (Steam's queue over 24 KB)")
+			and stream._providers[StateStream.RUN_SHOP].held.empty()
+		),
+		"hold: one line per held client when the screen closes: %s" % [lines]
+	)
+
+	statuses[P1] = {}
+	shop.key = "8"
+	stream.step(0.1)
+	sent = _take(stream)
+	t._check(sent.size() == 2, "hold: no status from Steam, no hold: %s" % [sent])
+	statuses[P1] = over
+	stream.session.emit_signal("peer_ready", P1)
+	stream.step(0.0)
+	sent = _take(stream)
+	t._check(
+		(
+			_same(sent, [[P1, [StateStream.MENU, 2, {"m": 1}]]])
+			and stream._providers[StateStream.RUN_SHOP].dirty.has(P1)
+		),
+		"hold: a resync target is held the same way: %s" % [sent]
+	)
 
 
 func _test_flush():

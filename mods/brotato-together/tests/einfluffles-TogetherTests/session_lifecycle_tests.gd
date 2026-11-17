@@ -11,6 +11,7 @@ extends Reference
 #  - the ping is the network's round trip: not the frames either game let the messages wait
 #  - sessions are relayed by default (Steam's direct route off), +bt_direct opts out, +bt_relay is
 #    still accepted; a direct path while relay-only is on gets one warning per connection
+#  - Steam's send rate is raised to 512 KB/s (min and max), Steam's default when refused
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
@@ -176,6 +177,7 @@ func run(t: Node, together: Node) -> void:
 	_test_compat()
 	_test_join_presence(transport)
 	_test_relay_route(transport)
+	_test_send_rate(transport)
 
 	session.disconnect("peer_ready", self, "_on_peer_ready")
 	transport.leave_lobby()
@@ -611,6 +613,83 @@ func _test_relay_route(transport: Node) -> void:
 	transport.relay_only = false
 	transport.link_watch = saved_watch
 	_test_direct_under_relay()
+
+
+# Steam's send rate goes from its default 256 KB/s to 512 KB/s: SendRateMin (10) and SendRateMax
+# (11) both, since Steam paces at the min for any real ping. Refused or not available: Steam's
+# default, said so, nothing claimed. The route's own setting is not touched.
+func _test_send_rate(transport: Node) -> void:
+	var saved_rate: int = transport.send_rate
+	var saved_watch = transport.link_watch
+	transport.link_watch = LinkWatch.new()
+	var rate: int = transport.SEND_RATE
+	_steam.config_values.clear()
+	_t._check(
+		(
+			transport.apply_send_rate()
+			and transport.send_rate == rate
+			and rate == 524288
+			and _steam.config_values.size() == 2
+			and _steam.config_values.get(10) == rate
+			and _steam.config_values.get(11) == rate
+			and transport.send_rate_note == "Send rate: up to 512 KB/s (Steam's default is 256)"
+		),
+		(
+			"send rate: min and max set to 512 KB/s %s (%s)"
+			% [_steam.config_values, transport.send_rate_note]
+		)
+	)
+	_steam.config_values.clear()
+	var relayed: bool = transport.apply_route([])
+	var route_note: String = transport.route_note
+	transport.apply_send_rate()
+	_t._check(
+		(
+			relayed
+			and transport.relay_only
+			and transport.route_note == route_note
+			and _steam.config_values.size() == 3
+			and _steam.config_values.get(104) == 0
+		),
+		"send rate: the route's setting is left as it was %s" % [_steam.config_values]
+	)
+	_steam.config_values.clear()
+	transport.apply_route(["+bt_direct"])
+	_t._check(
+		(
+			transport.apply_send_rate()
+			and not transport.relay_only
+			and _steam.config_values.size() == 2
+			and not _steam.config_values.has(104)
+		),
+		"send rate: set with +bt_direct too, the direct route untouched %s" % [_steam.config_values]
+	)
+	_steam.config_accepted = false
+	_t._check(
+		(
+			not transport.apply_send_rate()
+			and transport.send_rate == 0
+			and "refused" in transport.send_rate_note
+			and "default of 256 KB/s stays" in transport.send_rate_note
+		),
+		"send rate: not claimed when Steam refuses it (%s)" % transport.send_rate_note
+	)
+	_steam.config_accepted = true
+	transport.steam = Reference.new()  # a GodotSteam without setGlobalConfigValueInt32
+	_t._check(
+		(
+			not transport.apply_send_rate()
+			and transport.send_rate == 0
+			and "cannot" in transport.send_rate_note
+			and "default of 256 KB/s stays" in transport.send_rate_note
+		),
+		"send rate: Steam's default without setGlobalConfigValueInt32 (%s)" % transport.send_rate_note
+	)
+	transport.steam = _steam
+	transport.relay_only = false
+	transport.send_rate = saved_rate
+	transport.link_watch = saved_watch
+	_steam.config_values.clear()
 
 
 # A direct path although relay-only is on here (the other side runs an older build or +bt_direct):

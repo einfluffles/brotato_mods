@@ -6,7 +6,8 @@ extends Reference
 #    stays up under recurring lateness and comes back down once it calms; a stall too long to hold
 #    leaves no extra delay behind
 #  - gap log lines for snapshots and inputs (sync/stream_gaps.gd): once per gap, rate limited,
-#    with the cause; the host's INPUT stream per client
+#    with the cause; the host's INPUT stream per client, which tells a client's own stall from
+#    inputs held up or lost on the way (the client's clock and seq)
 #  - the session's path (net/link_watch.gd): direct / relayed with the relay's POP, logged on
 #    change only; a failed session is followed by when it was up again
 # test_client_stall runs inside battle_loopback (a client in a real puppet battle): a 400 ms
@@ -51,6 +52,7 @@ func run(together: Node) -> void:
 	_test_long_stall()
 	_test_gap_lines()
 	_test_gap_wiring(together)
+	_test_input_gap_causes(together)
 	_test_link_watch()
 	_test_session_failed(together)
 
@@ -245,19 +247,80 @@ func _test_gap_wiring(together: Node) -> void:
 		logged and "No snapshot for 300 ms" in gaps.last_line and "render delay 300" in gaps.last_line,
 		"a logged gap carries its context: %s" % gaps.last_line
 	)
-	# Host: a client's INPUT stream (seq = its physics steps).
-	var input := [60, Vector2.ZERO, Vector2.ZERO, 0, 0, 0]
+	# Host: a client's INPUT stream (seq = its physics steps, the last field its clock).
+	var input := [60, Vector2.ZERO, Vector2.ZERO, 0, 0, 0, PoolVector2Array(), 1000]
 	input_sync.note_input_gap(PEER, input)
 	var tracker = input_sync._input_gaps[PEER]
 	tracker._last_arrival -= 350
 	input = input.duplicate()
 	input[0] = 61
+	input[7] = 1000 + FRAME_MSEC
 	input_sync.note_input_gap(PEER, input)
 	_t._check(
 		tracker.logged == 1 and "No input from %s for 35" % PEER in tracker.last_line,
 		"host: a stall in a client's inputs is logged: %s" % tracker.last_line
 	)
 	input_sync._input_gaps.erase(PEER)
+
+
+# The host tells whose stall an input gap was from the client's clock and seq (sync/stream_gaps.gd).
+# A client's frame that stalls at a scene change runs no physics steps meanwhile and then sends up
+# to 8 at once with consecutive seqs: its own stall. Before protocol 22 the host took the send time
+# from the seq and logged each of those (200 to 850 ms, at every battle start and shop entry) as
+# "sent 17 ms apart: held up on the way".
+func _test_input_gap_causes(together: Node) -> void:
+	var input_sync: Node = together.input_sync
+	var lines := {}
+	for label in ["own stall", "held up", "lost"]:
+		input_sync._input_gaps.erase(PEER)
+		var clock := 50000
+		var seq := 1
+		for _k in 10:  # a steady stream first
+			input_sync.note_input_gap(PEER, _input(seq, clock))
+			seq += 1
+			clock += FRAME_MSEC
+		var tracker = input_sync._input_gaps[PEER]
+		match label:
+			"own stall":  # nothing sent for 650 ms, then 8 steps in one frame
+				tracker._last_arrival -= 650
+				clock += 650 - FRAME_MSEC
+				input_sync._remote[PEER] = {"released": true}  # the timeout fired meanwhile
+				for _k in 8:
+					input_sync.note_input_gap(PEER, _input(seq, clock))
+					seq += 1
+				input_sync._remote.erase(PEER)
+			"held up":  # sent at the usual pace, arriving together 400 ms late
+				tracker._last_arrival -= 400
+				for _k in 24:
+					input_sync.note_input_gap(PEER, _input(seq, clock))
+					seq += 1
+					clock += FRAME_MSEC
+			"lost":  # 20 sent at the usual pace and lost: the next one arrives on time
+				tracker._last_arrival -= 21 * FRAME_MSEC
+				seq += 20
+				clock += 20 * FRAME_MSEC
+				input_sync.note_input_gap(PEER, _input(seq, clock))
+		lines[label] = tracker.last_line if tracker.logged == 1 else "%d lines" % tracker.logged
+	_t._check(
+		"sent 650 ms apart (seq +1): its game sent nothing for 650 ms (its own stall)"
+		in lines["own stall"] and "; buttons released" in lines["own stall"],
+		"input gap: a client that sent nothing for 650 ms stalled itself: %s" % lines["own stall"]
+	)
+	_t._check(
+		"No input from %s for 40" % PEER in lines["held up"]
+		and "sent %d ms apart (seq +1): held up on the way" % FRAME_MSEC in lines["held up"]
+		and not "buttons released" in lines["held up"],
+		"input gap: inputs sent evenly that arrive together were held up: %s" % lines["held up"]
+	)
+	_t._check(
+		"(seq +21): 20 inputs lost on the way" in lines["lost"],
+		"input gap: a seq jump at the usual pace means lost inputs: %s" % lines["lost"]
+	)
+	input_sync._input_gaps.erase(PEER)
+
+
+static func _input(seq: int, clock: int) -> Array:
+	return [seq, Vector2.ZERO, Vector2.ZERO, 0, 0, 0, PoolVector2Array(), clock]
 
 
 # --- session path ---
