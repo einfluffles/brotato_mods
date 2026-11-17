@@ -38,6 +38,10 @@ enum Msg {
 	# host -> client: shop_id, player, stat (Keys hash), value: the icon and number the shop
 	# floats over a player's reroll button when a reroll gave a stat (bone dice; protocol 18)
 	SHOP_TEXT,
+	# host -> client: challenges (ids reached in the host's run), stats (lifetime counters ->
+	# how often they went up), won: what the run earns for the client's own save
+	# (session/progress_share.gd; protocol 20)
+	PROGRESS,
 	# host -> client: [section, revision, body or null (the section has no state now)], see
 	# sync/state_stream.gd; each section's body is described where it is built (shop:
 	# sync/shop_sync.gd, pause_shop: sync/pause_control.gd)

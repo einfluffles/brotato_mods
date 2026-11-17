@@ -247,7 +247,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   state"). Also: `GoTowardsBorderOppositeMovementBehavior.show_warning_arrow/line` (unused by the
   game), brachiosaurus foot shadow scale/position animations, jump-attack shadow `position.x` (reset on
   respawn only), effects done inside stripped method tracks / disconnected `animation_finished` handlers.
-- Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions).
+- Client saves/challenges are blocked while puppeting (`ProgressData` / `ChallengeService` extensions),
+  except for what the host's run earns the client (see "Progress for clients").
   Puppet mode on stashes what `ProgressData.save()` persists from the run side (`saved_run_state`,
   `last_saved_run_state`, `data`, `killed_enemies`, `killed_by_enemies`, `items_bought`); off restores it
   (`session/puppet.gd`) — the shop resume path overwrites `saved_run_state` with the host's run. Unlocks /
@@ -373,7 +374,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     it was up again and over which path, or that it still was not after 15 s.
 - **State stream** (`sync/state_stream.gd`, protocol 14: STATE = [section, revision, body or null]): one
   ordered reliable stream of host state in fixed sections, in apply / resync order: shop, upgrades, menu,
-  menu_grids, retry, pause_battle, pause_shop, pickups, cursors (state that builds controls before the cursors on
+  menu_grids, retry, pause_battle, pause_shop, pickups, damage, cursors (state that builds controls before the cursors on
   them). Replaces the copy of the same machinery each module had (poll loop + change key, key forgotten on
   `peer_ready`, per-peer sends, "keep the latest until the scene is ready").
   - Host: a provider per section answers `state_key(section)` (text, "" = inactive; checked every interval,
@@ -1223,6 +1224,123 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   loads) until it leaves the tree (mirrored state and cursors would replay e.g. button focus sounds); ClientView isn't mirrored and
   stays audible. Sounds played while the host's tree is paused (pause menu) aren't recorded. UI pages that
   play their own `AudioStreamPlayer` (profile, codex, item sets) bypass SoundManager; they're host-only.
+
+## Progress for clients
+
+- `session/progress_share.gd`, the `ChallengeService` / `ProgressData` extensions,
+  `session/puppet.gd`. Until protocol 20 a client earned nothing in an online run: challenges
+  are decided by game code that only runs on the host, and the client's save is closed while it
+  mirrors (see "Battle mirror": saves / challenges blocked while puppeting or borrowing DLC).
+  Now what the run earns counts for every player's own save, as in local co-op, where one
+  profile gets whatever any player achieves.
+- Host: the `ChallengeService` extension hears every `try_complete_challenge(id, value, below)`
+  and `complete_challenge(id)` call. The game returns early from the first when the host has
+  the challenge already, so the extension holds the value against the challenge itself
+  (`ProgressShare.host_met`): a veteran host's clients still earn it. Each id goes out once per
+  session. `ProgressData.increment_stat(key)` is counted per key. `PROGRESS` (reliable, at most
+  once a second; at once when `run_won` is counted): `{challenges, stats, won}`. Only while a
+  peer is ready; a peer that joins later earns what comes from then on.
+- Never sent: challenges that hang on the host's own history. The lifetime counters'
+  (`check_counted_challenges`: survivor, gatherer, lumberjack, cautious, evil hat; dig site,
+  fruit basket, whip it): each client reaches them with its own count, to which it adds the
+  host's `stats` (a fixed list of counters; nothing else of `ProgressData.data` is the host's to
+  write). The hourglass (play time) and the three species challenges (trophy hunter, clever
+  girl, egg hunt: lists in the host's save) are not shared at all yet, nor are
+  `killed_enemies` (codex).
+- Client: `Puppet.set_own_progress(true)` around the apply is the one way through the block.
+  Challenges are completed by the game's own `complete_challenge` (popup, platform achievement,
+  `challenges_completed`, the reward), then `_bt_unlock_own` puts the reward's hash onto the
+  client's own list whether the content is registered or not: while the host's DLC is borrowed
+  the live lists are the borrowed state, which `DlcBorrow.revert` throws away, and the own
+  lists are in its stash (`Puppet.own_list`). So a reward behind a DLC the client only has
+  from the host stays unlocked in its save; without the DLC the game does not register the
+  content, with it the unlock is there. Counters go onto `Puppet.own_data()` (the stashed
+  `data` while mirroring). `won`: the game's own `RunData.apply_run_won()` on the mirrored run
+  (the characters' challenges per player, the difficulty challenges, the danger levels in
+  `difficulties_unlocked`, whose per-character objects the borrow stash shares with the live
+  list; an entry for a borrowed DLC character exists only live and goes with the borrow). Its
+  closing `reset_and_save_new_run_state` stays blocked.
+- Saving: `ProgressData.bt_save_own()` puts everything set aside for this client (both
+  stashes: `Puppet.own_fields`) into `ProgressData`, calls the game's `save()` and puts the
+  live values back. After a completed challenge or a win; counters alone within 60 s and when
+  the lobby is left.
+- Open: tested headless only (`progress_share_tests.gd`: the host's sending incl. a challenge
+  it had already, the exclusions, a client that mirrors and borrows completing a challenge on
+  its own lists and counters, a lifetime challenge by its own count, the win, the save object).
+  Not run against Steam: achievements are set on the client's real account and cannot be taken
+  back by the mod. Nothing is backfilled for runs played before this build.
+
+## Damage meter
+
+- `sync/damage_meter.gd` (the numbers), `ui/damage_views.gd` (where they show). Built in after
+  the Damage Meter mod by Oudstand (its README: "Feel free to modify and share"), written anew:
+  that mod reads each machine's own counters, which stand still on a client during a puppet
+  battle (no values on clients), and its shop summary is one popup for every player that pauses
+  the tree and takes every device's input (online: the host's pause for everybody).
+- Numbers: the game's own counters, no hook into the fight. `WeaponData.dmg_dealt_last_wave`
+  (reset in `main` when a wave starts, counted by `Weapon`), and for items
+  `RunData.tracked_item_effects` where the item's `tracking_text` is `DAMAGE_DEALT` /
+  `EXPLOSION_DAMAGE_DEALT`: counted for the whole run, so the wave's part is the difference to a
+  copy taken when the battle scene appears. Every tracked key that gained counts, in the
+  inventory or not (a turret a weapon built: count 0). A list value's first entry is the
+  damage (the bonk dog's two both are). Equal ids are one source with their number. Per player
+  `[total, sources as [my_id, count, damage]]`: the 2 strongest while the wave runs (what the
+  HUD shows), the 10 strongest in the measurement taken when the battle scene leaves (the
+  shop's board).
+- Cost (`damage_meter_tests.gd`, late endless run, 4 players with 6 weapons and 250 items each,
+  headless container): 6.5 ms per measurement at first, twice a second, and 2156 B per update.
+  It walked every item and every counter and looked each counter's item up in the item list.
+  Now 0.45 ms and 588 B during the wave (2156 B once at its end): the counters that count
+  damage are looked up once per wave (again when a counter is added), a source's number comes
+  from `RunData.get_nb_item`, and the board is compared as arrays, not as text.
+- Who measures: the machine that runs the wave (the host; any machine outside a session, so it
+  works offline), every 0.5 s while the battle scene is the current one and once more when it
+  leaves the tree. The board then stands through the shop until the next battle starts.
+- State stream section `damage` (protocol 19, before cursors), checked every 0.5 s, sent when
+  the board changed; a peer that joins gets it with the resync. The client checks the body
+  strictly (`DamageMeter.clean`: at most 4 players, 10 sources, ids up to 96 characters, no
+  negative numbers) and resolves ids against `ItemService.items / weapons / characters`.
+- HUD: an `HBoxContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
+  bars sit at the bottom; right-aligned for players 2 and 4): icon and total, in co-op the
+  player's share of the team's total, then icon and number of the two strongest sources.
+  Hidden while the total is 0; mouse ignored.
+- Shop: a `Button` after each player's reroll button (reached with right from reroll; up /
+  down lead where they do from reroll) and the board, a `PanelContainer`: in the co-op shop a
+  child of the panel that holds the player's `ShopItemsContainer`, so it fills the place of the
+  shop items; in the solo shop (the slots sit in a row there) a top-level child of the slots'
+  container, laid over its rect when it comes up, so the layout does not move. The board
+  (title: wave, total, share; a row per source) is visible while that player's `FocusEmulator`
+  rests on the button, the button has the focus (solo) or the mouse is on it (polled each
+  frame): no press, no modal state, no pause. The shop is told by `_get_reroll_button`, not by
+  class: naming `BaseShop` in a script that loads with the mod loads `base_shop.gd` too early
+  and the game's shop scripts no longer parse (seen in the tests). `ui/focus_targets.gd` knows the button as `shop_damage`, so the
+  cursor on it travels like every other (`SHOP_FOCUS` to the host, the cursors section to the
+  other clients) and every machine shows the board in that player's panel.
+- Under load (`damage_meter_tests.gd`, crowded wave: 350 enemies, twelve fast pistols, 60 ms
+  added to every frame, about 3 frames a second): the total rises in every second and equals,
+  to the point, the health the enemies lost (kills: their whole health; enemies the game
+  removed at its cap: what they had lost). The counters are written inside the weapon's hit
+  handler, so nothing depends on frame rate, and every measurement reads the lists anew: no
+  cached weapon or item objects, no dependence on the wave timer (the mod builds its source
+  list once per wave and closes the wave's summary when the wave timer reads 0).
+- Switch: Options > Gameplay has a "Damage meter" check button under "life bars on bosses"
+  (`extensions/ui/menu_options.gd`: a copy of that button without its handler, so it looks and
+  sounds like the game's; set again in `init()`, which runs every time the page opens). The
+  game's own Mods menu only lists the installed mods and the Mod Loader has a config store but
+  no screen, so the switch sits with the game's display options, in the main menu and in the
+  pause menu alike. It is this machine's: off, the row, the buttons and the boards are gone
+  here (a cursor on a button moves to reroll, and reroll's way to the right is its old one);
+  a host with peers measures on, because each client decides for itself, a machine without
+  peers stops measuring. Another player's cursor on a button this machine hides is not shown
+  here (and not passed on, when this machine is the host). Stored with `session/settings.gd`
+  in the Mod Loader's config (`config_schema` in `manifest.json`, default on;
+  `user://mod_configs/einfluffles-BrotatoTogether/settings.json` from the first change: the
+  loader's "default" config cannot be written). The label is English only.
+- Not taken over from the mod: its other options (opacity, number of sources, ungrouped
+  weapons), damage per second, the "charmed enemies" entry (it extends `Enemy.take_damage`),
+  dart traps (the game ships them without a tracking key).
+- Open: the row and the board are checked as nodes, texts and rects in the headless tests
+  (`damage_meter_tests.gd`), not seen on a real screen; the mouse on the button is untested.
 
 ## Remote input, pause, absent players
 

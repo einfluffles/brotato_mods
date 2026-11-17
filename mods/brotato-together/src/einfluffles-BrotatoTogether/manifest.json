@@ -14,7 +14,19 @@
 			"incompatibilities": ["six666-BrotatoOnline"],
 			"load_before": [],
 			"tags": ["Utilities"],
-			"config_schema": {},
+			"config_schema": {
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"title": "brotato:together",
+				"type": "object",
+				"properties": {
+					"damage_meter": {
+						"type": "boolean",
+						"title": "Damage meter",
+						"description": "Show each player's damage of the wave at the life bar and the board in the shop.",
+						"default": true
+					}
+				}
+			},
 			"description_rich": "",
 			"image": null
 		}
