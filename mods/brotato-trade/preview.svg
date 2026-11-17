@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Workshop preview for brotato:trade: a red and a blue player half, two hands handing over a crate. Original artwork; tools/package.sh renders it. -->
+  <defs>
+    <linearGradient id="red" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c63a58"/>
+      <stop offset="1" stop-color="#5a1630"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f74dc"/>
+      <stop offset="1" stop-color="#132c62"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffe98a" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#ffd84a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vig" cx="50%" cy="50%" r="72%">
+      <stop offset="0.55" stop-color="#160e1f" stop-opacity="0"/>
+      <stop offset="1" stop-color="#160e1f" stop-opacity="0.75"/>
+    </radialGradient>
+    <g id="gem">
+      <path d="M 0,-14 L 10,0 L 0,14 L -10,0 Z" fill="#6ee07a" stroke="#1f5a2a" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M 0,-14 L 10,0 L 0,0 Z" fill="#b8ffbf" opacity="0.75"/>
+      <path d="M 0,14 L -10,0 L 0,0 Z" fill="#2f9a40" opacity="0.6"/>
+    </g>
+  </defs>
+
+  <!-- split background -->
+  <rect width="1024" height="1024" fill="url(#blue)"/>
+  <path d="M 0,0 L 612,0 L 412,1024 L 0,1024 Z" fill="url(#red)"/>
+  <path d="M 596,0 L 628,0 L 428,1024 L 396,1024 Z" fill="#160e1f"/>
+  <rect width="1024" height="1024" fill="url(#vig)"/>
+  <ellipse cx="512" cy="620" rx="330" ry="300" fill="url(#glow)"/>
+
+  <!-- materials -->
+  <use xlink:href="#gem" transform="translate(110,560) rotate(-20) scale(2.6)"/>
+  <use xlink:href="#gem" transform="translate(914,560) rotate(20) scale(2.6)"/>
+  <use xlink:href="#gem" transform="translate(250,500) rotate(15) scale(1.5)" opacity="0.85"/>
+  <use xlink:href="#gem" transform="translate(774,500) rotate(-15) scale(1.5)" opacity="0.85"/>
+  <use xlink:href="#gem" transform="translate(60,60) rotate(-10) scale(1.6)" opacity="0.8"/>
+  <use xlink:href="#gem" transform="translate(964,60) rotate(10) scale(1.6)" opacity="0.8"/>
+
+  <!-- title -->
+  <g font-family="Tomson Talks" font-weight="bold" text-anchor="middle"
+     paint-order="stroke" stroke="#2a1a10" stroke-linejoin="round">
+    <text x="512" y="255" font-size="190" fill="#ffd84a" stroke-width="28">brotato</text>
+    <text x="512" y="405" font-size="160" fill="#fff" stroke-width="26">:trade</text>
+  </g>
+
+  <!-- hands -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M -60,850 L 405,722" stroke="#2a1a10" stroke-width="124"/>
+    <path d="M 1084,850 L 619,722" stroke="#2a1a10" stroke-width="124"/>
+    <path d="M 388,705 L 384,640" stroke="#2a1a10" stroke-width="70"/>
+    <path d="M 636,705 L 640,640" stroke="#2a1a10" stroke-width="70"/>
+    <path d="M -60,850 L 405,722" stroke="#ffe7c4" stroke-width="98"/>
+    <path d="M 1084,850 L 619,722" stroke="#ffe7c4" stroke-width="98"/>
+    <path d="M 388,705 L 384,640" stroke="#ffe7c4" stroke-width="44"/>
+    <path d="M 636,705 L 640,640" stroke="#ffe7c4" stroke-width="44"/>
+    <!-- sleeves in the player colours -->
+    <path d="M -60,850 L 170,787" stroke="#2a1a10" stroke-width="140"/>
+    <path d="M -60,850 L 158,790" stroke="#ff5d73" stroke-width="114"/>
+    <path d="M 1084,850 L 854,787" stroke="#2a1a10" stroke-width="140"/>
+    <path d="M 1084,850 L 866,790" stroke="#4aa8ff" stroke-width="114"/>
+  </g>
+
+  <!-- crate with a give arrow -->
+  <g transform="translate(512,615)">
+    <rect x="-105" y="-105" width="210" height="210" rx="18" fill="#c98a4b" stroke="#2a1a10" stroke-width="14"/>
+    <rect x="-76" y="-76" width="152" height="152" rx="8" fill="#a2652f" stroke="#2a1a10" stroke-width="8"/>
+    <path d="M -52,-18 L 6,-18 L 6,-44 L 60,0 L 6,44 L 6,18 L -52,18 Z" fill="#ffd84a" stroke="#2a1a10" stroke-width="10" stroke-linejoin="round"/>
+  </g>
+
+  <!-- tagline -->
+  <rect x="242" y="880" width="540" height="88" rx="44" fill="#2a1a10" opacity="0.92" stroke="#ffd84a" stroke-width="6"/>
+  <text x="512" y="942" font-family="Tomson Talks" font-size="56" letter-spacing="3" text-anchor="middle" fill="#fff" stroke="#fff" stroke-width="1.5">HAND IT OVER</text>
+</svg>
