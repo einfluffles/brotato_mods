@@ -42,6 +42,9 @@ const PISTOL := "weapon_pistol_1"
 const ShopPopupMouseTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_popup_mouse_tests.gd"
 )
+const ShopCursorTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/shop_cursor_tests.gd"
+)
 const WheelScrollTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/wheel_scroll_tests.gd"
 )
@@ -58,6 +61,7 @@ var _wheel = null  # WheelScrollTests, kept alive across its yields
 var _mods = ShopModIntentTests.new()
 var _gear = ShopGearTests.new()  # kept alive across its yields
 var _popups = ShopPopupMouseTests.new()  # kept alive across its yields
+var _cursors = ShopCursorTests.new()  # kept alive across its yields
 
 
 func run(t: Node, together: Node):
@@ -122,6 +126,7 @@ func _host_part(together: Node):
 	_host_rejections()
 	yield(_host_slot_intents(), "completed")
 	yield(_host_weapon_intents(), "completed")
+	yield(_cursors.host(self), "completed")
 	_host_ready_intents()
 	_mods.host(self)
 	yield(_gear.host(self), "completed")

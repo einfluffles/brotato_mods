@@ -842,7 +842,15 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `_settle_host_cursor` runs deferred after every applied intent: the game's combine handler moves the
     cursor with deferred `grab_focus` calls, one of them onto an element it already queued for deletion
     (it relies on a later call that a visible mouse skips), and a `FocusEmulator` that keeps a freed
-    control errors on its next move.
+    control errors on its next move. It puts the cursor back on what the client last reported
+    (`ShopSync.host_apply_focus` keeps each player's last `SHOP_FOCUS` target) when a cursor can rest
+    there (visible, focusable, not a disabled button), else it leaves the game's place (a queued
+    element: the default control). Before, a recycle or combine left the host's copy where the game
+    put it (recycle: the row's first weapon, combine: the new weapon, or the first one with a visible
+    mouse) while the client's cursor kept its place in the row (`ShopSync._refresh_gear`, the element
+    at the same index). The client reports only a change, and the report of its cursor back on the
+    weapon often arrives with the intent, before those deferred calls, so it never corrected the host:
+    the host and the other clients showed the cursor one or more weapons to the left until it moved.
   - Locks (protocol 15): the state carries the lock of every slot node (`locks`, in the key), and the
     client sets each node to it (`ShopSync._apply_locks`). Before, the client called the game's
     `BaseShop._update_visual_locks`, which finds a locked item by its place in the offered list;
