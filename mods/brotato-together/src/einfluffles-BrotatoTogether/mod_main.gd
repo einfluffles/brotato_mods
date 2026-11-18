@@ -42,6 +42,7 @@ var input_sync: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
 var focus_sync: Node = null
+var scroll_sync: Node = null  # every panel's scroll positions, both ways (sync/scroll_sync.gd)
 var shop_sync: Node = null
 var upgrades_sync: Node = null
 var menu_sync: Node = null
@@ -114,6 +115,12 @@ func _ready() -> void:
 	focus_sync = _add("sync/focus_sync.gd", "FocusSync")
 	focus_sync.state_stream = state_stream
 	focus_sync.setup(session)
+
+	scroll_sync = _add("sync/scroll_sync.gd", "ScrollSync")
+	scroll_sync.state_stream = state_stream
+	scroll_sync.focus_sync = focus_sync
+	scroll_sync.input_sync = input_sync
+	scroll_sync.setup(session)
 
 	# The run state of the shop, the level-up panels and BATTLE_START in parts, only those a
 	# client lacks: one record of what each peer has (host) and one store of what this client
@@ -286,7 +293,7 @@ func _is_host_screen(msg_type: int, body) -> bool:
 		return false
 	if body[0] == state_stream.MENU:
 		return typeof(state) != TYPE_DICTIONARY or state.get("kind") != TITLE_KIND
-	return not body[0] in [state_stream.MENU_GRIDS, state_stream.CURSORS]
+	return not body[0] in [state_stream.MENU_GRIDS, state_stream.CURSORS, state_stream.SCROLLS]
 
 
 # The next screen (shop, next battle, end-of-run menu) follows BATTLE_END closely and replaces

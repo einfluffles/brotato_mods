@@ -125,13 +125,17 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   They decide nothing there; input goes to the host. The character grid, which every cursor
   shares, scrolls after your own player's cursor only (on the host after its local players):
   the other players moving through it no longer scroll your screen. Your right stick scrolls
-  your own panel's description there (on a client too, at once), and the other players' panels
-  show where their players scrolled them on the host.
+  your own panel's description there (on a client too, at once).
 - **Mouse wheel:** on the selection screens, in the shop and in the level-up / crate panels the
   wheel scrolls what is under the pointer in your own panel (description, stats, item lists, the
   character grid), on the host for its keyboard player and on a client for its own player. It
   never scrolls another player's panel; in local co-op without a lobby it scrolls the keyboard
   player's panel only (the game turns the wheel off on co-op screens).
+- **Everybody sees everybody's scrolling:** on these three screens every player's panel shows
+  how far its player scrolled it (descriptions, the character's starting items, item lists, the
+  stats sheet), with the wheel or the right stick, on the host and on every client. Before, a
+  client's scrolling stayed on that client, and in the shop and the level-up panels nobody saw
+  anybody else's.
 - **Wave failed:** the retry / end-run prompt appears on clients too, with who gets to choose.
 - **Sounds:** clients hear the host's sounds — battle sounds with the snapshots, menu/shop sounds as
   they happen — instead of their own mirrored screens' sounds.
@@ -255,7 +259,7 @@ that Steam's default stays if Steam refuses the setting.
 run-state round trip, a client borrowing the host's DLC (and giving it back exactly), a recorded host battle replayed on a client, shop purchase mirroring, the weapons row of the shop (the Anvil at shop entry co-op and solo, a new weapon slot in the label at once, a remote player buying into it, a 7th weapon on a client's puppet), the run state in parts (which parts each change sends, the client building the same run from
 them, resyncs, a body replaced while pending, a missing part, a client held while Steam's queue to it is full getting the union of what it missed; a wave's start after the shop carrying only the common part, the client's run then the host's, a start queued while a scene loads), shop locks (per slot, also after a buy; the own press shown at once), the own shop
 panel running locally (intents applied or rejected on the host, nothing changed on the client), another mod's shop intent (registered, applied once, sent from the own panel only), level-up/crate
-panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade, the gear page rebuilt by the host's run changes under the own and a mirrored cursor, a cursor whose control is freed), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), the mouse wheel scrolling only the mouse player's own panel (shop, level-up, character selection; host and client) and the right stick in character selection (own panel, mirrored positions on a client), "Player N" above the join hint, shop UI sounds, the lobby
+panels (mirrored options, the own panel running locally with pad, keyboard and synthetic mouse events, decisions as checked intents, the crate weapon popup's combine / recycle / meca upgrade, the gear page rebuilt by the host's run changes under the own and a mirrored cursor, a cursor whose control is freed), cursor mirroring (also with another mod's extra controls on one machine only), the host's selection screens and end of run as the game's own scenes on a client (the host's grids, selections, zone, join progress, the character shown while a player holds F / Y in weapon selection; nothing decided or saved there; a client joining before anybody joined on the host), the shared character grid scrolling after each machine's own players only (host, client, local co-op), the mouse wheel scrolling only the mouse player's own panel (shop, level-up, character selection; host and client) and the right stick in character selection (own panel), every panel's scroll positions both ways (shop, level-up, character selection; host and client), "Player N" above the join hint, shop UI sounds, the lobby
 in the game's menus (the title screen's Host lobby button and player frame, kicking, a client in its own main menu
 while the host is in its own, the pause menu page, the Co-op row and the slot invite of character selection (and that they
 move nothing in the layout), the client's popup, each with keyboard / pad / FocusEmulator input and a fake Steam), the wave-failed prompt and the battle -> shop transition on clients, which screen drives a client's own

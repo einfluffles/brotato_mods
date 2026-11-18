@@ -214,7 +214,7 @@ func _test_wiring(together: Node) -> void:
 	var missing := []
 	for module in [
 		together.shop_sync, together.upgrades_sync, together.menu_sync, together.retry_sync,
-		together.pickup_list,
+		together.pickup_list, together.scroll_sync,
 		together.focus_sync, together.pause_control, together.battle_host, together.battle_client
 	]:
 		if module.state_stream != stream:

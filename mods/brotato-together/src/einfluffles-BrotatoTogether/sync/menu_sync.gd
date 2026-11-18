@@ -86,8 +86,7 @@ func state_patch(section: int, steam_id: int) -> Dictionary:
 
 # kind, screen, count, coop, selected (per player), colors (palette index per slot), max; character
 # selection: zone [id, random], endless, and while joining is open join (hold progress of the
-# joining players); the selection screens: scrolls (per player its panel's description
-# scroll position); weapon selection: picks (per player the indices of its picked elements),
+# joining players); weapon selection: picks (per player the indices of its picked elements),
 # character_shown (per player: its panel shows the player's character, ui_info held); end of
 # run: pages (per player its carousel page). `you` comes with the per-peer patch.
 func _state() -> Dictionary:
@@ -114,8 +113,6 @@ func _state() -> Dictionary:
 			for progress in CoopService.connection_progress:
 				joining.append(stepify(progress, 0.1))
 			state["join"] = joining
-	if _scene.has_method("_get_panels"):
-		state["scrolls"] = _scrolls(count)
 	var picked = _scene.get("_picked_elements")
 	if picked is Array:
 		state["picks"] = _picks(picked)
@@ -127,19 +124,6 @@ func _state() -> Dictionary:
 			pages.append(containers[p].carousel.index)
 		state["pages"] = pages
 	return state
-
-
-# Selection screens: per player how far its panel's description is scrolled (its right stick, or
-# the wheel of the host's keyboard player, scrolls it here).
-func _scrolls(count: int) -> Array:
-	var scrolls := []
-	var panels: Array = _scene._get_panels()
-	for p in min(count, panels.size()):
-		var scroll = null
-		if panels[p] != null and panels[p].has_method("get_description_scroll"):
-			scroll = panels[p].get_description_scroll()
-		scrolls.append(scroll.scroll_vertical if scroll is ScrollContainer else 0)
-	return scrolls
 
 
 static func kind_of(scene: Node) -> String:

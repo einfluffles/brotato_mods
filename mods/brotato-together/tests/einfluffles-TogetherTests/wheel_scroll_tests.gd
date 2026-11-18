@@ -1,18 +1,26 @@
 extends Reference
-# Scrolling online (ui/wheel_scroll.gd, sync/local_panel.gd, sync/input_sync.gd, menu sync):
+# Scrolling online (ui/wheel_scroll.gd, sync/local_panel.gd, sync/input_sync.gd,
+# sync/scroll_sync.gd):
 #  - the mouse wheel scrolls what is under the pointer in the mouse player's own panel and nothing
 #    of another player: on the host (its keyboard player) in the shop, the level-up panels and
 #    character selection; on a client in its own shop and level-up panel and on its copy of the
 #    host's character selection;
 #  - character selection: a player's right stick scrolls their own panel's description on the
-#    host (and the host's state carries where each one is), on a client's copy the own player's
-#    stick scrolls its own panel there, and the other panels follow the host's positions.
+#    host, on a client's copy the own player's stick scrolls its own panel there;
+#  - on all three screens (check_sync) the host's state carries how far each panel is scrolled
+#    and a client's PANEL_SCROLL its own panel's; the receiver moves the other panels there and
+#    never the own one.
 # The descriptions are made taller than their box here, so the checks need no particular item.
 # Called from the shop, level-up and selection tests while their screen is up; checks go
 # through the test mod's _check.
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
+)
+const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const ScrollSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/scroll_sync.gd")
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
 const TALLER := 600.0
@@ -60,6 +68,88 @@ func check_wheel(label: String, own: Control, other: Control):
 			total(other) == 0 and total(own) == own_total,
 			"%s: the wheel over another player's panel scrolls nothing" % label
 		)
+	restore()
+	reset(own)
+	reset(other)
+	yield(_frames(1), "completed")
+
+
+# sync/scroll_sync.gd on scene, with own the panel of this machine's player p_own and other the
+# panel of player p_other (a remote player on the host, another player on a client):
+# - host: its state carries the own panel's position; a client's PANEL_SCROLL moves that client's
+#   panel here, never another one, and not on another scene;
+# - client: PANEL_SCROLL carries the own panel's position; the host's state moves the other
+#   panel and leaves the own one alone.
+func check_sync(
+	label: String, scroller: Node, scene: Node, own: Control, other: Control, players: Array
+):
+	yield(_frames(1), "completed")  # a coroutine also when it returns early
+	var p_own: int = players[0]
+	var p_other: int = players[1]
+	var selection := ScrollSync.is_selection(scene)
+	var own_scroll := largest_scroll(own)
+	var other_scroll := largest_scroll(other)
+	if own_scroll == null or other_scroll == null:
+		_t._check(false, "%s: both panels have a ScrollContainer showing" % label)
+		return
+	make_tall(own_scroll)
+	make_tall(other_scroll)
+	yield(_frames(2), "completed")
+	reset(own)
+	reset(other)
+	own_scroll.scroll_vertical = 70
+	var own_target := ScrollSync._describe(own_scroll, scene, p_own, own)
+	var other_target := ScrollSync._describe(other_scroll, scene, p_other, other)
+	_t._check(
+		ScrollSync.resolve(scene, p_own, own_target) == own_scroll
+		and ScrollSync.resolve(scene, p_other, other_target) == other_scroll,
+		"%s: a panel's scroll named by meaning (%s, %s)" % [label, own_target, other_target]
+	)
+	# The selection screens name it relative to the player's panel: never another panel either.
+	var inside: bool = selection or ScrollSync.resolve(scene, p_other, own_target) == null
+	_t._check(inside, "%s: another player's scroll is not in a player's own panel" % label)
+	var sent: Array = []
+	if Puppet.is_active():
+		var body: Dictionary = bytes2var(var2bytes(scroller.own_body()), false)
+		sent = body.get("scrolls", [])
+		_t._check(
+			body.get("scene") == scene.filename and [own_target, 70] in sent,
+			"%s: PANEL_SCROLL carries the own panel's position (%s)" % [label, sent]
+		)
+		var state := {
+			"scene": scene.filename,
+			"players": [[p_own, [[own_target, 210]]], [p_other, [[other_target, 140]]]],
+		}
+		_t._check(
+			scroller.apply_state(StateStream.SCROLLS, bytes2var(var2bytes(state), false), 1),
+			"%s: the host's scroll state applied" % label
+		)
+	else:
+		_t._check(scroller.state_key(StateStream.SCROLLS) != "", "%s: the scroll state is on" % label)
+		var body: Dictionary = scroller.state_body(StateStream.SCROLLS)
+		for entry in body.get("players", []):
+			if entry[0] == p_own:
+				sent = entry[1]
+		_t._check(
+			body.get("scene") == scene.filename and [own_target, 70] in sent,
+			"%s: the scroll state carries the own panel's position (%s)" % [label, sent]
+		)
+		var wrong := {"scene": "res://elsewhere.tscn", "scrolls": [[other_target, 300]]}
+		var ignored: bool = not scroller.host_apply(p_other, wrong)
+		_t._check(ignored, "%s: another scene's scrolls ignored" % label)
+		var message := {"scene": scene.filename, "scrolls": [[other_target, 140]]}
+		if not selection:
+			message.scrolls.append([own_target, 210])  # the host's own player's: ignored
+		_t._check(
+			scroller.host_apply(p_other, bytes2var(var2bytes(message), false)),
+			"%s: a client's PANEL_SCROLL applied" % label
+		)
+	yield(_t.get_tree().create_timer(0.5), "timeout")
+	_t._check(
+		other_scroll.scroll_vertical == 140 and own_scroll.scroll_vertical == 70,
+		"%s: the other panel follows (140), the own one stays (%s, %s)"
+		% [label, other_scroll.scroll_vertical, own_scroll.scroll_vertical]
+	)
 	restore()
 	reset(own)
 	reset(other)
@@ -160,7 +250,7 @@ func _frames(count: int):
 
 # Host: two remote players (virtual devices 12, 13) and the keyboard player 2 of this machine,
 # every cursor on a character (else a panel shows the random element, without a description).
-func host_selection(scene: Node, capture: FuncRef):
+func host_selection(scene: Node, scroller: Node):
 	var panels: Array = scene._get_panels()
 	var grid: Node = scene._get_inventories()[0]
 	for p in 3:
@@ -183,20 +273,16 @@ func host_selection(scene: Node, capture: FuncRef):
 		scrolls[1].scroll_vertical > 0 and scrolls[0].scroll_vertical == 0,
 		"stick, host: P2's right stick scrolls P2's description only"
 	)
-	var state: Dictionary = capture.call_func(scene, 1)
-	var sent = state.get("scrolls")
-	_t._check(
-		sent is Array and sent.size() == 3 and sent[1] == scrolls[1].scroll_vertical and sent[0] == 0,
-		"stick, host: the menu state carries each panel's scroll position (%s)" % [sent]
-	)
 	restore()
 	for scroll in scrolls:
 		scroll.scroll_vertical = 0
-	yield(_frames(1), "completed")
+	# The keyboard player 3 is this machine's, P2 a client's.
+	var label := "character selection, host"
+	yield(check_sync(label, scroller, scene, panels[2], panels[1], [2, 1]), "completed")
 
 
 # Client: its copy of the host's screen, this machine's player is P2 (you = 1).
-func client_selection(scene: Node, menus: Node, input_sync: Node, state: Dictionary):
+func client_selection(scene: Node, input_sync: Node, scroller: Node):
 	var panels: Array = scene._get_panels()
 	var grid: Node = scene._get_inventories()[0]
 	for p in 2:
@@ -226,17 +312,8 @@ func client_selection(scene: Node, menus: Node, input_sync: Node, state: Diction
 		Utils.get_player_rjoy_vector(1) == Vector2.ZERO,
 		"stick, client: and lets go with the stick"
 	)
-	# The host scrolled P1's description to 120: the copy follows; the own one stays local.
-	var scrolled: Dictionary = state.duplicate(true)
-	scrolled["scrolls"] = [120, 0]
-	_t._check(menus.show(scrolled), "stick, client: the host's state with scroll positions")
-	yield(_t.get_tree().create_timer(0.5), "timeout")  # at the stick's speed
-	_t._check(
-		scrolls[0].scroll_vertical == 120 and scrolls[1].scroll_vertical == own_scrolled,
-		"stick, client: another panel follows the host's position, the own one stays (%s, %s)"
-		% [scrolls[0].scroll_vertical, scrolls[1].scroll_vertical]
-	)
 	restore()
 	for scroll in scrolls:
 		scroll.scroll_vertical = 0
-	yield(_frames(1), "completed")
+	var label := "character selection, client"
+	yield(check_sync(label, scroller, scene, panels[1], panels[0], [1, 0]), "completed")

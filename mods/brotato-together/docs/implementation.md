@@ -1301,10 +1301,36 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     device). A client's copy got nothing: its slot devices are never pressed there and nothing
     was mirrored. Now `InputSync._menu_copy_device` gives the own slot device this player's right
     stick while a copy shows (only display scrolls read the stick on these screens, like the
-    shop's `_drive_local_stick`), and the menu state carries `scrolls` (per player its panel's
-    description `scroll_vertical`): the copy moves the other panels toward it at the stick's
-    speed (`MenuPuppet._follow_scrolls`, the state comes every 0.1 s). A wheel scroll on a client
-    stays on that client (the host's copy of its panel does not move).
+    shop's `_drive_local_stick`). Until protocol 27 the menu state carried `scrolls` (the
+    description's position per player) and nothing went back: a wheel scroll on a client stayed
+    on that client. Now see Panel scroll positions.
+  - Panel scroll positions (`sync/scroll_sync.gd`, protocol 27): a panel is scrolled where it is
+    driven, the wheel only ever on the machine of the panel's player, and a client's own shop
+    and level-up panel run on the client, right stick included. So the host saw none of a
+    client's scrolling and a client none of anybody else's (in the shop and the level-up panels
+    not even the host's). Both ways now, on the co-op shop (`CoopShopPlayerContainer`), the
+    level-up / crate panels while they show (`UpgradesUIPlayerContainer`) and the selection
+    screens (the player's panel):
+    - A panel's positions: every ScrollContainer below it that shows and has more content than
+      room (`WheelScroll.can_scroll`; buttons are not walked, so a gear list's elements cost
+      nothing), as `[target, scroll_vertical]`. The target is a `ui/focus_targets.gd` target: by
+      the player's anchors in the shop and the level-up panels (`describe(scroll, scene, p)`),
+      relative to the player's panel on the selection screens, which have no anchors. At most 16
+      per player.
+    - Client -> host, `PANEL_SCROLL` = `{scene, scrolls}` (reliable, on change, checked every
+      0.1 s): the own panel only, which is the one whose `FocusEmulator` runs on the client
+      (`FocusSync.local_emulators`: shop, level-up) or, on the copy of a selection screen, `you`
+      (`SharedScroll.own_player`). The host takes it for the sender's player on the same scene
+      only; a target outside that player's panel does not resolve.
+    - Host -> clients, state section `scrolls` (after `cursors`, so a popup the cursor opens is
+      there to be scrolled): `{scene, players: [[player, [[target, value]]]]}`, every panel as
+      the host's screen has it. The key is the containers' instance ids and values (no
+      description per check). A client follows every panel but its own.
+    - Following, on both sides: a received value moves its container at least at the stick's
+      speed (600 px/s) and faster over a long way (12 times the rest per second, so a wheel step
+      of 70 px is there in about 0.1 s), and is let go once reached, so the receiver's own game
+      (a popup that opens at the top for the next item) is not held back by an old value. A
+      target that does not resolve or show yet is retried for 2 s.
   - Mouse wheel and right stick on co-op screens: the game has no wheel there. Every
     `FocusEmulator` with a cursor marks each event that is not a co-op action as handled while
     nobody can join (no ScrollContainer sees it), and `BaseSelection._scroll_with_mouse_wheel`
