@@ -15,9 +15,9 @@ extends Node
 # sync/state_stream.gd, {wave, players: [[total, [[my_id, count, damage], ...]], ...], time:
 # seconds, hits: [[damage, my_id or ""], ...] per player}, checked every UPDATE_SEC, sent when it
 # changed. time and hits came later: a board without them is still one (0 and none). During
-# the wave it carries the LIVE_SOURCES strongest sources per player (what the HUD shows); the
-# measurement when the battle scene leaves carries MAX_SOURCES, and that board stands through
-# the shop until the next wave starts.
+# the wave it carries live_sources() sources per player (what the HUD shows, picked by
+# strongest()); the measurement when the battle scene leaves
+# carries MAX_SOURCES, and that board stands through the shop until the next wave starts.
 #
 # Cost: a measurement reads the weapons and only the counters that are damage (their keys are
 # looked up once per wave), a few dozen values per player however many items the run has.
@@ -38,7 +38,12 @@ const DAMAGE_TEXTS := ["DAMAGE_DEALT", "EXPLOSION_DAMAGE_DEALT"]
 const SUMMED := ["item_bonk_dog"]  # tracked as [explosions, hits]: both are damage
 const UPDATE_SEC := 0.5
 const MAX_SOURCES := 10
-const LIVE_SOURCES := 2  # during the wave: what the HUD shows
+# During the wave: what the HUD shows, one line each. Fewer with 3 or 4 players: then two of
+# them share each side of the screen.
+const LIVE_SOURCES := 4
+const LIVE_SOURCES_CROWDED := 3
+const CROWDED_FROM := 3  # players
+const OTHER_KIND_SHARE := 0.05  # of the player's total, see strongest()
 const SETTING := "damage_meter"
 const MAX_PLAYERS := 4
 const MAX_ID_LENGTH := 96
@@ -114,10 +119,11 @@ func _process(delta: float) -> void:
 
 # final: with all MAX_SOURCES sources per player (the shop's board), else the HUD's few.
 func measure(final := false) -> void:
-	var limit := MAX_SOURCES if final else LIVE_SOURCES
+	var limit := MAX_SOURCES if final else live_sources(RunData.get_player_count())
 	var players := []
 	for p in RunData.get_player_count():
-		players.append(measure_player(p, _baseline[p] if p < _baseline.size() else {}, limit))
+		var baseline: Dictionary = _baseline[p] if p < _baseline.size() else {}
+		players.append(measure_player(p, baseline, limit, not final))
 	var hits := []
 	for p in players.size():
 		hits.append(_hits[p].duplicate() if p < _hits.size() else [0, ""])
@@ -176,15 +182,18 @@ static func source_of(args, p: int) -> String:
 
 
 # [total, [[my_id, count, damage], ...]]: the player's sources that dealt damage, strongest
-# first, at most `limit`; the total counts all of them. Equal weapons and items are one source
-# with their number (0: nothing of it in the inventory, e.g. a turret a weapon built).
-func measure_player(p: int, baseline: Dictionary, limit := MAX_SOURCES) -> Array:
+# first, at most `limit` (mixed: see strongest()); the total counts all of them. Equal weapons
+# and items are one source with their number (0: nothing of it in the inventory, e.g. a turret
+# a weapon built).
+func measure_player(p: int, baseline: Dictionary, limit := MAX_SOURCES, mixed := false) -> Array:
 	var groups := {}  # my_id -> [count, damage]
+	var weapons := {}  # my_id -> true for the weapons among them
 	for weapon in RunData.get_player_weapons(p):
 		var group = groups.get(weapon.my_id)
 		if group == null:
 			group = [0, 0]
 			groups[weapon.my_id] = group
+			weapons[weapon.my_id] = true
 		group[0] += 1
 		group[1] += int(weapon.dmg_dealt_last_wave)
 	var tracked: Dictionary = RunData.tracked_item_effects[p]
@@ -201,7 +210,33 @@ func measure_player(p: int, baseline: Dictionary, limit := MAX_SOURCES) -> Array
 		if groups[id][1] > 0:
 			sources.append([id, groups[id][0], groups[id][1]])
 	sources.sort_custom(DamageOrder, "strongest_first")
-	return [total, sources.slice(0, limit - 1)]
+	var least := int(ceil(total * OTHER_KIND_SHARE)) if mixed else -1
+	return [total, strongest(sources, weapons, limit, least)]
+
+
+# The sources the HUD shows in a wave with this many players.
+static func live_sources(player_count: int) -> int:
+	return LIVE_SOURCES_CROWDED if player_count >= CROWDED_FROM else LIVE_SOURCES
+
+
+# The first `limit` of the sources (strongest first). When those are all weapons, or all of the
+# rest (structures, pets, items, the character), and the strongest of the other kind dealt at
+# least `least` (-1: never), the last of them gives way to it: the HUD shows a weapon build's
+# turrets or burning, and a turret build's weapons, once they count (OTHER_KIND_SHARE).
+static func strongest(sources: Array, weapons: Dictionary, limit: int, least := -1) -> Array:
+	var kept := sources.slice(0, limit - 1) if limit > 0 and not sources.empty() else []
+	if least < 0 or kept.size() < 2 or sources.size() <= kept.size():
+		return kept
+	var kind: bool = weapons.has(kept[0][0])
+	for source in kept:
+		if weapons.has(source[0]) != kind:
+			return kept
+	for k in range(kept.size(), sources.size()):
+		if weapons.has(sources[k][0]) != kind:
+			if sources[k][2] >= least:
+				kept[kept.size() - 1] = sources[k]
+			break
+	return kept
 
 
 # The player's counters that count damage, as [key, my_id]. Which ones they are only changes

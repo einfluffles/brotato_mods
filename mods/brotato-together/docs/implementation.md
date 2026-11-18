@@ -1667,9 +1667,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   copy taken when the battle scene appears. Every tracked key that gained counts, in the
   inventory or not (a turret a weapon built: count 0). A list value's first entry is the
   damage (the bonk dog's two both are). Equal ids are one source with their number. Per player
-  `[total, sources as [my_id, count, damage]]`: the 2 strongest while the wave runs (what the
-  HUD shows), the 10 strongest in the measurement taken when the battle scene leaves (the
-  shop's board).
+  `[total, sources as [my_id, count, damage]]`: while the wave runs what the HUD shows, 4, with
+  3 or 4 players 3 (`DamageMeter.live_sources`: two players then share each side of the
+  screen); the 10 strongest in the measurement taken when the battle scene leaves (the shop's
+  board). In the wave, when the kept ones are all weapons, or all of the rest (structures,
+  pets, items, the character), the last gives way to the strongest of the other kind if that
+  dealt at least 5% of the player's total (`DamageMeter.strongest`, `OTHER_KIND_SHARE`): a
+  weapon build's turrets or burning show in the HUD, not only in the shop, but a 0.3% item
+  does not push out a weapon. The shop's board is the plain top 10. Host-side only: the wire
+  format is the same, `clean` took up to 10 sources already, an older host's 2 leave the
+  other lines hidden.
 - Biggest hit: the one hook into the fight. The meter connects to the battle's `EntitySpawner`
   (`enemy_spawned`, `neutral_spawned`) and through it to each unit's `took_damage` (once per
   unit: the spawner's pools hand the same nodes out again). The value is `full_dmg_value`, what
@@ -1701,21 +1708,40 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   `time` and `hits` were added later without a protocol bump: `clean` takes a board without
   them (time 0, no hits) and an older client drops them, so either side may be older. With
   them, the board changes with every measurement while a wave runs (the time moves), so it is
-  sent every 0.5 s then; 760 B for 4 players in a late run.
+  sent every 0.5 s then; 760 B for 4 players in a late run with 2 sources each, 968 B with
+  the 3 each the HUD shows now.
 - Numbers: up to 9,999 as they are, then three digits and a unit (`DamageViews.short`: 12.3K,
   456K, 7.89M, then B, T, Q), rounding into the next digit or unit included.
-- HUD: a `VBoxContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
-  bars sit at the bottom; right-aligned for players 2 and 4). Line `Main`: damage icon and
-  total (outlined 26), in co-op the player's share of the team's (grey) and the damage per
-  second (blue), both in a 20 px copy of the outlined font. Line `Detail`: icon and number of
-  the two strongest sources, the crit icon and the biggest hit (gold). Hidden while the total
-  is 0; a part with nothing to show is hidden, so the line keeps no gap; mouse ignored.
-- The board: three tiles with a caption over icon and value (the wave over the total and, in
-  co-op, the share of the team's; DPS; biggest hit with its source's icon; estimated at about
-  340 px, for the four-player panel's 403), a line, then a row per source: icon, name in its
-  tier colour over a bar against the strongest source in that colour, number, share. The bar
-  sits under the name so the name keeps room in a narrow panel. `DamageViews._board_list`
-  builds it, `_fill_board` fills it for the panel's `player_index` (0 in solo).
+- HUD: a `PanelContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
+  bars sit at the bottom; at the right edge for players 2 and 4), a dark rounded backing
+  (black at 45%, radius 6, margins 8 / 4) as wide as its lines, against the battle's scenery;
+  its `VBoxContainer` `Lines`. Line `Main`: damage icon and total, in co-op the
+  player's share of the team's (grey) and the damage per second (blue), all three at 22 so
+  they share a baseline. A 4 px gap, then `Sources`, one line per source of the board (see
+  above, up to 4): icon, number (20 px, light grey). More than one of it: `x<n>` (16 px,
+  white) in the icon's lower right corner, 2 / 4 px past it, as the game's inventory shows a
+  count (`IconPanel`). Last line `Hit`: the crit icon with what dealt the hit (26 px, tilted
+  20 degrees) over its middle, the burst at 75% under it; the biggest hit (gold, 20 px).
+  Every line's icon is 32 px with a 10 px gap (room for the count), so all numbers start in
+  one column. The HUD's sizes are copies of the outlined font with a 2 px outline. Numbers
+  short from 1,000 (7.01K next to 41.7K; the shop's board from 10,000).
+  For players 3 and 4 the order is reversed (Hit at the top, the strongest source next to
+  Main, Main next to the bar); for players 2 and 4 every line is mirrored, so the icons stay
+  at the screen's edge. Hidden while the total is 0; a line or part with nothing to show is
+  hidden, so the block keeps no gap; mouse ignored. Look reviewed on an in-game screenshot by
+  a second model: ragged number column, flat hierarchy, icons lost on the scenery.
+- The board: `Head` with "Wave N" (grey) over one line `Stats` like the wave's HUD, all at
+  22 px with a 2 px outline: icon, total and, in co-op, the share of the team's (grey); icon
+  and damage per second (blue, `/s`); the crit icon with what dealt the biggest hit tilted over
+  it, and the hit (gold). Icons 28 px, 12 px more between the three parts; estimated at about
+  380 px with a share and late-run numbers, for the four-player panel's 383 inside its
+  margins. Then a line, then a row per source. The row is the bar:
+  a `ProgressBar` 40 px high, a dark rounded track (black at 25%, radius 6, a 2 px border at
+  50%) filled in the source's tier colour (55%) as far as it reaches against the strongest.
+  On it (`Content`, anchored over the bar): icon, name (with `x<n>`), number (both the
+  outlined 26), share (18 px, white at 75%, to two places, `<0.01%` below). The text is white
+  so it reads on every tier colour. `DamageViews._board_list` builds it, `_fill_board` fills it
+  for the panel's `player_index` (0 in solo).
 - Co-op shop and co-op end of run (protocol 26): a fourth carousel page. A `Carousel` takes as
   many pages as `%Headings` has children (`_get_max_index`, unless `max_index` is set), and the
   index setter shows heading and `%Content` child of the same index. `add_page` appends a copy
