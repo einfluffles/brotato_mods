@@ -5,5 +5,5 @@ cleanup_client,axolotl
 core,battle_loopback,shop_loopback,local_shop,pause_input,selection,run_parts
 cleanup_host,menu_ux,live_menu,local_device,traffic,battle_start
 cleanup_misc,anim_mirror,runtime_parts,battle_perf,client_report
-input_ack,pose_mirror,bullet_hell_left,bullet_hell_top,bullet_hell_bottom
+input_ack,pose_mirror,bullet_hell_left,bullet_hell_top,bullet_hell_bottom,dead_player
 feedback,looks,damage,battle_scene,state_stream,shop_change,cursor_key,upgrades_change,lobby_menu,network_stalls,progress

@@ -6,7 +6,7 @@ extends Reference
 #            weapons: PoolRealArray, per weapon [rotation, sprite_x, sprite_y, sprite_rotation]]
 #            health/max_health/gold/level/xp are null when not sent (see below),
 #            weapon_slots: PoolIntArray (wave-start slot of each weapon) or null (all still held),
-#            speed: px/s or null when not sent (see sync/battle_scene.gd)]
+#            speed: px/s or null when not sent (see sync/battle_scene.gd), dead: bool]
 #   ids, types: PoolIntArray; positions: PoolVector2Array (Vector2.ZERO for FLAG_REST entities)
 #   flags: PoolByteArray, FLAG_BITS per entity (entity i at bit i * FLAG_BITS)
 #   poses: {entity index: PoolRealArray} (see sync/pose.gd)
@@ -30,7 +30,7 @@ extends Reference
 #
 # Wire layout:
 #   u32 battle_id, u32 t, u16 wave time left (1/100 s)
-#   u8 player count; per player: u8 PLAYER_STATS bit, i16 x, i16 y (1/POS_SCALE px),
+#   u8 player count; per player: u8 PLAYER_* bits, i16 x, i16 y (1/POS_SCALE px),
 #     varint input_ack, [stats: zigzag health, zigzag max_health, zigzag gold, varint level,
 #     f32 xp], u8 weapon count, bitmask (1 bit per weapon: sprite moved), per weapon i16 angle
 #     [+ i16 sprite x, i16 sprite y (1/8 px), i16 sprite angle],
@@ -54,7 +54,7 @@ extends Reference
 # INPUT seq the host applied for that player (0 for host-local players).
 
 enum PlayerField {
-	POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEAPONS, WEAPON_SLOTS, SPEED
+	POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEAPONS, WEAPON_SLOTS, SPEED, DEAD
 }
 
 const EVENT_DAMAGE := 0
@@ -86,6 +86,9 @@ const WAVE_FLAGS := 15
 const EXPLOSION_SCALE := 100.0
 const PLAYER_WEAPON_SLOTS := 2  # wire only (protocol 13, sync/battle_scene.gd)
 const PLAYER_SPEED := 4  # wire only (protocol 13)
+# wire only (protocol 28): Player.dead. Not health 0: a Veteran who died starts the next wave
+# alive at 0 health (no_cure_between_wave, Player._get_health_kept_between_waves).
+const PLAYER_DEAD := 8
 const MAX_SPEED := 1 << 20  # px/s; parse rejects more
 const STAT_FIELDS := [
 	PlayerField.HEALTH, PlayerField.MAX_HEALTH, PlayerField.GOLD, PlayerField.LEVEL, PlayerField.XP
@@ -203,7 +206,8 @@ static func _put_looks(buf: StreamPeerBuffer, looks: Dictionary) -> void:
 
 static func _put_player(buf: StreamPeerBuffer, entry: Array) -> void:
 	var has_stats: bool = entry[PlayerField.HEALTH] != null
-	buf.put_u8((PLAYER_STATS if has_stats else 0) | _scene_flags(entry))
+	var dead: int = PLAYER_DEAD if is_dead(entry) else 0
+	buf.put_u8((PLAYER_STATS if has_stats else 0) | _scene_flags(entry) | dead)
 	_put_position(buf, entry[PlayerField.POSITION])
 	_put_varint(buf, entry[PlayerField.INPUT_ACK])
 	if has_stats:
@@ -502,10 +506,11 @@ static func _get_player(buf: StreamPeerBuffer):
 	if buf.get_available_bytes() < 5:
 		return null
 	var stats_flag := buf.get_u8()
-	if stats_flag & ~(PLAYER_STATS | PLAYER_WEAPON_SLOTS | PLAYER_SPEED):
+	if stats_flag & ~(PLAYER_STATS | PLAYER_WEAPON_SLOTS | PLAYER_SPEED | PLAYER_DEAD):
 		return null
 	var entry := []
 	entry.resize(PlayerField.size())
+	entry[PlayerField.DEAD] = (stats_flag & PLAYER_DEAD) != 0
 	entry[PlayerField.POSITION] = _get_position(buf)
 	entry[PlayerField.INPUT_ACK] = _get_varint(buf)
 	if entry[PlayerField.INPUT_ACK] < 0:
@@ -823,6 +828,10 @@ static func _resolve_speeds(view: Dictionary, cache: Dictionary) -> void:
 				known[i] = [view.t, entry[PlayerField.SPEED]]
 		elif known.has(i):
 			entry[PlayerField.SPEED] = known[i][1]
+
+
+static func is_dead(entry: Array) -> bool:
+	return entry.size() > PlayerField.DEAD and entry[PlayerField.DEAD] == true
 
 
 static func has_stats(entry: Array) -> bool:

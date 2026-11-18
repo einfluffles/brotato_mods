@@ -60,7 +60,9 @@ enum Msg {
 
 # 27: scroll positions of every player's panel travel both ways (PANEL_SCROLL, state section
 # scrolls); the menu state no longer carries `scrolls`.
-const VERSION := 27
+# 28: a snapshot's player flags carry Player.dead (PLAYER_DEAD); clients no longer take health 0
+# for dead (a Veteran who died starts the next wave alive at 0 health).
+const VERSION := 28
 # How long one side carries on without the other's stream (snapshots on a client, INPUT on the
 # host) before it counts as gone rather than late. Both ends share it: a client predicts its own
 # player for that long without snapshots (sync/battle_client.gd PREDICTION_STALE_MSEC), and the
