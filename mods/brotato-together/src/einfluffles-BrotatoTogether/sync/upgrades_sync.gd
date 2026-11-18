@@ -19,6 +19,7 @@ extends Node
 #   upgrade's two options are rolled on the host on request and shown from the state (mecas);
 #   the pick is an option index (sync/meca_choice.gd).
 #   Its cursor and page also travel as UPGRADE_FOCUS: what the host and the others see.
+#   Other mods' buttons on a panel leave as intents of their own kinds (register_intent).
 #   Keyboard and mouse on the own panel, and the mouse kept off the others: sync/local_panel.gd.
 # The other players' panels stay mirrored: cursors by FocusSync, pages from the state.
 
@@ -33,6 +34,7 @@ const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
+const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -65,6 +67,7 @@ const WEAPON_POPUP_HANDLERS := {
 }
 # weapon_meca_roll: the host rolls (or finds) the two meca options; weapon_meca: picks one.
 const WEAPON_KINDS := ["weapon_combine", "weapon_discard", "weapon_meca_roll", "weapon_meca"]
+const OWN_KINDS := ["choose", "reroll"] + ITEM_KINDS + WEAPON_KINDS
 const MAX_HELD := 8  # intents held while the host is paused (a few presses per player)
 const LOG_NAME := "einfluffles-BrotatoTogether:UpgradesSync"
 const DEVICE_OWNER := "upgrades"  # InputSync.set_local_device
@@ -88,6 +91,7 @@ var _seq_keys := []
 # order once it resumes (see host_apply_intent).
 var _held := []
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
+var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method]
 
 # client
 var _guarded_ui: Node = null  # the puppet UpgradesUI whose decision signals are rewired
@@ -100,6 +104,7 @@ var _local_active := false
 var _sent_focus := ""
 var _meca = MecaChoice.new()  # the own popup's meca upgrade
 var _local_panel: Node = null  # in the guarded UI: device type and mouse for the own panel
+var _host_kinds := []  # other mods' intent kinds the host handles (its last state)
 
 
 func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> void:
@@ -153,6 +158,51 @@ func _on_message(steam_id: int, msg_type: int, msg) -> void:
 				)
 
 
+# --- for other mods: a decision of their own on a player's panel (a button they add) ---
+# The same contract as ShopSync's. Host: register_intent(kind, target, method).
+#   method(ui, player, id, arg) -> bool runs for a remote player's press after the checks every
+#   intent gets (its own player, its panel's revision, panel not done, not paused), with the
+#   panel's meca effect choice set as for take; true counts like an applied press of the game.
+# Client: nothing may change the run here (is_puppet_ui). The mod sends the press of this
+#   client's own panel (send_intent) when the host has the kind (host_handles); the result
+#   arrives with the host's next state.
+
+
+# kind: namespaced by the mod ("trade.crate"); id and arg are the mod's to define.
+func register_intent(kind: String, target: Object, method: String) -> bool:
+	if kind == "" or kind in OWN_KINDS or target == null:
+		return false
+	_mod_kinds[kind] = [target, method]
+	return true
+
+
+func is_puppet_ui(_ui: Node) -> bool:
+	return Puppet.is_active()
+
+
+func host_handles(kind: String) -> bool:
+	return kind in _host_kinds
+
+
+# The player whose panel runs on this client (-1: none).
+func own_player() -> int:
+	return _own.player_index if _local_active and is_instance_valid(_own) else -1
+
+
+# False: not sent (not this client's own panel, or the host does not know the kind).
+func send_intent(ui: Node, player: int, kind: String, id: String, arg: int) -> bool:
+	if ui != _guarded_ui or player != own_player() or not host_handles(kind):
+		return false
+	_send_intent(kind, id, _own._meca_effect_choice_selected, {"arg": arg})
+	return true
+
+
+func _kinds() -> Array:
+	var kinds := _mod_kinds.keys()
+	kinds.sort()
+	return kinds
+
+
 # --- host ---
 
 
@@ -182,7 +232,7 @@ func state_key(_section: int) -> String:
 	for p in RunData.get_player_count():
 		golds.append(RunData.get_player_gold(p))
 	var pages := _pages(ui, players.size())
-	var rest := [battle_host._battle_id, players, _seqs, pages, golds, _mecas(ui)]
+	var rest := [battle_host._battle_id, players, _seqs, pages, golds, _mecas(ui), _kinds()]
 	return str(run_cache.rev) + var2str(rest)
 
 
@@ -200,6 +250,7 @@ func state_body(_section: int):
 #   pages: the carousel page
 #   mecas: the meca upgrade rolls its crate weapon popup remembers ([[weapon slot, weapon my_id,
 #     stat key hash, value, stat key hash, value]], MecaChoice.entries, as in the shop state)
+# and kinds: other mods' intent kinds the host handles (register_intent).
 # The run is run_cache's, compressed once per change. Its refresh here is free right after
 # state_key (same check: nothing new); called alone (tests, StateStream.message_for) it still
 # sees a change of the fingerprint, so no body carries a run older than its own check.
@@ -214,6 +265,7 @@ func body(players: Array) -> Dictionary:
 		"seqs": _seqs.duplicate(),
 		"pages": _pages(ui, players.size()),
 		"mecas": _mecas(ui),
+		"kinds": _kinds(),
 	}
 	_view_bytes = var2bytes(body).size()
 	body["run"] = run_cache.all()
@@ -347,6 +399,10 @@ func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 			container._on_BanButton_pressed()
 		else:
 			return false
+	elif _mod_kinds.has(kind):
+		if not _host_apply_mod(ui, container, p, kind, msg):
+			return false
+		_seqs[p] += 1  # stale now, even when the panel shows the same
 	elif not (kind in WEAPON_KINDS) or not _host_apply_weapon(ui, p, kind, msg):
 		return false
 	if kind == "weapon_meca_roll":
@@ -359,6 +415,24 @@ func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 	# coroutine, and is found by the fingerprint (banned items, ban tokens, gold).
 	run_cache.force()
 	return true
+
+
+# Another mod's press (register_intent). The meca effect choice comes along as for take.
+func _host_apply_mod(ui: Node, container: Node, p: int, kind: String, msg: Dictionary) -> bool:
+	var handler: Array = _mod_kinds[kind]
+	var arg = msg.get("arg")
+	if typeof(arg) != TYPE_INT or not is_instance_valid(handler[0]):
+		return false
+	if not handler[0].has_method(handler[1]):
+		return false
+	var item = container._item_data
+	var meca = msg.get("meca")
+	if container._items_container.visible and item != null and item.is_meca:
+		if typeof(meca) == TYPE_INT and (meca == 0 or meca == 1):
+			container._meca_effect_choice_selected = meca
+			container.update_effect_choice_buttons_visuals()
+	var changed = handler[0].call(handler[1], ui, p, msg.id, arg)
+	return typeof(changed) == TYPE_BOOL and changed
 
 
 # The crate weapon popup of a player whose crates give weapons: combine, recycle or meca
@@ -544,6 +618,11 @@ func apply(main: Node, msg: Dictionary) -> void:
 		return
 	var you: int = battle_client._you
 	_guard(ui, you)
+	_host_kinds = []
+	var kinds = msg.get("kinds")
+	for kind in kinds if typeof(kinds) == TYPE_ARRAY else []:
+		if typeof(kind) == TYPE_STRING:
+			_host_kinds.append(kind)
 	var changed = _apply_run(msg.get("run"))
 	if changed == null:
 		return  # a run part is missing: nothing applied, the host resyncs this client
@@ -612,6 +691,7 @@ func _on_battle_left() -> void:
 	_meca.detach()
 	_applied = {}
 	_run_key = {}
+	_host_kinds = []
 
 
 # The own panel stops taking local input. Gives up only this screen's device and cursor: a stop
@@ -803,7 +883,8 @@ func _on_own_meca_picked(weapon, index: int) -> void:
 	_on_own_weapon(weapon, "weapon_meca", index)
 
 
-func _send_intent(kind: String, id: String, meca := -1, weapon := {}) -> void:
+# fields: more of the message (a crate weapon's slot, another mod's arg).
+func _send_intent(kind: String, id: String, meca := -1, fields := {}) -> void:
 	last_intent = {
 		"battle_id": battle_client._battle_id,
 		"seq": _own_seq,
@@ -811,8 +892,8 @@ func _send_intent(kind: String, id: String, meca := -1, weapon := {}) -> void:
 		"id": id,
 		"meca": meca,
 	}
-	for field in weapon:
-		last_intent[field] = weapon[field]
+	for field in fields:
+		last_intent[field] = fields[field]
 	_send(Protocol.Msg.UPGRADE_INTENT, last_intent)
 
 
