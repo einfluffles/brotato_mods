@@ -113,6 +113,11 @@ func _host_part(together: Node):
 	var players := WheelScrollTests.as_keyboard_player(0)
 	var panels := [_shop._get_coop_player_container(0), _shop._get_coop_player_container(REMOTE)]
 	yield(_wheel.check_wheel("shop, host", panels[0], panels[1]), "completed")
+	var scroller: Node = together.scroll_sync
+	yield(
+		_wheel.check_sync("shop, host", scroller, _shop, panels[0], panels[1], [0, REMOTE]),
+		"completed"
+	)
 	CoopService.connected_players = players
 	_host_rejections()
 	yield(_host_slot_intents(), "completed")
@@ -460,6 +465,11 @@ func _client_part(together: Node):
 	_texts.client(self, shop)
 	var panels := [shop._get_coop_player_container(0), shop._get_coop_player_container(REMOTE)]
 	yield(_wheel.check_wheel("shop, client", panels[0], panels[1]), "completed")
+	var scroller: Node = together.scroll_sync
+	yield(
+		_wheel.check_sync("shop, client", scroller, shop, panels[0], panels[1], [0, REMOTE]),
+		"completed"
+	)
 	_mods.client(self, shop)
 	yield(_client_keyboard_mouse(emulator), "completed")
 

@@ -90,9 +90,10 @@ const PAUSE_SHOP := 6
 const PICKUPS := 7
 const DAMAGE := 8
 const CURSORS := 9
+const SCROLLS := 10  # after the cursors: a popup a cursor opens is there to be scrolled
 const NAMES := [
 	"shop", "upgrades", "menu", "menu_grids", "retry", "pause_battle", "pause_shop", "pickups",
-	"damage", "cursors",
+	"damage", "cursors", "scrolls",
 ]
 const DEFAULT_INTERVAL := 0.1
 const DEFAULT_TIMEOUT_SEC := 10.0

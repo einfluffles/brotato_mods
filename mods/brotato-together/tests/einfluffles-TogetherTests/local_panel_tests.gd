@@ -79,6 +79,11 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 			emulators.append(child)
 			child.set_process_input(true)
 	yield(_wheel.check_wheel("level-up, host", container, other), "completed")
+	var scene: Node = t.get_tree().current_scene
+	var scroller: Node = together.scroll_sync
+	yield(
+		_wheel.check_sync("level-up, host", scroller, scene, container, other, [0, 1]), "completed"
+	)
 	for emulator in emulators:
 		emulator.set_process_input(false)
 	CoopService.connected_players = players
@@ -458,6 +463,10 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	yield(_keyboard_and_mouse(panels, own, other, ui), "completed")
 	_wheel = WheelScrollTests.new(t)
 	yield(_wheel.check_wheel("level-up, client", own, other), "completed")
+	var scroller: Node = together.scroll_sync
+	yield(
+		_wheel.check_sync("level-up, client", scroller, main, own, other, [0, 1]), "completed"
+	)
 
 	# Done: local control ends.
 	var finished := msg.duplicate(true)

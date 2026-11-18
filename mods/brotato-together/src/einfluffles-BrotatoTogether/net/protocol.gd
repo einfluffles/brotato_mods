@@ -48,6 +48,9 @@ enum Msg {
 	# client -> host: a client's frame times, scene-change stalls and prediction corrections for
 	# the host's log, numbers only (sync/client_report.gd; protocol 24)
 	CLIENT_REPORT,
+	# client -> host: scene (its filename), scrolls ([[target, value]]: how far each
+	# ScrollContainer of the sender's own panel is scrolled, sync/scroll_sync.gd; protocol 27)
+	PANEL_SCROLL,
 	# host -> client: [section, revision, body or null (the section has no state now)], see
 	# sync/state_stream.gd; each section's body is described where it is built (shop:
 	# sync/shop_sync.gd, pause_shop: sync/pause_control.gd). The run state of sections shop and
@@ -55,9 +58,9 @@ enum Msg {
 	STATE,
 }
 
-# 26: carousels in the co-op shop and end of run have a fourth page (the damage meter's), whose
-# index travels like the others; an older peer would clamp it to the third.
-const VERSION := 26
+# 27: scroll positions of every player's panel travel both ways (PANEL_SCROLL, state section
+# scrolls); the menu state no longer carries `scrolls`.
+const VERSION := 27
 # How long one side carries on without the other's stream (snapshots on a client, INPUT on the
 # host) before it counts as gone rather than late. Both ends share it: a client predicts its own
 # player for that long without snapshots (sync/battle_client.gd PREDICTION_STALE_MSEC), and the
