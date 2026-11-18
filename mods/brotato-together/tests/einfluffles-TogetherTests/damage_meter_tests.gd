@@ -84,7 +84,37 @@ func _test_measure(meter: Node):
 		theirs[0] == 77 and theirs[1] == [[item.my_id, 1, 77]],
 		"an item's damage is what its counter gained this wave %s (%s)" % [theirs, item.my_id]
 	)
+	_test_strongest()
 	return item
+
+
+# The HUD's lines: the strongest; when they are all of one kind (weapon or not), the last goes
+# to the strongest of the other kind if it dealt `least`; the shop's board (-1) keeps its order.
+# The HUD shows 4 sources, 3 with 3 or 4 players.
+func _test_strongest() -> void:
+	var weapons := {"a": true, "b": true, "c": true}
+	var a := ["a", 1, 90]
+	var b := ["b", 1, 50]
+	var c := ["c", 1, 30]
+	var t := ["t", 0, 10]
+	var cases := [
+		[[a, b, t], 2, 0, [a, t]],
+		[[["t", 0, 90], ["u", 1, 50], ["a", 1, 10]], 2, 0, [["t", 0, 90], ["a", 1, 10]]],
+		[[a, t, b], 2, 0, [a, t]],
+		[[a, b], 2, 0, [a, b]],
+		[[a, b, c, t], 3, 0, [a, b, t]],
+		[[a, b, c, t], 3, 11, [a, b, c]],
+		[[a, b, c, t], 3, -1, [a, b, c]],
+		[[a, b, t], 10, 0, [a, b, t]],
+		[[a], 2, 0, [a]],
+		[[], 2, 0, []],
+	]
+	for case in cases:
+		var got: Array = DamageMeter.strongest(case[0], weapons, case[1], case[2])
+		_t._check(got == case[3], "strongest %s (%s) of %s: %s" % [case[1], case[2], case[0], got])
+	var counts := [DamageMeter.live_sources(1), DamageMeter.live_sources(2)]
+	counts += [DamageMeter.live_sources(3), DamageMeter.live_sources(4)]
+	_t._check(counts == [4, 4, 3, 3], "the HUD's sources by players %s" % [counts])
 
 
 # Up to 9,999 as it is, then three digits and a unit, also where rounding reaches the next one.
@@ -180,18 +210,32 @@ func _test_hud(meter: Node, item):
 	meter.measure()
 	var icon: Texture = meter.data_of(PISTOL).icon
 	var total: Label = rows[0].get_node("Main/Total")
-	var detail: Node = rows[0].get_node("Detail")
+	var first: Node = rows[0].get_node("Sources/Source0")
+	var hit: Node = rows[0].get_node("Hit")
 	_t._check(
-		rows[0].visible and total.text == "1,234" and detail.get_node("Source0Icon").texture == icon,
+		rows[0].visible and total.text == "1,234" and first.get_node("Icon").texture == icon,
 		"the row shows the total and the strongest source (%s)" % total.text
 	)
 	_t._check(
-		detail.get_node("Source0").text == "1,234" and not detail.get_node("Source1").visible,
-		"with its number, and no second source where there is none"
+		first.get_node("Amount").text == "1,234" and first.get_node("Count").text == "x2",
+		"on its own line with its number and the count of equal weapons"
 	)
 	_t._check(
-		not rows[0].get_node("Main/Dps").visible and not detail.get_node("Hit").visible,
+		not rows[0].get_node("Sources/Source1").visible,
+		"no second source line where there is none"
+	)
+	_t._check(
+		not rows[0].get_node("Main/Dps").visible and not hit.visible,
 		"no damage per second before the wave ran a second, no biggest hit before a hit"
+	)
+	_t._check(
+		(
+			rows[0].get_child(0).name == "Main"
+			and first.get_child(0).name == "Icon"
+			and rows[1].get_node("Sources/Source0").get_child(2).name == "Icon"
+			and rows[1].get_node("Main").get_child(3).name == "Icon"
+		),
+		"the total first under the bar, the icons at the screen's edge (the right-hand player's last)"
 	)
 	_t._check(
 		item == null
@@ -215,8 +259,8 @@ func _test_hud(meter: Node, item):
 		"the biggest hit per player, none for a hit that was no player's %s" % [meter.board.hits]
 	)
 	_t._check(
-		detail.get_node("Hit").visible and detail.get_node("Hit").text == "52.3K",
-		"the row shows it, short (%s)" % detail.get_node("Hit").text
+		hit.visible and hit.get_node("Value").text == "52.3K" and not hit.get_node("Source").visible,
+		"the row shows it, short, on its own line (%s)" % hit.get_node("Value").text
 	)
 	var dps: Label = rows[0].get_node("Main/Dps")
 	_t._check(dps.visible and dps.text == "123/s", "and the damage per second (%s)" % dps.text)
@@ -505,7 +549,7 @@ func _test_cost(meter: Node) -> void:
 	for entry in meter.board.players:
 		sources += entry[1].size()
 	_t._check(live < 1500.0, "a measurement in a late run stays under 1.5 ms (%.0f usec)" % live)
-	_t._check(live_size < 800, "the board of a running wave stays under 800 B (%d)" % live_size)
+	_t._check(live_size < 1100, "the board of a running wave stays under 1100 B (%d)" % live_size)
 	print(
 		(
 			"  info: damage meter, late run, 4 players: %.0f usec per measurement, %d B during the"

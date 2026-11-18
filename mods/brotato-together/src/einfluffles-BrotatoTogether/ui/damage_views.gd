@@ -1,10 +1,13 @@
 extends Node
 # Where the damage meter (sync/damage_meter.gd) shows, on every machine, in the game's own
 # screens:
-# - In a wave: two lines under each player's life bar (above it for the two lower players). The
-#   first: the wave's total, in co-op the player's share of the team's, and the damage per
-#   second. The second, smaller: the two strongest sources as icon and number, and the biggest
-#   single hit.
+# - In a wave: a block under each player's life bar (above it for the two lower players, in
+#   reverse, so the total stays next to the bar). Main: the wave's total, in co-op the player's
+#   share of the team's, and the damage per second. Below, one line per source (4, with 3 or 4
+#   players 3: DamageMeter.live_sources), icon, count when more than one, number; the strongest
+#   first, the last line goes to the strongest of the other kind (weapon or not) when it dealt
+#   5% (DamageMeter.strongest). Last the biggest single hit with the icon of what dealt it. The
+#   right-hand players' lines are mirrored: the icons stay at the screen's edge.
 # - In the co-op shop and the co-op end of run: a fourth page "Damage" in each player's carousel
 #   (after Shop / Items and the two Stats pages), reached like the others with LB / RB or the
 #   arrows. The panels build it in their own _ready (extensions/ui/coop_*_player_container.gd
@@ -35,8 +38,8 @@ const HUD_FONT := "res://resources/fonts/actual/base/font_26_outline.tres"
 const BOARD_FONT := "res://resources/fonts/actual/base/font_26.tres"
 const BOARD_SMALL_FONT := "res://resources/fonts/actual/base/font_smallest_text.tres"
 const HUD_SMALL_SIZE := 20
-const HUD_SOURCES := 2
 const HUD_ICON := Vector2(24, 24)
+const HUD_SOURCE_ICON := Vector2(28, 28)
 const HUD_SMALL_ICON := Vector2(20, 20)
 const TILE_ICON := Vector2(22, 22)
 const BOARD_ICON := Vector2(32, 32)
@@ -123,30 +126,62 @@ func _build_rows(main: Node) -> void:
 		if container == null or container.has_node(ROW_NAME):
 			_rows.append(null)
 			continue
-		var align := BoxContainer.ALIGN_END if p % 2 == 1 else BoxContainer.ALIGN_BEGIN
+		var right: bool = p % 2 == 1
+		var lower: bool = p > 1  # their bars sit at the bottom: the block grows upwards
 		var row := VBoxContainer.new()
 		row.name = ROW_NAME
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_constant_override("separation", 0)
+		row.add_constant_override("separation", 2)
 		row.modulate.a = 0.8 if RunData.is_coop_run else 1.0
-		var main_line := _line("Main", align, 6)
-		main_line.add_child(_icon(HUD_ICON, "Icon", load(TOTAL_ICON)))
-		main_line.add_child(_label(load(HUD_FONT), "Total"))
-		main_line.add_child(_label(_small_font(), "Share", MUTED))
-		main_line.add_child(_label(_small_font(), "Dps", DPS_COLOR))
-		row.add_child(main_line)
-		var detail := _line("Detail", align, 4)
-		for k in HUD_SOURCES:
-			detail.add_child(_icon(HUD_SMALL_ICON, "Source%dIcon" % k))
-			detail.add_child(_label(_small_font(), "Source%d" % k))
-		detail.add_child(_icon(HUD_SMALL_ICON, "HitIcon", load(HIT_ICON)))
-		detail.add_child(_label(_small_font(), "Hit", HIT_COLOR))
-		row.add_child(detail)
+		var main_line := _hud_line("Main", right, 6, [
+			_icon(HUD_ICON, "Icon", load(TOTAL_ICON)),
+			_label(load(HUD_FONT), "Total"),
+			_label(_small_font(), "Share", MUTED),
+			_label(_small_font(), "Dps", DPS_COLOR),
+		])
+		var sources := VBoxContainer.new()
+		sources.name = "Sources"
+		sources.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sources.add_constant_override("separation", 2)
+		var lines := []
+		for k in meter.LIVE_SOURCES:
+			lines.append(_hud_line("Source%d" % k, right, 4, [
+				_icon(HUD_SOURCE_ICON, "Icon"),
+				_label(_small_font(), "Count", MUTED),
+				_label(_small_font(), "Amount"),
+			]))
+		var hit_line := _hud_line("Hit", right, 4, [
+			_icon(HUD_SOURCE_ICON, "Icon", load(HIT_ICON)),
+			_label(_small_font(), "Value", HIT_COLOR),
+			_icon(HUD_SMALL_ICON, "Source"),
+		])
+		# The strongest source next to the total, the hit farthest from the bar.
+		for line in _ordered(lines, lower):
+			sources.add_child(line)
+		for part in _ordered([main_line, sources, hit_line], lower):
+			row.add_child(part)
 		container.add_child(row)
-		if p > 1:
-			container.move_child(row, 0)  # the lower players' bars grow upwards
+		if lower:
+			container.move_child(row, 0)
 		_rows.append(row)
 	_fill()
+
+
+# A HUD line of these parts, mirrored for a right-hand player: the first part (the icon) at the
+# screen's edge.
+static func _hud_line(line_name: String, right: bool, separation: int, parts: Array) -> Node:
+	var align := BoxContainer.ALIGN_END if right else BoxContainer.ALIGN_BEGIN
+	var line := _line(line_name, align, separation)
+	for part in _ordered(parts, right):
+		line.add_child(part)
+	return line
+
+
+static func _ordered(parts: Array, reverse: bool) -> Array:
+	var ordered := parts.duplicate()
+	if reverse:
+		ordered.invert()
+	return ordered
 
 
 func _fill_row(row: VBoxContainer, entry: Array, share: int, hit: Array) -> void:
@@ -156,18 +191,23 @@ func _fill_row(row: VBoxContainer, entry: Array, share: int, hit: Array) -> void
 	_set_text(main_line.get_node("Share"), "%d%%" % share if share >= 0 else "")
 	var dps := per_second(entry[0], meter.board.get("time", 0.0))
 	_set_text(main_line.get_node("Dps"), short(dps) + "/s" if dps >= 0 else "")
-	var detail: Node = row.get_node("Detail")
-	for k in HUD_SOURCES:
-		var icon: TextureRect = detail.get_node("Source%dIcon" % k)
-		var label: Label = detail.get_node("Source%d" % k)
-		var data = meter.data_of(entry[1][k][0]) if k < entry[1].size() else null
-		icon.visible = data != null
-		label.visible = data != null
+	for k in meter.LIVE_SOURCES:
+		var line: Node = row.get_node("Sources/Source%d" % k)
+		var source = entry[1][k] if k < entry[1].size() else null
+		var data = meter.data_of(source[0]) if source != null else null
+		line.visible = data != null
 		if data != null:
-			icon.texture = data.icon
-			label.text = short(entry[1][k][2])
-	detail.get_node("HitIcon").visible = hit[0] > 0
-	_set_text(detail.get_node("Hit"), short(hit[0]) if hit[0] > 0 else "")
+			line.get_node("Icon").texture = data.icon
+			_set_text(line.get_node("Count"), "x%d" % source[1] if source[1] > 1 else "")
+			line.get_node("Amount").text = short(source[2])
+	var hit_line: Node = row.get_node("Hit")
+	hit_line.visible = hit[0] > 0
+	hit_line.get_node("Value").text = short(hit[0]) if hit[0] > 0 else ""
+	var hit_source = meter.data_of(hit[1]) if hit[1] != "" else null
+	var source_icon: TextureRect = hit_line.get_node("Source")
+	source_icon.visible = hit_source != null
+	if hit_source != null:
+		source_icon.texture = hit_source.icon
 
 
 func _small_font() -> DynamicFont:

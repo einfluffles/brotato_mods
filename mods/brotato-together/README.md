@@ -100,9 +100,10 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   text now names
   that player's own highest and lowest stats, and `modloader.log` gets a warning
   (`einfluffles-BrotatoTogether:Axolotl`) with what was found: please include it in a report.
-- **Damage meter:** during a wave, two lines at each player's life bar show what that player
-  has dealt in the wave, the damage per second, the two strongest weapons or items and the
-  biggest single hit. Big numbers stay short (12.3K, 4.57M, 7.89B). In the co-op shop and at
+- **Damage meter:** during a wave, a small block at each player's life bar shows what that
+  player has dealt in the wave and the damage per second, then the strongest sources one per
+  line (4, with 3 or 4 players 3), weapons as well as structures, pets, items or the
+  character's own damage, and the biggest single hit. Big numbers stay short (12.3K, 4.57M, 7.89B). In the co-op shop and at
   the end of a co-op run, each player's panel has a fourth page, **Damage**, after the shop and
   the two stats pages: LB / RB (or the arrows) lead there like to the stats. In the solo shop
   and at the end of a solo run it is a third tab in the stats panel (LB / RB cycle through
