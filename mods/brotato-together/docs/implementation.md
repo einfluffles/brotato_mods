@@ -1712,18 +1712,22 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   the 3 each the HUD shows now.
 - Numbers: up to 9,999 as they are, then three digits and a unit (`DamageViews.short`: 12.3K,
   456K, 7.89M, then B, T, Q), rounding into the next digit or unit included.
-- HUD: a `VBoxContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
-  bars sit at the bottom; right-aligned for players 2 and 4). Line `Main`: damage icon and
-  total (outlined 26), in co-op the player's share of the team's (grey) and the damage per
-  second (blue), both in a 20 px copy of the outlined font. Then `Sources`, one line per source
-  of the board (see above, up to 4): icon (28 px), `x<n>` (grey) for more than one of it,
-  number. Last line `Hit`: the crit icon (28 px), the biggest hit (gold) and the icon (20 px)
-  of what dealt it. For players 3 and 4 the order is reversed (Hit at the top, the strongest
-  source next to Main, Main next to the bar); for players 2 and 4 every line is mirrored, so
-  the icons stay at the screen's edge. Height about 56 px with nothing yet, about 180 px with
-  4 sources and a hit; a line is about 135 px wide, inside the life bar's 320 (the upgrade and
-  crate icons start 348 px from the edge). Hidden while the total is 0; a line or part with
-  nothing to show is hidden, so the block keeps no gap; mouse ignored.
+- HUD: a `PanelContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
+  bars sit at the bottom; at the right edge for players 2 and 4), a dark rounded backing
+  (black at 45%, radius 6, margins 8 / 4) as wide as its lines, against the battle's scenery;
+  its `VBoxContainer` `Lines`. Line `Main`: damage icon and total (outlined 26), in co-op the
+  player's share of the team's (grey) and the damage per second (blue), both 18 px. A 4 px
+  gap, then `Sources`, one line per source of the board (see above, up to 4): icon, number
+  (20 px, light grey), `×<n>` (16 px, darker grey) for more than one of it. Last line `Hit`:
+  the crit icon, the biggest hit (gold, 20 px) and the icon (24 px, 80%) of what dealt it.
+  Every line's icon is 32 px with a 6 px gap, so all numbers start in one column; the count
+  after the number keeps it there. The smaller sizes are copies of the outlined font with a
+  2 px outline. Numbers short from 1,000 (7.01K next to 41.7K; the shop's board from 10,000).
+  For players 3 and 4 the order is reversed (Hit at the top, the strongest source next to
+  Main, Main next to the bar); for players 2 and 4 every line is mirrored, so the icons stay
+  at the screen's edge. Hidden while the total is 0; a line or part with nothing to show is
+  hidden, so the block keeps no gap; mouse ignored. Look reviewed on an in-game screenshot by
+  a second model: ragged number column, flat hierarchy, icons lost on the scenery.
 - The board: three tiles with a caption over icon and value (the wave over the total and, in
   co-op, the share of the team's; DPS; biggest hit with its source's icon; estimated at about
   340 px, for the four-player panel's 403), a line, then a row per source: icon, name in its

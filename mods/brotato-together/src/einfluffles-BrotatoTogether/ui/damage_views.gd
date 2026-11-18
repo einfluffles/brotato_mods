@@ -4,10 +4,12 @@ extends Node
 # - In a wave: a block under each player's life bar (above it for the two lower players, in
 #   reverse, so the total stays next to the bar). Main: the wave's total, in co-op the player's
 #   share of the team's, and the damage per second. Below, one line per source (4, with 3 or 4
-#   players 3: DamageMeter.live_sources), icon, count when more than one, number; the strongest
+#   players 3: DamageMeter.live_sources), icon, number, count when more than one; the strongest
 #   first, the last line goes to the strongest of the other kind (weapon or not) when it dealt
-#   5% (DamageMeter.strongest). Last the biggest single hit with the icon of what dealt it. The
-#   right-hand players' lines are mirrored: the icons stay at the screen's edge.
+#   5% (DamageMeter.strongest). Last the biggest single hit with the icon of what dealt it. All
+#   icons in one 32 px column, so the numbers line up; on a dark rounded backing as wide as the
+#   lines, against the battle's scenery; numbers short from 1,000 (7.01K). The right-hand
+#   players' lines are mirrored: the icons stay at the screen's edge.
 # - In the co-op shop and the co-op end of run: a fourth page "Damage" in each player's carousel
 #   (after Shop / Items and the two Stats pages), reached like the others with LB / RB or the
 #   arrows. The panels build it in their own _ready (extensions/ui/coop_*_player_container.gd
@@ -37,10 +39,22 @@ const HIT_ICON := "res://items/stats/crit_chance.png"
 const HUD_FONT := "res://resources/fonts/actual/base/font_26_outline.tres"
 const BOARD_FONT := "res://resources/fonts/actual/base/font_26.tres"
 const BOARD_SMALL_FONT := "res://resources/fonts/actual/base/font_smallest_text.tres"
-const HUD_SMALL_SIZE := 20
-const HUD_ICON := Vector2(24, 24)
-const HUD_SOURCE_ICON := Vector2(28, 28)
-const HUD_SMALL_ICON := Vector2(20, 20)
+# The HUD: one column of 32 px icons, so every number starts at the same x; the total at the
+# font's 26, amounts and the hit 20, share and damage per second 18, a count 16.
+const HUD_ICON := Vector2(32, 32)
+const HUD_SMALL_ICON := Vector2(24, 24)  # what dealt the biggest hit
+const HUD_AMOUNT_SIZE := 20
+const HUD_STAT_SIZE := 18
+const HUD_COUNT_SIZE := 16
+const HUD_OUTLINE := 2  # the smaller sizes' outline: they sit on the battle's scenery
+const HUD_SEPARATION := 6
+const HUD_GAP := 4  # between the total and the sources
+const HUD_SHORT_FROM := 1000  # 7.01K, not 7,013, next to 41.7K
+const HUD_AMOUNT_COLOR := Color(0.88, 0.88, 0.88)
+const HUD_COUNT_COLOR := Color(0.6, 0.6, 0.6)
+const HUD_BACK := Color(0, 0, 0, 0.45)
+const HUD_BACK_RADIUS := 6
+const HUD_BACK_MARGIN := Vector2(8, 4)
 const TILE_ICON := Vector2(22, 22)
 const BOARD_ICON := Vector2(32, 32)
 const BAR_HEIGHT := 6
@@ -61,7 +75,7 @@ var meter: Node = null  # sync/damage_meter.gd (set by mod_main.gd)
 var _scene_id := 0
 var _rows := []  # per player: the HUD row, or null
 var _views := []  # [holder, list]: a carousel container (page) or a StatsContainer (solo tab)
-var _hud_small: DynamicFont = null
+var _hud_fonts := {}  # size -> the HUD font at that size
 
 
 func _ready() -> void:
@@ -91,9 +105,9 @@ static func _is_solo_shop(scene: Node) -> bool:
 	return shop and not scene.has_method("_get_coop_player_container")
 
 
-# 1,234 up to SHORT_FROM, then three digits and a unit: 12.3K, 456K, 7.89M.
-static func short(number: int) -> String:
-	if number < SHORT_FROM:
+# 1,234 up to `from`, then three digits and a unit: 12.3K, 456K, 7.89M.
+static func short(number: int, from := SHORT_FROM) -> String:
+	if number < from:
 		return Text.get_formatted_number(int(max(0, number)))
 	var value := float(number)
 	var unit := -1
@@ -128,38 +142,47 @@ func _build_rows(main: Node) -> void:
 			continue
 		var right: bool = p % 2 == 1
 		var lower: bool = p > 1  # their bars sit at the bottom: the block grows upwards
-		var row := VBoxContainer.new()
-		row.name = ROW_NAME
-		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_constant_override("separation", 2)
+		var row := _hud_back(right)
 		row.modulate.a = 0.8 if RunData.is_coop_run else 1.0
-		var main_line := _hud_line("Main", right, 6, [
+		var lines := VBoxContainer.new()
+		lines.name = "Lines"
+		lines.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lines.add_constant_override("separation", 2)
+		row.add_child(lines)
+		var main_line := _hud_line("Main", right, [
 			_icon(HUD_ICON, "Icon", load(TOTAL_ICON)),
 			_label(load(HUD_FONT), "Total"),
-			_label(_small_font(), "Share", MUTED),
-			_label(_small_font(), "Dps", DPS_COLOR),
+			_label(_hud_font(HUD_STAT_SIZE), "Share", MUTED),
+			_label(_hud_font(HUD_STAT_SIZE), "Dps", DPS_COLOR),
 		])
+		var gap := Control.new()
+		gap.name = "Gap"
+		gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		gap.rect_min_size.y = HUD_GAP
 		var sources := VBoxContainer.new()
 		sources.name = "Sources"
 		sources.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		sources.add_constant_override("separation", 2)
-		var lines := []
+		var source_lines := []
 		for k in meter.LIVE_SOURCES:
-			lines.append(_hud_line("Source%d" % k, right, 4, [
-				_icon(HUD_SOURCE_ICON, "Icon"),
-				_label(_small_font(), "Count", MUTED),
-				_label(_small_font(), "Amount"),
+			# The count after the amount: the amounts stay in one column.
+			source_lines.append(_hud_line("Source%d" % k, right, [
+				_icon(HUD_ICON, "Icon"),
+				_label(_hud_font(HUD_AMOUNT_SIZE), "Amount", HUD_AMOUNT_COLOR),
+				_label(_hud_font(HUD_COUNT_SIZE), "Count", HUD_COUNT_COLOR),
 			]))
-		var hit_line := _hud_line("Hit", right, 4, [
-			_icon(HUD_SOURCE_ICON, "Icon", load(HIT_ICON)),
-			_label(_small_font(), "Value", HIT_COLOR),
-			_icon(HUD_SMALL_ICON, "Source"),
+		var hit_source := _icon(HUD_SMALL_ICON, "Source")
+		hit_source.modulate.a = 0.8
+		var hit_line := _hud_line("Hit", right, [
+			_icon(HUD_ICON, "Icon", load(HIT_ICON)),
+			_label(_hud_font(HUD_AMOUNT_SIZE), "Value", HIT_COLOR),
+			hit_source,
 		])
 		# The strongest source next to the total, the hit farthest from the bar.
-		for line in _ordered(lines, lower):
+		for line in _ordered(source_lines, lower):
 			sources.add_child(line)
-		for part in _ordered([main_line, sources, hit_line], lower):
-			row.add_child(part)
+		for part in _ordered([main_line, gap, sources, hit_line], lower):
+			lines.add_child(part)
 		container.add_child(row)
 		if lower:
 			container.move_child(row, 0)
@@ -169,12 +192,29 @@ func _build_rows(main: Node) -> void:
 
 # A HUD line of these parts, mirrored for a right-hand player: the first part (the icon) at the
 # screen's edge.
-static func _hud_line(line_name: String, right: bool, separation: int, parts: Array) -> Node:
+static func _hud_line(line_name: String, right: bool, parts: Array) -> Node:
 	var align := BoxContainer.ALIGN_END if right else BoxContainer.ALIGN_BEGIN
-	var line := _line(line_name, align, separation)
+	var line := _line(line_name, align, HUD_SEPARATION)
 	for part in _ordered(parts, right):
 		line.add_child(part)
 	return line
+
+
+# The HUD block's backing: a dark rounded panel as wide as its lines, at the screen's edge.
+static func _hud_back(right: bool) -> PanelContainer:
+	var back := PanelContainer.new()
+	back.name = ROW_NAME
+	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	back.size_flags_horizontal = Control.SIZE_SHRINK_END if right else 0
+	var style := StyleBoxFlat.new()
+	style.bg_color = HUD_BACK
+	style.set_corner_radius_all(HUD_BACK_RADIUS)
+	style.content_margin_left = HUD_BACK_MARGIN.x
+	style.content_margin_right = HUD_BACK_MARGIN.x
+	style.content_margin_top = HUD_BACK_MARGIN.y
+	style.content_margin_bottom = HUD_BACK_MARGIN.y
+	back.add_stylebox_override("panel", style)
+	return back
 
 
 static func _ordered(parts: Array, reverse: bool) -> Array:
@@ -184,25 +224,26 @@ static func _ordered(parts: Array, reverse: bool) -> Array:
 	return ordered
 
 
-func _fill_row(row: VBoxContainer, entry: Array, share: int, hit: Array) -> void:
+func _fill_row(row: Control, entry: Array, share: int, hit: Array) -> void:
 	row.visible = meter.shown and entry[0] > 0
-	var main_line: Node = row.get_node("Main")
-	main_line.get_node("Total").text = short(entry[0])
+	var lines: Node = row.get_node("Lines")
+	var main_line: Node = lines.get_node("Main")
+	main_line.get_node("Total").text = short(entry[0], HUD_SHORT_FROM)
 	_set_text(main_line.get_node("Share"), "%d%%" % share if share >= 0 else "")
 	var dps := per_second(entry[0], meter.board.get("time", 0.0))
-	_set_text(main_line.get_node("Dps"), short(dps) + "/s" if dps >= 0 else "")
+	_set_text(main_line.get_node("Dps"), short(dps, HUD_SHORT_FROM) + "/s" if dps >= 0 else "")
 	for k in meter.LIVE_SOURCES:
-		var line: Node = row.get_node("Sources/Source%d" % k)
+		var line: Node = lines.get_node("Sources/Source%d" % k)
 		var source = entry[1][k] if k < entry[1].size() else null
 		var data = meter.data_of(source[0]) if source != null else null
 		line.visible = data != null
 		if data != null:
 			line.get_node("Icon").texture = data.icon
-			_set_text(line.get_node("Count"), "x%d" % source[1] if source[1] > 1 else "")
-			line.get_node("Amount").text = short(source[2])
-	var hit_line: Node = row.get_node("Hit")
+			_set_text(line.get_node("Count"), "×%d" % source[1] if source[1] > 1 else "")
+			line.get_node("Amount").text = short(source[2], HUD_SHORT_FROM)
+	var hit_line: Node = lines.get_node("Hit")
 	hit_line.visible = hit[0] > 0
-	hit_line.get_node("Value").text = short(hit[0]) if hit[0] > 0 else ""
+	hit_line.get_node("Value").text = short(hit[0], HUD_SHORT_FROM) if hit[0] > 0 else ""
 	var hit_source = meter.data_of(hit[1]) if hit[1] != "" else null
 	var source_icon: TextureRect = hit_line.get_node("Source")
 	source_icon.visible = hit_source != null
@@ -210,12 +251,14 @@ func _fill_row(row: VBoxContainer, entry: Array, share: int, hit: Array) -> void
 		source_icon.texture = hit_source.icon
 
 
-func _small_font() -> DynamicFont:
-	if _hud_small == null:
-		_hud_small = load(HUD_FONT).duplicate()
-		_hud_small.size = HUD_SMALL_SIZE
-		_hud_small.extra_spacing_top = 0
-	return _hud_small
+func _hud_font(size: int) -> DynamicFont:
+	if not _hud_fonts.has(size):
+		var font: DynamicFont = load(HUD_FONT).duplicate()
+		font.size = size
+		font.outline_size = HUD_OUTLINE
+		font.extra_spacing_top = 0
+		_hud_fonts[size] = font
+	return _hud_fonts[size]
 
 
 # --- the pages and the tab ---

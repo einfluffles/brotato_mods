@@ -209,40 +209,49 @@ func _test_hud(meter: Node, item):
 		RunData.add_tracked_value(1, item.my_id_hash, 77)
 	meter.measure()
 	var icon: Texture = meter.data_of(PISTOL).icon
-	var total: Label = rows[0].get_node("Main/Total")
-	var first: Node = rows[0].get_node("Sources/Source0")
-	var hit: Node = rows[0].get_node("Hit")
+	var total: Label = rows[0].get_node("Lines/Main/Total")
+	var first: Node = rows[0].get_node("Lines/Sources/Source0")
+	var hit: Node = rows[0].get_node("Lines/Hit")
 	_t._check(
-		rows[0].visible and total.text == "1,234" and first.get_node("Icon").texture == icon,
+		rows[0].visible and total.text == "1.23K" and first.get_node("Icon").texture == icon,
 		"the row shows the total and the strongest source (%s)" % total.text
 	)
 	_t._check(
-		first.get_node("Amount").text == "1,234" and first.get_node("Count").text == "x2",
+		first.get_node("Amount").text == "1.23K" and first.get_node("Count").text == "×2",
 		"on its own line with its number and the count of equal weapons"
 	)
 	_t._check(
-		not rows[0].get_node("Sources/Source1").visible,
+		not rows[0].get_node("Lines/Sources/Source1").visible,
 		"no second source line where there is none"
 	)
 	_t._check(
-		not rows[0].get_node("Main/Dps").visible and not hit.visible,
+		not rows[0].get_node("Lines/Main/Dps").visible and not hit.visible,
 		"no damage per second before the wave ran a second, no biggest hit before a hit"
 	)
 	_t._check(
 		(
-			rows[0].get_child(0).name == "Main"
+			rows[0].get_node("Lines").get_child(0).name == "Main"
 			and first.get_child(0).name == "Icon"
-			and rows[1].get_node("Sources/Source0").get_child(2).name == "Icon"
-			and rows[1].get_node("Main").get_child(3).name == "Icon"
+			and first.get_child(1).name == "Amount"
+			and rows[1].get_node("Lines/Sources/Source0").get_child(2).name == "Icon"
+			and rows[1].get_node("Lines/Main").get_child(3).name == "Icon"
 		),
 		"the total first under the bar, the icons at the screen's edge (the right-hand player's last)"
+	)
+	_t._check(
+		(
+			rows[0] is PanelContainer
+			and rows[0].size_flags_horizontal == 0
+			and rows[1].size_flags_horizontal == Control.SIZE_SHRINK_END
+		),
+		"on a backing as wide as its lines, at the screen's edge"
 	)
 	_t._check(
 		item == null
 		or (
 			rows[1].visible
-			and rows[1].get_node("Main/Total").text == "77"
-			and rows[1].get_node("Main/Share").text == "6%"
+			and rows[1].get_node("Lines/Main/Total").text == "77"
+			and rows[1].get_node("Lines/Main/Share").text == "6%"
 		),
 		"the other player's row shows that player's own, with its share of the team's"
 	)
@@ -262,7 +271,7 @@ func _test_hud(meter: Node, item):
 		hit.visible and hit.get_node("Value").text == "52.3K" and not hit.get_node("Source").visible,
 		"the row shows it, short, on its own line (%s)" % hit.get_node("Value").text
 	)
-	var dps: Label = rows[0].get_node("Main/Dps")
+	var dps: Label = rows[0].get_node("Lines/Main/Dps")
 	_t._check(dps.visible and dps.text == "123/s", "and the damage per second (%s)" % dps.text)
 
 
