@@ -503,6 +503,8 @@ func _apply_players(
 		var player = players[i]
 		BattleScene.apply_speed(player, newest.players[i])  # before the prediction reads it
 		_battle_scene.follow_weapons(player, i, to.players[i])  # before weapons apply by index
+		if Snapshot.is_dead(newest.players[i]) and not player.dead:
+			PuppetEntity.player_died(player)
 		if player.dead:
 			_move(player, "p%s" % i, to.players[i][PF.POSITION])
 		elif i == _you and i < newest.players.size():
@@ -601,8 +603,6 @@ static func _in_zone(position: Vector2) -> Vector2:
 # HUD values (the HUD listens to these signals). Level-ups only update visuals here: the game's
 # own levelled_up handler would also change stats, which is the host's job.
 func _apply_player_stats(player: Node, i: int, entry: Array) -> void:
-	if entry[PF.HEALTH] <= 0 and not player.dead:
-		PuppetEntity.player_died(player)
 	_feedback.player_stats(_main, i, entry)  # heal and level-up texts
 	BattleScene.apply_hit_protection(_main, i, player, entry)
 	if (

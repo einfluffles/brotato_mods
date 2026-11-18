@@ -556,6 +556,7 @@ func _capture_players() -> Array:
 		entry.append(_battle_scene.weapon_slots(i, player))
 		entry.append(_battle_scene.speed(i, player, _snapshot_count))
 		entry.append(null)
+		entry.append(player.dead)
 		var last = _stats.get(i)
 		if last == null or last[0] != stats:
 			last = [stats, _snapshot_count]
