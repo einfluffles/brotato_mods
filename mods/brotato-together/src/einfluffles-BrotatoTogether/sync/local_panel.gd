@@ -157,7 +157,8 @@ static func control_at(panel: Control, pos: Vector2) -> Control:
 	return _find_at(panel, pos, null)
 
 
-# Tree order is draw order: of the focusable controls under pos, the last one is on top.
+# Tree order is draw order: of the focusable controls under pos, the last one is on top. An open
+# popup hides the ones below: hovering its description must not move the cursor away.
 static func _find_at(node: Node, pos: Vector2, found: Control) -> Control:
 	if node is CanvasItem and not node.visible:
 		return found
@@ -167,6 +168,8 @@ static func _find_at(node: Node, pos: Vector2, found: Control) -> Control:
 			return found  # its children are cut off here
 		if inside and _is_focusable(node):
 			found = node
+		elif inside and node is ItemPopup:
+			found = null  # an item's popup covers what lies below it
 	for child in node.get_children():
 		found = _find_at(child, pos, found)
 	return found

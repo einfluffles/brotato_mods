@@ -39,6 +39,9 @@ const ShopModIntentTests := preload(
 )
 const ShopGearTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_gear_tests.gd")
 const PISTOL := "weapon_pistol_1"
+const ShopPopupMouseTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/shop_popup_mouse_tests.gd"
+)
 const WheelScrollTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/wheel_scroll_tests.gd"
 )
@@ -54,6 +57,7 @@ var _texts = ShopTextTests.new()
 var _wheel = null  # WheelScrollTests, kept alive across its yields
 var _mods = ShopModIntentTests.new()
 var _gear = ShopGearTests.new()  # kept alive across its yields
+var _popups = ShopPopupMouseTests.new()  # kept alive across its yields
 
 
 func run(t: Node, together: Node):
@@ -745,6 +749,7 @@ func _client_keyboard_mouse(emulator: Node):
 			break
 	yield(_mouse(hovered, "move"), "completed")
 	_t._check(emulator.focused_control == hovered, "mouse hover moves the own shop cursor")
+	yield(_popups.cover(self, emulator, own, hovered), "completed")
 	var other_emulator = Utils.get_focus_emulator(REMOTE, shop)
 	var other_cursor = other_emulator.focused_control
 	var other_button: Control = _node(REMOTE, _pick(REMOTE))._button
@@ -783,7 +788,7 @@ func _client_keyboard_mouse(emulator: Node):
 		"a click still moves it, and hover is free again"
 	)
 
-	yield(_client_popup_mouse(emulator), "completed")
+	yield(_popups.inventory(self, emulator), "completed")
 
 	# A cursor on a page arrow when the arrows become trigger glyphs again.
 	yield(_click(arrows[1]), "completed")
@@ -805,51 +810,6 @@ func _client_keyboard_mouse(emulator: Node):
 	carousel._on_ArrowLeft_pressed()
 	yield(_frames(2), "completed")
 	InputService.using_gamepad = was_using_gamepad
-
-
-# The mouse in the own inventory popup: a click on a weapon opens it with the cursor inside,
-# the mouse stays inside, a held recycle ends with the mouse button, cancel closes it.
-func _client_popup_mouse(emulator: Node):
-	var local = _sync.local
-	var shop: Node = _shop
-	var popup = shop._get_item_popup(0)
-	var element: Control = shop._get_gear_container(0).weapons_container._elements.get_child(0)
-	yield(_click(element), "completed")
-	_t._check(
-		popup._focused and popup.is_a_parent_of(emulator.focused_control),
-		"a click on an own weapon opens its popup with the cursor in it"
-	)
-	var outside: Control = null
-	for control in [shop._get_reroll_button(0), shop._get_go_button(0)]:
-		var middle: Vector2 = control.get_global_rect().position + control.rect_size / 2.0
-		if control.is_visible_in_tree() and not popup.get_global_rect().has_point(middle):
-			outside = control
-			break
-	if outside != null:
-		local.last_intent = {}
-		yield(_mouse(outside, "move"), "completed")
-		yield(_click(outside), "completed")
-		_t._check(
-			popup._focused and popup.is_a_parent_of(emulator.focused_control) and local.last_intent.empty(),
-			"the mouse stays inside the open shop popup (%s)" % outside.name
-		)
-	else:
-		print("  info: the shop popup covers reroll and Go, mouse outside it not tested")
-
-	ProgressData.settings.holding_button = true
-	local.last_intent = {}
-	if popup._focused and popup._requires_recycle_hold() and popup._discard_button.visible:
-		yield(_mouse(popup._discard_button, "down"), "completed")
-		_t._check(popup._recycle_button_held, "mouse down on recycle starts the shop popup's hold")
-		yield(_mouse(popup._discard_button, "up"), "completed")
-		_t._check(
-			not popup._recycle_button_held and local.last_intent.empty(),
-			"mouse up ends the hold: a short click recycles nothing"
-		)
-	else:
-		print("  info: no hold-to-recycle in the shop popup, mouse hold not tested")
-	yield(_click(popup._cancel_button), "completed")
-	_t._check(not popup._focused, "a click on cancel closes the shop popup")
 
 
 # --- helpers ---
@@ -979,7 +939,11 @@ func _mouse(control: Control, kind: String):
 	var canvas_pos: Vector2 = control.get_global_transform_with_canvas().xform(
 		control.rect_size / 2.0
 	)
-	var pos: Vector2 = control.get_viewport().get_final_transform().xform(canvas_pos)
+	yield(_mouse_at(canvas_pos, kind), "completed")
+
+
+func _mouse_at(canvas_pos: Vector2, kind: String):
+	var pos: Vector2 = _t.get_viewport().get_final_transform().xform(canvas_pos)
 	var event = null  # InputEventMouseMotion or InputEventMouseButton
 	if kind == "move":
 		event = InputEventMouseMotion.new()
