@@ -33,6 +33,8 @@ func run(t: Node):
 	_refusals()
 	yield(_other_popup(), "completed")
 	yield(_four_players(), "completed")
+	var buy = load(t.DIR + "buy_tests.gd").new()
+	yield(buy.run(t), "completed")
 
 
 # An item has no popup buttons in the game. Here it has Trade and Cancel.

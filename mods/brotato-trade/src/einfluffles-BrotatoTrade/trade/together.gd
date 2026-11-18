@@ -4,6 +4,7 @@ extends Reference
 # (ShopSync.register_intent / send_intent), the host checks and applies it like its own
 # players' and its next state brings the result to everybody.
 #   kind            slot                          id            arg
+#   "trade.buy"     index in the giver's offers   item my_id    receiving player
 #   "trade.weapon"  index in the giver's weapons  weapon my_id  receiving player
 #   "trade.item"    index in the giver's items    item my_id    receiving player
 # The crate panels (level-up / crate, UpgradesSync) take a client's crate trade the same way:
@@ -13,6 +14,7 @@ extends Reference
 # offline game still can.
 
 const NODE_PATH := "/root/ModLoader/einfluffles-BrotatoTogether"
+const KIND_BUY := "trade.buy"  # an offered item bought for another player
 const KIND_WEAPON := "trade.weapon"
 const KIND_ITEM := "trade.item"
 const KIND_CRATE := "trade.crate"
@@ -45,6 +47,8 @@ static func register(handler: Object) -> void:
 		return
 	_register(shop_sync, KIND_WEAPON, handler, "on_remote_weapon")
 	_register(shop_sync, KIND_ITEM, handler, "on_remote_item")
+	# A buy keeps the revision, like the game's own buy press.
+	shop_sync.register_intent(KIND_BUY, handler, "on_remote_buy")  # (shop, player, slot, id, arg)
 
 
 # Without the panel revision: a second trade sent before the host's state with the first
@@ -72,6 +76,27 @@ static func can_request(shop: Node, from: int) -> bool:
 		and shop_sync.host_handles(KIND_WEAPON)
 		and shop_sync.host_handles(KIND_ITEM)
 	)
+
+
+# Whether player `from` can buy an offered item for another player from its panel of this shop.
+static func can_request_buy(shop: Node, from: int) -> bool:
+	if not is_loaded():
+		return true
+	var shop_sync = _shop_sync()
+	if shop_sync == null:
+		return not _is_client()
+	if not shop_sync.is_puppet_shop(shop):
+		return true
+	return shop_sync.own_player() == from and shop_sync.host_handles(KIND_BUY)
+
+
+# A client's buy for another player, to its host. False: not sent.
+static func send_buy(shop: Node, from: int, shop_item: Node, to: int) -> bool:
+	var shop_sync = _shop_sync()
+	if shop_sync == null or not can_request_buy(shop, from) or shop_item.item_data == null:
+		return false
+	var slot: int = shop._get_shop_items_container(from)._shop_items.find(shop_item)
+	return shop_sync.send_intent(shop, from, KIND_BUY, slot, shop_item.item_data.my_id, to)
 
 
 # The shop is a client's copy of the host's: nothing may change the run here.

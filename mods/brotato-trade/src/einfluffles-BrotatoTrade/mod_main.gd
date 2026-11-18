@@ -55,3 +55,10 @@ func _remote(shop: Node, weapon: bool, from: int, slot: int, id: String, to: int
 	if not is_instance_valid(shop) or not shop.has_method("trade_apply_request"):
 		return false
 	return shop.trade_apply_request(weapon, from, slot, id, to)
+
+
+# brotato:together, host: a remote player's buy for another (slot: the shop item's place).
+func on_remote_buy(shop: Node, player: int, slot: int, id: String, to: int) -> bool:
+	if not is_instance_valid(shop) or not shop.has_method("trade_buy_apply_request"):
+		return false
+	return shop.trade_buy_apply_request(player, slot, id, to)

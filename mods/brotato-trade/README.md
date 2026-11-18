@@ -63,6 +63,29 @@ needs brotato:trade to trade itself (without it, it still sees what the others t
 whose host has no brotato:trade gets no Trade button. brotato:together must be the version with
 intents for other mods (protocol 21 for the shop, protocol 30 for crates).
 
+### Buying for another player
+
+Every item the shop offers you has a **Trade** button right of its price (move right from the
+item, or click it online). It opens the item's popup with every other player and *Cancel*; pick
+one and you buy the item for them: you pay, they get it.
+
+- **Players without room are listed but cannot be picked** (greyed out, the cursor skips them),
+  by the game's own rules for a buy: for a weapon what the shop asks before it sells one to that
+  player (tier, melee / ranged, a free slot, else a weapon to combine with: "Player 2
+  (Combine)"); for an item its limit (a unique item they own, counting what their own shop
+  offers, as for a trade). With nobody to buy for, *Trade* cannot be pressed.
+- **Your own slots do not matter**: with 6/6 weapons you can still buy a weapon for a player
+  with room, and you keep all of yours. Nothing of yours changes but your gold.
+- **As a buy**: the same price (yours, with your coupons), the same delay between two buys, the
+  item leaves your shop (a locked one too, unlocked as by a buy) and your gold shakes when it
+  is not enough. The receiver gets the item the way a buy gives it (the game's `buy_item` /
+  `buy_weapon` for the receiver): stat-gain effects, mutation on equip, duplication, a weapon
+  combined without a free slot, free rerolls an item gives. Meca items (an effect to pick on the
+  card) have no Trade button.
+- Online the press leaves as a shop intent `trade.buy` (the shop item's place, its item's id, the
+  receiver) and the host buys with the same code; it needs a host with this version of
+  brotato:trade.
+
 ## How it works
 
 - **One step, on the game that owns the run** (`trade/transfer.gd`). Everything is checked first
@@ -89,6 +112,12 @@ intents for other mods (protocol 21 for the shop, protocol 30 for crates).
   popup's own Cancel button), `CoopShop` (who can take what, both panels afterwards),
   `CoopUpgradesUIPlayerContainer` (the crate panel's Trade button and list, built from its Take
   button) and `UpgradesUI` (the crate hand-over).
+- **Buying for another player** (`extensions/ui/coop_shop.gd`): the checks of the shop's buy
+  press, the receiver's room by the game's rules, then the shop items container's own
+  `shop_item_bought` signal: `BaseShop.on_shop_item_bought` runs for the giver (price, coupons,
+  the offer), only `buy_item` / `buy_weapon` go to the receiver; then the slot goes as after a
+  buy, and the receiver's part (stats, prices, rerolls) and its cursor follow. The Trade buttons
+  on the shop items are built from the item's own button script and font.
 
 ## Tests
 
@@ -96,11 +125,13 @@ intents for other mods (protocol 21 for the shop, protocol 30 for crates).
 rules and the hand-over on `RunData` (limits, the same object in several lists, effects moving
 with the item, combining with the cursed weapon, nothing appearing or vanishing), the real co-op
 shop driven with each player's buttons (popup, list, cancel, both panels and every cursor after a
-trade), the crate panels on the real battle scene (the button, the list with a player who has no
+trade), buying for another player (`buy_tests.gd`, run by the shop suite: a giver with 6/6
+weapons, a receiver without room, price, lock, slot and offers as for a buy, not enough gold),
+the crate panels on the real battle scene (the button, the list with a player who has no
 room, cancel, an item and a weapon traded by a giver without a free slot, the receiver's cursor),
 and processes that also load brotato:together (a remote player's request applied once on the
 host, a client's press only sending it, the host's state bringing the result; the same for a
-crate trade).
+crate trade; a client's buy for another with the mouse and with the buttons).
 
 ## Open
 
@@ -109,6 +140,8 @@ crate trade).
   its crate weapons below) is untested, the headless tests have no renderer.
 - Online, a crate trade is tested on the host and on a client's side of the panels set up by
   hand, not between two running games.
+- The shop items' Trade button is untested to the eye: it narrows the item's card (its
+  description and price) in the co-op panels, most of all with four players.
 - No Workshop item or preview image yet.
 - The button text "Trade" is English in every language.
 - Online, a cursor on the Trade buttons is only shown to players who have the mod too.
