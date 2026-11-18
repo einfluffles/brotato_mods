@@ -9,6 +9,7 @@ const FAKE_PEER := 4242
 const REMOTE := 1  # the remote player's slot on the host, the client's own player later
 const ITEM := "trade.item"
 const WEAPON := "trade.weapon"
+const BUY := "trade.buy"
 
 var _t: Node = null
 var _sync: Node = null
@@ -58,9 +59,9 @@ func _host(input: Node):
 	_shop = yield(_t.open_shop(), "completed")
 	_sync._host_shop = _shop
 	_sync._shop_id = 5
-	_t.check(_sync._kinds() == [ITEM, WEAPON], "the host takes trades as shop intents")
+	_t.check(_sync._kinds() == [BUY, ITEM, WEAPON], "the host takes trades as shop intents")
 	_capture("start")
-	_t.check(_states.start.get("kinds") == [ITEM, WEAPON], "and its state says so")
+	_t.check(_states.start.get("kinds") == [BUY, ITEM, WEAPON], "and its state says so")
 	# A reroll's gold: the remote player's data changes, its gear does not.
 	RunData.add_gold(3, REMOTE)
 	_capture("rerolled")
@@ -117,7 +118,34 @@ func _host(input: Node):
 	_t.check(_t.ledger() == before, "still the same things")
 	_capture("traded")
 	_host_ledger = _t.ledger()
+	_host_buy()
 	input.devices.erase(FAKE_PEER)
+
+
+# The remote player buys an offered item for the host's player.
+func _host_buy() -> void:
+	var nodes: Array = _shop._get_shop_items_container(REMOTE)._shop_items
+	var node = _buyable(nodes, 0)
+	_t.check(node != null, "(the remote player is offered something player 1 can take)")
+	if node == null:
+		return
+	RunData.add_gold(node.value, REMOTE)
+	var gold := [RunData.get_player_gold(0), RunData.get_player_gold(REMOTE)]
+	var count: int = _held(0, node.item_data)
+	var slot := nodes.find(node)
+	_t.check(not _apply(BUY, slot, node.item_data.my_id, REMOTE), "nothing is bought for oneself")
+	var request := _intent(BUY, slot, node.item_data.my_id, 0)
+	_t.check(_sync.host_apply_intent(_shop, REMOTE, request), "a remote player's buy for another")
+	_t.check(
+		_held(0, node.item_data) == count + 1 and not node.active,
+		"the item went to player 1, the slot is bought"
+	)
+	_t.check(
+		[RunData.get_player_gold(0), RunData.get_player_gold(REMOTE)] == [gold[0], gold[1] - node.value],
+		"paid by the remote player"
+	)
+	_t.check(not _sync.host_apply_intent(_shop, REMOTE, request), "the same buy twice: once")
+	_t.check(_held(0, node.item_data) == count + 1, "no second copy")
 
 
 # --- client: the same shop as the host sent it, the own player is the giver ---
@@ -209,6 +237,7 @@ func _client():
 		"with the same id"
 	)
 	_t.check(_t.ledger() == before, "nothing changed hands here either")
+	yield(_client_buy(popup), "completed")
 
 	# A host without brotato:trade does not name the kinds: no Trade on this client.
 	var plain_host: Dictionary = _states.start.duplicate()
@@ -217,6 +246,10 @@ func _client():
 	own = _owned(REMOTE, _plain.my_id)
 	_t.check(_shop.trade_receivers(own, REMOTE).empty(), "a host without trading: nothing offered")
 	_t.check(not popup.will_show_buttons_when_focused(own), "and an item has no popup buttons again")
+	var offers: Array = _shop._get_shop_items_container(REMOTE)._shop_items
+	_t.check(
+		not _shop.trade_buy_offered(offers[0], REMOTE), "nor can an offered item be bought for another"
+	)
 	_receive(_states.start)
 	own = _owned(REMOTE, _plain.my_id)
 	_t.check(_shop.trade_receivers(own, REMOTE) == [0], "trading is back with it")
@@ -236,6 +269,72 @@ func _client():
 		_shop._get_gear_container(REMOTE).weapons_container._elements.get_child_count() == 1,
 		"the giver's weapon row has one weapon left"
 	)
+
+
+# The own panel's shop item: Trade with the mouse (LocalPanel), then with the buttons. A pick
+# only sends the buy to the host.
+func _client_buy(popup):
+	var nodes: Array = _shop._get_shop_items_container(REMOTE)._shop_items
+	var node = _buyable(nodes, 0)
+	var theirs: Array = _shop._get_shop_items_container(0)._shop_items
+	yield(_t.frames(2), "completed")
+	var button: Button = _shop._trade_buy_buttons[node][0]
+	_t.check(button.visible and not button.disabled, "the own offers have a Trade button")
+	_t.check(
+		not _shop._trade_buy_buttons[theirs[0]][0].visible, "another player's offers have none"
+	)
+	var before: String = _t.ledger()
+	_sync.local.last_intent = {}
+	yield(_click(button), "completed")
+	_t.check(popup._focused and popup.trade_buy_item() == node, "a click on Trade opens the popup")
+	yield(_click(popup._trade_players[0]), "completed")
+	var sent: Dictionary = _sync.local.last_intent
+	_t.check(
+		sent.get("kind") == BUY and sent.get("slot") == nodes.find(node) and sent.get("arg") == 0,
+		"a click on the player sends the buy to the host (%s)" % [sent]
+	)
+	_t.check(
+		sent.get("id") == node.item_data.my_id and sent.get("seq") == _states.start.seqs[REMOTE],
+		"naming the item and the panel's revision"
+	)
+	_t.check(_t.ledger() == before and node.active, "nothing bought here")
+	_t.check(not popup._focused, "the popup closed")
+	_t.check(
+		Utils.get_focus_emulator(REMOTE, _shop).focused_control == button,
+		"the cursor is back on Trade"
+	)
+	_sync.local.last_intent = {}
+	yield(_t.get_tree().create_timer(0.15), "timeout")
+	yield(_t.tap("ui_accept", REMOTE), "completed")
+	yield(_t.tap("ui_accept", REMOTE), "completed")
+	sent = _sync.local.last_intent
+	_t.check(sent.get("kind") == BUY and sent.get("arg") == 0, "so does accept, twice")
+
+
+# The first offer of that list player `to` has room for.
+func _buyable(nodes: Array, to: int):
+	for node in nodes:
+		if node.active and node.item_data != null and not node.item_data.is_meca:
+			if _shop.trade_buy_room(node, to):
+				return node
+	return null
+
+
+# The mouse moves onto the control and clicks it (window coordinates, like a real one): on a
+# client LocalPanel turns that into the own cursor and its accept.
+func _click(control: Control):
+	var at: Vector2 = control.get_global_transform_with_canvas().xform(control.rect_size / 2.0)
+	at = control.get_viewport().get_final_transform().xform(at)
+	for step in ["move", "down", "up"]:
+		var event: InputEventMouse = InputEventMouseMotion.new()
+		if step != "move":
+			event = InputEventMouseButton.new()
+			event.button_index = BUTTON_LEFT
+			event.pressed = step == "down"
+		event.position = at
+		event.global_position = at
+		Input.parse_input_event(event)
+		yield(_t.frames(3), "completed")
 
 
 # --- helpers ---
@@ -269,6 +368,13 @@ func _intent(kind: String, slot: int, id: String, to: int, seq_offset := 0) -> D
 
 func _apply(kind: String, slot: int, id: String, to: int, seq_offset := 0) -> bool:
 	return _sync.host_apply_intent(_shop, REMOTE, _intent(kind, slot, id, to, seq_offset))
+
+
+# How many of that item or weapon the player has.
+func _held(player: int, item) -> int:
+	if item is WeaponData:
+		return _t.ids(RunData.get_player_weapons_ref(player)).count(item.my_id)
+	return _count(player, item)
 
 
 func _count(player: int, item) -> int:

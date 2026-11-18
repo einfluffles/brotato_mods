@@ -7,17 +7,25 @@ extends "res://ui/menus/shop/coop_item_popup.gd"
 # can be given, and stays a plain card otherwise.
 # Only where trade_shop is set (extensions/ui/coop_shop.gd): the level-up screen's popups are
 # the same scene and stay as they are.
+# Buying for another player (trade_open_buy, from a shop item's Trade button): the popup shows
+# the offered item with every other player and Cancel; a player without room is listed but
+# cannot be picked. A pick asks for the buy (trade_buy_requested), Cancel closes the popup
+# (trade_buy_closed).
 
 signal trade_requested(item_data, to_player)
+signal trade_buy_requested(shop_item, to_player)
+signal trade_buy_closed(shop_item)
 
 const TRADE_TEXT := "Trade"
 const TRADE_TO_META := "trade_to"
+const TRADE_OK_META := "trade_ok"
 
 var trade_shop: Node = null  # answers trade_receivers / trade_combines
 
 var _trade_button: Button = null
 var _trade_players := []  # a button per possible receiver, shown while choosing
 var _trade_choosing := false
+var _trade_buy: Node = null  # the ShopItem whose buy-for list is open
 
 
 func _ready() -> void:
@@ -41,6 +49,8 @@ func _input(event: InputEvent) -> void:
 
 
 func should_show_buttons(item_data: ItemParentData, focused: bool) -> bool:
+	if _trade_buy != null:
+		return focused
 	if .should_show_buttons(item_data, focused):
 		return true
 	if not buttons_enabled or not focused or item_data is WeaponData:
@@ -53,10 +63,43 @@ func cancel() -> void:
 	.cancel()
 
 
+func hide(index := -1) -> void:
+	_trade_buy = null
+	.hide(index)
+
+
+# The shop item's own popup, focused, listing entries ([player, can take it, combines]).
+func trade_open_buy(shop_item: Node, entries: Array) -> void:
+	_trade_buy = shop_item
+	display_item_data(shop_item.item_data, shop_item._button)
+	focus()
+	_trade_choosing = true
+	var first: Button = null
+	for i in _trade_players.size():
+		var button: Button = _trade_players[i]
+		button.visible = i < entries.size()
+		if not button.visible:
+			continue
+		_trade_label(button, entries[i][0], entries[i][2])
+		button.set_meta(TRADE_OK_META, entries[i][1])
+		if entries[i][1]:
+			button.activate()
+			first = button if first == null else first
+		else:
+			button.disable()
+	_update_button_focus_neighbours()
+	if first != null:
+		first.grab_focus()
+
+
+func trade_buy_item() -> Node:
+	return _trade_buy
+
+
 func _update_button_visibilities() -> void:
 	_trade_collapse()
 	var shown: bool = _item_data != null and should_show_buttons(_item_data, _focused)
-	if shown and not _item_data is WeaponData:
+	if shown and (_trade_buy != null or not _item_data is WeaponData):
 		# The base goes on to ask RunData about combining and recycling a weapon.
 		_cancel_pending_upgrade()
 		for button in [_combine_button, _discard_button, _upgrade_button]:
@@ -123,6 +166,14 @@ func _on_trade_player_pressed(index: int) -> void:
 		return
 	var item = _item_data
 	var to: int = button.get_meta(TRADE_TO_META)
+	if _trade_buy != null:
+		if button.has_meta(TRADE_OK_META) and not button.get_meta(TRADE_OK_META):
+			return
+		item = _trade_buy
+		_trade_collapse()
+		_focused = false
+		emit_signal("trade_buy_requested", item, to)
+		return
 	_trade_collapse()
 	_focused = false
 	emit_signal("trade_requested", item, to)
@@ -130,6 +181,8 @@ func _on_trade_player_pressed(index: int) -> void:
 
 func _trade_receivers(item) -> Array:
 	if trade_shop == null or item == null or not is_instance_valid(trade_shop):
+		return []
+	if _trade_buy != null:
 		return []
 	return trade_shop.trade_receivers(item, player_index)
 
@@ -152,11 +205,13 @@ func _trade_add_button(node_name: String) -> Button:
 
 
 # "Player 2" in that player's colour with its character, and what happens to a weapon that
-# finds no free slot there.
-func _trade_label(button: Button, to: int) -> void:
+# finds no free slot there (combines: null asks the shop).
+func _trade_label(button: Button, to: int, combines = null) -> void:
 	button.set_meta(TRADE_TO_META, to)
 	button.text = Text.text("COOP_PLAYER", [str(to + 1)])
-	if trade_shop.trade_combines(_item_data, to):
+	if combines == null:
+		combines = trade_shop.trade_combines(_item_data, to)
+	if combines:
 		button.text += " (%s)" % tr("MENU_COMBINE")
 	var character = RunData.get_player_character(to)
 	button.icon = character.get_icon() if character != null else null
@@ -166,12 +221,23 @@ func _trade_label(button: Button, to: int) -> void:
 func _trade_collapse() -> void:
 	_trade_choosing = false
 	for button in _trade_players:
+		if not button.active:
+			button.activate()  # a player without room in a buy-for list
+		if button.has_meta(TRADE_OK_META):
+			button.remove_meta(TRADE_OK_META)
 		button.hide()
 		button.focus_mode = FOCUS_NONE
 
 
-# From the player list back to the popup's buttons, the cursor on Trade.
+# From the player list back to the popup's buttons, the cursor on Trade. A buy-for list has
+# nothing to go back to: the popup closes.
 func _trade_back(refocus: bool) -> void:
+	if _trade_buy != null:
+		var shop_item := _trade_buy
+		_trade_collapse()
+		_focused = false
+		emit_signal("trade_buy_closed", shop_item)
+		return
 	if refocus:
 		if not is_visible_in_tree() or _item_data == null:
 			return
