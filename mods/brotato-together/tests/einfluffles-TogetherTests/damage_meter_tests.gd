@@ -351,15 +351,16 @@ func _test_shop(item):
 	)
 	var rows: Node = list.get_node("Sources")
 	var row: Node = rows.get_child(0)
-	var number := "%s %s" % [row.get_node("Amount").text, row.get_node("Share").text]
+	var content: Node = row.get_node("Content")
+	var number := "%s %s" % [content.get_node("Amount").text, content.get_node("Share").text]
 	_t._check(
 		row.visible and number == "1,234 100.00%" and not rows.get_child(1).visible,
 		"a row per source with number and share (%s)" % number
 	)
-	_t._check(row.get_node("Text/Bar").value == 1000, "the strongest source's bar is full")
+	_t._check(row.value == 1000, "the strongest source's row is a full bar")
 	if item != null:
 		var theirs: Node = _list(panels[1]).get_node("Sources").get_child(0)
-		var item_icon: Texture = theirs.get_node("Icon").texture
+		var item_icon: Texture = theirs.get_node("Content/Icon").texture
 		_t._check(theirs.visible and item_icon == item.icon, "player 2's page: its own item")
 	# Online the page index travels like the game's own pages: a client's page on the host.
 	ShopIntents.apply_focus(shop, 0, 3, [])

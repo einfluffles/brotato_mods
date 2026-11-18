@@ -18,8 +18,9 @@ extends Node
 # - In the solo shop and the solo end of run: a third tab "Damage" (an icon) in the stats panel
 #   next to Primary / Secondary; LB / RB cycle through the three (extensions/ui/stats_container.gd).
 # The board on a page or tab is the wave before: three tiles (the wave's total with, in co-op,
-# the share of the team's; damage per second; biggest hit with its source), and the sources with
-# icon, name over a bar against the strongest, number and share (56.83%, <0.01%).
+# the share of the team's; damage per second; biggest hit with its source), and a row per
+# source: a bar in its tier colour against the strongest as the row's background, icon, name,
+# number and share (56.83%, <0.01%) on it.
 # Numbers from 10,000 on are short (12.3K, 4.56M, 7.89B): late runs deal billions.
 # All of it is gone while the meter is switched off on this machine (DamageMeter.shown): the
 # page can no longer be reached (carousel.max_index) and a player on it goes back one page; the
@@ -61,7 +62,18 @@ const HUD_BACK_RADIUS := 6
 const HUD_BACK_MARGIN := Vector2(8, 4)
 const TILE_ICON := Vector2(22, 22)
 const BOARD_ICON := Vector2(32, 32)
-const BAR_HEIGHT := 6
+# The board's source rows: the bar is the row (dark rounded track, filled in the tier colour as
+# far as the source reaches against the strongest), icon, name, number and share in white on it.
+const ROW_HEIGHT := 40
+const ROW_RADIUS := 6
+const ROW_BORDER := 2
+const ROW_BORDER_COLOR := Color(0, 0, 0, 0.5)
+const ROW_BACK := Color(0, 0, 0, 0.25)
+const ROW_FILL_ALPHA := 0.55
+const ROW_MARGIN := Vector2(6, 10)  # left (before the icon), right (after the share)
+const ROW_SEPARATION := 10
+const ROW_SHARE_SIZE := 18
+const ROW_SHARE_COLOR := Color(1, 1, 1, 0.75)
 const AMOUNT_WIDTH := 84
 const SHARE_WIDTH := 80  # "100.00%"
 const PAGE_MARGIN := 10
@@ -71,7 +83,6 @@ const MUTED := Color(0.7, 0.7, 0.7)
 const DPS_COLOR := Color(0.6, 0.85, 1.0)
 const HIT_COLOR := Color(1.0, 0.8, 0.35)
 const LINE_COLOR := Color(1, 1, 1, 0.12)
-const BAR_BACK := Color(1, 1, 1, 0.1)
 const PAGE_META := "brotato_together_damage_page"  # on a container: the page's carousel index
 
 var meter: Node = null  # sync/damage_meter.gd (set by mod_main.gd)
@@ -373,9 +384,8 @@ func _drop_view(holder: Control) -> void:
 
 
 # The board: List > Tiles (Total: the wave over total and team share; Dps; Hit), a line,
-# Sources (MAX_SOURCES rows of Icon, Text > Name over Bar, Amount, Share).
+# Sources (MAX_SOURCES rows: the bar itself, Content > Icon, Name, Amount, Share on it).
 func _board_list() -> VBoxContainer:
-	var font: Font = load(BOARD_FONT)
 	var small: Font = load(BOARD_SMALL_FONT)
 	var list := VBoxContainer.new()
 	list.name = LIST_NAME
@@ -403,26 +413,26 @@ func _board_list() -> VBoxContainer:
 	sources.add_constant_override("separation", 4)
 	list.add_child(sources)
 	for _i in meter.MAX_SOURCES:
-		var row := _line("", BoxContainer.ALIGN_BEGIN, 10)
-		row.add_child(_icon(BOARD_ICON, "Icon"))
-		var text := VBoxContainer.new()
-		text.name = "Text"
-		text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		text.add_constant_override("separation", 0)
-		var name_label := _label(font, "Name")
+		var row := _bar()
+		var content := _line("Content", BoxContainer.ALIGN_BEGIN, ROW_SEPARATION)
+		content.anchor_right = 1.0
+		content.anchor_bottom = 1.0
+		content.margin_left = ROW_MARGIN.x
+		content.margin_right = -ROW_MARGIN.y
+		content.add_child(_icon(BOARD_ICON, "Icon"))
+		var name_label := _label(load(HUD_FONT), "Name")
 		name_label.clip_text = true
-		text.add_child(name_label)
-		text.add_child(_bar())
-		row.add_child(text)
-		var amount := _label(font, "Amount")
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		content.add_child(name_label)
+		var amount := _label(load(HUD_FONT), "Amount")
 		amount.align = Label.ALIGN_RIGHT
 		amount.rect_min_size.x = AMOUNT_WIDTH
-		row.add_child(amount)
-		var share := _label(small, "Share", MUTED)
+		content.add_child(amount)
+		var share := _label(_hud_font(ROW_SHARE_SIZE), "Share", ROW_SHARE_COLOR)
 		share.align = Label.ALIGN_RIGHT
 		share.rect_min_size.x = SHARE_WIDTH
-		row.add_child(share)
+		content.add_child(share)
+		row.add_child(content)
 		sources.add_child(row)
 	return list
 
@@ -444,17 +454,20 @@ func _tile(tile_name: String, caption: String, icon_path: String, color: Color) 
 	return tile
 
 
-func _bar() -> ProgressBar:
+# A source's row: a bar against the strongest source, the row's own background (a dark rounded
+# track, filled in the source's tier colour), with its parts on top (Content).
+static func _bar() -> ProgressBar:
 	var bar := ProgressBar.new()
-	bar.name = "Bar"
 	bar.percent_visible = false
 	bar.max_value = 1000
-	bar.rect_min_size.y = BAR_HEIGHT
+	bar.rect_min_size.y = ROW_HEIGHT
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for part in ["bg", "fg"]:
 		var style := StyleBoxFlat.new()
-		style.bg_color = BAR_BACK
-		style.set_corner_radius_all(3)
+		style.bg_color = ROW_BACK
+		style.set_corner_radius_all(ROW_RADIUS)
+		style.set_border_width_all(ROW_BORDER)
+		style.border_color = ROW_BORDER_COLOR
 		bar.add_stylebox_override(part, style)
 	return bar
 
@@ -483,15 +496,14 @@ func _fill_board(list: Node, entry: Array, team_share: int, hit: Array) -> void:
 		if data == null:
 			continue
 		var color: Color = ItemService.get_color_from_tier(data.tier)
-		row.get_node("Icon").texture = data.icon
-		var name_label: Label = row.get_node("Text/Name")
-		name_label.text = tr(data.name) + (" x%d" % source[1] if source[1] > 1 else "")
-		name_label.add_color_override("font_color", color)
-		var bar: ProgressBar = row.get_node("Text/Bar")
-		bar.value = 1000.0 * source[2] / max(1, top)
-		bar.get_stylebox("fg").bg_color = Color(color.r, color.g, color.b, 0.85)
-		row.get_node("Amount").text = short(source[2])
-		row.get_node("Share").text = percent(source[2], entry[0])
+		var content: Node = row.get_node("Content")
+		content.get_node("Icon").texture = data.icon
+		var name_text: String = tr(data.name) + (" x%d" % source[1] if source[1] > 1 else "")
+		content.get_node("Name").text = name_text
+		row.value = 1000.0 * source[2] / max(1, top)
+		row.get_stylebox("fg").bg_color = Color(color.r, color.g, color.b, ROW_FILL_ALPHA)
+		content.get_node("Amount").text = short(source[2])
+		content.get_node("Share").text = percent(source[2], entry[0])
 
 
 # The switch: the page stays in the carousel but past its max_index; a player on it goes back

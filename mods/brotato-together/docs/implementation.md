@@ -1732,11 +1732,13 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   a second model: ragged number column, flat hierarchy, icons lost on the scenery.
 - The board: three tiles with a caption over icon and value (the wave over the total and, in
   co-op, the share of the team's; DPS; biggest hit with its source's icon; estimated at about
-  340 px, for the four-player panel's 403), a line, then a row per source: icon, name in its
-  tier colour over a bar against the strongest source in that colour, number, share (to two
-  places, `<0.01%` below). The bar sits under the name so the name keeps room in a narrow
-  panel. `DamageViews._board_list` builds it, `_fill_board` fills it for the panel's
-  `player_index` (0 in solo).
+  340 px, for the four-player panel's 403), a line, then a row per source. The row is the bar:
+  a `ProgressBar` 40 px high, a dark rounded track (black at 25%, radius 6, a 2 px border at
+  50%) filled in the source's tier colour (55%) as far as it reaches against the strongest.
+  On it (`Content`, anchored over the bar): icon, name (with `x<n>`), number (both the
+  outlined 26), share (18 px, white at 75%, to two places, `<0.01%` below). The text is white
+  so it reads on every tier colour. `DamageViews._board_list` builds it, `_fill_board` fills it
+  for the panel's `player_index` (0 in solo).
 - Co-op shop and co-op end of run (protocol 26): a fourth carousel page. A `Carousel` takes as
   many pages as `%Headings` has children (`_get_max_index`, unless `max_index` is set), and the
   index setter shows heading and `%Content` child of the same index. `add_page` appends a copy
