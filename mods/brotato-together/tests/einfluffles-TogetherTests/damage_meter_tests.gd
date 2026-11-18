@@ -217,8 +217,8 @@ func _test_hud(meter: Node, item):
 		"the row shows the total and the strongest source (%s)" % total.text
 	)
 	_t._check(
-		first.get_node("Amount").text == "1.23K" and first.get_node("Count").text == "×2",
-		"on its own line with its number and the count of equal weapons"
+		first.get_node("Amount").text == "1.23K" and first.get_node("Icon/Count").text == "x2",
+		"on its own line with its number, the count of equal weapons in the icon's corner"
 	)
 	_t._check(
 		not rows[0].get_node("Lines/Sources/Source1").visible,
@@ -233,7 +233,7 @@ func _test_hud(meter: Node, item):
 			rows[0].get_node("Lines").get_child(0).name == "Main"
 			and first.get_child(0).name == "Icon"
 			and first.get_child(1).name == "Amount"
-			and rows[1].get_node("Lines/Sources/Source0").get_child(2).name == "Icon"
+			and rows[1].get_node("Lines/Sources/Source0").get_child(1).name == "Icon"
 			and rows[1].get_node("Lines/Main").get_child(3).name == "Icon"
 		),
 		"the total first under the bar, the icons at the screen's edge (the right-hand player's last)"
@@ -268,7 +268,11 @@ func _test_hud(meter: Node, item):
 		"the biggest hit per player, none for a hit that was no player's %s" % [meter.board.hits]
 	)
 	_t._check(
-		hit.visible and hit.get_node("Value").text == "52.3K" and not hit.get_node("Source").visible,
+		(
+			hit.visible
+			and hit.get_node("Value").text == "52.3K"
+			and not hit.get_node("Icon/Source").visible
+		),
 		"the row shows it, short, on its own line (%s)" % hit.get_node("Value").text
 	)
 	var dps: Label = rows[0].get_node("Lines/Main/Dps")
