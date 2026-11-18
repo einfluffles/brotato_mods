@@ -6,7 +6,7 @@ extends Node
 
 const DIR := "res://mods-unpacked/einfluffles-TradeTests/"
 const TOGETHER := "/root/ModLoader/einfluffles-BrotatoTogether"
-const SUITES := ["rules", "shop", "together"]
+const SUITES := ["rules", "shop", "crate", "together", "together_crate"]
 const WATCHDOG_SEC := 120.0
 const FIRST_DEVICE := 1  # device 0 is the keyboard to CoopService
 const PISTOL := "weapon_pistol_1"
@@ -72,6 +72,54 @@ func open_shop():
 	get_tree().change_scene(RunData.get_shop_scene_path())
 	yield(frames(3), "completed")
 	return get_tree().current_scene
+
+
+# The battle scene with its wave over, as main.clean_up_room leaves it for the level-up / crate
+# panels (main._coop_upgrades_ui): no wave timer, no enemies, players idle.
+func open_battle():
+	get_tree().change_scene("res://main.tscn")
+	yield(frames(2), "completed")
+	var main: Node = get_tree().current_scene
+	main._wave_timer.stop()
+	main._entity_spawner.clean_up_room()
+	main._wave_manager.clean_up_room()
+	for player in main._players:
+		if is_instance_valid(player):
+			player.on_room_cleanup()
+	yield(get_tree().create_timer(0.3), "timeout")
+	return main
+
+
+# UpgradesUI.show_options for crates only: crates[p] is how many crates player p opens.
+func show_crates(ui: Node, crates: Array, levels := []) -> void:
+	var consumables := []
+	var upgrades := []
+	for p in CoopService.UI_MAX_PLAYER_COUNT:
+		var opened := []
+		for _i in crates[p] if p < crates.size() else 0:
+			var crate = UpgradesUI.ConsumableToProcess.new()
+			crate.consumable_data = find(ItemService.consumables, "consumable_item_box")
+			crate.player_index = p
+			opened.append(crate)
+		consumables.append(opened)
+		var ups := []
+		if p in levels:
+			var up = UpgradesUI.UpgradeToProcess.new()
+			up.level = 2
+			up.player_index = p
+			ups.append(up)
+		upgrades.append(ups)
+	ui.show_options(consumables, upgrades)
+	Utils.set_process_input_where_defined(ui, true)  # main._on_EndWaveTimer_timeout does this
+
+
+# Weapons that neither fit nor combine with `weapon` until player p has no free slot for it.
+func fill_weapons(p: int, weapon) -> void:
+	for other in ItemService.weapons:
+		if not RunData.has_weapon_slot_available(weapon, p):
+			return
+		if other.my_id != weapon.my_id and other.tier == 0 and other.type == weapon.type:
+			RunData.add_weapon(other, p)
 
 
 func weapon(my_id := PISTOL):

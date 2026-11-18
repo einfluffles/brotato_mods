@@ -1,5 +1,7 @@
 # One game process per line (tools/check.sh), each running the comma-separated suites of
-# mod_main.gd's SUITES. "+<mod folder>" also loads that mod: the together suite needs
+# mod_main.gd's SUITES. "+<mod folder>" also loads that mod: the together suites need
 # brotato:together, the others run without it (trading in plain local co-op).
 rules,shop
+crate
 together +brotato-together
+together_crate +brotato-together

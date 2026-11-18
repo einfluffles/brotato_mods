@@ -8,6 +8,7 @@ const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const KIND := "test.poke"
+const FREE := "test.give"  # registered without the panel revision
 const REMOTE := 1  # the remote player's slot on the host
 
 var calls := []  # what the handler got: [player, slot, id, arg]
@@ -43,6 +44,15 @@ func host(s) -> void:
 	s._t._check(not s._apply(KIND, 3, "x", 9) and calls.empty(), "nothing runs while paused")
 	s._t.get_tree().paused = false
 	answer = true
+	s._t._check(shop_sync.register_intent(FREE, self, "on_poke", false), "a kind without revision")
+	calls = []
+	var stale: Dictionary = s._intent(FREE, 3, "x", 9, -1)
+	s._t._check(shop_sync.host_apply_intent(s._shop, REMOTE, stale), "its press on an old panel runs")
+	s._t._check(
+		shop_sync.host_apply_intent(s._shop, REMOTE, stale) and calls.size() == 2,
+		"and a second one made on that panel too"
+	)
+	shop_sync._mod_kinds.erase(FREE)
 
 
 # Client, own player 0, after a state that names the kind.

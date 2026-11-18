@@ -9,6 +9,7 @@ extends Node
 # add_element / remove_element; pending until the puppet battle of that battle_id is ready.
 
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
+const OwnPickups := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/own_pickups.gd")
 const MAX_PLAYERS := 4
 const MAX_ENTRIES := 64  # per player (network data)
 const MAX_ID_LENGTH := 96
@@ -90,7 +91,7 @@ func _show(list: Node, ids: Array) -> void:
 		else:
 			list.remove_element(data)
 	for id in missing:
-		var data = battle_client._find_consumable(id)
+		var data = OwnPickups.find_data(id)
 		if data != null:
 			list.add_element(_zone_copy(data))
 

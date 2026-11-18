@@ -87,8 +87,9 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
   Each of these screens claims your slot's input for itself, so a level-up panel that stops late
   never switches off your shop panel, and the shop panel takes its input back if anything else did
   (both written to the log).
-  Other mods can add shop decisions of their own that reach the host the same way
-  ([brotato:trade](../brotato-trade) does, for giving items and weapons to other players).
+  Other mods can add shop and level-up / crate panel decisions of their own that reach the host
+  the same way ([brotato:trade](../brotato-trade) does, for giving items and weapons to other
+  players and crate items).
 - **Two fixes in the game's own shop** (online, local co-op and solo): an item that adds a weapon
   slot (Cybernetic Arm) shows in "WEAPONS (n/m)" as soon as it is bought, not only in the next
   shop (the slot itself could always be used at once, also by a client and in the next wave).
