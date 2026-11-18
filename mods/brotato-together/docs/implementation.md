@@ -68,6 +68,25 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   until it has been calm for 5 s. Render time never runs backwards.
 - Client puppets of non-Entity scenes (projectiles, gold, consumables) are pooled per type like the game's
   Entity pool (out of the tree; freed when the battle state resets).
+- Own pickups (`sync/own_pickups.gd`, no wire change): the own player is predicted ahead while
+  consumables show the host's world ~100 ms back, so a fruit or crate the player ran over vanished a
+  round trip plus the render delay later, behind it (about 70 to 100 px at running speed). In the game a
+  touch takes a consumable (`Player._on_ItemPickupArea_area_entered`: the pickup circle, r 32 at
+  (0, -24), against the item's 16 px box); only a healing one is attracted, and only below max health
+  (`_on_ItemAttractArea_area_entered`, r 150 x pickup range), so at full health a fruit, and a crate
+  always, waits for the touch. The client runs those rules on its predicted position (no correction
+  blend) for consumables standing where the newest snapshot has them (a pushed-out or attracted one
+  moves): a touch takes the puppet out of the mirror with one of its `pickup_sounds`; below max health a
+  healing one in the attract circle first flies to the player like `Item._physics_process` (500 px/s,
+  +20 per tick; not while a heal taken here is unconfirmed: the health shown lacks it). The id is held
+  (not respawned) until the newest snapshot drops it too; that snapshot's matching pickup sound is
+  removed before it is queued. Still there once the host has applied 10 more inputs (`CONFIRM_INPUTS`;
+  at most 60 snapshots), it is released, respawns where the host has it and is never predicted again (no
+  take and come back loop). Taken by another player meanwhile, it vanished here at the own player
+  instead (the client can't tell who took it). Nothing while the prediction is off (pause, stall, wave
+  end, dead): a flight goes back where it stood. Gold is not predicted. Tests: `own_pickups_tests.gd`
+  (the host's physics takes a crate exactly where `OwnPickups.overlaps` says, 2 px in and out on three
+  sides).
 - Boss parts: clients spawn in snapshot order and the host lists `bosses` first; a `BrachiosaurusFoot` waits
   until a "Brachiosaurus" puppet exists (its `_ready` finds it by name). Extensions skip, while puppeting,
   the foot's `shoot()` and `StayEdgesOfMapMovementBehavior.move_away()` (called by the foot's `_ready` on its
@@ -685,7 +704,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   ownership-related: zones (`ZoneService.zones` lists all), enemy/boss scenes (loaded by path),
   `get_dlc_data_by_id`, the run's `enabled_dlcs` / `active_update_data_ids` (from the host's run state).
   DLC drops (poisoned / meca / mutant / mutation fruit, meca parts) were never in `ItemService.consumables`,
-  even for owners: `BattleClient._find_consumable` also reads them from every `DLCData`.
+  even for owners: `OwnPickups.find_data` (`sync/own_pickups.gd`) also reads them from every `DLCData`.
 - WELCOME carries the host's own DLCs; on the first accepted WELCOME (before `peer_ready`) the client
   borrows the ones it lacks (only ids in `ProgressData.dlc_ids`): stashes `available_dlc_ids`,
   `active_update_data`, the unlock lists `save()` writes, `ItemService._tiers_data` and its id lookups;
