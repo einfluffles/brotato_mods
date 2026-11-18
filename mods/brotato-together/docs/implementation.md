@@ -1730,9 +1730,12 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   at the screen's edge. Hidden while the total is 0; a line or part with nothing to show is
   hidden, so the block keeps no gap; mouse ignored. Look reviewed on an in-game screenshot by
   a second model: ragged number column, flat hierarchy, icons lost on the scenery.
-- The board: three tiles with a caption over icon and value (the wave over the total and, in
-  co-op, the share of the team's; DPS; biggest hit with its source's icon; estimated at about
-  340 px, for the four-player panel's 403), a line, then a row per source. The row is the bar:
+- The board: `Head` with "Wave N" (grey) over one line `Stats` like the wave's HUD, all at
+  22 px with a 2 px outline: icon, total and, in co-op, the share of the team's (grey); icon
+  and damage per second (blue, `/s`); the crit icon with what dealt the biggest hit tilted over
+  it, and the hit (gold). Icons 28 px, 12 px more between the three parts; estimated at about
+  380 px with a share and late-run numbers, for the four-player panel's 383 inside its
+  margins. Then a line, then a row per source. The row is the bar:
   a `ProgressBar` 40 px high, a dark rounded track (black at 25%, radius 6, a 2 px border at
   50%) filled in the source's tier colour (55%) as far as it reaches against the strongest.
   On it (`Content`, anchored over the bar): icon, name (with `x<n>`), number (both the

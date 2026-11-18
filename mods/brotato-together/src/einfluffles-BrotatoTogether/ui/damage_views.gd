@@ -17,8 +17,8 @@ extends Node
 #   like the game's own pages (shop_sync, shop_intents, menu_sync).
 # - In the solo shop and the solo end of run: a third tab "Damage" (an icon) in the stats panel
 #   next to Primary / Secondary; LB / RB cycle through the three (extensions/ui/stats_container.gd).
-# The board on a page or tab is the wave before: three tiles (the wave's total with, in co-op,
-# the share of the team's; damage per second; biggest hit with its source), and a row per
+# The board on a page or tab is the wave before: "Wave N" over one line as the wave's HUD (the
+# total with, in co-op, the share of the team's; damage per second; biggest hit), and a row per
 # source: a bar in its tier colour against the strongest as the row's background, icon, name,
 # number and share (56.83%, <0.01%) on it.
 # Numbers from 10,000 on are short (12.3K, 4.56M, 7.89B): late runs deal billions.
@@ -38,8 +38,6 @@ const TOTAL_ICON := "res://items/stats/percent_damage.png"
 const DPS_ICON := "res://items/stats/attack_speed.png"
 const HIT_ICON := "res://items/stats/crit_chance.png"
 const HUD_FONT := "res://resources/fonts/actual/base/font_26_outline.tres"
-const BOARD_FONT := "res://resources/fonts/actual/base/font_26.tres"
-const BOARD_SMALL_FONT := "res://resources/fonts/actual/base/font_smallest_text.tres"
 # The HUD: one column of 32 px icons, so every number starts at the same x; the first line all
 # at 22 (one baseline), amounts and the hit 20, 10 px between icon and number. A count sits in
 # the icon's lower right corner, as in the game's inventory ("x3"); the biggest hit's source
@@ -60,7 +58,11 @@ const HUD_AMOUNT_COLOR := Color(0.88, 0.88, 0.88)
 const HUD_BACK := Color(0, 0, 0, 0.45)
 const HUD_BACK_RADIUS := 6
 const HUD_BACK_MARGIN := Vector2(8, 4)
-const TILE_ICON := Vector2(22, 22)
+# The board's head: "Wave N" over one line as the wave's HUD, all at HUD_MAIN_SIZE; icons a
+# little smaller than the HUD's, so the line fits a four-player panel.
+const STAT_ICON := Vector2(28, 28)
+const STAT_HIT_SOURCE := Vector2(22, 22)
+const STAT_GAP := 12  # between total, damage per second and hit, past the line's 6
 const BOARD_ICON := Vector2(32, 32)
 # The board's source rows: the bar is the row (dark rounded track, filled in the tier colour as
 # far as the source reaches against the strongest), icon, name, number and share in white on it.
@@ -241,21 +243,34 @@ func _badged_icon() -> TextureRect:
 
 
 # The crit icon (Icon) with the source of the biggest hit (Source) tilted over its middle.
-static func _hit_icon() -> TextureRect:
-	var burst := _icon(HUD_ICON, "Icon", load(HIT_ICON))
-	var source := _icon(HUD_HIT_SOURCE, "Source")
+static func _hit_icon(
+	size := HUD_ICON, source_size := HUD_HIT_SOURCE, icon_name := "Icon"
+) -> TextureRect:
+	var burst := _icon(size, icon_name, load(HIT_ICON))
+	var source := _icon(source_size, "Source")
 	source.anchor_left = 0.5
 	source.anchor_top = 0.5
 	source.anchor_right = 0.5
 	source.anchor_bottom = 0.5
-	source.margin_left = -HUD_HIT_SOURCE.x / 2
-	source.margin_right = HUD_HIT_SOURCE.x / 2
-	source.margin_top = -HUD_HIT_SOURCE.y / 2
-	source.margin_bottom = HUD_HIT_SOURCE.y / 2
-	source.rect_pivot_offset = HUD_HIT_SOURCE / 2
+	source.margin_left = -source_size.x / 2
+	source.margin_right = source_size.x / 2
+	source.margin_top = -source_size.y / 2
+	source.margin_bottom = source_size.y / 2
+	source.rect_pivot_offset = source_size / 2
 	source.rect_rotation = HUD_HIT_SOURCE_ANGLE
 	burst.add_child(source)
 	return burst
+
+
+# What dealt the biggest hit (an id, "" when unknown) over a _hit_icon; under a source the
+# burst steps back, so the weapon reads.
+func _show_hit_source(burst: TextureRect, id: String) -> void:
+	var data = meter.data_of(id) if id != "" else null
+	var source: TextureRect = burst.get_node("Source")
+	source.visible = data != null
+	burst.self_modulate = HUD_HIT_BURST if data != null else Color.white
+	if data != null:
+		source.texture = data.icon
 
 
 # The HUD block's backing: a dark rounded panel as wide as its lines, at the screen's edge.
@@ -302,13 +317,7 @@ func _fill_row(row: Control, entry: Array, share: int, hit: Array) -> void:
 	var hit_line: Node = lines.get_node("Hit")
 	hit_line.visible = hit[0] > 0
 	hit_line.get_node("Value").text = short(hit[0], HUD_SHORT_FROM) if hit[0] > 0 else ""
-	var hit_source = meter.data_of(hit[1]) if hit[1] != "" else null
-	var source_icon: TextureRect = hit_line.get_node("Icon/Source")
-	source_icon.visible = hit_source != null
-	# Under a source the burst steps back, so the weapon reads.
-	hit_line.get_node("Icon").self_modulate = HUD_HIT_BURST if hit_source != null else Color.white
-	if hit_source != null:
-		source_icon.texture = hit_source.icon
+	_show_hit_source(hit_line.get_node("Icon"), hit[1])
 
 
 func _hud_font(size: int) -> DynamicFont:
@@ -383,23 +392,32 @@ func _drop_view(holder: Control) -> void:
 	_views = kept
 
 
-# The board: List > Tiles (Total: the wave over total and team share; Dps; Hit), a line,
-# Sources (MAX_SOURCES rows: the bar itself, Content > Icon, Name, Amount, Share on it).
+# The board: List > Wave, Stats (as the wave's HUD: TotalIcon, Total, Share; DpsIcon, Dps;
+# HitIcon with Source over it, Hit), a line, Sources (MAX_SOURCES rows: the bar itself,
+# Content > Icon, Name, Amount, Share on it).
 func _board_list() -> VBoxContainer:
-	var small: Font = load(BOARD_SMALL_FONT)
+	var font := _hud_font(HUD_MAIN_SIZE)
 	var list := VBoxContainer.new()
 	list.name = LIST_NAME
 	list.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	list.add_constant_override("separation", 8)
-	var tiles := _line("Tiles", BoxContainer.ALIGN_BEGIN, 12)
-	var total := _tile("Total", "", TOTAL_ICON, Color.white)
-	total.get_node("Line").add_child(_label(small, "Share", MUTED))
-	tiles.add_child(total)
-	tiles.add_child(_tile("Dps", "DPS", DPS_ICON, DPS_COLOR))
-	var hit := _tile("Hit", "Biggest hit", HIT_ICON, HIT_COLOR)
-	hit.get_node("Line").add_child(_icon(TILE_ICON, "SourceIcon"))
-	tiles.add_child(hit)
-	list.add_child(tiles)
+	var head := VBoxContainer.new()
+	head.name = "Head"
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_constant_override("separation", 0)
+	head.add_child(_label(font, "Wave", MUTED))
+	var stats := _line("Stats", BoxContainer.ALIGN_BEGIN, 6)
+	stats.add_child(_icon(STAT_ICON, "TotalIcon", load(TOTAL_ICON)))
+	stats.add_child(_label(font, "Total"))
+	stats.add_child(_label(font, "Share", MUTED))
+	stats.add_child(_spacer(STAT_GAP))
+	stats.add_child(_icon(STAT_ICON, "DpsIcon", load(DPS_ICON)))
+	stats.add_child(_label(font, "Dps", DPS_COLOR))
+	stats.add_child(_spacer(STAT_GAP))
+	stats.add_child(_hit_icon(STAT_ICON, STAT_HIT_SOURCE, "HitIcon"))
+	stats.add_child(_label(font, "Hit", HIT_COLOR))
+	head.add_child(stats)
+	list.add_child(head)
 	var line := HSeparator.new()
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var line_style := StyleBoxLine.new()
@@ -437,21 +455,11 @@ func _board_list() -> VBoxContainer:
 	return list
 
 
-# A tile: a caption over icon and value (Caption, Line > Icon, Value). Narrow enough for three
-# in a row in a four-player panel.
-func _tile(tile_name: String, caption: String, icon_path: String, color: Color) -> VBoxContainer:
-	var tile := VBoxContainer.new()
-	tile.name = tile_name
-	tile.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tile.add_constant_override("separation", 0)
-	var caption_label := _label(load(BOARD_SMALL_FONT), "Caption", MUTED)
-	caption_label.text = caption
-	tile.add_child(caption_label)
-	var line := _line("Line", BoxContainer.ALIGN_BEGIN, 6)
-	line.add_child(_icon(TILE_ICON, "Icon", load(icon_path)))
-	line.add_child(_label(load(BOARD_FONT), "Value", color))
-	tile.add_child(line)
-	return tile
+static func _spacer(width: int) -> Control:
+	var spacer := Control.new()
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spacer.rect_min_size.x = width
+	return spacer
 
 
 # A source's row: a bar against the strongest source, the row's own background (a dark rounded
@@ -474,18 +482,14 @@ static func _bar() -> ProgressBar:
 
 func _fill_board(list: Node, entry: Array, team_share: int, hit: Array) -> void:
 	var wave: int = meter.board.get("wave", 0)
-	var tiles: Node = list.get_node("Tiles")
-	tiles.get_node("Total/Caption").text = Text.text("WAVE", [str(wave)])
-	tiles.get_node("Total/Line/Value").text = short(entry[0])
-	_set_text(tiles.get_node("Total/Line/Share"), "%d%%" % team_share if team_share >= 0 else "")
+	list.get_node("Head/Wave").text = Text.text("WAVE", [str(wave)])
+	var stats: Node = list.get_node("Head/Stats")
+	stats.get_node("Total").text = short(entry[0])
+	_set_text(stats.get_node("Share"), "%d%%" % team_share if team_share >= 0 else "")
 	var dps := per_second(entry[0], meter.board.get("time", 0.0))
-	tiles.get_node("Dps/Line/Value").text = short(dps) if dps >= 0 else "-"
-	tiles.get_node("Hit/Line/Value").text = short(hit[0]) if hit[0] > 0 else "-"
-	var hit_source = meter.data_of(hit[1]) if hit[1] != "" else null
-	var source_icon: TextureRect = tiles.get_node("Hit/Line/SourceIcon")
-	source_icon.visible = hit_source != null
-	if hit_source != null:
-		source_icon.texture = hit_source.icon
+	stats.get_node("Dps").text = short(dps) + "/s" if dps >= 0 else "-"
+	stats.get_node("Hit").text = short(hit[0]) if hit[0] > 0 else "-"
+	_show_hit_source(stats.get_node("HitIcon"), hit[1])
 	var sources: Node = list.get_node("Sources")
 	var top: int = entry[1][0][2] if not entry[1].empty() else 1
 	for k in meter.MAX_SOURCES:

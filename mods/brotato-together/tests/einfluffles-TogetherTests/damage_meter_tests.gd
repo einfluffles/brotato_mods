@@ -335,19 +335,19 @@ func _test_shop(item):
 		"with a gamepad the cursor waits on Go, as on the stats pages (%s)" % [cursor]
 	)
 	var list: Node = _list(panels[0])
-	var tiles: Node = list.get_node("Tiles")
-	var title: String = tiles.get_node("Total/Caption").text
-	var share: Label = tiles.get_node("Total/Line/Share")
+	var stats: Node = list.get_node("Head/Stats")
+	var title: String = list.get_node("Head/Wave").text
+	var share: Label = stats.get_node("Share")
 	_t._check(
 		title == Text.text("WAVE", [str(RunData.current_wave)]) and share.visible,
-		"the total's caption is the wave, with the share of the team's (%s, %s)" % [title, share.text]
+		"the wave over the total, with the share of the team's (%s, %s)" % [title, share.text]
 	)
 	var values := []
-	for tile in ["Total", "Dps", "Hit"]:
-		values.append(tiles.get_node(tile + "/Line/Value").text)
+	for part in ["Total", "Dps", "Hit"]:
+		values.append(stats.get_node(part).text)
 	_t._check(
 		values[0] == "1,234" and values[1] != "-" and values[2] == "52.3K",
-		"tiles: the total, damage per second and the biggest hit %s" % [values]
+		"one line: the total, damage per second and the biggest hit %s" % [values]
 	)
 	var rows: Node = list.get_node("Sources")
 	var row: Node = rows.get_child(0)
@@ -442,7 +442,7 @@ func _test_coop_end_run():
 	for _i in 3:
 		containers[0].carousel._on_ArrowRight_pressed()
 	yield(_t.get_tree(), "idle_frame")
-	var total: String = _list(containers[0]).get_node("Tiles/Total/Line/Value").text
+	var total: String = _list(containers[0]).get_node("Head/Stats/Total").text
 	_t._check(
 		containers[0].carousel.index == 3 and _page(containers[0]).visible and total == "1,234",
 		"three pages on: the last wave's board (%s)" % total
@@ -621,11 +621,11 @@ func _test_solo_shop(meter: Node):
 		"pressed: the board instead of the stats"
 	)
 	var list: Node = page.get_node(DamageViews.LIST_NAME)
-	var total: String = list.get_node("Tiles/Total/Line/Value").text
-	var share: Label = list.get_node("Tiles/Total/Line/Share")
+	var total: String = list.get_node("Head/Stats/Total").text
+	var share: Label = list.get_node("Head/Stats/Share")
 	_t._check(total == "50" and not share.visible, "with the wave's total, no share alone")
 	_t._check(
-		list.get_node("Tiles/Hit/Line/Value").text == "-",
+		list.get_node("Head/Stats/Hit").text == "-",
 		"a board without hits (an older host's): no biggest hit"
 	)
 	stats.update_tab(stats.Tab.PRIMARY)
