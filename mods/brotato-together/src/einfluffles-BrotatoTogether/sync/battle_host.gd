@@ -549,11 +549,13 @@ func _capture_players() -> Array:
 			RunData.get_player_gold(i),
 			RunData.get_player_level(i),
 			float(RunData.get_player_xp(i)),
+			int(player._hit_protection),  # tardigrade charges: the HUD counter and life bar tint
 		]
 		var entry := [player.global_position, null, null, _input_ack_of(i), null, null, null]
 		entry.append(Snapshot.pack_weapons(player.current_weapons))
 		entry.append(_battle_scene.weapon_slots(i, player))
 		entry.append(_battle_scene.speed(i, player, _snapshot_count))
+		entry.append(null)
 		var last = _stats.get(i)
 		if last == null or last[0] != stats:
 			last = [stats, _snapshot_count]

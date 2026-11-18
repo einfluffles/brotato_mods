@@ -32,8 +32,9 @@ extends Reference
 #   u32 battle_id, u32 t, u16 wave time left (1/100 s)
 #   u8 player count; per player: u8 PLAYER_STATS bit, i16 x, i16 y (1/POS_SCALE px),
 #     varint input_ack, [stats: zigzag health, zigzag max_health, zigzag gold, varint level,
-#     f32 xp], u8 weapon count, bitmask (1 bit per weapon: sprite moved), per weapon i16 angle
-#     [+ i16 sprite x, i16 sprite y (1/8 px), i16 sprite angle],
+#     f32 xp, varint hit protection (protocol 28)], u8 weapon count, bitmask (1 bit per
+#     weapon: sprite moved), per weapon i16 angle [+ i16 sprite x, i16 sprite y (1/8 px),
+#     i16 sprite angle],
 #     [PLAYER_WEAPON_SLOTS: u8 bit count, slot bitmask], [PLAYER_SPEED: varint px/s]
 #   u16 entity count; varint run count, runs of [varint type idx, varint length] (types in
 #     entity order); net ids as zigzag varint deltas to the previous one (the host sorts each run
@@ -54,7 +55,8 @@ extends Reference
 # INPUT seq the host applied for that player (0 for host-local players).
 
 enum PlayerField {
-	POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEAPONS, WEAPON_SLOTS, SPEED
+	POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEAPONS, WEAPON_SLOTS, SPEED,
+	HIT_PROTECTION
 }
 
 const EVENT_DAMAGE := 0
@@ -88,7 +90,12 @@ const PLAYER_WEAPON_SLOTS := 2  # wire only (protocol 13, sync/battle_scene.gd)
 const PLAYER_SPEED := 4  # wire only (protocol 13)
 const MAX_SPEED := 1 << 20  # px/s; parse rejects more
 const STAT_FIELDS := [
-	PlayerField.HEALTH, PlayerField.MAX_HEALTH, PlayerField.GOLD, PlayerField.LEVEL, PlayerField.XP
+	PlayerField.HEALTH,
+	PlayerField.MAX_HEALTH,
+	PlayerField.GOLD,
+	PlayerField.LEVEL,
+	PlayerField.XP,
+	PlayerField.HIT_PROTECTION,
 ]
 const WEAPON_STRIDE := 4
 const FLAG_FACING_LEFT := 1
@@ -212,6 +219,7 @@ static func _put_player(buf: StreamPeerBuffer, entry: Array) -> void:
 		_put_varint(buf, _zigzag(entry[PlayerField.GOLD]))
 		_put_varint(buf, max(0, entry[PlayerField.LEVEL]))
 		buf.put_float(entry[PlayerField.XP])
+		_put_varint(buf, max(0, entry[PlayerField.HIT_PROTECTION]))
 	var weapons: PoolRealArray = entry[PlayerField.WEAPONS]
 	var count := int(min(weapons.size() / WEAPON_STRIDE, MAX_WEAPONS))
 	buf.put_u8(count)
@@ -522,6 +530,9 @@ static func _get_player(buf: StreamPeerBuffer):
 				return null
 		entry[PlayerField.XP] = buf.get_float()
 		if is_nan(entry[PlayerField.XP]) or is_inf(entry[PlayerField.XP]):
+			return null
+		entry[PlayerField.HIT_PROTECTION] = _get_varint(buf)
+		if entry[PlayerField.HIT_PROTECTION] < 0:
 			return null
 	if buf.get_available_bytes() < 1:
 		return null

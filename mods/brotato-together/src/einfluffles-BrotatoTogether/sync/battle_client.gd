@@ -604,6 +604,7 @@ func _apply_player_stats(player: Node, i: int, entry: Array) -> void:
 	if entry[PF.HEALTH] <= 0 and not player.dead:
 		PuppetEntity.player_died(player)
 	_feedback.player_stats(_main, i, entry)  # heal and level-up texts
+	BattleScene.apply_hit_protection(_main, i, player, entry)
 	if (
 		player.current_stats.health != entry[PF.HEALTH]
 		or player.max_stats.health != entry[PF.MAX_HEALTH]
