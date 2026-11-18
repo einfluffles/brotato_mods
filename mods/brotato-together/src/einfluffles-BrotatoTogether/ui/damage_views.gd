@@ -19,7 +19,7 @@ extends Node
 #   next to Primary / Secondary; LB / RB cycle through the three (extensions/ui/stats_container.gd).
 # The board on a page or tab is the wave before: three tiles (the wave's total with, in co-op,
 # the share of the team's; damage per second; biggest hit with its source), and the sources with
-# icon, name over a bar against the strongest, number and share.
+# icon, name over a bar against the strongest, number and share (56.83%, <0.01%).
 # Numbers from 10,000 on are short (12.3K, 4.56M, 7.89B): late runs deal billions.
 # All of it is gone while the meter is switched off on this machine (DamageMeter.shown): the
 # page can no longer be reached (carousel.max_index) and a player on it goes back one page; the
@@ -63,7 +63,7 @@ const TILE_ICON := Vector2(22, 22)
 const BOARD_ICON := Vector2(32, 32)
 const BAR_HEIGHT := 6
 const AMOUNT_WIDTH := 84
-const SHARE_WIDTH := 56
+const SHARE_WIDTH := 80  # "100.00%"
 const PAGE_MARGIN := 10
 const SHORT_FROM := 10000
 const UNITS := ["K", "M", "B", "T", "Q"]
@@ -107,6 +107,15 @@ func _process(_delta: float) -> void:
 static func _is_solo_shop(scene: Node) -> bool:
 	var shop: bool = scene.has_method("_get_reroll_button")
 	return shop and not scene.has_method("_get_coop_player_container")
+
+
+# A source's share of the player's total on the board, to two places: 56.83%, 0.04%; "<0.01%"
+# for what dealt something but rounds to nothing (a few dozen next to millions).
+static func percent(part: int, whole: int) -> String:
+	if part <= 0 or whole <= 0:
+		return "0.00%"
+	var value := 100.0 * part / whole
+	return "<0.01%" if value < 0.005 else "%.2f%%" % value
 
 
 # 1,234 up to `from`, then three digits and a unit: 12.3K, 456K, 7.89M.
@@ -482,8 +491,7 @@ func _fill_board(list: Node, entry: Array, team_share: int, hit: Array) -> void:
 		bar.value = 1000.0 * source[2] / max(1, top)
 		bar.get_stylebox("fg").bg_color = Color(color.r, color.g, color.b, 0.85)
 		row.get_node("Amount").text = short(source[2])
-		var share := int(round(100.0 * source[2] / max(1, entry[0])))
-		row.get_node("Share").text = "%d%%" % share
+		row.get_node("Share").text = percent(source[2], entry[0])
 
 
 # The switch: the page stays in the carousel but past its max_index; a player on it goes back

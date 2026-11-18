@@ -142,6 +142,18 @@ func _test_short() -> void:
 		DamageViews.per_second(1234, 10.0) == 123 and DamageViews.per_second(50, 0.5) == -1,
 		"damage per second, none before the wave ran a second"
 	)
+	var shares := [
+		DamageViews.percent(1290000, 2270000),
+		DamageViews.percent(266, 2270000),
+		DamageViews.percent(10, 2270000),
+		DamageViews.percent(1000, 1000),
+		DamageViews.percent(1, 1000),
+		DamageViews.percent(0, 1000),
+	]
+	_t._check(
+		shares == ["56.83%", "0.01%", "<0.01%", "100.00%", "0.10%", "0.00%"],
+		"the board's shares to two places, <0.01%% for a little %s" % [shares]
+	)
 
 
 func _test_board(meter: Node) -> void:
@@ -341,7 +353,7 @@ func _test_shop(item):
 	var row: Node = rows.get_child(0)
 	var number := "%s %s" % [row.get_node("Amount").text, row.get_node("Share").text]
 	_t._check(
-		row.visible and number == "1,234 100%" and not rows.get_child(1).visible,
+		row.visible and number == "1,234 100.00%" and not rows.get_child(1).visible,
 		"a row per source with number and share (%s)" % number
 	)
 	_t._check(row.get_node("Text/Bar").value == 1000, "the strongest source's bar is full")
