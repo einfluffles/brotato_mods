@@ -1715,15 +1715,16 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
 - HUD: a `PanelContainer` in `UI/HUD/LifeContainerP<n>` (first child for players 3 and 4, whose
   bars sit at the bottom; at the right edge for players 2 and 4), a dark rounded backing
   (black at 45%, radius 6, margins 8 / 4) as wide as its lines, against the battle's scenery;
-  its `VBoxContainer` `Lines`. Line `Main`: damage icon and total (outlined 26), in co-op the
-  player's share of the team's (grey) and the damage per second (blue), all three at 26 so
+  its `VBoxContainer` `Lines`. Line `Main`: damage icon and total, in co-op the
+  player's share of the team's (grey) and the damage per second (blue), all three at 22 so
   they share a baseline. A 4 px gap, then `Sources`, one line per source of the board (see
   above, up to 4): icon, number (20 px, light grey). More than one of it: `x<n>` (16 px,
-  white) in the icon's lower right corner, 5 / 4 px past it, as the game's inventory shows a
+  white) in the icon's lower right corner, 2 / 4 px past it, as the game's inventory shows a
   count (`IconPanel`). Last line `Hit`: the crit icon with what dealt the hit (26 px, tilted
   20 degrees) over its middle, the burst at 75% under it; the biggest hit (gold, 20 px).
-  Every line's icon is 32 px with a 6 px gap, so all numbers start in one column. The smaller
-  sizes are copies of the outlined font with a 2 px outline. Numbers short from 1,000 (7.01K next to 41.7K; the shop's board from 10,000).
+  Every line's icon is 32 px with a 10 px gap (room for the count), so all numbers start in
+  one column. The HUD's sizes are copies of the outlined font with a 2 px outline. Numbers
+  short from 1,000 (7.01K next to 41.7K; the shop's board from 10,000).
   For players 3 and 4 the order is reversed (Hit at the top, the strongest source next to
   Main, Main next to the bar); for players 2 and 4 every line is mirrored, so the icons stay
   at the screen's edge. Hidden while the total is 0; a line or part with nothing to show is

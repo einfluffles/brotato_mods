@@ -40,18 +40,19 @@ const HUD_FONT := "res://resources/fonts/actual/base/font_26_outline.tres"
 const BOARD_FONT := "res://resources/fonts/actual/base/font_26.tres"
 const BOARD_SMALL_FONT := "res://resources/fonts/actual/base/font_smallest_text.tres"
 # The HUD: one column of 32 px icons, so every number starts at the same x; the first line all
-# at the font's 26 (one baseline), amounts and the hit 20. A count sits in the icon's lower
-# right corner, as in the game's inventory ("x3"); the biggest hit's source lies tilted over
-# the crit icon.
+# at 22 (one baseline), amounts and the hit 20, 10 px between icon and number. A count sits in
+# the icon's lower right corner, as in the game's inventory ("x3"); the biggest hit's source
+# lies tilted over the crit icon.
 const HUD_ICON := Vector2(32, 32)
 const HUD_HIT_SOURCE := Vector2(26, 26)
 const HUD_HIT_SOURCE_ANGLE := -20.0
 const HUD_HIT_BURST := Color(1, 1, 1, 0.75)  # the crit icon under a source
 const HUD_AMOUNT_SIZE := 20
 const HUD_COUNT_SIZE := 16
-const HUD_BADGE_OFFSET := Vector2(5, 4)  # past the icon's lower right corner
+const HUD_BADGE_OFFSET := Vector2(2, 4)  # past the icon's lower right corner, clear of the number
 const HUD_OUTLINE := 2  # the smaller sizes' outline: they sit on the battle's scenery
-const HUD_SEPARATION := 6
+const HUD_SEPARATION := 10
+const HUD_MAIN_SIZE := 22
 const HUD_GAP := 4  # between the total and the sources
 const HUD_SHORT_FROM := 1000  # 7.01K, not 7,013, next to 41.7K
 const HUD_AMOUNT_COLOR := Color(0.88, 0.88, 0.88)
@@ -154,9 +155,9 @@ func _build_rows(main: Node) -> void:
 		row.add_child(lines)
 		var main_line := _hud_line("Main", right, [
 			_icon(HUD_ICON, "Icon", load(TOTAL_ICON)),
-			_label(load(HUD_FONT), "Total"),
-			_label(load(HUD_FONT), "Share", MUTED),
-			_label(load(HUD_FONT), "Dps", DPS_COLOR),
+			_label(_hud_font(HUD_MAIN_SIZE), "Total"),
+			_label(_hud_font(HUD_MAIN_SIZE), "Share", MUTED),
+			_label(_hud_font(HUD_MAIN_SIZE), "Dps", DPS_COLOR),
 		])
 		var gap := Control.new()
 		gap.name = "Gap"
