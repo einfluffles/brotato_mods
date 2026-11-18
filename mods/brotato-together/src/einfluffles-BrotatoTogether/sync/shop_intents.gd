@@ -26,8 +26,9 @@ extends Reference
 # once applied, except
 # "meca_roll": it only rolls (or finds) the two meca upgrade options the host keeps for that
 # weapon in its copy of the player's popup, sent back with the state (sync/meca_choice.gd).
-# Another mod's kind is a press like the game's own: checked against the revision, and its
-# handler(shop, player, slot, id, arg) -> bool decides and says whether it changed anything.
+# Another mod's kind is a press like the game's own: checked against the revision (unless it
+# was registered without), and its handler(shop, player, slot, id, arg) -> bool decides and says
+# whether it changed anything.
 
 enum { DROPPED, APPLIED, CHANGED }
 
@@ -42,7 +43,7 @@ const OWN_KINDS := ["go", "endless", "lock", "reroll"] + SLOT_KINDS + WEAPON_KIN
 
 # seq: the current revision of player p's panel. Returns DROPPED, APPLIED (nothing a press
 # could go stale on changed) or CHANGED (the caller bumps the revision).
-# mod_kinds: other mods' kinds, kind -> [target, method].
+# mod_kinds: other mods' kinds, kind -> [target, method, revision].
 static func apply(shop: Node, p: int, msg: Dictionary, seq: int, mod_kinds := {}) -> int:
 	var kind = msg.get("kind")
 	var slot = msg.get("slot")
@@ -59,6 +60,9 @@ static func apply(shop: Node, p: int, msg: Dictionary, seq: int, mod_kinds := {}
 	if kind == "lock":
 		var node = find_slot(shop._get_shop_items_container(p), slot, id)
 		return DROPPED if node == null else _slot(shop, p, node, kind, arg)
+	var handler: Array = mod_kinds.get(kind, [])
+	if handler.size() > 2 and not handler[2]:
+		return _mod(shop, p, handler, slot, id, arg)
 	if typeof(msg.get("seq")) != TYPE_INT or msg.seq != seq:
 		return DROPPED
 	if kind == "reroll":
@@ -84,13 +88,16 @@ static func apply(shop: Node, p: int, msg: Dictionary, seq: int, mod_kinds := {}
 		# The popup's own signal: the shop's handler checks what may be combined / recycled.
 		popup.emit_signal("item_%s_button_pressed" % kind, weapon)
 		return CHANGED
-	if mod_kinds.has(kind):
-		var handler: Array = mod_kinds[kind]
-		if not is_instance_valid(handler[0]) or not handler[0].has_method(handler[1]):
-			return DROPPED
-		var changed = handler[0].call(handler[1], shop, p, slot, id, arg)
-		return CHANGED if typeof(changed) == TYPE_BOOL and changed else DROPPED
+	if not handler.empty():
+		return _mod(shop, p, handler, slot, id, arg)
 	return DROPPED
+
+
+static func _mod(shop: Node, p: int, handler: Array, slot: int, id: String, arg: int) -> int:
+	if not is_instance_valid(handler[0]) or not handler[0].has_method(handler[1]):
+		return DROPPED
+	var changed = handler[0].call(handler[1], shop, p, slot, id, arg)
+	return CHANGED if typeof(changed) == TYPE_BOOL and changed else DROPPED
 
 
 # What player p's panel offers, as far as a press can go stale on it: the offered items (the

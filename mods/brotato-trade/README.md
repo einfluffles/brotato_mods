@@ -54,10 +54,11 @@ intents for other mods (protocol 21).
   did not arrive goes back to the giver. No frame, save or network state sees it in both lists
   or in none.
 - **Online, only the host changes the run.** A client's Trade press leaves as a shop intent
-  (`trade.item` / `trade.weapon`: the object's place in the giver's list, its id, the receiver),
-  with the revision of the panel it was pressed on. The host checks sender, revision, place, id
-  and the rules again and applies it with the same code as a local trade. A request that arrives
-  twice is applied once; the result reaches every client with the host's next shop state.
+  (`trade.item` / `trade.weapon`: the object's place in the giver's list, its id, the receiver).
+  The host checks sender, place, id and the rules again and applies it with the same code as a
+  local trade; the result reaches every client with the host's next shop state. A trade skips the
+  panel revision the game's own presses carry: two quick trades of the same item both count
+  (with the revision, the second was dropped as stale until the host's answer had arrived).
 - **UI:** script extensions of the game's `CoopItemPopup` (the button and the list, built from the
   popup's own Cancel button) and `CoopShop` (who can take what, both panels afterwards).
 

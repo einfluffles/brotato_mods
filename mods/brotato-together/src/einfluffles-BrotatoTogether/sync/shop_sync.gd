@@ -71,7 +71,7 @@ var _shop_id := 0
 var _seq_shop_id := 0  # instance id of the shop the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel offers something new
 var _seq_keys := []
-var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method]
+var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method, revision]
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 
 # client
@@ -141,10 +141,13 @@ func _process(_delta: float) -> void:
 
 
 # kind: namespaced by the mod ("trade.item"); slot, id and arg are the mod's to define.
-func register_intent(kind: String, target: Object, method: String) -> bool:
+# revision false: a press whose slot and id name its target and whose handler checks everything
+# again skips the panel revision, so a second press sent before the host's answer counts too
+# (and the same message twice runs twice).
+func register_intent(kind: String, target: Object, method: String, revision := true) -> bool:
 	if kind == "" or kind in ShopIntents.OWN_KINDS or target == null:
 		return false
-	_mod_kinds[kind] = [target, method]
+	_mod_kinds[kind] = [target, method, revision]
 	return true
 
 
