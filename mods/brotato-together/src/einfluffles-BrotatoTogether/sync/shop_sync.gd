@@ -45,6 +45,9 @@ const ShopIntents := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_intents.gd"
 )
 const ShopLocal := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_local.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
@@ -73,6 +76,7 @@ var _seqs := []  # per player: bumped whenever the panel offers something new
 var _seq_keys := []
 var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method, revision]
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
+var _reported := {}  # player -> [shop instance id, the last SHOP_FOCUS target of its client]
 
 # client
 var _client_shop: Node = null
@@ -184,10 +188,17 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 			var shop = _host_shop_for(body)
 			var p := _player_index_of(steam_id)
 			if shop != null and p >= 0 and p < RunData.get_player_count():
-				ShopIntents.apply_focus(shop, p, body.get("page"), body.get("target"))
+				host_apply_focus(shop, p, body.get("page"), body.get("target"))
 
 
 # --- host ---
+
+
+# A remote player's own cursor and page as its client reports them (SHOP_FOCUS, sent when they
+# change).
+func host_apply_focus(shop: Node, p: int, page, target) -> void:
+	_reported[p] = [shop.get_instance_id(), target]
+	ShopIntents.apply_focus(shop, p, page, target)
 
 
 # A reroll that gives a stat (bone dice: BaseShop._on_RerollButton_pressed) floats its icon and
@@ -364,17 +375,40 @@ func host_apply_intent(shop: Node, p: int, msg: Dictionary) -> bool:
 	return true
 
 
-# The game's handlers move the player's cursor with deferred grab_focus calls, some of them
-# onto an inventory element that the same handler already queued for deletion (it relies on a
-# later one, which a visible mouse skips). Runs after those calls and before the deletion: a
-# FocusEmulator must never keep a freed control.
+# The game's handlers move the player's cursor with deferred grab_focus calls (recycle and
+# combine: to the row's first weapon or the new one), some of them onto an inventory element
+# that the same handler already queued for deletion (it relies on a later one, which a visible
+# mouse skips). Runs after those calls and before the deletion: a FocusEmulator must never keep
+# a freed control. The cursor goes back where the client last reported it: its own cursor keeps
+# its place in the row and is reported only when it moves, so the host showed it elsewhere.
 func _settle_host_cursor(shop: Node, p: int) -> void:
 	if not is_instance_valid(shop) or not shop.is_inside_tree():
 		return
 	var emulator = Utils.get_focus_emulator(p, shop)
-	var control = emulator.focused_control if emulator != null else null
+	if emulator == null:
+		return
+	var reported := _reported_control(shop, p)
+	if reported != null:
+		if emulator.focused_control != reported:
+			emulator.focused_control = reported
+		return
+	var control = emulator.focused_control
 	if control != null and is_instance_valid(control) and control.is_queued_for_deletion():
 		emulator.focused_control = shop._get_default_focus_control(p)
+
+
+# What player p's client last reported its cursor on, if a cursor can rest there now (not a
+# slot just bought, not a weapon just recycled).
+func _reported_control(shop: Node, p: int) -> Control:
+	var reported = _reported.get(p)
+	if reported == null or reported[0] != shop.get_instance_id():
+		return null
+	var control = FocusTargets.resolve(reported[1], shop, p)
+	if not (control is Control) or not control.is_visible_in_tree():
+		return null
+	if control.focus_mode != Control.FOCUS_ALL or (control is BaseButton and control.disabled):
+		return null
+	return control
 
 
 func _host_shop_for(msg):
