@@ -174,6 +174,17 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     the path is in its spawner's three lists. `ZoneService.forbidden_circles` is cleared before:
     `Hole._ready` is the only thing that adds circles and only the layout exists at that point. A
     mid-wave resync keeps the layout of the scene it has.
+  - Single holes (`BrachiosaurusFoot._stomp` → `GPESpawner.spawn_single_hole_at_position`, direct
+    children of `_gpe_container`) are static snapshot entities (`BattleScene.spawned_holes`). The
+    client's puppet goes into `_gpe_container` and keeps its body (not puppetized): before, the
+    foot's puppet never stomped, so the hole was missing on clients.
+  - Holes block the own-player prediction: the client's players keep `collision_mask` = obstacles
+    (layer 8: holes, the map's limits; no layer, so nothing runs into them), and every replayed
+    input is one `Unit._physics_process` tick (`BattleScene.step`: `body_test_motion` from the
+    predicted position, then the slide). Before, the replay added straight steps: walking into a
+    hole the prediction ran through it and every snapshot pulled it back (94 px after 40 ticks
+    into a hole in the test). The test walks the host's player into a layout hole and a single
+    hole with the game's own physics and the client's prediction ends where it did (< 0.1 px).
   - Weapons during a wave: the only way the game changes a player's weapon nodes is
     `Player.on_weapon_wanted_to_break` (the brick's `break_on_hit`, `Weapon.on_weapon_hit_something`;
     abyssal_terrors), which erases the weapon from `current_weapons` and `RunData`. Crate weapons

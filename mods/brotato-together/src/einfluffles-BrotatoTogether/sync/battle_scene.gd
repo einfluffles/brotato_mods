@@ -2,11 +2,13 @@ extends Reference
 # Battle state that changes the scene itself rather than moving something in it (protocol 13):
 # - the jungle waves' hole layout, picked at random by every machine's main._ready
 #   (GPESpawner.spawn_holes_full_scene): BATTLE_START carries the host's, the client swaps its own;
+#   single holes a wave adds (BrachiosaurusFoot._stomp) travel as static snapshot entities;
 # - weapons that leave a player during a wave (Player.on_weapon_wanted_to_break, the only path in
 #   the game: the brick's break_on_hit): the snapshot's per-weapon data is matched by index, so
 #   the client must drop the same weapon from its puppet;
 # - each player's current move speed (petrol puddles, slows, temporary speed stats), which the
-#   client's own-player prediction and the walk animation use.
+#   client's own-player prediction and the walk animation use;
+# - the holes and the map's limits stop that prediction as the host's physics stops the player.
 # One instance per battle on each side (BattleHost / BattleClient replace it with the battle).
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -16,6 +18,10 @@ const HOLE_LAYOUT_LISTS := ["holes_scene", "holes_old_scene", "holes_explorer_sc
 const HOLE_LAYOUT_POSITION := Vector2.ONE  # where spawn_holes_full_scene puts it
 const SPEED_REPEAT := 4  # snapshots: a speed is sent this long after it changes
 const SPEED_REFRESH := 10  # ... and every this many snapshots (staggered against the stats)
+# Physics layer "obstacles" (holes, the map's limits): all a player's body runs into besides the
+# other players.
+const OBSTACLES := 128
+const MOTION_MARGIN := 0.08  # Unit._physics_process's test_motion margin
 
 # Host
 var _wave_weapons := {}  # player index -> instance ids of its weapons at wave start
@@ -89,6 +95,19 @@ static func hole_layout(main) -> String:
 		return ""
 	var layout = _find_layout(main, _layout_scenes(main))
 	return layout.filename if layout != null else ""
+
+
+# The single holes of this wave (spawn_single_hole_at_position, children of the container itself;
+# the layout's are its scene's).
+static func spawned_holes(main) -> Array:
+	var holes := []
+	var container = main.get("_gpe_container")
+	if not is_instance_valid(container):
+		return holes
+	for child in container.get_children():
+		if child is Hole and not child.is_queued_for_deletion():
+			holes.append(child)
+	return holes
 
 
 # --- client ---
@@ -219,3 +238,22 @@ static func apply_speed(player: Node, entry: Array) -> void:
 	player.bonus_speed = 0
 	player.decaying_bonus_speed = 0.0
 	player.petrol_malus = 0.0
+
+
+# One physics tick of a player as Unit._physics_process moves it on the host: test_motion against
+# its collision mask, then once more along what it hit. The body itself stays where it is.
+# result: a Physics2DTestMotionResult to reuse.
+static func step(player: Node2D, from: Vector2, motion: Vector2, result) -> Vector2:
+	if not player is PhysicsBody2D:
+		return from + motion
+	var xform: Transform2D = player.global_transform
+	xform.origin = from
+	var body: RID = player.get_rid()
+	var hit := Physics2DServer.body_test_motion(body, xform, motion, true, MOTION_MARGIN, result)
+	from += result.motion
+	if hit:
+		xform.origin = from
+		var slide := motion.slide(result.collision_normal)
+		Physics2DServer.body_test_motion(body, xform, slide, true, MOTION_MARGIN, result)
+		from += result.motion
+	return from

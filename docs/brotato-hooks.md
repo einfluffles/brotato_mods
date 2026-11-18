@@ -184,6 +184,10 @@ RNG is unseeded (`Utils._rng.randomize()`), so shops/upgrades **must** be rolled
 - Move speed: `Player.get_move_speed()` = (`current_stats.speed` + `bonus_speed` + `decaying_bonus_speed`)
   / (1 + `petrol_malus`); petrol is set per physics frame (`update_petrol_effect`), the slow decays in
   `Unit._physics_process`.
+- Player movement: a `RigidBody2D` in `MODE_KINEMATIC` (layer 2, mask 130: players + layer 8
+  "obstacles" = holes, `TileMap`, `TileMapLimits`). `Unit._physics_process` moves it with
+  `test_motion(velocity * delta, true, 0.08)` and, when that hits, once more with the velocity slid
+  along the normal; no `move_and_slide` anywhere. A tick along a hole's edge can so move up to two steps.
 
 ### Inventory popup (shop)
 
