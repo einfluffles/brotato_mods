@@ -57,8 +57,8 @@ func _test_wire() -> void:
 	var held: PoolRealArray = view.players[0][PF.WEAPONS]  # a copy: pool arrays are values
 	held.resize(4 * Snapshot.WEAPON_STRIDE)
 	view.players[0][PF.WEAPONS] = held
-	view.players[0].append_array([PoolIntArray([0, 2, 3, 5]), 412])
-	view.players[1].append_array([null, null])
+	view.players[0][PF.WEAPON_SLOTS] = PoolIntArray([0, 2, 3, 5])
+	view.players[0][PF.SPEED] = 412
 	var parsed := Snapshot.parse(Snapshot.encode(view))
 	_t._check(not parsed.empty(), "snapshot with weapon slots and speed parses")
 	if parsed.empty():
@@ -105,7 +105,7 @@ func _test_sizes() -> void:
 		var view: Dictionary = scenario_view(scenarios[label])
 		var base := Protocol.encode(Protocol.Msg.SNAPSHOT, Snapshot.encode(view)).size()
 		for entry in view.players:
-			entry.append_array([null, 430])
+			entry[PF.SPEED] = 430
 		var speeds := Protocol.encode(Protocol.Msg.SNAPSHOT, Snapshot.encode(view)).size()
 		var held: PoolRealArray = view.players[0][PF.WEAPONS]
 		held.resize(5 * Snapshot.WEAPON_STRIDE)
@@ -133,7 +133,7 @@ func _test_resolve_speed() -> void:
 	var cache := {}
 	var views := []
 	for t_speed in [[100, 400], [200, null], [150, 300], [250, null]]:
-		var entry := [Vector2.ZERO, 1, 1, 0, 1, 1, 1.0, PoolRealArray(), null, t_speed[1]]
+		var entry := [Vector2.ZERO, 1, 1, 0, 1, 1, 1.0, PoolRealArray(), null, t_speed[1], 0]
 		var view := {
 			"battle_id": 1,
 			"t": t_speed[0],

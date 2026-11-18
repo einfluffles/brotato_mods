@@ -22,8 +22,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   battle (TYPE_DEF); the wave's unit scenes, the players' projectile scenes and gold are announced with
   BATTLE_START so clients `load()` them while the scene loads, not mid-wave.
 - Snapshot wire format (`sync/snapshot.gd`, since protocol 4): hand-packed bytes, little endian. u32 battle id,
-  u32 host msec, u16 wave time (1/100 s); per player u8 flags, i16 x/y (0.5 px), varint input ack,
-  [zigzag varints health/max health/gold, varint level, f32 xp], u8 weapon count + "sprite moved" bitmask,
+  u32 host msec, u16 wave time (1/100 s); per player u8 flags (dead: protocol 28), i16 x/y (0.5 px), varint input ack,
+  [zigzag varints health/max health/gold, varint level, f32 xp, varint hit protection (protocol 29)], u8 weapon count + "sprite moved" bitmask,
   i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle) [+ weapon slots, speed: see Scene
   state]; u16 entity count, types as runs
   [varint type, varint length], u16 net ids, 4-bit flags, i16 x/y per entity not resting; poses as
@@ -58,6 +58,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   round trip of running). No wire change: the event has been there since protocol 11. A dead player is
   shown at the host's position anyway; nothing else stops a player mid-wave (`_move_locked` is enemies'
   only).
+- Dead players (protocol 28): a snapshot's player flags carry `Player.dead` (`PLAYER_DEAD`, every
+  snapshot); the client plays the death (`PuppetEntity.player_died`) when it is set. Until then clients
+  took health 0 for dead, but a Veteran (`no_cure_between_wave`) who died starts the next wave alive at
+  0 health (`Player._get_health_kept_between_waves`; `main._ready` lifts everyone else to at least 1),
+  so clients hid his model all wave while the host's player ran and shot.
+- Hit protection (protocol 29): tardigrades give `Player._hit_protection` charges, each blocking one
+  hit (`Player.get_damage_value`). The HUD counter (`PlayerUIElements.update_hit_protection_count`,
+  from `main._on_player_health_updated`) and the life bars' purple tint (`main._physics_process` ->
+  `life_bar_effects()` -> `UIProgressBar.update_color_from_effects`) both read that field, which a
+  puppet only set once from the run's effects: on clients the counter never went down and the bars
+  stayed purple at 0. It is the last of the player stats now (sparse like them; 1 B when sent), and
+  `BattleScene.apply_hit_protection` (from `BattleClient._apply_player_stats`) sets it and updates
+  the counter (a blocked hit changes no health, so no `health_updated` does).
 - Render delay (`sync/render_delay.gd`): 100 ms behind the newest snapshot on a good connection (room for
   ~67 ms of lateness; nothing changes there). When the newest snapshot is all there is, render time holds on
   it (the delay grows by as long as the stall lasts, up to 500 ms) instead of running past it: the world

@@ -102,6 +102,9 @@ const AxolotlTests := preload("res://mods-unpacked/einfluffles-TogetherTests/axo
 const OwnPickupsTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/own_pickups_tests.gd"
 )
+const DeadPlayerTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/dead_player_tests.gd"
+)
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -128,6 +131,7 @@ const SUITES := [
 	"looks",
 	"damage",
 	"battle_scene",
+	"dead_player",
 	"selection",
 	"state_stream",
 	"shop_change",
@@ -394,6 +398,11 @@ func _suite_damage(together: Node):
 func _suite_battle_scene(together: Node):
 	coop_run(3)
 	_suite = BattleSceneTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_dead_player(together: Node):
+	_suite = DeadPlayerTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

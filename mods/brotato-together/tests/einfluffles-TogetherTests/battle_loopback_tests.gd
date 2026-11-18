@@ -197,6 +197,7 @@ func run(together: Node):
 	var dead_snap := Snapshot.parse(recorded[-1][1])
 	dead_snap.t = client._buffer[-1].t + 1000  # newer than anything buffered
 	dead_snap.players[1][Snapshot.PlayerField.HEALTH] = 0
+	dead_snap.players[1][Snapshot.PlayerField.DEAD] = true
 	client._on_snapshot(dead_snap)
 	yield(t.get_tree().create_timer(1.3), "timeout")
 	var player2: Node = puppet_main.get("_players")[1]

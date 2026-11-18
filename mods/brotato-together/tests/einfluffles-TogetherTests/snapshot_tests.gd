@@ -76,6 +76,7 @@ func _test_round_trip() -> void:
 			parsed.players[0][PF.HEALTH] == view.players[0][PF.HEALTH]
 			and parsed.players[0][PF.GOLD] == view.players[0][PF.GOLD]
 			and is_equal_approx(parsed.players[0][PF.XP], view.players[0][PF.XP])
+			and parsed.players[2][PF.HIT_PROTECTION] == 2
 			and parsed.players[0][PF.INPUT_ACK] == view.players[0][PF.INPUT_ACK]
 			and parsed.players[1][PF.HEALTH] == null
 			and not Snapshot.has_stats(parsed.players[1])
@@ -256,8 +257,8 @@ func _test_index() -> void:
 
 func _test_resolve() -> void:
 	var cache := {}
-	var p0 := [Vector2(1, 1), 10, 20, 0, 5, 2, 1.5, PoolRealArray()]
-	var p1 := [Vector2(2, 2), null, null, 0, null, null, null, PoolRealArray()]
+	var p0 := [Vector2(1, 1), 10, 20, 0, 5, 2, 1.5, PoolRealArray(), null, null, 0]
+	var p1 := [Vector2(2, 2), null, null, 0, null, null, null, PoolRealArray(), null, null, null]
 	var first := _view(100, [5, 6], [Vector2(10, 20), Vector2.ZERO], [0, Snapshot.FLAG_REST], [p0, p1])
 	first.poses = {1: PoolRealArray([0.5])}
 	Snapshot.resolve(first, cache)
@@ -266,7 +267,7 @@ func _test_resolve() -> void:
 		"resting entity never seen yet left out"
 	)
 	_t._check(not Snapshot.has_stats(first.players[1]), "player stats unknown until first sent")
-	var p1_stats := [Vector2(2, 2), 30, 40, 0, 7, 3, 2.5, PoolRealArray()]
+	var p1_stats := [Vector2(2, 2), 30, 40, 0, 7, 3, 2.5, PoolRealArray(), null, null, 1]
 	var second := _view(
 		200, [5, 6], [Vector2.ZERO, Vector2(30, 40)], [Snapshot.FLAG_REST, 0], [p0.duplicate(), p1_stats]
 	)
@@ -281,7 +282,14 @@ func _test_resolve() -> void:
 		late.positions.size() == 1 and late.positions[0] == Vector2(30, 40) and cache.t == 200,
 		"out-of-order snapshot filled, cache kept"
 	)
-	_t._check(late.players[1][PF.HEALTH] == 30 and late.players[1][PF.XP] == 2.5, "stats filled in")
+	_t._check(
+		(
+			late.players[1][PF.HEALTH] == 30
+			and late.players[1][PF.XP] == 2.5
+			and late.players[1][PF.HIT_PROTECTION] == 1
+		),
+		"stats filled in"
+	)
 
 
 func _view(t: int, ids: Array, positions: Array, flags: Array, players: Array) -> Dictionary:
@@ -353,7 +361,8 @@ func scenario(
 			var sprite := [12.3, -4.6, 0.3] if w == 0 else [0.0, 0.0, 0.0]  # mid-thrust
 			weapons.append_array(PoolRealArray([_rng.randf_range(-PI, PI)] + sprite))
 		var position := Vector2(_rng.randf_range(0, MAP.x), _rng.randf_range(0, MAP.y))
-		view.players.append([position, 25 + p, 40, 1000 + p * 7, 150 + p, 9, 37.5, weapons])
+		var entry := [position, 25 + p, 40, 1000 + p * 7, 150 + p, 9, 37.5, weapons, null, null, p]
+		view.players.append(entry)
 	var ids := PoolIntArray()
 	var types := PoolIntArray()
 	var positions := PoolVector2Array()
