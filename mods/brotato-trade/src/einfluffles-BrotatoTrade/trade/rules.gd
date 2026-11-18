@@ -12,6 +12,8 @@ extends Reference
 #   it rolls: what the player owns and what its shop offers it right now, locked or not
 # - weapons: what ShopItemsContainer._can_weapon_be_bought asks before a buy: tier limits, no
 #   melee / ranged weapons, then a free slot (ADD), else a weapon to combine it with (COMBINE)
+# A crate item (can_take_crate) is new to the run: there is no giver to check, only whether the
+# receiver could take it.
 
 enum { NONE, ADD, COMBINE }
 
@@ -160,6 +162,33 @@ static func combine_partner(weapon, to: int):
 		if candidate.is_cursed:
 			return candidate
 	return candidates.front() if not candidates.empty() else null
+
+
+# Player `to` can take a crate item in place of the player who found it: a weapon by the
+# weapon rules above and what the crate panel's Take checks (RunData.can_take_weapon), an item
+# within its limit, counting the player's locked shop items as UpgradesUI._recheck_extra_items
+# does (the next shop offers them again).
+static func can_take_crate(item, to: int) -> bool:
+	if item == null or not is_player(to):
+		return false
+	if is_weapon(item):
+		return weapon_plan(item, to) != NONE and RunData.can_take_weapon(item, to)
+	if not item is ItemData:
+		return false
+	return RunData.get_remaining_max_nb_item(item, to) > locked_count(item, to)
+
+
+# How many of player `to`'s locked shop items count towards the item's limit.
+static func locked_count(item, to: int) -> int:
+	if item.max_nb == -1:
+		return 0
+	var limited: Array = [item.my_id_hash]
+	limited += ItemService.get_limited_item_descendants(item.my_id_hash)
+	var count := 0
+	for locked in RunData.get_player_locked_shop_items(to):
+		if locked[0] is ItemData and locked[0].my_id_hash in limited:
+			count += 1
+	return count
 
 
 static func can_trade(item, from: int, to: int, shop: Node = null) -> bool:

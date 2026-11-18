@@ -35,6 +35,7 @@ const BUTTON_DELAY_SEC := 0.15  # UpgradesUIPlayerContainer's ButtonDelayTimer: 
 const CLIENT_KINDS := ["crate item", "reroll", "upgrade choice"]  # _sequence's steps 2, 3, 4 and 5
 const NEW_PANELS := "new panels"
 const STATS_MARK := "-"  # a stat value no update leaves (the level shown in each panel's stats)
+const POKE := "test.poke"  # another mod's kind (_test_mod_intent)
 
 var _t: Node = null
 var _together: Node = null
@@ -48,6 +49,7 @@ var _client = RunParts.Store.new()  # what a client has of the run, from what wa
 var _client_ok := true  # no body named a part the client lacked
 var _client_ids := {}  # the run part ids last sent
 var _bodies := []  # [kind, player, body]: the states of _sequence that changed the run
+var _pokes := []  # what the POKE handler got: [player, id, arg]
 
 
 func run(t: Node, together: Node):
@@ -97,6 +99,7 @@ func _small_run():
 	_test_idle()
 	_test_views()
 	_test_weapons()
+	_test_mod_intent()
 	yield(_test_crate(), "completed")
 	yield(_test_level_ups(), "completed")
 	_test_safety_net()
@@ -161,6 +164,42 @@ func _test_weapons() -> void:
 		_expect_run("meca upgrade (weapon_meca intent)")
 	if not was_active:
 		ProgressData.active_update_data.erase(MecaChoice.MECA_DLC)
+
+
+# Another mod's press on player 1's panel (UpgradesSync.register_intent): its handler runs for
+# the remote player after the game's checks, once; the state names the host's kinds.
+func _test_mod_intent() -> void:
+	_t._check(
+		not _sync.register_intent("take", self, "_on_poke"),
+		"upgrades change: a mod cannot take a game kind"
+	)
+	var press := _intent(1, POKE, "x", {"arg": 2})
+	_t._check(
+		not _sync.host_apply_intent(_ui, 1, press), "upgrades change: a kind nobody has is dropped"
+	)
+	_t._check(_sync.register_intent(POKE, self, "_on_poke"), "upgrades change: a mod registers one")
+	_t._check(
+		_sync.body(_sync.capture(_ui)).kinds == [POKE],
+		"upgrades change: the state names the host's kinds"
+	)
+	_t._check(
+		not _sync.host_apply_intent(_ui, 1, _intent(1, POKE, "x")),
+		"upgrades change: a press without its arg is dropped"
+	)
+	press = _intent(1, POKE, "x", {"arg": 2})
+	_t._check(_sync.host_apply_intent(_ui, 1, press), "upgrades change: its press is applied")
+	_t._check(_pokes == [[1, "x", 2]], "upgrades change: by its handler %s" % [_pokes])
+	_t._check(
+		not _sync.host_apply_intent(_ui, 1, press), "upgrades change: the same press twice: once"
+	)
+	_sync._mod_kinds.erase(POKE)
+	_stream.step(1.0)  # the revision and the kinds went out
+	_take()
+
+
+func _on_poke(_ui_node: Node, player: int, id: String, arg: int) -> bool:
+	_pokes.append([player, id, arg])
+	return true
 
 
 # Player 0's crates: recycled by intent, then banned (ban token and button given here: the

@@ -1012,6 +1012,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     `_on_weapon_discard_button_pressed` / `_on_weapon_meca_upgrade_selected`) and counts the intent as
     applied only if the weapons changed (the game refuses locked weapons or a missing partner itself). The
     player's weapons are part of the panel revision, so a second press is stale. Meca upgrade: see below.
+  - Other mods' decisions on a panel (protocol 28; `UpgradesSync.register_intent`, `send_intent`), the
+    same contract as the shop's (see Shop): a mod that adds a button to a level-up / crate panel
+    registers a kind of its own (brotato:trade's `trade.crate`: its crate item handed to another
+    player). Host: a remote player's `UPGRADE_INTENT` of that kind (`id`, `arg`: the mod's; `meca`: the
+    panel's meca effect choice, set on the container first as for take) runs
+    `handler(ui, player, id, arg) -> bool` after the checks every intent gets (its own player, its
+    panel's revision, panel not done, not paused); true bumps the sender's revision (a second press
+    of the same message is stale even if the panel shows the same), forces the run check and flushes
+    like a game intent. A game kind cannot be registered. The state names the host's kinds (`kinds`,
+    in the key). Client: `is_puppet_ui(ui)` (puppet mode) tells the mod it must not change the run,
+    `host_handles(kind)`, `own_player()` (the panel that runs here, -1 while none does) and
+    `send_intent(ui, player, kind, id, arg)` (false: not this client's own panel, or the host lacks the
+    kind).
   - Meca upgrade (protocol 10; `sync/meca_choice.gd`, the same for the crate weapon popup and the shop's
     item popup). Game rule: `ItemPopup._get_upgrade_preview` rolls the two stat options
     (`DLC2Data.meca_item`) when the upgrade button is hovered or pressed and keeps that roll per weapon
