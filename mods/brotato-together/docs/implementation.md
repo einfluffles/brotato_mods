@@ -885,7 +885,10 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
     player's press runs `handler(shop, player, slot, id, arg) -> bool` after the checks every press
     gets (the sender's own player, the panel revision, not paused); true counts like an applied
     press of the game (revision bumped, run serialized, state flushed), so the same message twice is
-    applied once. A game kind cannot be registered. The state names the host's kinds (`kinds`, in the
+    applied once. `register_intent(..., false)` skips the revision for a kind whose slot + id name
+    its target and whose handler checks everything again (brotato:trade): a second press sent
+    before the host's answer runs too (with the revision, two quick trades of the same item lost
+    the second). A game kind cannot be registered. The state names the host's kinds (`kinds`, in the
     key). Client: `is_puppet_shop(shop)` tells the mod it must not change the run,
     `host_handles(kind)` whether the host has the mod, `own_player()` whose panel is local, and
     `send_intent(shop, player, kind, slot, id, arg)` sends a press of the own panel (false: not

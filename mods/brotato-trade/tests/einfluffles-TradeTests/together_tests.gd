@@ -73,32 +73,42 @@ func _host(input: Node):
 	_t.check(not _apply(ITEM, slot, _plain.my_id, 7), "nor to a player who is not there")
 	var unique_slot: int = RunData.get_player_items_ref(REMOTE).find(_unique)
 	_t.check(not _apply(ITEM, unique_slot, _unique.my_id, 0), "nor a unique item to its owner")
-	_t.check(not _apply(ITEM, slot, _plain.my_id, 0, -1), "a request on an old panel is dropped")
 	_t.check(_t.ledger() == before, "dropped requests change nothing")
 
+	# Two quick trades of the same thing: the second leaves the client before the host's state
+	# with the first arrived, so both carry the same panel revision.
 	var request := _intent(ITEM, slot, _plain.my_id, 0)
+	var again := _intent(ITEM, slot, _plain.my_id, 0)
 	_t.check(_sync.host_apply_intent(_shop, REMOTE, request), "a remote player's trade is applied")
 	_t.check(
 		_count(0, _plain) == 1 and _count(REMOTE, _plain) == 1, "one of its two copies changed hands"
 	)
-	_t.check(
-		not _sync.host_apply_intent(_shop, REMOTE, request),
-		"the same request arriving twice is applied once"
-	)
-	_t.check(_count(0, _plain) == 1 and _t.ledger() == before, "no second copy, nothing lost")
 	_t.check(_row_has(0, _plain), "the host's panels show it")
+	_t.check(
+		_sync.host_apply_intent(_shop, REMOTE, again),
+		"a second trade of the same item made before the host's answer is applied too"
+	)
+	_t.check(
+		_count(0, _plain) == 2 and _count(REMOTE, _plain) == 0 and _t.ledger() == before,
+		"both copies changed hands, nothing lost"
+	)
+	_t.check(not _sync.host_apply_intent(_shop, REMOTE, again), "a third finds nothing to give")
+	_t.check(_shop.trade_give(_plain, 0, REMOTE), "(one given back)")
 
 	var weapon = RunData.get_player_weapons_ref(REMOTE)[1]
 	request = _intent(WEAPON, 7, weapon.my_id, 0)
+	again = _intent(WEAPON, 1, weapon.my_id, 0)
 	_t.check(
 		_sync.host_apply_intent(_shop, REMOTE, request),
 		"a weapon trade is applied, found by its id when the slot is off"
 	)
-	_t.check(not _sync.host_apply_intent(_shop, REMOTE, request), "and only once")
+	_t.check(_sync.host_apply_intent(_shop, REMOTE, again), "a quick second one too")
+	_t.check(not _sync.host_apply_intent(_shop, REMOTE, again), "a third finds nothing to give")
 	var sizes := [
 		RunData.get_player_weapons_ref(0).size(), RunData.get_player_weapons_ref(REMOTE).size()
 	]
-	_t.check(sizes == [1, 1], "one weapon each now (%s)" % [sizes])
+	_t.check(sizes == [2, 0], "both weapons changed hands (%s)" % [sizes])
+	_t.check(_shop.trade_give(RunData.get_player_weapons_ref(0)[1], 0, REMOTE), "(one given back)")
 	_t.check(_t.ledger() == before, "the run still holds exactly the same things")
 	yield(_t.frames(2), "completed")
 
@@ -161,6 +171,12 @@ func _client():
 	)
 	_t.check(_t.ledger() == before, "nothing changed hands here")
 	_t.check(not popup._focused, "the popup closed like after any decision")
+	local.last_intent = {}
+	popup.emit_signal("trade_requested", own, 0)
+	_t.check(
+		local.last_intent.hash() == sent.hash(),
+		"a second trade before the host's answer leaves with the same revision (%s)" % [sent]
+	)
 
 	var weapon = RunData.get_player_weapons_ref(REMOTE)[1]
 	popup.emit_signal("trade_requested", weapon, 0)
