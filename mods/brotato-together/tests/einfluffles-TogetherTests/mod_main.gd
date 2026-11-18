@@ -99,6 +99,12 @@ const ClientReportTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/client_report_tests.gd"
 )
 const AxolotlTests := preload("res://mods-unpacked/einfluffles-TogetherTests/axolotl_tests.gd")
+const OwnPickupsTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/own_pickups_tests.gd"
+)
+const DeadPlayerTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/dead_player_tests.gd"
+)
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -125,6 +131,7 @@ const SUITES := [
 	"looks",
 	"damage",
 	"battle_scene",
+	"dead_player",
 	"selection",
 	"state_stream",
 	"shop_change",
@@ -138,6 +145,7 @@ const SUITES := [
 	"progress",
 	"client_report",
 	"axolotl",
+	"own_pickups",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -393,6 +401,11 @@ func _suite_battle_scene(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
+func _suite_dead_player(together: Node):
+	_suite = DeadPlayerTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
 # sync/state_stream.gd with its own streams on a fake session; touches no game state.
 func _suite_state_stream(together: Node):
 	_suite = StateStreamTests.new()
@@ -472,6 +485,12 @@ func _suite_client_report(together: Node):
 # co-op: no method call on null (a crash in a release build of the game).
 func _suite_axolotl(together: Node):
 	_suite = AxolotlTests.new(self)
+	yield(_suite.run(together), "completed")
+
+
+func _suite_own_pickups(together: Node):
+	coop_run(3)
+	_suite = OwnPickupsTests.new(self)
 	yield(_suite.run(together), "completed")
 
 

@@ -43,8 +43,18 @@ static func register(handler: Object) -> void:
 			LOG_NAME
 		)
 		return
-	shop_sync.register_intent(KIND_WEAPON, handler, "on_remote_weapon")
-	shop_sync.register_intent(KIND_ITEM, handler, "on_remote_item")
+	_register(shop_sync, KIND_WEAPON, handler, "on_remote_weapon")
+	_register(shop_sync, KIND_ITEM, handler, "on_remote_item")
+
+
+# Without the panel revision: a second trade sent before the host's state with the first
+# arrived carries the same revision and was dropped as stale. The host checks it all again.
+static func _register(shop_sync: Object, kind: String, handler: Object, method: String) -> void:
+	for info in shop_sync.get_method_list():
+		if info.name == "register_intent" and info.args.size() > 3:
+			shop_sync.register_intent(kind, handler, method, false)
+			return
+	shop_sync.register_intent(kind, handler, method)
 
 
 # Whether player `from` can trade from its panel of this shop.

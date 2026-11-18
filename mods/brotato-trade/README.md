@@ -61,7 +61,7 @@ Your panel goes on to your next crate or level-up, as after *Take*.
 Works online with [brotato:together](../brotato-together). The host needs both mods; a client
 needs brotato:trade to trade itself (without it, it still sees what the others trade). A client
 whose host has no brotato:trade gets no Trade button. brotato:together must be the version with
-intents for other mods (protocol 21 for the shop, protocol 28 for crates).
+intents for other mods (protocol 21 for the shop, protocol 30 for crates).
 
 ## How it works
 
@@ -72,10 +72,11 @@ intents for other mods (protocol 21 for the shop, protocol 28 for crates).
   did not arrive goes back to the giver. No frame, save or network state sees it in both lists
   or in none.
 - **Online, only the host changes the run.** A client's Trade press leaves as a shop intent
-  (`trade.item` / `trade.weapon`: the object's place in the giver's list, its id, the receiver),
-  with the revision of the panel it was pressed on. The host checks sender, revision, place, id
-  and the rules again and applies it with the same code as a local trade. A request that arrives
-  twice is applied once; the result reaches every client with the host's next shop state.
+  (`trade.item` / `trade.weapon`: the object's place in the giver's list, its id, the receiver).
+  The host checks sender, place, id and the rules again and applies it with the same code as a
+  local trade; the result reaches every client with the host's next shop state. A trade skips the
+  panel revision the game's own presses carry: two quick trades of the same item both count
+  (with the revision, the second was dropped as stale until the host's answer had arrived).
 - **Crates** (`extensions/ui/upgrades_ui.gd`): the game's Take runs with the receiver as the one
   who takes. The container's press (without its check of the giver's weapon slots) emits its
   `item_take_button_pressed`; for that press the option the panel processes names the receiver,

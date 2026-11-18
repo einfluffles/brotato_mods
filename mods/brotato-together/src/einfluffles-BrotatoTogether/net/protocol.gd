@@ -28,7 +28,7 @@ enum Msg {
 	# Crate weapon popup: kind "weapon_combine" | "weapon_discard" | "weapon_meca_roll" (the
 	# host rolls the two meca options, sent in the upgrades state) | "weapon_meca" (meca: the
 	# index of the option picked), id (the weapon's my_id), weapon (its slot in the sender's
-	# weapons). Other mods' kinds (UpgradesSync.register_intent; protocol 28): id, arg (theirs
+	# weapons). Other mods' kinds (UpgradesSync.register_intent; protocol 30): id, arg (theirs
 	# to define) and meca (the panel's meca effect choice)
 	UPGRADE_INTENT,
 	# client -> host: battle_id, page (the sender's carousel page), target (its cursor as a
@@ -59,9 +59,15 @@ enum Msg {
 	STATE,
 }
 
-# 28: other mods' decisions on the level-up / crate panels (UPGRADE_INTENT with their own kinds
+# 27: scroll positions of every player's panel travel both ways (PANEL_SCROLL, state section
+# scrolls); the menu state no longer carries `scrolls`.
+# 28: a snapshot's player flags carry Player.dead (PLAYER_DEAD); clients no longer take health 0
+# for dead (a Veteran who died starts the next wave alive at 0 health).
+# 29: the snapshot's player stats end with the player's hit protection (tardigrade charges), so
+# a client's HUD counter and life bar tint follow the host's blocked hits.
+# 30: other mods' decisions on the level-up / crate panels (UPGRADE_INTENT with their own kinds
 # and arg; the upgrades state names the host's kinds).
-const VERSION := 28
+const VERSION := 30
 # How long one side carries on without the other's stream (snapshots on a client, INPUT on the
 # host) before it counts as gone rather than late. Both ends share it: a client predicts its own
 # player for that long without snapshots (sync/battle_client.gd PREDICTION_STALE_MSEC), and the
