@@ -22,8 +22,8 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   battle (TYPE_DEF); the wave's unit scenes, the players' projectile scenes and gold are announced with
   BATTLE_START so clients `load()` them while the scene loads, not mid-wave.
 - Snapshot wire format (`sync/snapshot.gd`, since protocol 4): hand-packed bytes, little endian. u32 battle id,
-  u32 host msec, u16 wave time (1/100 s); per player u8 flags, i16 x/y (0.5 px), varint input ack,
-  [zigzag varints health/max health/gold, varint level, f32 xp], u8 weapon count + "sprite moved" bitmask,
+  u32 host msec, u16 wave time (1/100 s); per player u8 flags (dead: protocol 28), i16 x/y (0.5 px), varint input ack,
+  [zigzag varints health/max health/gold, varint level, f32 xp, varint hit protection (protocol 29)], u8 weapon count + "sprite moved" bitmask,
   i16 angle (+ i16 sprite x/y in 1/8 px, i16 sprite angle) [+ weapon slots, speed: see Scene
   state]; u16 entity count, types as runs
   [varint type, varint length], u16 net ids, 4-bit flags, i16 x/y per entity not resting; poses as
@@ -58,6 +58,19 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   round trip of running). No wire change: the event has been there since protocol 11. A dead player is
   shown at the host's position anyway; nothing else stops a player mid-wave (`_move_locked` is enemies'
   only).
+- Dead players (protocol 28): a snapshot's player flags carry `Player.dead` (`PLAYER_DEAD`, every
+  snapshot); the client plays the death (`PuppetEntity.player_died`) when it is set. Until then clients
+  took health 0 for dead, but a Veteran (`no_cure_between_wave`) who died starts the next wave alive at
+  0 health (`Player._get_health_kept_between_waves`; `main._ready` lifts everyone else to at least 1),
+  so clients hid his model all wave while the host's player ran and shot.
+- Hit protection (protocol 29): tardigrades give `Player._hit_protection` charges, each blocking one
+  hit (`Player.get_damage_value`). The HUD counter (`PlayerUIElements.update_hit_protection_count`,
+  from `main._on_player_health_updated`) and the life bars' purple tint (`main._physics_process` ->
+  `life_bar_effects()` -> `UIProgressBar.update_color_from_effects`) both read that field, which a
+  puppet only set once from the run's effects: on clients the counter never went down and the bars
+  stayed purple at 0. It is the last of the player stats now (sparse like them; 1 B when sent), and
+  `BattleScene.apply_hit_protection` (from `BattleClient._apply_player_stats`) sets it and updates
+  the counter (a blocked hit changes no health, so no `health_updated` does).
 - Render delay (`sync/render_delay.gd`): 100 ms behind the newest snapshot on a good connection (room for
   ~67 ms of lateness; nothing changes there). When the newest snapshot is all there is, render time holds on
   it (the delay grows by as long as the stall lasts, up to 500 ms) instead of running past it: the world
@@ -68,6 +81,25 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   until it has been calm for 5 s. Render time never runs backwards.
 - Client puppets of non-Entity scenes (projectiles, gold, consumables) are pooled per type like the game's
   Entity pool (out of the tree; freed when the battle state resets).
+- Own pickups (`sync/own_pickups.gd`, no wire change): the own player is predicted ahead while
+  consumables show the host's world ~100 ms back, so a fruit or crate the player ran over vanished a
+  round trip plus the render delay later, behind it (about 70 to 100 px at running speed). In the game a
+  touch takes a consumable (`Player._on_ItemPickupArea_area_entered`: the pickup circle, r 32 at
+  (0, -24), against the item's 16 px box); only a healing one is attracted, and only below max health
+  (`_on_ItemAttractArea_area_entered`, r 150 x pickup range), so at full health a fruit, and a crate
+  always, waits for the touch. The client runs those rules on its predicted position (no correction
+  blend) for consumables standing where the newest snapshot has them (a pushed-out or attracted one
+  moves): a touch takes the puppet out of the mirror with one of its `pickup_sounds`; below max health a
+  healing one in the attract circle first flies to the player like `Item._physics_process` (500 px/s,
+  +20 per tick; not while a heal taken here is unconfirmed: the health shown lacks it). The id is held
+  (not respawned) until the newest snapshot drops it too; that snapshot's matching pickup sound is
+  removed before it is queued. Still there once the host has applied 10 more inputs (`CONFIRM_INPUTS`;
+  at most 60 snapshots), it is released, respawns where the host has it and is never predicted again (no
+  take and come back loop). Taken by another player meanwhile, it vanished here at the own player
+  instead (the client can't tell who took it). Nothing while the prediction is off (pause, stall, wave
+  end, dead): a flight goes back where it stood. Gold is not predicted. Tests: `own_pickups_tests.gd`
+  (the host's physics takes a crate exactly where `OwnPickups.overlaps` says, 2 px in and out on three
+  sides).
 - Boss parts: clients spawn in snapshot order and the host lists `bosses` first; a `BrachiosaurusFoot` waits
   until a "Brachiosaurus" puppet exists (its `_ready` finds it by name). Extensions skip, while puppeting,
   the foot's `shoot()` and `StayEdgesOfMapMovementBehavior.move_away()` (called by the foot's `_ready` on its
@@ -685,7 +717,7 @@ How the mod uses the hooks in [`docs/brotato-hooks.md`](../../../docs/brotato-ho
   ownership-related: zones (`ZoneService.zones` lists all), enemy/boss scenes (loaded by path),
   `get_dlc_data_by_id`, the run's `enabled_dlcs` / `active_update_data_ids` (from the host's run state).
   DLC drops (poisoned / meca / mutant / mutation fruit, meca parts) were never in `ItemService.consumables`,
-  even for owners: `BattleClient._find_consumable` also reads them from every `DLCData`.
+  even for owners: `OwnPickups.find_data` (`sync/own_pickups.gd`) also reads them from every `DLCData`.
 - WELCOME carries the host's own DLCs; on the first accepted WELCOME (before `peer_ready`) the client
   borrows the ones it lacks (only ids in `ProgressData.dlc_ids`): stashes `available_dlc_ids`,
   `active_update_data`, the unlock lists `save()` writes, `ItemService._tiers_data` and its id lookups;

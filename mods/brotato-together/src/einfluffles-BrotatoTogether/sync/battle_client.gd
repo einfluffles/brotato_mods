@@ -35,6 +35,7 @@ const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/p
 const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const RenderDelay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/render_delay.gd")
+const OwnPickups := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/own_pickups.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
 const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
@@ -128,6 +129,7 @@ var _looks = Looks.new()
 var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppets
 var _render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
 var _snapshot_gaps = StreamGaps.new("snapshot")  # stalls of the host's snapshots, for the log
+var _pickups = OwnPickups.new()  # consumables the own player picks up
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -308,6 +310,7 @@ func _reset_battle_state() -> void:
 	_battle_scene = BattleScene.new()
 	_render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
 	_snapshot_gaps.reset()
+	_pickups = OwnPickups.new()
 
 
 func _on_node_added(node: Node) -> void:
@@ -420,25 +423,7 @@ func _define_type(idx, key) -> void:
 	elif parts.size() > 1:
 		var tag: String = parts[1]
 		var plain: bool = tag == CURSED_TAG or PuppetEntity.BIRTH_TAGS.has(tag)
-		_type_data[idx] = tag if plain else _find_consumable(tag)
-
-
-func _find_consumable(my_id: String):
-	for data in ItemService.consumables:
-		if data.my_id == my_id:
-			return data
-	# DLC drops (poisoned / meca / mutant / mutation fruit, meca parts) aren't in that list (not
-	# even for owners): they are DLCData properties, which every copy of the game has.
-	for update in ItemService.update_data_list:
-		var dlc_data = update.dlc_data if update != null else null
-		if dlc_data == null:
-			continue
-		for property in dlc_data.get_property_list():
-			if property.usage & PROPERTY_USAGE_SCRIPT_VARIABLE:
-				var value = dlc_data.get(property.name)
-				if value is ConsumableData and value.my_id == my_id:
-					return value
-	return null
+		_type_data[idx] = tag if plain else OwnPickups.find_data(tag)
 
 
 func _on_snapshot(snapshot: Dictionary) -> void:
@@ -464,6 +449,8 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 	Snapshot.resolve(snapshot, _resolve_cache)
 	Facing.resolve(snapshot, _resolve_cache)
 	_buffer.insert(i, snapshot)
+	if i == _buffer.size() - 1:
+		_pickups.confirm(snapshot, _you, _types)  # before its pickup sound is queued
 	for event in snapshot.events:
 		if _events.size() < MAX_QUEUED_EVENTS:
 			_events.append([snapshot.t, event])
@@ -490,6 +477,9 @@ func _process(delta: float) -> void:
 	interp_lag_msec = int(_buffer[-1].t - render_t)
 	_apply_players(from, to, alpha, _buffer[-1], delta)
 	_apply_entities(from, to, alpha)
+	var at := _own_display - _own_error  # without the blend: where the host will have it
+	for id in _pickups.update(_entities, _picker(), at, _own_seq, _buffer[-1], to, delta):
+		_drop_entity(id)
 	_apply_wave_timer(to.wave_time_left)
 	_fire_events(render_t)
 	ClientReport.mirror_cost(OS.get_ticks_usec() - started, _entities.size())
@@ -503,6 +493,8 @@ func _apply_players(
 		var player = players[i]
 		BattleScene.apply_speed(player, newest.players[i])  # before the prediction reads it
 		_battle_scene.follow_weapons(player, i, to.players[i])  # before weapons apply by index
+		if Snapshot.is_dead(newest.players[i]) and not player.dead:
+			PuppetEntity.player_died(player)
 		if player.dead:
 			_move(player, "p%s" % i, to.players[i][PF.POSITION])
 		elif i == _you and i < newest.players.size():
@@ -601,9 +593,8 @@ static func _in_zone(position: Vector2) -> Vector2:
 # HUD values (the HUD listens to these signals). Level-ups only update visuals here: the game's
 # own levelled_up handler would also change stats, which is the host's job.
 func _apply_player_stats(player: Node, i: int, entry: Array) -> void:
-	if entry[PF.HEALTH] <= 0 and not player.dead:
-		PuppetEntity.player_died(player)
 	_feedback.player_stats(_main, i, entry)  # heal and level-up texts
+	BattleScene.apply_hit_protection(_main, i, player, entry)
 	if (
 		player.current_stats.health != entry[PF.HEALTH]
 		or player.max_stats.health != entry[PF.MAX_HEALTH]
@@ -661,12 +652,13 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 			_despawn(node)  # the host reused the id for another kind of entity
 			node = null
 		if node == null or not is_instance_valid(node):
-			node = _spawn(types[i])
+			node = null if _pickups.holds(id) else _spawn(types[i])
 			if node == null:
 				continue
 			_entities[id] = node
 			_entity_types[id] = types[i]
 			_entity_kinds[id] = _kind_of(node)
+			_pickups.spawned(id, node)
 			_last_positions.erase(id)
 			_forget_despawned(node)  # reused from the pool: no longer the old id's target
 			placed = false
@@ -735,12 +727,8 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 	for id in _entities.keys():
 		if not alive.has(id):
 			FeedbackMirror.gold_gone(_main, _entities[id])  # picked up: its sparkle
-			_despawn(_entities[id])
 			_despawned[id] = [_entities[id], now + DESPAWN_GRACE_MSEC]
-			_entities.erase(id)
-			_entity_types.erase(id)
-			_entity_kinds.erase(id)
-			_last_positions.erase(id)
+			_drop_entity(id)
 	for id in _despawned.keys():
 		if now > _despawned[id][1]:
 			_despawned.erase(id)
@@ -765,6 +753,21 @@ func _kind_of(node: Node) -> int:
 	if not layout.parts.empty() or not layout.group_parts.empty():
 		kind |= KIND_POSE
 	return kind
+
+
+func _drop_entity(id: int) -> void:
+	_despawn(_entities[id])
+	_entities.erase(id)
+	_entity_types.erase(id)
+	_entity_kinds.erase(id)
+	_last_positions.erase(id)
+
+
+# The own player while its prediction runs and it lives: it picks up consumables at once.
+func _picker():
+	var players: Array = _main.get("_players")
+	var live: bool = _you >= 0 and _you < players.size() and _own_base_t >= 0 and _predicting()
+	return players[_you] if live and not players[_you].dead else null
 
 
 func _forget_despawned(node: Node) -> void:

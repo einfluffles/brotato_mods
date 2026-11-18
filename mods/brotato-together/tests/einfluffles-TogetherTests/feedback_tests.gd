@@ -2,8 +2,9 @@ extends Reference
 # Feedback the client shows without game logic (sync/feedback_mirror.gd, protocol 11): the wire
 # format of its events and their size, then a host battle that explodes (once a pooled
 # explosion reused between two snapshots), pays out bonus gold, heals, levels up, changes a
-# player's stats, picks up crates and ends its wave, replayed on a client: also the stat icons
-# over the player (protocol 18) and the HUD's picked-up crates (sync/pickup_list.gd).
+# player's stats, picks up crates, uses up tardigrade charges and ends its wave, replayed on a
+# client: also the stat icons over the player (protocol 18), the HUD's picked-up crates
+# (sync/pickup_list.gd) and the charges' counter and life bar tint (protocol 28).
 # Driven from mod_main.gd (late suites); checks go through its _check.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -21,6 +22,7 @@ const ROCKET_EFFECT := "res://weapons/ranged/rocket_launcher/rocket_launcher_eff
 const SNAPSHOTS := 30  # 1 s of battle
 const HEAL := 3
 const BONUS := 12
+const PROTECTION := 2
 
 var t: Node  # the test mod: _check, scene tree
 var _weapon_anims = null  # WeaponAnimTests, kept alive across its yields
@@ -183,6 +185,9 @@ func _test_battle(mod: Node):
 	CoopService.clear_coop_players()
 	for i in 2:
 		CoopService.connected_players.push_back([i, CoopService.PlayerType.GAMEPAD_XBOX])
+	var effects: Dictionary = RunData.get_player_effects(0)
+	var saved_protection = effects[Keys.hit_protection_hash]
+	effects[Keys.hit_protection_hash] = PROTECTION  # two tardigrades
 	t.get_tree().change_scene("res://main.tscn")
 	yield(t.get_tree(), "idle_frame")
 	yield(t.get_tree(), "idle_frame")
@@ -202,6 +207,8 @@ func _test_battle(mod: Node):
 	var puppet_main: Node = client._main
 	var seen: Dictionary = yield(_replay(client, puppet_main, recorded), "completed")
 	_check_client(client, puppet_main, seen, host_side)
+	_check_protection(puppet_main, seen, host_side)
+	effects[Keys.hit_protection_hash] = saved_protection
 	_check_pickups(mod.pickup_list, client, puppet_main, host_side)
 	yield(t.get_tree().create_timer(1.2), "timeout")  # "explode" lasts 1 s
 	var pooled: Node = seen.get("explosion")
@@ -246,6 +253,10 @@ func _record_host(host: Node, main: Node, host_side: Dictionary):
 				explosions.append(_explode(effect, corner + Vector2(40 * k, 0)))
 			3:
 				players[0].current_stats.health -= HEAL
+			5, 16:
+				var hit := TakeDamageArgs.new(-1)
+				hit.dodgeable = false  # no dodge roll, no iframes
+				players[0].take_damage(7, hit)  # blocked: a charge used up
 			6:
 				explosions[0]._animation_player.advance(1.0)  # ends: end_explosion pools it ...
 				yield(t.get_tree(), "idle_frame")  # (in case animation_finished comes deferred)
@@ -274,6 +285,7 @@ func _record_host(host: Node, main: Node, host_side: Dictionary):
 	host_side["scale"] = explosions[1].scale.x
 	host_side["reused"] = explosions[2] == explosions[0]
 	host_side["bonus"] = RunData.bonus_gold
+	host_side["protection"] = players[0]._hit_protection
 	return recorded
 
 
@@ -413,7 +425,9 @@ func _check_host_events(recorded: Array, host_side: Dictionary) -> void:
 
 # Replays the recording and notes what the client showed meanwhile.
 func _replay(client: Node, puppet_main: Node, recorded: Array):
-	var seen := {"explosions": 0, "texts": {}, "icons": {}, "label": 0, "sparkles": 0}
+	var seen := {
+		"explosions": 0, "texts": {}, "icons": {}, "label": 0, "sparkles": 0, "protection": {}
+	}
 	var sparkle: String = puppet_main._effects_manager.gold_pickup_particles.resource_path
 	var replay_start := OS.get_ticks_msec()
 	for msg in recorded:
@@ -446,6 +460,9 @@ func _sample(puppet_main: Node, seen: Dictionary, sparkle: String) -> void:
 	seen.label = max(seen.label, puppet_main._wave_cleared_label.visible_characters)
 	for effect in puppet_main._effects.get_children():
 		seen.sparkles += 1 if effect.filename == sparkle else 0
+	var counter: Node = puppet_main._players_ui[0].hit_protection
+	if counter.visible:
+		seen.protection[counter.hit_protection_label.text] = true
 
 
 func _check_client(client: Node, puppet_main: Node, seen: Dictionary, host_side: Dictionary):
@@ -483,3 +500,22 @@ func _check_client(client: Node, puppet_main: Node, seen: Dictionary, host_side:
 		"bonus gold bag shows the host's value (%s)" % bag._gold_label.text
 	)
 	t._check(client._feedback._wave_ended, "client knows the wave ended")
+
+
+# Tardigrade: the host's blocked hits use up the charges; the client's HUD counter counts down
+# and hides at 0, and the life bars are red again (main._physics_process tints them).
+func _check_protection(puppet_main: Node, seen: Dictionary, host_side: Dictionary) -> void:
+	var ui = puppet_main._players_ui[0]
+	t._check(host_side.protection == 0, "the host's two blocked hits use up both charges")
+	t._check(
+		seen.protection.keys() == ["2", "1"] and not ui.hit_protection.visible,
+		"client's charge counter counts down and hides at 0 %s" % [seen.protection.keys()]
+	)
+	t._check(
+		(
+			puppet_main._players[0]._hit_protection == 0
+			and ui.life_bar._non_flash_color == ui.life_bar.progress_color
+			and ui.player_life_bar._non_flash_color == ui.player_life_bar.progress_color
+		),
+		"client's life bars turn red when the charges are gone"
+	)

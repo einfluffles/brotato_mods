@@ -240,6 +240,17 @@ static func apply_speed(player: Node, entry: Array) -> void:
 	player.petrol_malus = 0.0
 
 
+# Tardigrade charges, used up by the host's blocked hits: the HUD counter, and the life bars'
+# tint, which main._physics_process reads from _hit_protection every frame.
+static func apply_hit_protection(main: Node, i: int, player: Node, entry: Array) -> void:
+	if player._hit_protection == entry[PF.HIT_PROTECTION]:
+		return
+	player._hit_protection = entry[PF.HIT_PROTECTION]
+	var players_ui = main.get("_players_ui")
+	if players_ui != null and i < players_ui.size():
+		players_ui[i].update_hit_protection_count(player, player._hit_protection)
+
+
 # One physics tick of a player as Unit._physics_process moves it on the host: test_motion against
 # its collision mask, then once more along what it hit. The body itself stays where it is.
 # result: a Physics2DTestMotionResult to reuse.
