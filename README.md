@@ -3,10 +3,12 @@
 Mods for [Brotato](https://store.steampowered.com/app/1942280/Brotato/), built on the
 [Godot Mod Loader](https://github.com/GodotModding/godot-mod-loader) (6.3.0) that the game ships.
 
-| Mod | Id | |
+| Mod | Id | What it does |
 |---|---|---|
-| [brotato:together](mods/brotato-together) | `einfluffles-BrotatoTogether` | online co-op over Steam P2P |
-| [brotato:trade](mods/brotato-trade) | `einfluffles-BrotatoTrade` | give items and weapons to other players in the co-op shop |
+| [brotato:together](mods/brotato-together) | `einfluffles-BrotatoTogether` | Online co-op through Steam's networking, in place of Steam Remote Play's video stream. |
+| [brotato:trade](mods/brotato-trade) | `einfluffles-BrotatoTrade` | Give, pass on or buy items and weapons for other players in co-op. |
+
+Each mod's README says how to play it, what it does not do yet and what its tests cover.
 
 ## Layout
 
@@ -25,24 +27,38 @@ their own files as `res://mods-unpacked/<mod_id>/...`.
 
 ## Toolchain
 
-Everything runs in a container (podman):
+The tools run in a container that holds GDRE Tools, Godot 3.6 headless and gdtoolkit 3.x. Build it once:
 
 ```sh
-podman build -t brotato-modtools -f tools/Containerfile tools   # GDRE Tools, Godot 3.6 headless, gdtoolkit 3.x
-tools/lint.sh                  # gdlint over mods/
-tools/check.sh [mods/<folder>] # boot the game headless with each mod + its test mod
-tools/check.sh -s <suite>      # only these suites of the test mod (comma-separated), -q: failures only
-tools/package.sh [target]      # -> <target>/<name>/<name>.zip (+ preview.png), default: dist/
-tools/deploy.sh <name> <workshop_item_id>     # replace the subscribed item's zip with the package
+podman build -t brotato-modtools -f tools/Containerfile tools
 ```
 
-`tools/check.sh` uses podman, or docker when podman is missing (`CONTAINER=...` picks one). A test mod
-names its suites in `tests/<test_mod_id>/shards.txt`, one group per line, and every group runs in its own
-game process at the same time. A line ending in `+<mod folder>` also loads that mod's `src/` in its process
-(brotato:trade's tests next to brotato:together). Each process only sees the mods mounted for it. On a slow mount (a Windows drive under WSL) the game runs from a copy of
-`reference/` in `~/.cache/brotato-modtools`, refreshed when `reference/project.godot` changes
-(`MOD_CHECK_RESYNC=1` forces it): booting from the Windows drive takes close to a minute, from the copy
-a few seconds.
+| Command | What it does |
+|---|---|
+| `tools/lint.sh` | Runs gdlint over `mods/`. |
+| `tools/check.sh [mods/<folder> ...]` | Boots the game headless with each mod and its test mod (see [Tests](#tests)). |
+| `tools/package.sh [target]` | Writes `<target>/<name>/<name>.zip` and `preview.png` for every mod (default target: `dist/`). |
+| `tools/deploy.sh <name> <workshop_item_id>` | Replaces the subscribed Workshop item's zip with the package (see [Publishing](#publishing)). |
+
+`tools/check.sh` uses podman, or docker when podman is missing (`CONTAINER=...` picks one).
+`tools/lint.sh` and `tools/package.sh` need podman.
+
+### Tests
+
+`tools/check.sh` needs the decompiled game in `reference/` (see [Game code](#game-code)). It fails
+when the test mod does not print `MOD-TESTS: PASS`, on any script error in mod code, and on a
+game-script error or a `get_meta` / `get_child` / `get_node` engine error while the tests run.
+
+- A test mod is split into named suites. `tools/check.sh -s <suite>[,<suite>]` runs only those, in
+  one game process. `-q` prints failures, info lines and the summary only.
+- `tests/<test_mod_id>/shards.txt` lists one group of suites per line. A full check starts one game
+  process per line, all at the same time.
+- A line that ends in `+<mod folder>` also loads that mod's `src/` in its process. brotato:trade
+  uses this for its tests next to brotato:together. A process sees only the mods mounted for it.
+- On a slow mount (a Windows drive under WSL) the game runs from a copy of `reference/` in
+  `~/.cache/brotato-modtools`, because the game reads about 17000 files while booting and such a
+  mount makes that slow. The copy is refreshed when `reference/project.godot` changes.
+  `MOD_CHECK_CACHE=1` or `0` forces the copy on or off, and `MOD_CHECK_RESYNC=1` refreshes it.
 
 ### Publishing
 
@@ -50,13 +66,15 @@ a few seconds.
 (in the Brotato install folder): select the zip, the preview image (first upload), tags, and the Workshop id
 when updating.
 
-The Steam build of Brotato only loads **subscribed Workshop items** (`<game>/mods` is ignored), so testing
-uses a private Workshop item whose local copy `tools/deploy.sh` overwrites.
+The Steam build of Brotato only loads **subscribed Workshop items** (`<game>/mods` is ignored). To
+try a build in the real game, subscribe to a private Workshop item and overwrite its local copy
+with `tools/deploy.sh`. Steam may put the uploaded version back when it updates or verifies the
+item, so run the script again after that.
 
 ### Game code
 
-`tools/check.sh` and reading the game need a decompiled copy in `reference/` (git-ignored — never commit game
-code). Decompile your own copy:
+`tools/check.sh` and reading the game need a decompiled copy in `reference/`. The folder is
+git-ignored. Decompile your own copy:
 
 ```sh
 mkdir -p reference
@@ -71,8 +89,8 @@ podman run --rm --userns=keep-id -e HOME=/tmp \
 
 Brotato and its code and assets belong to Blobfish. These mods contain none of the game's code or
 assets: they hook into the game at runtime through Godot Mod Loader. This project is not affiliated
-with or endorsed by Blobfish. `reference/` (your own decompiled copy of the game) is git-ignored
-and must never be committed or distributed.
+with or endorsed by Blobfish. `reference/` (your own decompiled copy of the game) must never be
+committed or distributed.
 
-The Workshop preview image is original artwork. Its lettering uses the font Tomson Talks (SIL Open
-Font License 1.1); the font itself is not distributed.
+The Workshop preview images are original artwork. Their lettering uses the font Tomson Talks (SIL
+Open Font License 1.1); the font itself is not distributed.
