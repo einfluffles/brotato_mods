@@ -1,22 +1,17 @@
 extends Reference
-# Global "this client is mirroring the host's run" flag, readable from script extensions.
-# While set, the client's own save file, challenges and achievements must not be touched.
-#
-# Saves are blocked while puppeting (extensions/singletons/progress_data.gd), but the puppet run
-# still overwrites ProgressData fields that the *next* save() writes: the shop resume path sets
-# saved_run_state to the host's run (the title screen would offer "Continue" for it). Turning
-# puppet mode on stashes everything ProgressData.save() persists from the run side; turning it
-# off restores it, so the client's own run and stats come back exactly as they were.
+# Global "this client is mirroring the host's run" flag, readable from script extensions. While
+# set, the client's own save file, challenges and achievements must not be touched.
 
 const META_KEY := "brotato_together_puppet"
 const STASH_KEY := "brotato_together_puppet_stash"
 # Set while the client uses the host's DLC (= session/dlc_borrow.gd META_KEY; not preloaded:
 # the ProgressData / ChallengeService extensions preload this file at mod init).
 const DLC_BORROW_META_KEY := "brotato_together_dlc_borrow"
-# ProgressData fields written by runs (save() serializes all of them).
 # Set around a write of this client's own progress that it earned in the host's run
 # (session/progress_share.gd): the one thing that may reach its save while it mirrors.
 const OWN_META := "brotato_together_own_progress"
+# ProgressData fields a mirrored run overwrites and the next save() would write (saved_run_state:
+# the title screen would offer "Continue" for the host's run). Stashed while the flag is set.
 const STASHED_FIELDS := [
 	"saved_run_state",
 	"last_saved_run_state",
@@ -31,7 +26,6 @@ static func is_active() -> bool:
 	return Engine.has_meta(META_KEY) and Engine.get_meta(META_KEY)
 
 
-# Saves / challenges are off while mirroring the host's run or using its DLC.
 static func blocks_progress() -> bool:
 	return is_active() or Engine.has_meta(DLC_BORROW_META_KEY)
 
@@ -47,8 +41,7 @@ static func set_own_progress(on: bool) -> void:
 		Engine.remove_meta(OWN_META)
 
 
-# This client's own lifetime counters (ProgressData.data as its save has it): the stashed ones
-# while it mirrors a run, else the live ones.
+# ProgressData.data (the lifetime counters) as this client's save has it.
 static func own_data() -> Dictionary:
 	var stash = Engine.get_meta(STASH_KEY) if Engine.has_meta(STASH_KEY) else null
 	if stash is Dictionary and stash.get("data") is Dictionary:
@@ -57,8 +50,7 @@ static func own_data() -> Dictionary:
 	return progress_data.data if progress_data != null else {}
 
 
-# This client's own copy of a list its save keeps (characters_unlocked, ...): the one put aside
-# while it uses the host's DLC (session/dlc_borrow.gd), else the live one.
+# A list this client's save keeps (characters_unlocked, ...), without what it borrowed.
 static func own_list(field: String) -> Array:
 	var borrow = Engine.get_meta(DLC_BORROW_META_KEY) if Engine.has_meta(DLC_BORROW_META_KEY) else null
 	if borrow is Dictionary and borrow.get("progress") is Dictionary and borrow.progress.has(field):

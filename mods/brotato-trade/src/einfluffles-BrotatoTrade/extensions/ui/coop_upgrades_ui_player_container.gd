@@ -1,10 +1,6 @@
 extends "res://ui/menus/ingame/coop_upgrades_ui_player_container.gd"
-# The crate panel (an item found in a crate, end of a wave) gets a Trade button below Take.
-# Trade lists the other players, one button each, with Cancel, in place of Take / Recycle / Ban.
-# A player without room for the item is listed but cannot be picked; with nobody to take it,
-# Trade cannot be pressed. Picking a player asks the UpgradesUI to hand the item over instead of
-# taking it (trade_requested); Cancel (button or key) leads back.
-# Only where trade_ui is set (extensions/ui/upgrades_ui.gd).
+# Adds Trade below Take to a co-op crate panel: it lists the other players in place of Take /
+# Recycle / Ban. Only where trade_ui is set (extensions/ui/upgrades_ui.gd).
 
 signal trade_requested(to_player)
 
@@ -36,7 +32,7 @@ func _ready() -> void:
 	_trade_cancel.connect("pressed", self, "trade_back", [true])
 
 
-# Who can take the item changes with every decision of every player: Trade and the list follow.
+# Polled: who can take the item changes with every decision of every player.
 func _process(_delta: float) -> void:
 	if _trade_button == null:
 		return
@@ -61,7 +57,6 @@ func _process(_delta: float) -> void:
 			_trade_set(_trade_players[i], true, entries[i][1])
 
 
-# Cancel while the players are listed leads back to the buttons.
 func _input(event: InputEvent) -> void:
 	if _trade_choosing and Utils.is_player_cancel_pressed(event, player_index):
 		call_deferred("trade_back", true)
@@ -83,7 +78,6 @@ func finish() -> void:
 	.finish()
 
 
-# The page's cursor while choosing: the first player that can be picked.
 func get_item_focus_button() -> Button:
 	if _trade_choosing:
 		for button in _trade_players:
@@ -97,7 +91,6 @@ func trade_is_choosing() -> bool:
 	return _trade_choosing
 
 
-# From the list back to the item's buttons, the cursor on Trade (else the game's choice).
 func trade_back(refocus: bool) -> void:
 	if not _trade_choosing:
 		return
@@ -162,7 +155,6 @@ func _trade_item_ready() -> bool:
 	return true
 
 
-# shown: visible; ok: can be pressed (the game's own disable / activate: no focus, no mouse).
 func _trade_set(button: Button, shown: bool, ok: bool) -> void:
 	button.visible = shown
 	ok = ok and shown
@@ -175,7 +167,6 @@ func _trade_set(button: Button, shown: bool, ok: bool) -> void:
 		button.disable()
 
 
-# Up and down stay in the list: the players that can be picked, then Cancel.
 func _trade_set_neighbours() -> void:
 	var buttons := []
 	for button in _trade_players + [_trade_cancel]:
@@ -204,11 +195,10 @@ func _trade_collapse() -> void:
 	_trade_hidden = []
 
 
-# A button like Take, at that place among the item's buttons.
 func _trade_add_button(node_name: String, at: int) -> Button:
 	var button := Button.new()
 	button.name = node_name
-	button.set_script(_take_button.get_script())  # the game's press and focus sounds
+	button.set_script(_take_button.get_script())
 	button.theme = _take_button.theme
 	button.add_font_override("font", _take_button.get_font("font"))
 	button.focus_neighbour_left = NodePath(".")
@@ -221,7 +211,7 @@ func _trade_add_button(node_name: String, at: int) -> Button:
 	return button
 
 
-# "Player 2" in that player's colour with its character; entry: [to, ok, combines].
+# entry: [to, ok, combines].
 func _trade_label(button: Button, entry: Array) -> void:
 	var to: int = entry[0]
 	button.set_meta(TRADE_TO_META, to)

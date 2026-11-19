@@ -1,21 +1,7 @@
 extends Node
-# Who may pause, who operates the pause menu, and when the menu does not pause at all.
-# Wave of an online session (host with a peer, or client): the menu is live
-#   (extensions/ui/pause_menu.gd), the game runs on behind it.
-#   Host: opened by a local player's pause as always; that player's character stands still
-#   meanwhile. Remote pause presses never arrive during a battle scene.
-#   Client: its own pause opens the puppet scene's menu for its own slot; its buttons stay
-#   here, the host gets neutral input. Restart / end run are the host's, Quit asks to leave
-#   (on the menu's lobby page, ui/lobby_menu.gd).
-#   The menu closes when the wave ends: the level-up panels need the same buttons.
-# Everything else is a real pause. Level-up panels: the host's local players only. Shop: any
-#   player; when that is a remote player, the menu goes to the host's first local player (the
-#   game's own "change pause ownership" steps from PauseMenu.on_game_lost_focus), since the
-#   remote player can't see it and must not quit or restart blind. The remote player who paused
-#   resumes with pause again (while the menu shows its main page). Clients learn who paused
-#   (section PAUSE_BATTLE via BattleHost; in the shop, section PAUSE_SHOP provided here and
-#   handled by ShopSync).
-# Client: puppet scenes never pause locally (focus loss, pad disconnect, pause button).
+# Who may pause and who operates the pause menu. During a wave of an online session the menu is
+# live (extensions/ui/pause_menu.gd): the game runs on behind it. Everything else is a real pause;
+# a remote player cannot see the host's menu, so it goes to the host's first local player.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -35,12 +21,11 @@ const TEXT_FONT := "res://resources/fonts/actual/base/font_35_outline.tres"
 const HOST_ONLY_BUTTONS := ["%RestartButton", "%EndRunButton"]
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 var input_sync: Node = null
 var battle_client: Node = null
-var lobby_menu: Node = null  # ui/lobby_menu.gd; client: Quit asks there
+var lobby_menu: Node = null  # client: Quit asks there
 
-# host
 var _menu: Node = null  # PauseMenu that is open
 var _pauser_device := -1  # virtual device that paused (-1: the host or nobody)
 var _paused_frame := -1  # the shop pauses on the release event that is still propagating
@@ -48,8 +33,7 @@ var _held_behavior: Node = null  # movement of the live menu's owner, parked on 
 var _held_device := -1
 var _scene_id := 0  # instance id of the scene whose pause menu is watched
 
-# client
-var _pause_armed := false  # own pause went down while the buttons were the game's
+var _pause_armed := false  # client: own pause went down while the buttons were the game's
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -62,7 +46,6 @@ func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
 
 
-# Client: called when a puppet battle / shop scene is ready.
 static func disable_local_pause(scene: Node) -> void:
 	var menu = scene.get("_pause_menu")
 	if menu != null:
@@ -77,8 +60,7 @@ static func banner_text(by: String, by_id: int, local_id: int) -> String:
 	return "Paused by %s" % (by if by != "" else "the host")
 
 
-# The host's pause on a client: the scene dims behind the backdrop of its own pause menu, with
-# who paused in the game's fonts. Lives in the scene it covers, found there by name.
+# The host's pause on a client. The banner lives in the scene it covers, found there by name.
 static func show_banner(parent: Node, visible: bool, text: String) -> void:
 	var banner = parent.get_node_or_null(BANNER_NAME)
 	if banner == null:
@@ -136,9 +118,6 @@ static func _line(node_name: String, text: String, font_path: String) -> Label:
 	return label
 
 
-# --- host ---
-
-
 # [name, steam id] of whoever paused; ["", 0] for the host.
 func paused_by() -> Array:
 	if _pauser_device < 0:
@@ -150,8 +129,7 @@ func paused_by() -> Array:
 	return ["a player", 0]
 
 
-# The battle scene and the shop each have one pause menu. Looked up when the scene changes:
-# a node_added handler would run for every spawn of every wave, also in solo play.
+# Looked up when the scene changes: a node_added handler would run for every spawn of every wave.
 func _watch_scene(scene: Node) -> void:
 	var scene_id := scene.get_instance_id() if scene != null else 0
 	if scene_id == _scene_id:
@@ -169,9 +147,7 @@ func _watch_scene(scene: Node) -> void:
 
 
 # Host: a shop that starts with the tree still paused while its own pause menu is closed (the
-# battle's menu was open when the scene changed). Nobody could use it, and its pause state would
-# keep every client's own panel off until the host paused and resumed. Returns whether it
-# resumed. (UpgradesSync holds the level-up intents of a pause, the known way in.)
+# battle's menu was open when the scene changed). Returns whether it resumed.
 func release_stale_pause(scene: Node) -> bool:
 	if scene == null or scene.filename != SHOP_SCENE or not get_tree().paused:
 		return false
@@ -229,7 +205,7 @@ func _give_menu_to(menu: Node, owner: int) -> void:
 	menu._main_menu.init(owner)
 
 
-# The remote player who paused resumes with its pause button (released, like the game).
+# The remote player who paused resumes with its pause button.
 func _input(event: InputEvent) -> void:
 	if _pauser_device < 0 or not (event is InputEventAction) or event.pressed:
 		return
@@ -240,9 +216,8 @@ func _input(event: InputEvent) -> void:
 		_resume_for_pauser()
 
 
-# The menu's FocusEmulator (the host's local player by now) eats the events of every other
-# player's device before _input above runs, unless the game is listening for joining players
-# (it is not in the shop). The release still reaches the action state, so it is polled too.
+# The menu's FocusEmulator eats the events of every other player's device before _input above
+# runs. The release still reaches the action state, so it is polled too.
 func _poll_pauser_release() -> void:
 	if _pauser_device < 0 or not _pauser_may_resume():
 		return
@@ -267,8 +242,8 @@ func _process(_delta: float) -> void:
 	_update_live_menu()
 
 
-# State stream provider, section PAUSE_SHOP: [paused, by (name), by_id (steam id, 0: the host)]
-# while the host is in the shop (like PAUSE_BATTLE); inactive elsewhere. Handled by ShopSync.
+# Section PAUSE_SHOP: [paused, by (name), by_id (steam id, 0: the host)] while the host is in the
+# shop. Handled by ShopSync.
 func state_key(_section: int) -> String:
 	var scene := get_tree().current_scene
 	if scene == null or scene.filename != SHOP_SCENE:
@@ -283,9 +258,6 @@ func state_body(_section: int) -> Array:
 func _shop_pause_state() -> Array:
 	var by := paused_by()
 	return [get_tree().paused, by[0], by[1]]
-
-
-# --- live menu ---
 
 
 func _update_live_menu() -> void:
@@ -318,7 +290,6 @@ func is_client_battle(main: Node) -> bool:
 	)
 
 
-# Host, every frame of a battle scene.
 func host_update(main: Node) -> void:
 	input_sync.blocked_by[BLOCK_KEY] = 1 << VirtualDevices.PAUSE_INDEX
 	var menu = main.get("_pause_menu")
@@ -347,7 +318,7 @@ func _hold_player(player) -> void:
 		behavior.device = VirtualDevices.IDLE
 
 
-# Client, every frame of its puppet battle. you: its player slot (-1: spectator, no menu).
+# you: the client's player slot (-1: spectator, no menu).
 func client_update(main: Node, you: int) -> void:
 	var menu = main.get("_pause_menu")
 	if menu == null:
@@ -380,7 +351,6 @@ func toggle_client_menu(menu: Node, you: int) -> void:
 		menu.open_live(you)
 
 
-# Once per puppet battle: what only the host may decide is off, Quit means leaving the lobby.
 func _prepare_client_menu(menu: Node) -> void:
 	if menu.has_meta(CLIENT_MENU_META):
 		return
@@ -395,7 +365,6 @@ func _prepare_client_menu(menu: Node) -> void:
 	main_menu.connect("quit_button_pressed", self, "_on_client_quit", [menu])
 
 
-# The lobby page of this menu, with its question.
 func _on_client_quit(_menu: Node) -> void:
 	if lobby_menu != null:
 		lobby_menu.ask_leave()

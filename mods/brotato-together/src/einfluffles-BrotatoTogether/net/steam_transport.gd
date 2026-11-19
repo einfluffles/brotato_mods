@@ -1,9 +1,6 @@
 extends Node
-# Steam lobby + Steam Networking Messages transport (star topology: lobby owner = host).
-#
-# Uses the GodotSteam singleton compiled into Brotato (fetched dynamically, like the game does in
-# singletons/platforms/steam.gd). Payloads are opaque PoolByteArrays; see protocol.gd for
-# the encoding.
+# Steam lobby + Steam Networking Messages transport (star topology: lobby owner = host), on the
+# GodotSteam singleton compiled into Brotato.
 
 signal lobby_ready(lobby_id, is_host)
 signal lobby_failed(reason)
@@ -34,8 +31,8 @@ const MAX_MESSAGES_PER_POLL := 128
 const MAX_HELD_MSEC := 60000  # a longer wait is a clock that does not fit: unknown
 const KICK_CLOSE_MSEC := 3000  # a kicked member's session stays open this long for the KICK
 const LOBBY_KEY_MOD := "brotato_together"
-# Launch options: Steam may connect the two machines directly again (relay-only is the default);
-# the former opt-in to relay-only, still accepted.
+# Launch options. DIRECT_ARG: Steam may connect the two machines directly (relay-only is the
+# default). RELAY_ARG asks for that default: accepted, changes nothing.
 const DIRECT_ARG := "+bt_direct"
 const RELAY_ARG := "+bt_relay"
 # ESteamNetworkingConfigValue P2P_Transport_ICE_Enable and its "disable" value, by GodotSteam's
@@ -53,7 +50,7 @@ const LinkWatch := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/
 const LOG_NAME := "einfluffles-BrotatoTogether:Transport"
 
 var steam: Object = null
-var link_watch = LinkWatch.new()  # each member's session path (direct / relayed), for the log
+var link_watch = LinkWatch.new()
 var local_id := 0
 var lobby_id := 0
 var host_id := 0
@@ -65,9 +62,9 @@ var pending_join_id := 0  # invite waiting for confirmation (joining leaves the 
 var kicked := {}
 
 var relay_only := false  # Steam's direct route is off (see apply_route)
-var route_note := ""  # what apply_route logged (tests)
+var route_note := ""  # what apply_route logged
 var send_rate := 0  # bytes per second apply_send_rate set (0: Steam's default)
-var send_rate_note := ""  # what apply_send_rate logged (tests)
+var send_rate_note := ""  # what apply_send_rate logged
 var join_presence := ""  # the "connect" rich presence we advertise ("" = no Join button)
 var _lobby_tag := ""
 var _next_send_warning_msec := 0
@@ -101,18 +98,8 @@ func setup(lobby_tag: String) -> bool:
 	return true
 
 
-# Steam keeps two routes to a peer, a direct one (ICE, through both players' NATs) and one
-# through its relays (SDR), uses the better one and keeps probing the other to see whether to
-# switch. With both routes, sessions stalled for 0.2 to 3.3 s on a 12 s beat while both lines
-# were clean; relayed only, the same players had none (docs/implementation.md, Route). So the
-# direct route is off by default: one route, nothing to switch between. DIRECT_ARG leaves Steam's
-# default (both routes), for players far from any relay or for testing. It wins over RELAY_ARG
-# (the former opt-in, now the default anyway): it is the only one that asks for a change.
-# Applies to sessions opened afterwards, so it is set before any lobby. Meant for both sides: an
-# older build still offers the direct route, and whether one side alone keeps it from forming is
-# not tested; link_watch warns when a session comes up direct anyway. Without
-# setGlobalConfigValueInt32, or when Steam refuses it, the mod goes on with Steam's default and
-# says so.
+# Relay only by default: with both routes Steam keeps probing the other one, and sessions
+# stalled for up to 3.3 s on clean lines. Applies to sessions opened afterwards.
 func apply_route(args: Array) -> bool:
 	relay_only = false
 	link_watch.relay_only = false
@@ -141,17 +128,8 @@ func apply_route(args: Array) -> bool:
 	return true
 
 
-# Steam paces each session at a fixed rate and does not measure the line: a session starts at
-# 4380 B per round trip, clamped to [SendRateMin, SendRateMax], and keeps it
-# (GameNetworkingSockets, SNP_InitializeConnection / SNP_ClampSendRate). With a ping above
-# 4380 B / min (17 ms at 256 KB/s) that is SendRateMin, which is why steamnetworkingtypes.h says
-# to set both to the same value: a higher max alone does next to nothing. Steam's default,
-# 256 KB/s for both, made 250 KB of reliable run state in the shop wait 954 ms, the snapshots and
-# pings behind it (docs/implementation.md, Send rate). The rate only paces a backlog; with nothing
-# queued nothing changes. Global and before any session, as apply_route; the sending that matters
-# is the host's, so one side alone helps. Without setGlobalConfigValueInt32, or when Steam
-# refuses, the mod goes on with Steam's default and says so. Max goes first: a refused min then
-# leaves about Steam's default (see above), never a min above the max.
+# Steam paces a session at SendRateMin at any ping above 4380 B / rate (17 ms at its default),
+# so min and max are set together, max first: a refused min then never ends up above the max.
 func apply_send_rate() -> bool:
 	send_rate = 0
 	if steam == null or not steam.has_method("setGlobalConfigValueInt32"):
@@ -307,7 +285,7 @@ func held_msec(received_usec: int) -> int:
 
 
 # Steam's own numbers for the connection to a peer (ping, queue_time in usec, pending_reliable,
-# pending_unreliable, send_rate, ...), {} when unavailable. For the log.
+# pending_unreliable, send_rate, ...), {} when unavailable.
 func connection_status(steam_id: int) -> Dictionary:
 	if steam == null or local_id == 0 or not steam.has_method("getSessionConnectionInfo"):
 		return {}  # local_id 0: Steam not running (headless tests)
@@ -458,7 +436,6 @@ func _clear_join_presence() -> void:
 
 
 func _on_session_request(remote_id: int) -> void:
-	# Only accept message sessions from members of our lobby.
 	if is_active() and _is_lobby_member(remote_id):
 		steam.acceptSessionWithUser(remote_id)
 	else:
@@ -472,8 +449,7 @@ func _is_lobby_member(steam_id: int) -> bool:
 	return members.has(steam_id)
 
 
-# Signature differs between GodotSteam versions (3.x: reason, steam id, state, debug message).
-# What happened next (up again, over which path; or still not) follows from net/link_watch.gd.
+# The signature differs between GodotSteam versions, hence four optional arguments.
 func _on_session_failed(a = null, b = null, c = null, d = null) -> void:
 	var text: String = link_watch.session_failed([a, b, c, d], OS.get_ticks_msec())
 	ModLoaderLog.warning(text, LOG_NAME)

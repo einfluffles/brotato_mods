@@ -1,8 +1,7 @@
 extends Control
-# The title screen's animated key art behind the client's waiting screen, so a client in the
-# host's lobby sees Brotato rather than a blank screen. Follows the client's own key-art setting
-# (ProgressData.settings.main_screen_keyart: 0 = newest available, 1 = random, n = fixed), dimmed
-# like the game's menu pages so the status text and player cards stay readable.
+# The title screen's animated key art behind the client's waiting screen, by the client's own
+# key-art setting (ProgressData.settings.main_screen_keyart: 0 = newest available, 1 = random,
+# n = fixed), dimmed like the game's menu pages.
 
 const DIM := Color(0, 0, 0, 0.6)
 

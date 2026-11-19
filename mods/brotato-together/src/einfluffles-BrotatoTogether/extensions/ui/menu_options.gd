@@ -1,8 +1,7 @@
 extends "res://ui/menus/pages/menu_options.gd"
-# The damage meter's switch (sync/damage_meter.gd) in the game's options, Gameplay tab, under
-# "life bars on bosses": a copy of that check button (its look and script, not its handler). The
-# game's Mods menu only lists the installed mods, and the Mod Loader keeps settings but has no
-# screen for them, so the switch sits with the game's own display options. It is this machine's.
+# The damage meter's switch in the game's options, Gameplay tab, under "life bars on bosses": a
+# copy of that check button (its look and script, not its handler). The Mod Loader keeps
+# settings but has no screen for them.
 
 const METER := "/root/ModLoader/einfluffles-BrotatoTogether/DamageMeter"
 const BUTTON_NAME := "DamageMeterButton"

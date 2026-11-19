@@ -1,12 +1,8 @@
 extends Reference
-# Routes game sounds for mirroring (used by the SoundManager/SoundManager2D extensions).
-# Host: every sound the game queues is also handed to a recording sink to be replayed on clients
-#   — BattleHost during a battle (snapshot events), UiSounds otherwise (shop, menus;
-#   sync/ui_sounds.gd). Sounds the game drops itself (all players busy, queue full, playSingle
-#   cooldown) aren't recorded.
-# Client in a mirrored scene (battle, shop): locally triggered sounds are dropped (puppets would
-# e.g. play step sounds from their walk animation, mirrored cursors focus sounds) — only replays
-# of the host's sounds are played.
+# Routes game sounds for mirroring, for the SoundManager / SoundManager2D extensions.
+# Host: every sound the game queues goes to a sink (BattleHost in a battle, UiSounds otherwise).
+# Client in a mirrored scene: local sounds are dropped (puppets' step sounds, mirrored cursors'
+# focus sounds), only the host's are replayed.
 
 const META_SINK := "brotato_together_sound_sink"
 const META_UI_SINK := "brotato_together_ui_sound_sink"
@@ -17,7 +13,6 @@ const SOUND_EXTENSIONS := ["wav", "ogg", "mp3"]
 const SINGLE_COOLDOWN_SLACK := 0.1  # s, see replay()
 
 
-# Client: true if a locally triggered sound must not be played (mirrored scene, not a replay).
 static func drop_local() -> bool:
 	if _sink() != null:
 		return false
@@ -29,7 +24,7 @@ static func drop_local() -> bool:
 	return false
 
 
-# Host: a sound the game queued. cooldown: playSingle's duplicate_cooldown (0 for play()).
+# cooldown: playSingle's duplicate_cooldown (0 for play()).
 static func record(
 	sound: Resource, position, volume_mod: float, pitch_rand: float, always := false, cooldown := 0.0
 ) -> void:
@@ -72,7 +67,6 @@ static func is_muted() -> bool:
 	return Engine.has_meta(META_MUTE) and Engine.get_meta(META_MUTE)
 
 
-# Local sounds suppressed so far (debugging / tests).
 static func dropped_count() -> int:
 	return Engine.get_meta(META_DROPPED) if Engine.has_meta(META_DROPPED) else 0
 

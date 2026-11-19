@@ -1,10 +1,7 @@
 extends Reference
-# Online, every machine has its own screen: a grid that several cursors share (co-op character
-# selection) scrolls after the cursors of this machine's own players only. The game scrolls it
-# for every cursor (FocusEmulator._ensure_control_visible), which is right for local co-op on
-# one screen; a mirrored or remote cursor moving deep into the grid would scroll everybody's.
-# A grid that only one cursor reaches (each player's weapon grid, the shop) still follows it.
-# Without a lobby every player is local, so nothing changes there.
+# A grid that several cursors share (co-op character selection) scrolls after this machine's
+# own players' cursors only. The game scrolls it for every cursor
+# (FocusEmulator._ensure_control_visible), which is right on one shared screen only.
 # Names no game classes: the FocusEmulator extension preloads it at mod init.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -34,8 +31,7 @@ static func follows(emulator: Node, scroll: Node) -> bool:
 	return is_local_player(emulator.player_index) or not is_shared(emulator, scroll)
 
 
-# A player of this machine. While none of them has joined, every cursor counts as local (the
-# grid then follows whoever is in it, as before).
+# While none of this machine's players has joined, every cursor counts as local.
 static func is_local_player(player_index: int) -> bool:
 	var players: Array = CoopService.connected_players
 	if player_index < 0 or player_index >= players.size():

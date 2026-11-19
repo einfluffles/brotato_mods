@@ -1,18 +1,7 @@
 extends Reference
-# The item popup's meca upgrade (DLC primal_dread), on the crate weapon popup of the level-up
-# screen (sync/upgrades_sync.gd) and on the shop's item popup (sync/shop_local.gd,
-# shop_intents.gd). The game rolls the two stat options when the upgrade button is pressed or
-# hovered (ItemPopup._get_upgrade_preview -> DLC2Data.meca_item) and keeps that roll per weapon
-# object in the popup (_upgrade_preview_cache) for as long as the popup lives: closing and
-# reopening it shows the same two options again, and there is no cancel while choosing.
-#
-# Host: the static functions. A client's request rolls with the game's code into the host's
-#   own copy of that player's popup cache (or finds the roll already there), so the rule above
-#   holds for remote players too; the state carries the remembered rolls (entries()). A pick
-#   names the option by index and applies exactly the remembered roll, which is then forgotten.
-# Client: an instance per own popup. The upgrade button no longer rolls: it asks the host, and
-#   once the host's roll is in a state the popup shows it through its own code
-#   (_on_UpgradeButton_pressed with the roll put into its cache). The pick leaves as an index.
+# The item popup's meca upgrade (DLC primal_dread). The game rolls the two stat options in the
+# popup and keeps the roll per weapon object (_upgrade_preview_cache) while the popup lives.
+# Here the host rolls (static functions); a client's popup asks for the roll and picks by index.
 
 signal roll_requested(weapon)
 signal picked(weapon, index)
@@ -27,9 +16,6 @@ var _connected := []  # [source, signal, method]
 var _waiting = null  # the weapon whose roll was asked for
 var _picked = null  # the weapon item_meca_upgrade_selected named
 var _choice := -1  # the effect button pressed
-
-
-# --- host ---
 
 
 static func dlc_data():
@@ -81,8 +67,6 @@ static func take(item_popup: Node, weapon, p: int, index):
 	return dlc_data().change_effect_option_to_modular_effect(preview, index)
 
 
-# Player p's remembered rolls, for the state: what the popup needs to draw the two effect
-# buttons (key hash for the icon, value for "+n"), per weapon still owned.
 static func entries(item_popup: Node, p: int) -> Array:
 	var list := []
 	if item_popup == null:
@@ -110,8 +94,6 @@ static func options(item) -> Array:
 	return found
 
 
-# A client's player's rolls from the network: only well-formed entries with stats the game
-# knows.
 static func parse(value) -> Array:
 	var list := []
 	if typeof(value) != TYPE_ARRAY:
@@ -130,9 +112,6 @@ static func parse(value) -> Array:
 	return list
 
 
-# --- client ---
-
-
 # Cuts the popup's own roll on press (a client's popup never rolls an option to pick from).
 static func cut(item_popup: Node) -> void:
 	var button = item_popup.get("_upgrade_button")
@@ -140,7 +119,6 @@ static func cut(item_popup: Node) -> void:
 		button.disconnect("pressed", item_popup, "_on_UpgradeButton_pressed")
 
 
-# The own popup's upgrade button asks the host; its pick is reported as an index.
 func attach(item_popup: Node, p: int) -> void:
 	detach()
 	popup = item_popup
@@ -169,8 +147,8 @@ func detach() -> void:
 	_choice = -1
 
 
-# A state arrived: the host's rolls for this player. The one asked for is shown if the popup
-# still waits for it (closed in the meantime: nothing to show, the roll stays on the host).
+# The roll asked for is shown if the popup still waits for it. If it was closed in the meantime,
+# the roll stays on the host.
 func set_rolls(value) -> void:
 	rolls = parse(value)
 	if _waiting == null or not is_instance_valid(popup):
@@ -231,8 +209,8 @@ func _roll_of(weapon) -> Array:
 	return []
 
 
-# The popup's two signals for one pick (effect button, then item_meca_upgrade_selected, in
-# whatever order Godot calls them): sent once both are known.
+# One pick raises two of the popup's signals (effect button, item_meca_upgrade_selected) in an
+# order that is not fixed: sent once both are known.
 func _on_choice(index: int) -> void:
 	_choice = index
 	_send_pick()

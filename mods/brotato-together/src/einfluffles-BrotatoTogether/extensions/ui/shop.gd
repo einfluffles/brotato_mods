@@ -1,5 +1,5 @@
 extends "res://ui/menus/shop/shop.gd"
-# The solo shop: the same as extensions/ui/coop_shop.gd (ui/shop_gear.gd).
+# The game's solo shop with the two fixes of ui/shop_gear.gd.
 
 const ShopGear := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/shop_gear.gd")
 

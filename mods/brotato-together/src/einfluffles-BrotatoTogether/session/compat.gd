@@ -1,9 +1,7 @@
 extends Reference
-# Join compatibility, checked by the host on HELLO (the lobby tag only carries Protocol.VERSION).
-#  - game version (ProgressData.VERSION) and mod version (manifest version_number) must match:
-#    the client loads the host's scenes/resources by path and runs the same mirror code
-#  - DLC doesn't matter: a client lacking one of the host's DLCs borrows it for the session
-#    (session/dlc_borrow.gd, from the host's list in WELCOME), like Steam Remote Play Together.
+# Join compatibility, checked by the host on HELLO. Game and mod version must match: the client
+# loads the host's scenes / resources by path and runs the same mirror code. DLC need not: a
+# client borrows what it lacks (session/dlc_borrow.gd).
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/dlc_borrow.gd")
@@ -28,8 +26,7 @@ static func mod_version() -> String:
 	return str(mod_data.manifest.version_number)
 
 
-# "" when a client with `client` info may join a host with `host` info, else a reason for the
-# client (shown on its lobby page).
+# "" when the client may join the host, else the reason shown on the client's lobby page.
 static func incompatibility(host: Dictionary, client) -> String:
 	if typeof(client) != TYPE_DICTIONARY:
 		return "malformed HELLO"
@@ -50,7 +47,6 @@ static func incompatibility(host: Dictionary, client) -> String:
 	return ""
 
 
-# The host's DLCs a client lacks (it borrows them; logged by the host).
 static func missing_dlcs(host_dlcs: Array, client_dlcs) -> Array:
 	var missing := []
 	for dlc_id in host_dlcs:

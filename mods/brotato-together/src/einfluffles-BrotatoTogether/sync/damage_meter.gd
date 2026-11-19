@@ -1,30 +1,11 @@
 extends Node
-# Damage meter: what every player's weapons and items dealt in the current wave (in the shop:
-# in the wave before it). Shown by ui/damage_views.gd in the wave's HUD and in the shop.
-#
-# The numbers are the game's own counters: WeaponData.dmg_dealt_last_wave (reset when a wave
-# starts, counted up by Weapon as it hits) and RunData.tracked_item_effects of the items whose
-# tracking text is a damage text (counted for the whole run: the wave's part is the difference
-# to the values at the wave's start). Two more numbers per player: the biggest single hit (the
-# took_damage signal of every enemy and tree the battle's EntitySpawner spawns: the number the
-# floating damage text shows, with the source that dealt it) and the seconds the wave timer ran,
-# which make the damage per second.
-#
-# The machine that runs the wave measures (the host; any machine outside a session). A client's
-# counters stand still during a puppet battle, so the host's board travels: section DAMAGE of
-# sync/state_stream.gd, {wave, players: [[total, [[my_id, count, damage], ...]], ...], time:
-# seconds, hits: [[damage, my_id or ""], ...] per player}, checked every UPDATE_SEC, sent when it
-# changed. time and hits came later: a board without them is still one (0 and none). During
-# the wave it carries live_sources() sources per player (what the HUD shows, picked by
-# strongest()); the measurement when the battle scene leaves
-# carries MAX_SOURCES, and that board stands through the shop until the next wave starts.
-#
-# Cost: a measurement reads the weapons and only the counters that are damage (their keys are
-# looked up once per wave), a few dozen values per player however many items the run has.
-#
-# shown: this machine's switch (Options > Gameplay, extensions/ui/menu_options.gd), kept in the
-# Mod Loader's config (session/settings.gd). Off: nothing is shown here; the host still measures
-# while it has peers, who decide for themselves.
+# Damage meter: what every player's weapons and items dealt in the current wave (in the shop: in
+# the wave before it). The numbers are the game's own counters: WeaponData.dmg_dealt_last_wave
+# (per wave) and RunData.tracked_item_effects (per run: the wave's part is the difference to the
+# values at the wave's start).
+# The host's board is section DAMAGE of the state stream:
+#   {wave, players: [[total, [[my_id, count, damage], ...]], ...], time: seconds,
+#    hits: [[damage, my_id or ""], ...] per player}
 #
 # After the Damage Meter mod by Oudstand (the idea, the counters it reads, the bonk dog's two
 # damage values), written anew for a board that every machine shows the same.
@@ -49,9 +30,9 @@ const MAX_PLAYERS := 4
 const MAX_ID_LENGTH := 96
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 var board := {}  # see above; {} before the first wave
-var shown := true  # this machine shows the meter
+var shown := true  # this machine's switch; the host measures for its peers either way
 
 var _baseline := []  # per player: RunData.tracked_item_effects when the wave started
 var _scene_id := 0  # the battle scene being measured
@@ -114,10 +95,6 @@ func _process(delta: float) -> void:
 			measure()
 
 
-# --- measuring ---
-
-
-# final: with all MAX_SOURCES sources per player (the shop's board), else the HUD's few.
 func measure(final := false) -> void:
 	var limit := MAX_SOURCES if final else live_sources(RunData.get_player_count())
 	var players := []
@@ -129,9 +106,6 @@ func measure(final := false) -> void:
 		hits.append(_hits[p].duplicate() if p < _hits.size() else [0, ""])
 	var time := stepify(_wave_time, 0.1)
 	_set_board({"wave": RunData.current_wave, "players": players, "time": time, "hits": hits})
-
-
-# --- the biggest hit ---
 
 
 func _watch_hits(main: Node) -> void:
@@ -163,9 +137,8 @@ func on_hit(_unit, value: int, _kb, _crit, _dodge, _protected, _armor, args, _ty
 		_hits[p] = [value, source_of(args, p)]
 
 
-# The weapon or item a hit came from, as my_id, or "" when it does not say. From the hitbox
-# only: a burn tick reuses the unit's TakeDamageArgs with its hitbox cleared but `from` left as
-# whatever hit that unit last, maybe another player's weapon (Unit._on_BurningTimer_timeout).
+# From the hitbox only: a burn tick (Unit._on_BurningTimer_timeout) reuses the unit's
+# TakeDamageArgs with its hitbox cleared but `from` left as whatever hit that unit last.
 static func source_of(args, p: int) -> String:
 	var hitbox = args.hitbox if is_instance_valid(args.hitbox) else null
 	var from = hitbox.from if hitbox != null and is_instance_valid(hitbox.from) else null
@@ -181,10 +154,8 @@ static func source_of(args, p: int) -> String:
 	return Keys.hash_to_string.get(key, "") if key != Keys.empty_hash else ""
 
 
-# [total, [[my_id, count, damage], ...]]: the player's sources that dealt damage, strongest
-# first, at most `limit` (mixed: see strongest()); the total counts all of them. Equal weapons
-# and items are one source with their number (0: nothing of it in the inventory, e.g. a turret
-# a weapon built).
+# [total, [[my_id, count, damage], ...]], strongest first. Equal weapons and items are one source
+# with their number (0: nothing of it in the inventory, e.g. a turret a weapon built).
 func measure_player(p: int, baseline: Dictionary, limit := MAX_SOURCES, mixed := false) -> Array:
 	var groups := {}  # my_id -> [count, damage]
 	var weapons := {}  # my_id -> true for the weapons among them
@@ -214,15 +185,12 @@ func measure_player(p: int, baseline: Dictionary, limit := MAX_SOURCES, mixed :=
 	return [total, strongest(sources, weapons, limit, least)]
 
 
-# The sources the HUD shows in a wave with this many players.
 static func live_sources(player_count: int) -> int:
 	return LIVE_SOURCES_CROWDED if player_count >= CROWDED_FROM else LIVE_SOURCES
 
 
-# The first `limit` of the sources (strongest first). When those are all weapons, or all of the
-# rest (structures, pets, items, the character), and the strongest of the other kind dealt at
-# least `least` (-1: never), the last of them gives way to it: the HUD shows a weapon build's
-# turrets or burning, and a turret build's weapons, once they count (OTHER_KIND_SHARE).
+# The first `limit` sources. When those are all weapons or all not weapons and the strongest of
+# the other kind dealt at least `least` (-1: never), the last of them gives way to it.
 static func strongest(sources: Array, weapons: Dictionary, limit: int, least := -1) -> Array:
 	var kept := sources.slice(0, limit - 1) if limit > 0 and not sources.empty() else []
 	if least < 0 or kept.size() < 2 or sources.size() <= kept.size():
@@ -239,8 +207,8 @@ static func strongest(sources: Array, weapons: Dictionary, limit: int, least := 
 	return kept
 
 
-# The player's counters that count damage, as [key, my_id]. Which ones they are only changes
-# when a counter is added, so the list is read again when there are more (and with every wave).
+# Which counters count damage only changes when a counter is added, so the list is read again
+# when there are more (and with every wave).
 func _damage_keys(p: int, tracked: Dictionary) -> Array:
 	while _keys.size() <= p:
 		_keys.append([])
@@ -276,7 +244,6 @@ func _is_damage_item(id: String) -> bool:
 
 
 func _set_board(next: Dictionary) -> void:
-	# Arrays compare by value, dictionaries by reference.
 	var same := true
 	for key in ["wave", "players", "time", "hits"]:
 		same = same and next.get(key) == board.get(key)
@@ -287,16 +254,12 @@ func _set_board(next: Dictionary) -> void:
 	emit_signal("changed")
 
 
-# The item, weapon or character a source names (icon, name, tier), or null.
 func data_of(id: String):
 	if _data.empty():
 		for list in [ItemService.items, ItemService.weapons, ItemService.characters]:
 			for data in list:
 				_data[data.my_id] = data
 	return _data.get(id)
-
-
-# --- state stream ---
 
 
 func state_key(_section: int) -> String:
@@ -323,7 +286,6 @@ func _on_lobby_left() -> void:
 	_set_board({})
 
 
-# A board from the network, or {} when it is not one.
 static func clean(body) -> Dictionary:
 	if typeof(body) != TYPE_DICTIONARY or typeof(body.get("wave")) != TYPE_INT:
 		return {}

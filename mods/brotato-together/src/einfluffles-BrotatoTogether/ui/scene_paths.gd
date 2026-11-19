@@ -1,6 +1,4 @@
 extends Reference
-# Every FocusEmulator below a scene root. Cursors travel by meaning (ui/focus_targets.gd), not by
-# tree position: another mod's extra node on one machine would shift any child index.
 
 
 static func find_focus_emulators(root: Node) -> Array:

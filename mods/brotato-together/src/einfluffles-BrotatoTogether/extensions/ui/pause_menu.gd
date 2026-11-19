@@ -1,9 +1,7 @@
 extends "res://ui/menus/ingame/pause_menu.gd"
-# Live mode: the menu opens over the running game instead of pausing it. sync/pause_control.gd
-# turns it on during a wave of an online session, where a pause would freeze everybody.
-# The game's callers stay as they are: main._check_for_pause and the base _input (Godot 3 runs
-# it next to this one) end in pause(), which opens the menu or, once it is open, goes one step
-# back. Every other case is the game's own pause.
+# Live mode: the menu opens over the running game instead of pausing it (sync/pause_control.gd
+# turns it on during a wave of an online session, where a pause would freeze everybody). The
+# game's callers all end in pause(), which opens the menu or, once it is open, goes a step back.
 
 signal live_changed(open)
 

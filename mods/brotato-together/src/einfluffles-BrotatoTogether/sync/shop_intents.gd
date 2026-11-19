@@ -1,9 +1,7 @@
 extends Reference
 # Host: a remote player's shop decisions (SHOP_INTENT) and cursor (SHOP_FOCUS), applied to the
-# host's own shop. An intent names its target by place and by identity (slot + my_id) and the
-# game's own code decides: the button is pressed the way a FocusEmulator presses it, or the
-# control's own signal / the shop's own method runs, so the game's checks (gold, weapon slots,
-# ban tokens, ...) and other mods' handlers see it like a local player's press.
+# host's own shop. An intent names its target by slot and my_id and the game's own code decides,
+# so the game's checks and other mods' handlers see it like a local player's press.
 #
 # kind         slot                 id            arg
 # "buy"        shop item node       item my_id    meca effect choice (0 / 1), else -1
@@ -19,16 +17,10 @@ extends Reference
 # "meca_roll"  index in the weapons weapon my_id  -
 # "meca"       index in the weapons weapon my_id  option index (0 / 1) of the roll sent
 # another mod's (ShopSync.register_intent): slot, id and arg are its own to define
-# "go", "endless" and "lock" say what the player wants to be true: applying them twice changes
-# nothing, so they need no revision ("lock" names its item by slot and id; with the revision a
-# lock pressed right after a buy, before the new state arrived, was dropped). Everything else
-# is a press on what the sender's panel showed (the revision) and makes that revision stale
-# once applied, except
-# "meca_roll": it only rolls (or finds) the two meca upgrade options the host keeps for that
-# weapon in its copy of the player's popup, sent back with the state (sync/meca_choice.gd).
-# Another mod's kind is a press like the game's own: checked against the revision (unless it
-# was registered without), and its handler(shop, player, slot, id, arg) -> bool decides and says
-# whether it changed anything.
+# "go", "endless" and "lock" say what the player wants to be true, so they need no revision (a
+# lock pressed right after a buy, before the new state arrived, must not be dropped). Everything
+# else is a press on what the sender's panel showed (the revision) and makes that revision stale
+# once applied, except "meca_roll", which only rolls (or finds) the weapon's two options.
 
 enum { DROPPED, APPLIED, CHANGED }
 
@@ -113,9 +105,8 @@ static func revision_key(shop: Node, p: int) -> String:
 	return var2str([offered, shop._reroll_count[p], weapons])
 
 
-# A remote player's own cursor and page, for the host's screen and (through FocusSync and
-# the shop state) the other clients'. Cosmetic: decisions never depend on it.
-# target: a ui/focus_targets.gd target naming one of p's own shop parts.
+# Cosmetic: decisions never depend on it. target: a ui/focus_targets.gd target naming one of p's
+# own shop parts.
 static func apply_focus(shop: Node, p: int, page, target) -> void:
 	var emulator = Utils.get_focus_emulator(p, shop)
 	if emulator == null:
@@ -125,7 +116,7 @@ static func apply_focus(shop: Node, p: int, page, target) -> void:
 	# would otherwise run the setter again with every state.
 	var known: bool = typeof(page) == TYPE_INT and page >= 0
 	if known and min(page, carousel._get_max_index()) != carousel.index:
-		carousel.index = page  # the setter clamps and shows that page
+		carousel.index = page
 	var control = FocusTargets.resolve(target, shop, p)
 	if control is Control and control.is_visible_in_tree() and emulator.focused_control != control:
 		emulator.focused_control = control

@@ -1,8 +1,5 @@
 extends "res://ui/menus/shop/coop_shop_player_container.gd"
-# The damage meter's page at the end of this player's carousel (ui/damage_views.gd add_page).
-# Built here, in the panel's own _ready, so the page exists before a page index from the network
-# is applied to the carousel (sync/shop_sync.gd, sync/shop_intents.gd): a page that came later
-# would be clamped away.
+# The damage meter's page in this player's carousel, from the panel's own _ready (see add_page).
 
 const VIEWS := "/root/ModLoader/einfluffles-BrotatoTogether/DamageViews"
 

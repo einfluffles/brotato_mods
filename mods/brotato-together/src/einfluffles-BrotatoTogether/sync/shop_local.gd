@@ -1,29 +1,7 @@
 extends Reference
-# Client: this client's own panel in its copy of the shop (owned by sync/shop_sync.gd).
-#
-# guard(): once per puppet shop, on every player's panel. Whatever would change the run or
-#   roll something loses the game's handler, so a press there does nothing. The cuts sit where
-#   the mutation is, which is below BaseShop in places:
-#   - ShopItem -> ShopItemsContainer (buy / steal / ban / dismantle): the container checks gold,
-#     deactivates the slot and spends the ban token before BaseShop hears of it, and
-#     BaseShop._input calls steal_item() / _on_BanButton_button_down() / _release_BanButton() /
-#     _on_DismantleButton_pressed() on the item directly. All of them end in these signals.
-#   - ShopItem.change_lock_status (no signal at all): extensions/ui/shop_item.gd.
-#   - reroll and Go buttons -> BaseShop; item popup combine / recycle / meca upgrade -> BaseShop;
-#     the "endless" toggle -> its panel.
-#   The item popup's meca upgrade button loses the popup's own roll (MecaChoice.cut).
-# take_over(): the same signals of this client's own panel go to SHOP_INTENT instead (the meca
-#   upgrade asks the host for its two options and picks one by index: sync/meca_choice.gd), and its
-#   buttons drive its own slot's FocusEmulator (InputSync.set_local_device): cursor, pages,
-#   popups, the hold-to-ban bar and the meca effect choice on a shop item run here, without a
-#   round trip. Its cursor and page travel as SHOP_FOCUS (what the host and the others see).
-#   Keyboard and mouse: sync/local_panel.gd (added to the puppet shop by guard()) types the own
-#   slot as the device in use and moves / presses the own cursor with the mouse.
-#   The device is claimed as "shop" (the level-up panels claim it as "upgrades": neither can turn
-#   off the other's). While the own panel runs and the host is not paused, process() checks every
-#   frame that the device is still live and takes it back with a warning if not.
-# A control this file does not know (another mod's button) keeps its own handler: it can show
-# things, but every way into the run above is cut.
+# Client: this client's own panel in its copy of the shop. guard() cuts every game handler that
+# would change the run or roll something; take_over() sends the own panel's presses as
+# SHOP_INTENT and its cursor and page as SHOP_FOCUS.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
@@ -31,7 +9,9 @@ const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
-# ShopItemsContainer.connect_shop_items: ShopItem signal -> container handler.
+# ShopItemsContainer.connect_shop_items: ShopItem signal -> container handler. The container
+# mutates before BaseShop hears of it, so the cuts sit here. The lock has no signal at all:
+# extensions/ui/shop_item.gd.
 const ITEM_HANDLERS := {
 	"buy_button_pressed": "on_shop_item_buy_button_pressed",
 	"steal_button_pressed": "on_shop_item_steal_button_pressed",
@@ -51,7 +31,7 @@ const DEVICE_OWNER := "shop"  # InputSync.set_local_device
 var session: Node = null
 var input_sync: Node = null
 var focus_sync: Node = null
-var last_intent := {}  # the last decision sent (also read by the tests)
+var last_intent := {}  # the last decision sent
 var active := false  # the own panel runs locally
 var you := -1
 var seq := -1  # revision of the own panel, from the last state
@@ -94,13 +74,13 @@ func guard(shop: Node, shop_id: int) -> void:
 		var popup = shop._get_item_popup(p)
 		for signal_name in POPUP_HANDLERS:
 			_disconnect(popup, signal_name, shop, POPUP_HANDLERS[signal_name])
-		MecaChoice.cut(popup)  # the popup would roll its own meca options
+		MecaChoice.cut(popup)
 		var panel = shop._get_coop_player_container(p)
 		_disconnect(panel.get("_endless_button"), "toggled", panel, "_on_EndlessButton_toggled")
 	_add_local_panel()
 
 
-# The own panel takes local input. Safe to call again; another slot releases the old one.
+# Safe to call again; another slot releases the old one.
 func take_over(player: int) -> void:
 	if not is_instance_valid(_shop) or player < 0 or player >= RunData.get_player_count():
 		stop("no own panel in the state")
@@ -141,7 +121,6 @@ func stop(reason := "stopped") -> void:
 	_apply_local_panel()
 
 
-# The puppet shop left the tree.
 func leave(shop: Node) -> void:
 	if shop == _shop:
 		stop("shop left")
@@ -149,7 +128,6 @@ func leave(shop: Node) -> void:
 		local_panel = null  # freed with the shop
 
 
-# A state from the host was applied: the own panel's revision and Go flag as the host has them.
 func on_state(revision: int, ready: bool) -> void:
 	seq = revision
 	_host_ready = ready
@@ -158,8 +136,7 @@ func on_state(revision: int, ready: bool) -> void:
 		_go_sent = false
 
 
-# The same state: the meca upgrade rolls the host remembers for the own player's weapons (the
-# one the own popup asked for is shown).
+# The meca upgrade rolls the host remembers for the own player's weapons.
 func on_mecas(rolls) -> void:
 	meca.set_rolls(rolls)
 
@@ -174,7 +151,6 @@ func set_paused(paused: bool) -> void:
 	_apply_local_panel()
 
 
-# Every frame while the puppet shop runs.
 func process() -> void:
 	if is_instance_valid(local_panel):
 		# Also while nothing is local: LocalPanel stops mouse events over the panels otherwise.
@@ -188,8 +164,7 @@ func process() -> void:
 	_expire_locks()
 	_report_focus()
 	# Ready only lasts while the cursor rests on Go: the game clears the flag itself when the
-	# cursor leaves, on cancel and on the triggers. A press that reached the host after the
-	# cursor had already left is cleared the same way; either way the host has to hear of it.
+	# cursor leaves, on cancel and on the triggers, and the host has to hear of it.
 	var emulator = Utils.get_focus_emulator(you, _shop)
 	var on_go: bool = emulator != null and emulator.focused_control == _shop._get_go_button(you)
 	var ready: bool = _shop._player_pressed_go_button[you]
@@ -244,19 +219,16 @@ static func _disconnect(source: Object, signal_name: String, target: Object, met
 		source.disconnect(signal_name, target, method)
 
 
-# The own slot's device while the own panel runs and the host is not paused, else -1.
 func _wanted_device() -> int:
 	return CoopService.get_remapped_player_device(you) if active and not _paused else -1
 
 
-# Claims or gives up the "shop" claim only: another screen's claim stays as it is.
 func _apply_device(reason: String) -> void:
 	if input_sync != null:
 		input_sync.set_local_device(DEVICE_OWNER, _wanted_device(), reason)
 
 
-# The own panel runs and the host is not paused, so its device must be the live one. Whatever
-# turned it off, take it back (and say what had done it: the next session's log shows it).
+# Whatever turned the own panel's device off, take it back and log what had done it.
 func _heal_device() -> void:
 	var device := _wanted_device()
 	if input_sync == null or device < 0 or input_sync.local_device() == device:
@@ -271,8 +243,7 @@ func _heal_device() -> void:
 	_apply_device("self-heal")
 
 
-# Once per puppet shop, as its last child: after the FocusEmulators, so it gets every event
-# before them (sync/local_panel.gd).
+# As the shop's last child: after the FocusEmulators, so it gets every event before them.
 func _add_local_panel() -> void:
 	if is_instance_valid(local_panel):
 		local_panel.queue_free()
@@ -286,7 +257,6 @@ func _add_local_panel() -> void:
 	_panel_player = -1
 
 
-# LocalPanel drives the own panel while the local buttons do (not while the host is paused).
 func _apply_local_panel() -> void:
 	if not is_instance_valid(local_panel):
 		return
@@ -303,10 +273,9 @@ func _apply_local_panel() -> void:
 	)
 
 
-# The own slot is typed as another device now (keyboard <-> pad): LocalPanel has switched the
-# carousel and the glyphs. The way to the page arrows is the panel's own
-# (CoopShopPlayerContainer._set_focus_neighbours, which the game runs in _ready and on a page
-# change only).
+# The own slot is typed as another device now (keyboard <-> pad). The way to the page arrows is
+# the panel's own (CoopShopPlayerContainer._set_focus_neighbours, run by the game in _ready and
+# on a page change only).
 func _on_own_type_changed(_player_type: int, cursor_lost: bool) -> void:
 	if not active or not is_instance_valid(_shop):
 		return
@@ -314,9 +283,8 @@ func _on_own_type_changed(_player_type: int, cursor_lost: bool) -> void:
 	container._set_focus_neighbours()
 	if not cursor_lost:
 		return
-	# The cursor sat on a page arrow that is a trigger glyph now. Where the game puts a cursor
-	# after a page change (_set_focus_after_carousel_index_change): the shop's default on the
-	# shop page, Go on the stats pages.
+	# The cursor sat on a page arrow that is a trigger glyph now. Like the game after a page change
+	# (_set_focus_after_carousel_index_change): the shop's default on the shop page, else Go.
 	var target: Control = _shop._get_go_button(you)
 	if container.carousel.index == 0:
 		var shop_default: Control = _shop._get_default_focus_control(you)
@@ -339,9 +307,6 @@ func _report_focus() -> void:
 	if key != _sent_focus:
 		_sent_focus = key
 		_send(Protocol.Msg.SHOP_FOCUS, message)
-
-
-# --- the own panel's decisions ---
 
 
 func _on_own_buy(node: Node) -> void:
@@ -438,13 +403,11 @@ func _on_own_weapon(weapon, kind: String) -> void:
 	_shop._on_item_cancel_button_pressed(weapon, you)
 
 
-# The popup's upgrade button: the host rolls the two options (the popup stays as it is, so
-# Cancel still closes it); they arrive with the next state (on_mecas).
+# The popup stays as it is, so Cancel still closes it; the options arrive with the next state.
 func _on_own_meca_roll(weapon) -> void:
 	_send_intent("meca_roll", RunData.get_player_weapons(you).find(weapon), weapon.my_id)
 
 
-# One of the host's two options, by index; the popup closes like after combine / recycle.
 func _on_own_meca_picked(weapon, index: int) -> void:
 	_send_intent("meca", RunData.get_player_weapons(you).find(weapon), weapon.my_id, index)
 	_shop._on_item_cancel_button_pressed(weapon, you)

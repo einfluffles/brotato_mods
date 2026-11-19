@@ -1,12 +1,6 @@
 extends "res://singletons/coop_service.gd"
-# Remote players join through the normal hold-to-join flow on their virtual device. The game
-# would type them as keyboard (no joypad name) — force a gamepad type so stick aim and gamepad
-# UI hints apply.
-#
-# Player colours: the game reads every player's colour from `player_colors[slot]` (cursors,
-# panels, HUD, player highlight, ...). Players can pick another one from a palette (the game's
-# four defaults first, then extra colours); `player_colors` is rewritten whenever the slots or
-# the picks change, so all of the game's own colour code follows. Nothing is saved.
+# Player colours: the game reads every colour from player_colors[slot], so that array is
+# rewritten whenever the slots or the players' picks from the palette change. Nothing is saved.
 
 signal bt_player_colors_changed
 
@@ -24,7 +18,7 @@ const BT_EXTRA_COLORS := [
 var bt_palette := []  # game defaults + BT_EXTRA_COLORS
 var bt_slot_colors := []  # slot -> palette index currently in player_colors
 # Client's copy of the host's character selection: the host's hold-to-join progress (null:
-# this machine's own). sync/menu_puppet.gd.
+# this machine's own).
 var bt_remote_progress = null
 var _bt_picks := {}  # remapped device -> picked palette index
 var _bt_remote := []  # client of a lobby: the host's slot colours (palette indices)
@@ -34,6 +28,8 @@ func _ready() -> void:
 	_bt_init_colors()
 
 
+# The game would type a remote player's virtual device as keyboard (no joypad name); as a
+# gamepad, stick aim and gamepad UI hints apply.
 func _add_player(device: int, player_type: int) -> void:
 	if VirtualDevices.is_virtual(device):
 		player_type = PlayerType.GAMEPAD_XBOX
@@ -60,7 +56,6 @@ func _bt_on_players_updated(_players) -> void:
 	bt_apply_colors()
 
 
-# Next free colour for a player (step +1 / -1), skipping the other players' colours.
 func bt_cycle_color(player_index: int, step := 1) -> bool:
 	_bt_init_colors()
 	if not _bt_remote.empty() or player_index < 0 or player_index >= connected_players.size():
@@ -116,7 +111,6 @@ func _bt_first_free(slots: Array) -> int:
 	return 0
 
 
-# Client: the host's slot colours (from the menu state, BATTLE_START and the shop state).
 # Ignored unless it is one distinct palette index per slot.
 func bt_apply_remote_colors(value) -> void:
 	_bt_init_colors()
@@ -133,7 +127,6 @@ func bt_apply_remote_colors(value) -> void:
 	bt_apply_colors()
 
 
-# Client left the lobby: back to its own (local co-op) colours.
 func bt_clear_remote_colors() -> void:
 	if _bt_remote.empty():
 		return

@@ -1,7 +1,5 @@
 extends "res://ui/menus/shop/coop_shop.gd"
-# The Anvil's upgrade at shop entry without touching the weapons rows, and the weapons label
-# after a new weapon slot (ui/shop_gear.gd; extensions/ui/shop.gd does the same for the solo
-# shop).
+# The game's shop with the two fixes of ui/shop_gear.gd.
 
 const ShopGear := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/shop_gear.gd")
 

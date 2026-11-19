@@ -1,17 +1,7 @@
 extends Reference
-# The mouse wheel on co-op screens (character / weapon / difficulty selection, the shop, the
-# level-up and crate panels). The game turns it off there: every FocusEmulator with a cursor marks
-# each event that is not a co-op action as handled while nobody can join (so no ScrollContainer
-# gets it), and BaseSelection._scroll_with_mouse_wheel returns at once in a co-op run. Where an
-# event did get through (character selection while players can join), the GUI scrolled whatever
-# was under the pointer, any player's panel.
-# The mouse belongs to one player, so the wheel scrolls what is under the pointer in that player's
-# own panel and never anything of another player:
-#  - host and local co-op: the keyboard player (KEYBOARD_REMAPPED_DEVICE_ID); with none, nothing;
-#  - a client's copy of the host's selection screens: its own player (ui/shared_scroll.gd);
-#  - a client's own shop / level-up panel: sync/local_panel.gd calls scroll_at with that panel.
-# The FocusEmulator extension calls handle(): the emulators are children of the screen, and the
-# first of them to see the event marks it handled, so the game's handling never sees it either.
+# The mouse wheel on co-op screens. The game turns it off there (FocusEmulators mark the event
+# handled, BaseSelection._scroll_with_mouse_wheel returns in a co-op run). Here it scrolls what
+# is under the pointer in the mouse player's own panel, never another player's.
 # Names no game classes: the FocusEmulator extension preloads it at mod init.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -20,7 +10,6 @@ const STEP := 70  # ItemDescription.MOUSE_SCROLL_STEP
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
 
 
-# -1 / 1 for a wheel step up / down, 0 for any other event.
 static func direction(event: InputEvent) -> int:
 	if not (event is InputEventMouseButton):
 		return 0
@@ -31,8 +20,7 @@ static func direction(event: InputEvent) -> int:
 	return 0
 
 
-# A wheel event reaching a FocusEmulator of menu (its parent). True: it was a wheel event of a
-# co-op screen and is done with (scrolled in the mouse player's panel, or nothing to scroll).
+# True: a wheel event of a co-op screen, done with (scrolled, or nothing to scroll).
 static func handle(menu: Node, event: InputEvent) -> bool:
 	var step := direction(event)
 	if step == 0 or not RunData.is_coop_run or menu == null:
@@ -47,7 +35,6 @@ static func handle(menu: Node, event: InputEvent) -> bool:
 	return true
 
 
-# The player slot the mouse belongs to on this machine (-1: none).
 static func mouse_player() -> int:
 	if Puppet.is_active():
 		return SharedScroll.own_player()
@@ -58,8 +45,7 @@ static func mouse_player() -> int:
 	return -1
 
 
-# What the wheel may scroll for player on menu: its panel (and its grid on the selection screens,
-# the shared one in character selection). null: menu is not a screen with player panels.
+# null: menu is not a screen with player panels.
 static func own_roots(menu: Node, player: int):
 	var roots := []
 	if menu.has_method("_get_coop_player_container"):  # CoopShop

@@ -1,26 +1,7 @@
 extends Node
-# Co-op shop.
-# Host: owns every decision and the RNG. While coop_shop.tscn runs it provides section RUN_SHOP of
-#   the state stream (sync/state_stream.gd), sent whenever the shop or run state changes (the
-#   run state is serialized only when it can have changed: sync/run_cache.gd). Body:
-#   shop_id, run (the run state incl. the shop's own save data: offered items, rerolls, steals,
-#   in parts, per peer only those it lacks: sync/run_parts.gd; a body built alone carries them
-#   all), per player slots (the slot layout), locks (the lock per slot), go (the Go
-#   flag), seqs (a panel revision), pages (the carousel page) and mecas (the meca upgrade rolls
-#   its item popup remembers:
-#   [[weapon slot, weapon my_id, stat key hash, value, stat key hash, value]],
-#   sync/meca_choice.gd), colors (palette index per slot), kinds (other mods' intent kinds the
-#   host handles: register_intent), and per peer you (which player it is,
-#   -1: none). Remote players' decisions arrive as SHOP_INTENT and are applied by the
-#   game's own code when they still match the sender's panel (sync/shop_intents.gd); their raw
-#   buttons, except pause, are kept off the virtual devices meanwhile.
-# Client: loads the real shop through the game's resume path (RunData.resumed_from_state_in_shop),
-#   so it shows exactly the host's items without rolling; later states are applied in place, and
-#   only for the players whose part changed. The run's parts are stored as they arrive
-#   (accept_state) and only the new ones are parsed and deserialized (RunParts.Store). Its own
-#   panel runs locally and sends intents (sync/shop_local.gd); the other panels stay mirrored
-#   (cursors by FocusSync). Also handles section PAUSE_SHOP (provided by sync/pause_control.gd):
-#   the host's pause turns the own panel off and shows who paused.
+# Co-op shop. Host: owns every decision and the RNG, and provides section RUN_SHOP while
+# coop_shop.tscn runs. Client: loads the real shop through the game's resume path, so it shows the
+# host's items without rolling; its own panel runs locally and sends intents (sync/shop_local.gd).
 
 signal shop_entered
 
@@ -59,16 +40,15 @@ const LOADING_TIMEOUT_MSEC := 10000
 const BLOCK_KEY := "shop"  # InputSync.blocked_by
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 var input_sync: Node = null setget set_input_sync
 var focus_sync: Node = null setget set_focus_sync
 var local = ShopLocal.new()  # client: this client's own panel
 var run_cache = RunCache.new("shop")  # host: the shop's run state, serialized on change
-var run_sender = null  # host: RunParts.Sender, shared with UpgradesSync (set by mod_main.gd)
-var run_store = null  # client: RunParts.Store, shared with UpgradesSync (set by mod_main.gd)
-var last_text := {}  # host: the last SHOP_TEXT sent (also read by the tests)
+var run_sender = null  # host: RunParts.Sender, shared with UpgradesSync
+var run_store = null  # client: RunParts.Store, shared with UpgradesSync
+var last_text := {}  # host: the last SHOP_TEXT sent
 
-# host
 var _host_shop: Node = null
 var _shop_id := 0
 var _seq_shop_id := 0  # instance id of the shop the revisions belong to
@@ -78,9 +58,9 @@ var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method, revis
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 var _reported := {}  # player -> [shop instance id, the last SHOP_FOCUS target of its client]
 
-# client
 var _client_shop: Node = null
-var _loading_msec := -LOADING_TIMEOUT_MSEC  # when the puppet shop began to load (far back: not)
+# When the puppet shop began to load. It starts far enough back to count as not loading.
+var _loading_msec := -LOADING_TIMEOUT_MSEC
 var _client_shop_id := 0
 var _state := {}  # the run state RunData has, with the part ids it came from
 var _run_ids := {}
@@ -134,7 +114,7 @@ func _process(_delta: float) -> void:
 	_block_remote_buttons(not get_tree().paused)
 
 
-# --- for other mods: a decision of their own on a player's shop panel (a button they add) ---
+# For other mods: a decision of their own on a player's shop panel (a button they add).
 # Host: register_intent(kind, target, method). method(shop, player, slot, id, arg) -> bool runs
 #   for a remote player's press with the checks every intent gets (the sender's own player, its
 #   panel's revision, not paused) and returns whether it changed the run; the state then goes
@@ -145,9 +125,8 @@ func _process(_delta: float) -> void:
 
 
 # kind: namespaced by the mod ("trade.item"); slot, id and arg are the mod's to define.
-# revision false: a press whose slot and id name its target and whose handler checks everything
-# again skips the panel revision, so a second press sent before the host's answer counts too
-# (and the same message twice runs twice).
+# revision false: the press skips the panel revision (its slot and id name its target and its
+# handler checks everything again), so a second press sent before the host's answer counts too.
 func register_intent(kind: String, target: Object, method: String, revision := true) -> bool:
 	if kind == "" or kind in ShopIntents.OWN_KINDS or target == null:
 		return false
@@ -163,7 +142,6 @@ func host_handles(kind: String) -> bool:
 	return kind in _host_kinds
 
 
-# The player whose panel runs on this client (-1: none).
 func own_player() -> int:
 	return local.you if local.active else -1
 
@@ -191,21 +169,14 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 				host_apply_focus(shop, p, body.get("page"), body.get("target"))
 
 
-# --- host ---
-
-
-# A remote player's own cursor and page as its client reports them (SHOP_FOCUS, sent when they
-# change).
 func host_apply_focus(shop: Node, p: int, page, target) -> void:
 	_reported[p] = [shop.get_instance_id(), target]
 	ShopIntents.apply_focus(shop, p, page, target)
 
 
-# A reroll that gives a stat (bone dice: BaseShop._on_RerollButton_pressed) floats its icon and
-# number over the player's reroll button, on the host only: a client's reroll is an intent the
-# host applies. The stat comes from RunData.add_stat inside that handler, before it counts the
-# reroll: a gain followed by a counted reroll of the same player within the frame is that one
-# (the shop's own stat gains at its start count no reroll and show nothing).
+# A reroll that gives a stat (bone dice) floats its icon and number over the player's reroll
+# button, on the host only. BaseShop._on_RerollButton_pressed calls RunData.add_stat before it
+# counts the reroll, so the gain is sent when that player's reroll count rose within the frame.
 func _on_stat_added(stat, value, _db_mod, p) -> void:
 	if _host_shop == null or not is_instance_valid(_host_shop):
 		return
@@ -227,9 +198,8 @@ func _send_reroll_text(shop_id: int, p: int, stat: int, value: int, rerolls_befo
 		session.broadcast_reliable(Protocol.Msg.SHOP_TEXT, last_text)
 
 
-# State stream provider, section RUN_SHOP: inactive ("") unless the host is in the shop. The key
-# is the run state's revision (run_cache: serialized only when it can have changed, compressed
-# once per change) + everything else the body and the per-peer part are built from.
+# Section RUN_SHOP. The key is the run state's revision plus everything else the body and the
+# per-peer part are built from.
 func state_key(_section: int) -> String:
 	if _host_shop == null or not is_instance_valid(_host_shop):
 		run_sender.close(run_cache)
@@ -247,9 +217,13 @@ func state_key(_section: int) -> String:
 	return str(run_cache.rev) + var2str(rest)
 
 
-# Right after state_key in the same check, so refresh finds nothing new and the run is not
-# serialized again; called alone (tests), it still sees a change of the fingerprint. Its run has
-# every part; state_patch narrows it to what the peer lacks.
+# Body: shop_id, run (the run state incl. the shop's own save data, in parts: sync/run_parts.gd;
+# every part here, state_patch narrows it to what the peer lacks) and per player:
+#   slots: which slot nodes are active; locks: the lock per slot; go: the Go flag
+#   seqs: the panel revision; pages: the carousel page
+#   mecas: the meca upgrade rolls its item popup remembers (MecaChoice.entries)
+# plus colors (palette index per slot), kinds (other mods' intent kinds the host handles) and,
+# per peer, you (which player it is, -1: none).
 func state_body(_section: int) -> Dictionary:
 	run_cache.refresh(_host_shop, shop_args(_host_shop))
 	run_sender.offer(run_cache)
@@ -276,8 +250,6 @@ func _kinds() -> Array:
 	return kinds
 
 
-# Each client also learns which player's panel is its own (-1: none), and gets the run parts it
-# lacks (state_sent records them as sent).
 func state_patch(_section: int, steam_id: int) -> Dictionary:
 	return {"you": _player_index_of(steam_id), "run": run_sender.run_for(steam_id)}
 
@@ -293,18 +265,8 @@ func _yous() -> Array:
 	return yous
 
 
-# BaseShop.save_run_state's arguments: the shop's own part of the run state, and its part of
-# run_cache's fingerprint (sync/run_cache.gd has the shared part). What moves what in the shop:
-# - buy / steal / dismantle (BaseShop.on_shop_item_bought / _stolen / _dismantled): offered
-#   items and steals here; gold, items or weapons, meca parts in the shared part
-# - reroll (_on_RerollButton_pressed): reroll counters, offered items, gold; its goldfish item
-#   (fill_shop_items) and bone dice stats come with them
-# - lock / unlock (ShopItem.change_lock_status -> RunData.lock_player_shop_item), ban
-#   (ShopItem.ban_item), combine / recycle / meca upgrade (RunData.combine_weapon,
-#   recycle_weapon, meca_upgrade_weapon), the endless toggle
-#   (CoopShopPlayerContainer._on_EndlessButton_toggled: is_endless_run), DLC mutations on
-#   equip (try_mutate_item_on_equip): all in the shared part
-# Go, pages, colours, panel revisions and meca rolls are not run state: the key has them.
+# BaseShop.save_run_state's arguments: the shop's own part of the run state and of run_cache's
+# fingerprint (RunCache.fingerprint has the shared part and what moves it).
 static func shop_args(shop: Node) -> Array:
 	return [
 		shop._shop_items,
@@ -316,7 +278,6 @@ static func shop_args(shop: Node) -> Array:
 	]
 
 
-# The view parts of the state (the run state is run_cache's).
 func _shop_parts() -> Dictionary:
 	var shop := _host_shop
 	_update_seqs(shop)
@@ -344,17 +305,13 @@ func _shop_parts() -> Dictionary:
 	}
 
 
-# A peer that (re)joins must get the true run state, every part of it: the next check serializes
-# it. That check is the stream's resync for the peer, which runs in its next step, after every
-# peer_ready handler; a difference it finds goes to everyone. (Harmless on a client: only the
-# host's state_key refreshes.)
+# A (re)joining peer gets every part of the true run state (see UpgradesSync._on_peer_ready).
 func _on_peer_ready(steam_id: int) -> void:
 	run_cache.force()
 	run_sender.forget(steam_id)
 
 
-# A remote player's decision, sent from its own panel (see sync/shop_intents.gd). Only applied
-# to what that panel offers right now. Returns whether the game's code ran for it.
+# Returns whether the game's code ran for the intent.
 func host_apply_intent(shop: Node, p: int, msg: Dictionary) -> bool:
 	# Paused: the game ignores the shop's buttons too (the pause menu covers them).
 	if p < 0 or p >= RunData.get_player_count() or get_tree().paused:
@@ -366,21 +323,17 @@ func host_apply_intent(shop: Node, p: int, msg: Dictionary) -> bool:
 	if result == ShopIntents.CHANGED:
 		# A second press made on the same panel is stale, whatever this one turns out to do.
 		_seqs[p] += 1
-	# The game connects Buy and Steal deferred: they run at the end of this frame, so the state
-	# goes out in the next one (the stream holds its check until then) instead of once before
-	# and once after. That check serializes the run whatever the fingerprint says.
+	# The game connects Buy and Steal deferred: they run at the end of this frame, so the stream
+	# holds its check until the next one, which serializes the run whatever the fingerprint says.
 	run_cache.force(1)
 	state_stream.flush(StateStream.RUN_SHOP, true)
 	call_deferred("_settle_host_cursor", shop, p)
 	return true
 
 
-# The game's handlers move the player's cursor with deferred grab_focus calls (recycle and
-# combine: to the row's first weapon or the new one), some of them onto an inventory element
-# that the same handler already queued for deletion (it relies on a later one, which a visible
-# mouse skips). Runs after those calls and before the deletion: a FocusEmulator must never keep
-# a freed control. The cursor goes back where the client last reported it: its own cursor keeps
-# its place in the row and is reported only when it moves, so the host showed it elsewhere.
+# After the game's deferred grab_focus calls and before the deletion they target: a
+# FocusEmulator must never keep a freed control. The cursor goes back where the client last
+# reported it (the client reports it only when it moves).
 func _settle_host_cursor(shop: Node, p: int) -> void:
 	if not is_instance_valid(shop) or not shop.is_inside_tree():
 		return
@@ -456,9 +409,6 @@ func _player_index_of(steam_id: int) -> int:
 	return -1
 
 
-# --- client ---
-
-
 # SHOP_TEXT: the game's own floating text where BaseShop puts it (the co-op place: the right end
 # of the player's reroll button). Its sound is the host's (UI_SOUNDS).
 func client_show_text(body) -> bool:
@@ -479,15 +429,13 @@ func client_show_text(body) -> bool:
 	return true
 
 
-# State stream: every RUN_SHOP body as it arrives, also one a newer body replaces before it is
-# applied: its run parts are stored now (a missing one asks the host for a full resync).
 func accept_state(section: int, body, _revision: int) -> void:
 	if section == StateStream.RUN_SHOP and typeof(body) == TYPE_DICTIONARY:
 		run_store.take(body.get("run"), "shop")
 
 
-# State stream handler: RUN_SHOP (the shop) and PAUSE_SHOP (the host's pause). False: the shop
-# is still loading, the stream keeps the latest body and _on_shop_ready retries it.
+# RUN_SHOP (the shop) and PAUSE_SHOP (the host's pause). False: the shop is still loading, and
+# _on_shop_ready retries the pending body.
 func apply_state(section: int, body, _revision: int) -> bool:
 	if section == StateStream.PAUSE_SHOP:
 		return _apply_pause(body)
@@ -526,10 +474,8 @@ func _is_loading() -> bool:
 	return OS.get_ticks_msec() - _loading_msec < LOADING_TIMEOUT_MSEC
 
 
-# [paused, by (name), by_id (steam id, 0: the host)]. While the host is paused its pause menu
-# is in charge: the own panel is off. The newest body is the host's pause from the moment it
-# arrives, also while a shop loads: only the banner waits for that shop (a body that times out
-# waiting must not leave an older pause behind).
+# While the host is paused its pause menu is in charge: the own panel is off. That holds from
+# the moment the body arrives, also while a shop loads: only the banner waits for that shop.
 func _apply_pause(body) -> bool:
 	if typeof(body) != TYPE_ARRAY or body.size() != 3:
 		return true
@@ -545,8 +491,8 @@ func _apply_pause(body) -> bool:
 	return true
 
 
-# State stream: the host has no shop pause state any more (it left the shop, also from its pause
-# menu): no pause of that shop may carry over to the next one.
+# The host left the shop (also from its pause menu): no pause of that shop may carry over to
+# the next one.
 func clear_state(section: int) -> void:
 	if section == StateStream.PAUSE_SHOP:
 		local.set_paused(false)
@@ -555,10 +501,8 @@ func clear_state(section: int) -> void:
 
 
 # Per player, what of the sent run state its panel is built from: its run parts' ids (data: the
-# player's "p" and "g" parts, gear: "g"; sync/run_parts.gd) and a hash of its offered items (in
-# the common part as parsed). A panel is only rebuilt when its part differs from what it shows.
-# (As JSON text they cost a client as much as the host's JSON.print: 43 / 90 ms per changed
-# state in a late 2 / 4-player run, as hashes of the whole run 1 / 2 ms; now the ids are known.)
+# "p" and "g" parts, gear: "g") and a hash of its offered items (in the common part as parsed).
+# A panel is only rebuilt when its part differs from what it shows.
 static func player_keys(ids: Dictionary, common) -> Array:
 	var keys := []
 	var raw: Dictionary = common if typeof(common) == TYPE_DICTIONARY else {}
@@ -583,7 +527,6 @@ func _enter_shop(state: Dictionary) -> void:
 	RunData.shop_effects_checked = true  # anvil/destroy effects already ran on the host
 	VirtualDevices.fill_puppet_slots(RunData.get_player_count())
 	get_tree().paused = false
-	# Only while the puppet shop loads: no node_added handler for every node otherwise.
 	if not get_tree().is_connected("node_added", self, "_on_node_added"):
 		get_tree().connect("node_added", self, "_on_node_added")
 	_loading_msec = OS.get_ticks_msec()
@@ -592,8 +535,7 @@ func _enter_shop(state: Dictionary) -> void:
 		ModLoaderLog.error("Could not load the shop scene", LOG_NAME)
 
 
-# The puppet shop reacts to mirrored state/cursors with its own sounds; the host's replace them.
-# Muted from node_added (not ready) so sounds from the shop's own _ready are covered too.
+# Muted from node_added (not ready), so sounds from the shop's own _ready are covered too.
 func _on_node_added(node: Node) -> void:
 	if Puppet.is_active() and node.filename == SHOP_SCENE:
 		node.connect("ready", self, "_on_shop_ready", [node], CONNECT_ONESHOT)
@@ -675,9 +617,8 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 
 
 # The per-player part of BaseShop._ready, re-run with the host's values (no RNG anywhere).
-# changed: which parts of this player's panel differ from what it shows ("data": anything of
-# the player's run, "gear": weapons / items, "items": the offered items). The rest is left
-# alone: a rebuild of this client's own panel would fight its local cursor and popups.
+# changed: which parts of this player's panel differ from what it shows ("data", "gear",
+# "items"). The rest is left alone: a rebuild of the own panel would fight its local cursor.
 func _refresh_player(
 	shop: Node, state: Dictionary, p: int, changed: Dictionary, body: Dictionary
 ) -> void:
@@ -726,10 +667,8 @@ func _refresh_player(
 	shop._get_checkmark(p).visible = go
 
 
-# The lock of every slot as the host's slot has it. BaseShop._update_visual_locks would look
-# the locked items up by their place in the offered list, which is the slot only until an
-# item is bought: the lock then showed on a neighbour and the host refused to toggle either.
-# The own panel shows a press the host has not answered yet (ShopLocal.lock_shown).
+# By slot: BaseShop._update_visual_locks matches by index in the offered list, which is wrong
+# once an item is bought. The own panel shows a press the host has not answered yet.
 func _apply_locks(shop: Node, locks) -> void:
 	for p in RunData.get_player_count():
 		var flags := _list_at(locks, p)
@@ -748,9 +687,8 @@ func _apply_locks(shop: Node, locks) -> void:
 				popup.show_shop_hints(node)  # "lock" <-> "unlock"
 
 
-# set_weapons_data / set_items_data replace every inventory element. A cursor resting on one
-# (or inside the popup opened from one) is taken off first and put back on the element at the
-# same place: the emulator must never keep a control that is about to be freed.
+# set_weapons_data / set_items_data replace every inventory element: a cursor resting on one (or
+# in the popup opened from one) is taken off first and put back on the element at the same place.
 func _refresh_gear(shop: Node, p: int) -> void:
 	var gear = shop._get_gear_container(p)
 	var inventories := [gear.weapons_container._elements, gear.items_container._elements]

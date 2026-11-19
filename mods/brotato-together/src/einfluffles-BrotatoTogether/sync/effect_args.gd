@@ -1,26 +1,7 @@
 extends Reference
-# The custom args of the game's effects, the same in every run state the mod serializes.
-#
-# Effect.get_text adds an effect's custom args (_add_custom_args: a NEUTRAL sign for a burn
-# duration, an interval, ...) the first time its description is shown, and serialize() writes
-# them. Effects are shared resources (every copy of an item, the shop's offered items), so a
-# tooltip, a flame turret offered in the shop or a gear page shown on the host changed the
-# serialized gear of every player owning that effect while nothing in the run changed: a miss of
-# RunCache's fingerprint (7 in a 43-wave session, waves 18 to 40), and run parts that changed or
-# not depending on what had been shown (run_parts_tests.gd flaked on it).
-#
-# settle(state, true) (host, RunStateCodec.serialize): every effect the state serializes gets
-# its custom args now, as showing its text would; a later get_text changes nothing. Each effect
-# is walked once (shared ones too): 2.4 / 3.0 ms in the late 2 / 4-player test runs, only when
-# the run is serialized (never in RunCache's fingerprint check).
-# settle(state, false) (client, after deserializing a run state the host serialized that way):
-# the args came with the effect, so it is only marked as having them; its first get_text would
-# otherwise add them a second time. (A second copy does not change the text: every added arg is
-# USUAL value and format with a NEUTRAL sign, applied twice the same. The game's own resume has
-# that duplicate; DLC 2 drops duplicates before comparing effects.)
-#
-# state: a run state as ProgressData.get_run_state / deserialize_run_state give it (players_data
-# PlayerRunData objects, locked_shop_items and shop_items as [item, wave value] per player).
+# Effect.get_text adds custom args to the shared effect the first time a text is shown, which
+# changes what serialize() writes. settle() adds them up front (host) or marks them as added
+# (client, after deserializing), so a run state serializes the same whatever has been shown.
 
 # Effect properties holding effects that serialize() includes (StructureEffect,
 # EffectWithSubEffects, BonkDogEffect, BotOMineEffect, CarbonBowStatEffect, ...).
@@ -28,7 +9,7 @@ const NESTED_LISTS := ["effects", "sub_effects"]
 const NESTED := ["explosion_effect", "landmine_effect_stat", "structure_effect"]
 
 
-# Returns the number of effects whose args were added (host) or marked (client).
+# state: a run state as ProgressData.get_run_state / deserialize_run_state give it.
 static func settle(state: Dictionary, add: bool) -> int:
 	var walk := {"seen": {}, "add": add, "count": 0}
 	var players = state.get("players_data")

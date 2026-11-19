@@ -1,23 +1,17 @@
 extends "res://ui/menus/global/focus_emulator.gd"
-# Online, a grid several cursors share scrolls after this machine's own players only
-# (ui/shared_scroll.gd); every other scroll is the game's.
-#
-# The mouse wheel on a co-op screen scrolls the mouse player's own panel (ui/wheel_scroll.gd).
-#
-# A control freed while it holds the cursor (an inventory rebuilt under it) is dropped here
-# before the game's code touches it. The game reads focused_control in _draw, _input, the
-# setter and on a player change (disconnect, restyle, focus signals): a debug build reads a
-# freed control as null or raises a script error, a released build dereferences it and the
-# game crashes natively. The mod moves its own cursors off a control before it frees one
-# (sync/upgrades_sync.gd, sync/shop_sync.gd); this is the safety net for any other path, and
-# its warning (at most one per WARN_INTERVAL_MSEC per emulator) says that one was taken.
+# - A grid several cursors share scrolls after this machine's own players only (SharedScroll).
+# - The mouse wheel on a co-op screen scrolls the mouse player's own panel (WheelScroll).
+# - A control freed while it holds the cursor is dropped before the game's code touches it: the
+#   game reads focused_control in _draw, _input and its setters, and a release build crashes on
+#   a freed one. The mod moves its own cursors off a control before it frees one; this is the
+#   safety net for any other path.
 
 const SharedScroll := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/shared_scroll.gd")
 const WheelScroll := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/wheel_scroll.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:FocusEmulator"
 const WARN_INTERVAL_MSEC := 10000
 
-var freed_drops := 0  # controls dropped because they were freed (tests)
+var freed_drops := 0  # controls dropped because they were freed
 # Instance id of focused_control, 0 without one: a freed control cannot be asked anything, and
 # a debug build even reads it as null, so whether it still exists is looked up by id.
 var _cursor_id := 0
@@ -72,9 +66,9 @@ func _cursor_freed() -> bool:
 	return _cursor_id != 0 and instance_from_id(_cursor_id) == null
 
 
-# Forgets a freed focused_control without touching it (nothing to disconnect or restyle: it is
-# gone). move: the cursor goes to the control now at its place (the game's own recovery in
-# _handle_input picks the same one, but through the freed control).
+# Forgets a freed focused_control without touching it. move: the cursor goes to the control now
+# at its place (the game's own recovery in _handle_input picks the same one, but through the
+# freed control).
 func _drop_freed_control(move := true) -> void:
 	if not _cursor_freed():
 		return

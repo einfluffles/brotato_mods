@@ -1,12 +1,6 @@
 extends Node
-# Host: a remote player who dropped mid-run keeps their co-op slot (input_sync.gd, for a rejoin),
-# but the shop's Go and the level-up / crate panels wait for every player. Once a player has been
-# silent (stale or gone) for ABSENT_MSEC, their pending choices are made the game's way:
-# - level-up: the first offered upgrade (UpgradesUIPlayerContainer._on_choose_button_pressed)
-# - crate: take the item, or recycle it when it can't be taken (no weapon slot, meca choice)
-# - shop: Go (BaseShop._on_GoButton_pressed)
-# A player who answers again is simply back: nothing else changes. Shown in the lobby page's
-# details.
+# Host: once a dropped remote player has been silent for ABSENT_MSEC, their pending choices are
+# made the game's way, so the shop's Go and the level-up / crate panels stop waiting for them.
 
 const LOG_NAME := "einfluffles-BrotatoTogether:AbsentPlayers"
 const SHOP_SCENE := "res://ui/menus/shop/coop_shop.tscn"
@@ -40,7 +34,6 @@ func display_name(steam_id: int) -> String:
 	return _names.get(steam_id, str(steam_id))
 
 
-# "Name (away 12 s, auto in 8 s)" per absent player, for the lobby page.
 func describe() -> Array:
 	var lines := []
 	for steam_id in absent:
@@ -105,7 +98,6 @@ func _player_index(device: int) -> int:
 	return -1
 
 
-# Makes whatever choice player `index` is holding everyone up with. Safe to call repeatedly.
 func resolve(index: int) -> void:
 	if get_tree().paused:
 		return

@@ -1,19 +1,7 @@
 extends Reference
-# How far behind the newest snapshot a client renders the host's world (BattleClient._process).
-# On a good connection exactly the base delay (100 ms: three snapshots at 30 Hz, room for ~67 ms
-# of lateness), so nothing changes there. When snapshots stop coming (a network stall: seen as
-# 300 to 500 ms gaps every 20 to 50 s), the base delay runs out and the world used to freeze at the
-# newest snapshot and then jump ahead by the whole stall once snapshots came again.
-# Instead, while the newest snapshot is all there is, render time holds on it (the delay grows by
-# as much as the stall lasts, up to MAX_HOLD_MSEC): the world freezes the same, but carries on from
-# there when the late snapshots arrive, then catches up by playing SHRINK_RATE faster (1.15x: hard
-# to notice, and the extra delay of a 400 ms stall is gone after ~2 s). A longer stall (or a host
-# pause) is not held: past MAX_HOLD_MSEC the delay drops back and the world jumps as before, rather
-# than showing it seconds late afterwards. Holding never moves render time backwards.
-# Recurring lateness (JITTER_HOLDS holds within JITTER_WINDOW_MSEC) keeps the delay at the longest
-# of those holds (at most MAX_JITTER_MSEC) instead of shrinking, so the same lateness does not
-# freeze the world again and again; once it calms down for JITTER_WINDOW_MSEC, the delay shrinks
-# back to the base.
+# How far behind the newest snapshot a client renders the host's world. Through a stall of up to
+# MAX_HOLD_MSEC render time holds on the newest snapshot, so the world carries on from there
+# instead of jumping ahead, then catches up; recurring lateness keeps the delay at floor_msec.
 
 const MAX_HOLD_MSEC := 500
 const SHRINK_RATE := 0.15  # delay ms given back per ms
@@ -23,7 +11,7 @@ const MAX_JITTER_MSEC := 250
 const MAX_HOLDS_KEPT := 16
 
 var delay_msec := 0.0
-var holds := 0  # holds so far (tests)
+var holds := 0
 var _base := 0.0
 var _holding := false
 var _holds := []  # [msec, delay reached] of recent holds, oldest first

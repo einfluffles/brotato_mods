@@ -1,21 +1,7 @@
 extends Reference
-# The host's DLC, lent to a client for one session (like Steam Remote Play Together, where a
-# friend without the DLC plays in the owner's game). Never a DLC unlock.
-#
-# All DLC content (characters, items, weapons, zones, enemies, consumables) ships inside the base
-# game; ownership only decides what is *registered*: ProgressData.available_dlc_ids (the item /
-# character / weapon lists are rebuilt from it) and DLCData.add_resources() (backgrounds, title
-# screen backgrounds, enemy data, effect scripts). Without the host's DLC, the client's run-state
-# deserialization drops the host's DLC characters/items/weapons/effects (get_element_safe ->
-# null), DLC backgrounds fall back to the first one, and selection grids / item cards / shop and
-# level-up panels can't find DLC ids.
-#
-# borrow() registers the host's DLCs that this machine doesn't own: only ids in
-# ProgressData.dlc_ids, only while a client of that host (Session: accepted WELCOME). revert()
-# undoes it exactly (every way out of client mode ends in lobby_left / lobby_ready, see Session):
-# everything touched is stashed first and put back, DLC resources go through remove_resources().
-# Saves and challenges are blocked while borrowed (extensions), and the persisted unlock lists are
-# restored too, so nothing DLC-derived can reach the client's save.
+# The host's DLC, lent to a client for one session (like Steam Remote Play Together), never an
+# unlock. DLC content ships with the base game; ownership only decides what is registered
+# (ProgressData.available_dlc_ids, DLCData.add_resources), and that is what borrow() changes.
 
 const META_KEY := "brotato_together_dlc_borrow"  # = Puppet.DLC_BORROW_META_KEY
 const NAMES := {"abyssal_terrors": "Abyssal Terrors", "primal_dread": "Primal Dread"}
@@ -42,14 +28,12 @@ static func is_active() -> bool:
 	return Engine.has_meta(META_KEY)
 
 
-# DLC ids currently lent by the host ([] when none).
 static func borrowed_ids() -> Array:
 	if not is_active():
 		return []
 	return Engine.get_meta(META_KEY).ids.duplicate()
 
 
-# DLCs this machine really owns (what HELLO / WELCOME report).
 static func owned_ids() -> Array:
 	var owned := []
 	var borrowed := borrowed_ids()
@@ -59,7 +43,7 @@ static func owned_ids() -> Array:
 	return owned
 
 
-# The host's DLCs (network data) this machine lacks and could borrow: known ids only.
+# host_dlcs is network data: only known ids are taken.
 static func missing(host_dlcs) -> Array:
 	var result := []
 	if typeof(host_dlcs) != TYPE_ARRAY:
@@ -76,8 +60,6 @@ static func missing(host_dlcs) -> Array:
 	return result
 
 
-# Registers the host's DLCs this machine lacks; returns the borrowed ids. Replaces an earlier
-# borrow (reverted first).
 static func borrow(host_dlcs) -> Array:
 	revert()
 	var ids := missing(host_dlcs)
@@ -100,7 +82,6 @@ static func borrow(host_dlcs) -> Array:
 	return stash.ids.duplicate()
 
 
-# Puts everything borrow() touched back as it was. Safe to call anytime.
 static func revert() -> void:
 	if not is_active():
 		return

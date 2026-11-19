@@ -1,6 +1,5 @@
 extends "res://ui/menus/run/weapon_selection.gd"
-# A client's copy of the host's weapon selection (sync/menu_puppet.gd) shows the host's
-# elements and decides nothing: the host's state says who picked what.
+# A client's copy shows the host's elements and decides nothing (see character_selection.gd).
 
 const PuppetMenu := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet_menu.gd"

@@ -37,29 +37,28 @@ const EXTENSIONS := [
 
 var transport: Node = null
 var session: Node = null
-var state_stream: Node = null  # host state to clients in ordered sections (sync/state_stream.gd)
+var state_stream: Node = null
 var input_sync: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
 var focus_sync: Node = null
-var scroll_sync: Node = null  # every panel's scroll positions, both ways (sync/scroll_sync.gd)
+var scroll_sync: Node = null
 var shop_sync: Node = null
 var upgrades_sync: Node = null
 var menu_sync: Node = null
-var menu_puppet: Node = null  # client: the host's menus as the game's own scenes
+var menu_puppet: Node = null
 var ui_sounds: Node = null
 var pause_control: Node = null
 var absent_players: Node = null
 var retry_sync: Node = null
-var pickup_list: Node = null  # the HUD's picked-up crates on clients (sync/pickup_list.gd)
-var progress_share: Node = null  # what the host's run earns for the clients' own saves
-var damage_meter: Node = null  # what each player's weapons and items dealt (sync/damage_meter.gd)
-var client_report: Node = null  # a client's frame times and stalls for the host's log
-var coop_selection: Node = null  # join hints + colour picking on the co-op selection screen
+var pickup_list: Node = null
+var progress_share: Node = null
+var damage_meter: Node = null
+var client_report: Node = null
+var coop_selection: Node = null
 
 var _client_active := false
-# Client: the host is in its main menu, so this game is in its own, as itself (see
-# _enter_own_menus).
+# Client: the host is in its main menu, so this game is in its own (_enter_own_menus).
 var _own_menus := false
 var _popup_open := false
 var _sound_relay: Script = null
@@ -73,15 +72,9 @@ func _init() -> void:
 	ModLoaderLog.info("Init", LOG_NAME)
 
 
-# The mod's scripts are loaded here, never preloaded by this file. A preload compiles them when
-# the mod is initialised, before any mod's script extensions are installed, and compiling them
-# loads the game classes they name (Unit, BrachiosaurusFoot, ...). When another mod then extends
-# such a class (Damage Meter extends enemy.gd), the Mod Loader reloads its child classes, and
-# the game's own scripts no longer parse against the copies loaded early ('A value of type
-# "Unit" will never be an instance of "boss.gd"'): four autoloads fail and the game crashes on
-# the loading screen. _ready runs after all extensions are installed.
+# load(), never preload: a preload compiles the mod's scripts, and the game classes they name,
+# before other mods' extensions are installed, and the game's own scripts then fail to parse.
 func _ready() -> void:
-	# Keep networking alive while the tree is paused (pause menu).
 	pause_mode = PAUSE_MODE_PROCESS
 	_sound_relay = _load_script("session/sound_relay.gd")
 	_client_view = _load_script("ui/client_view.gd")
@@ -95,9 +88,7 @@ func _ready() -> void:
 	session.setup(transport)
 	session.connect("host_message", self, "_on_host_message")
 
-	# Before the sync modules, which get it ahead of their setup() (they register sections there)
-	# and process after it in a frame. Its peer_ready resync waits for its next step, so whatever
-	# the modules send from their own peer_ready goes out first (state_stream.gd header).
+	# Before the sync modules: they register sections in setup() and process after it in a frame.
 	state_stream = _add("sync/state_stream.gd", "StateStream")
 	state_stream.setup(session)
 
@@ -122,9 +113,8 @@ func _ready() -> void:
 	scroll_sync.input_sync = input_sync
 	scroll_sync.setup(session)
 
-	# The run state of the shop, the level-up panels and BATTLE_START in parts, only those a
-	# client lacks: one record of what each peer has (host) and one store of what this client
-	# has, for all three.
+	# One Sender (host) and one Store (client) for BATTLE_START, the shop and the level-up panels:
+	# a run part a peer has from one of them is not sent again by another.
 	var run_parts := _load_script("sync/run_parts.gd")
 	var run_sender = run_parts.Sender.new()
 	run_sender.setup(session)
@@ -213,7 +203,6 @@ func _add(path: String, node_name: String) -> Node:
 	return node
 
 
-# Pause ownership, absent players, client aim (needs the client's own player).
 func _add_player_control() -> void:
 	input_sync.battle_client = battle_client
 	pause_control = _add("sync/pause_control.gd", "PauseControl")
@@ -225,8 +214,7 @@ func _add_player_control() -> void:
 	absent_players.setup(session, input_sync, battle_host)
 
 
-# A client that joins from its main menu stays there until the host's state says where the host
-# is (its own main menu: _enter_own_menus; a screen: that screen).
+# A client that joins from its main menu stays there until the host's state says where it is.
 func _on_peer_ready(steam_id: int) -> void:
 	if session.is_client() and steam_id == transport.host_id and not _client_active:
 		_client_active = true
@@ -244,18 +232,15 @@ func _on_menu_open_changed(is_open: bool) -> void:
 	_apply_own_input()
 
 
-# While the lobby popup or the client's own menus have the keyboard/pad, the host gets neutral
-# input from us (and the game's own input handling is the solo one: InputSync's client mode).
-# The host's menu sounds are not ours to hear in our own menus.
+# While the lobby popup or the client's own menus have the keyboard / pad, the host gets neutral
+# input. In its own menus the client does not hear the host's menu sounds either.
 func _apply_own_input() -> void:
 	input_sync.local_input_blocked = _popup_open or _own_menus
 	ui_sounds.silent = _own_menus
 
 
-# The host is in its main menu: nothing to mirror and nothing to wait in front of, so the client
-# is in its own main menu and can use it (ui/lobby_menu.gd keeps Start and Continue off). It is
-# this machine's game meanwhile: its own run data and saves (puppet mode off) and its own DLC
-# only (the host's is handed back until the host's next screen, _on_host_message).
+# The host is in its main menu, so the client uses its own, with its own run data, saves and DLC
+# (puppet mode off, the borrowed DLC parked). ui/lobby_menu.gd keeps Start and Continue off.
 func _enter_own_menus() -> void:
 	if not _own_menus:
 		_own_menus = true
@@ -271,9 +256,8 @@ func _enter_own_menus() -> void:
 		ModLoaderLog.error("Could not load the title screen", LOG_NAME)
 
 
-# Before anybody reads a message of the host (Session.host_message): the first one from a
-# screen of the host ends the client's time in its own menus, and the host's DLC is back
-# before that message's run state or grids are decoded.
+# Runs before any other handler of the message (Session.host_message): the host's DLC is back
+# before the first message from a screen of the host is decoded.
 func _on_host_message(msg_type: int, body) -> void:
 	if not _own_menus or not _is_host_screen(msg_type, body):
 		return
@@ -296,9 +280,8 @@ func _is_host_screen(msg_type: int, body) -> bool:
 	return not body[0] in [state_stream.MENU_GRIDS, state_stream.CURSORS, state_stream.SCROLLS]
 
 
-# The next screen (shop, next battle, end-of-run menu) follows BATTLE_END closely and replaces
-# the scene itself: keep the frozen battle (muted) until then instead of flashing the client
-# view; fall back to the view if nothing replaces it in time.
+# The next screen follows BATTLE_END closely and replaces the scene itself: the frozen battle
+# stays (muted) until then; the client view is the fallback after TRANSITION_GRACE_SEC.
 func _on_client_battle_left() -> void:
 	if not _client_active:
 		return
@@ -318,10 +301,7 @@ func _on_transition_grace_over(stale_id: int) -> void:
 		_enter_client_view()
 
 
-# Host is in a menu: in its main menu (and its pages) the client is in its own; its selection
-# screens and the end of run are the game's own scenes here too (sync/menu_puppet.gd); anything
-# else is the waiting screen.
-# Also covers leaving the shop/battle for a menu without a dedicated end message.
+# A menu state is also how a client learns that the host left the shop / battle for a menu.
 func _on_menu_state(state: Dictionary) -> void:
 	if not _client_active:
 		return

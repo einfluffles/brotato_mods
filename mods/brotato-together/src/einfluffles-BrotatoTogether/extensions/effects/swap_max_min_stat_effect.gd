@@ -1,23 +1,8 @@
 extends "res://effects/items/swap_max_min_stat_effect.gd"
-# Axolotl (DLC 1): its text never calls a method on null.
-#
-# get_args names the two stats the swap took from stats_swapped once has_been_applied is set
-# (Keys.hash_to_string[stats_swapped[1]].to_upper()). With fewer than two entries, or an entry
-# Keys.hash_to_string lacks, that is to_upper() on null: a release build of the game dereferences
-# null there and the process dies (0xc0000005); a debug build only logs a script error. The game
-# reaches that state itself in co-op: the effect object is shared by the ItemService original,
-# every offer (shallow duplicates) and every Axolotl bought from a shop, a purchase sets
-# has_been_applied on it, and ItemService._get_rand_item_for_wave empties its stats_swapped
-# whenever it rolls an Axolotl for a player who has none. The next Axolotl text (that offer in
-# the shop or a crate, the owner's own item) crashed (docs/implementation.md, "Axolotl crash").
-#
-# Here such a text names the player's current lowest and highest primary stats instead, as the
-# game shows an Axolotl nobody bought. The effect stays as it is: it is shared, so a repair would
-# write one viewer's stats into everybody's Axolotl and into the run state the host sends and
-# saves. A state that is fine (or not applied yet) goes to the game's own get_args.
-#
-# A rate-limited warning says where such a state was met (get_args, and apply or
-# deserialize_and_merge when they leave one behind) with what is needed to find its cause.
+# Axolotl: the game's get_args calls to_upper() on null when stats_swapped has fewer than two
+# known entries, which crashes a release build; co-op reaches that state by itself. The text
+# then names the player's current lowest and highest stats. The effect is shared by every
+# Axolotl, so it is not repaired here.
 
 const LOG_NAME := "einfluffles-BrotatoTogether:Axolotl"
 const AXOLOTL_ID := "item_axolotl"
@@ -56,7 +41,6 @@ static func bt_renderable(stats: Array) -> bool:
 	return true
 
 
-# How many unrenderable states were met in this game (tests; the warnings' own count).
 static func bt_warning_count() -> int:
 	return Engine.get_meta(META_KEY).count if Engine.has_meta(META_KEY) else 0
 

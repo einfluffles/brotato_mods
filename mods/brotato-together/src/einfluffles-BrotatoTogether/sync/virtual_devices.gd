@@ -1,7 +1,6 @@
 extends Reference
-# Virtual (networked) input devices on the host. Each remote player gets one remapped device id;
-# the game reads it through the same device-suffixed InputMap actions it uses for local co-op
-# ("ui_accept_12", ...).
+# Virtual (networked) input devices on the host: each remote player gets one remapped device id,
+# read by the game through its device-suffixed InputMap actions ("ui_accept_12", ...).
 # Ids 0..7 are the game's remapped devices, 8..11 its debug devices (CoopService constants).
 
 const FIRST := 12
@@ -22,7 +21,7 @@ const ANALOG_ACTIONS := [
 	"rjoy_down",
 ]
 
-# Order defines the bit index in the INPUT message's button mask — append only.
+# Order defines the bit index in the INPUT message's button mask: append only.
 const BUTTON_ACTIONS := [
 	"ui_accept",
 	"ui_select",
@@ -108,9 +107,8 @@ static func fill_puppet_slots(count: int) -> void:
 		CoopService.connected_players.push_back([FIRST + i, CoopService.PlayerType.GAMEPAD_XBOX])
 
 
-# Client: the PlayerType of one puppet slot. Every slot starts as a gamepad; this client's own
-# slot follows the device its player really uses while a screen runs locally
-# (sync/local_panel.gd). Returns whether it changed.
+# Client: every puppet slot starts as a gamepad; its own slot follows the device its player
+# really uses while a screen runs locally (sync/local_panel.gd). Returns whether it changed.
 static func set_slot_type(player_index: int, player_type: int) -> bool:
 	var players: Array = CoopService.connected_players
 	if player_index < 0 or player_index >= players.size():

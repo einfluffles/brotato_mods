@@ -1,16 +1,7 @@
 extends "res://ui/menus/shop/coop_item_popup.gd"
-# The co-op popup of an inventory element gets a Trade button, between the game's own buttons
-# and Cancel. Pressing it lists the players who can take the item (trade/rules.gd), one button
-# each, in place of the other buttons; a player button asks for the trade (trade_requested),
-# Cancel leads back. The button only shows while somebody can take the item.
-# The game's popup has buttons for weapons only: an item gets Trade and Cancel here when it
-# can be given, and stays a plain card otherwise.
-# Only where trade_shop is set (extensions/ui/coop_shop.gd): the level-up screen's popups are
-# the same scene and stay as they are.
-# Buying for another player (trade_open_buy, from a shop item's Trade button): the popup shows
-# the offered item with every other player and Cancel; a player without room is listed but
-# cannot be picked. A pick asks for the buy (trade_buy_requested), Cancel closes the popup
-# (trade_buy_closed).
+# Adds Trade to the co-op item popup. The game's popup has buttons for weapons only: an item gets
+# Trade and Cancel here. Only where trade_shop is set (extensions/ui/coop_shop.gd): the level-up
+# screen's popups are the same scene and stay as they are.
 
 signal trade_requested(item_data, to_player)
 signal trade_buy_requested(shop_item, to_player)
@@ -68,7 +59,7 @@ func hide(index := -1) -> void:
 	.hide(index)
 
 
-# The shop item's own popup, focused, listing entries ([player, can take it, combines]).
+# entries: [player, can take it, combines] for every listed player.
 func trade_open_buy(shop_item: Node, entries: Array) -> void:
 	_trade_buy = shop_item
 	display_item_data(shop_item.item_data, shop_item._button)
@@ -187,7 +178,6 @@ func _trade_receivers(item) -> Array:
 	return trade_shop.trade_receivers(item, player_index)
 
 
-# A button like the game's own in this popup, above Cancel.
 func _trade_add_button(node_name: String) -> Button:
 	var button := Button.new()
 	button.name = node_name
@@ -204,8 +194,7 @@ func _trade_add_button(node_name: String) -> Button:
 	return button
 
 
-# "Player 2" in that player's colour with its character, and what happens to a weapon that
-# finds no free slot there (combines: null asks the shop).
+# combines: null asks the shop.
 func _trade_label(button: Button, to: int, combines = null) -> void:
 	button.set_meta(TRADE_TO_META, to)
 	button.text = Text.text("COOP_PLAYER", [str(to + 1)])
@@ -229,8 +218,6 @@ func _trade_collapse() -> void:
 		button.focus_mode = FOCUS_NONE
 
 
-# From the player list back to the popup's buttons, the cursor on Trade. A buy-for list has
-# nothing to go back to: the popup closes.
 func _trade_back(refocus: bool) -> void:
 	if _trade_buy != null:
 		var shop_item := _trade_buy

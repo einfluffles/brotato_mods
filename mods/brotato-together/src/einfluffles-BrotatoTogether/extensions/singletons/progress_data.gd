@@ -5,10 +5,10 @@ extends "res://singletons/progress_data.gd"
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const BT_SHARE := "/root/ModLoader/einfluffles-BrotatoTogether/ProgressShare"
 
-var _bt_share: Node = null  # session/progress_share.gd, once the mod is up
+var _bt_share: Node = null  # the ProgressShare node, once the mod is up
 
 
-# A host's lifetime counters count for its clients too (session/progress_share.gd).
+# A host's lifetime counters count for its clients too.
 func increment_stat(key: String) -> void:
 	.increment_stat(key)
 	if _bt_share == null:
@@ -17,9 +17,8 @@ func increment_stat(key: String) -> void:
 		_bt_share.host_stat(key)
 
 
-# Writes this machine's own progress to its save while it mirrors the host or uses its DLC:
-# what was put aside goes in for the save and the live values come back after it, so the file
-# holds this player's own run, counters and lists, plus what it just earned.
+# This machine's own progress to its save while it mirrors the host or uses its DLC: what was
+# put aside goes in for the save and the live values come back after it.
 func bt_save_own() -> void:
 	var live := _bt_own_in()
 	.save()

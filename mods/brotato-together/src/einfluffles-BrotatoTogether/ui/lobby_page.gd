@@ -1,14 +1,8 @@
 extends Control
 # The "Online co-op" page: host / invite / leave / join an invite, and the connection details.
-# Built like the game's own menu pages (title, a panel, MyMenuButtons, Back; init() and
-# back_button_pressed as Menus.switch and its pages use them), so it sits in the pause menu's
-# page stack (ui/lobby_menu.gd) with the game's focus handling: Godot focus in solo play, the
-# pause menu's FocusEmulator in co-op. (The title screen has the lobby in a frame on its main
-# menu instead, ui/lobby_frame.gd.)
-# Leaving mid-run asks on the game's confirm page (menu_confirm.tscn with our question; its Yes
-# leaves the lobby instead of the run).
-# framed: the same page as a popup (ui/lobby_popup.gd), a panel on the dimmed screen. There the
-# keys come from MenuInputGuard through move_focus / press_focused / back.
+# Built like the game's own menu pages (init() and back_button_pressed as Menus.switch uses
+# them), so it sits in the pause menu's page stack with the game's focus handling.
+# framed: the same page as a popup, where the keys come from MenuInputGuard.
 
 signal back_button_pressed
 
@@ -22,7 +16,7 @@ const TITLE := "Online co-op"
 const REFRESH_SEC := 0.25
 const DIM := Color(0, 0, 0, 0.6)
 
-var lobby: Node = null  # ui/lobby_menu.gd
+var lobby: Node = null
 var framed := false
 var menus: Node = null  # the game's Menus this page is in (null: the popup)
 var entry_button: Button = null  # opens the page from the Menus' main page
@@ -125,7 +119,6 @@ func _build_confirm() -> void:
 	_confirm.get_node("Buttons/Label").autowrap = true
 
 
-# Called by Menus.switch when the page shows (and by the popup when it opens).
 func init() -> void:
 	_show_confirm(false)
 	_focused = null
@@ -158,7 +151,6 @@ func is_asking() -> bool:
 	return _confirm != null and _confirm.visible
 
 
-# Leave, with the question first when a run is on.
 func ask_leave() -> void:
 	if not lobby.transport.is_active():
 		return
@@ -191,7 +183,6 @@ func _on_confirm_cancel() -> void:
 	refresh()
 
 
-# The buttons the cursor can be on: the question's, or the page's.
 func nav_buttons() -> Array:
 	var found := []
 	var row: Node = _confirm.get_node("Buttons") if is_asking() else _buttons
@@ -201,9 +192,6 @@ func nav_buttons() -> Array:
 			if not child.disabled or child.get("_is_delay_active") == true:
 				found.append(child)
 	return found
-
-
-# --- the popup's keys and mouse (MenuInputGuard keeps them from the GUI) ---
 
 
 func button_at(position: Vector2) -> Button:

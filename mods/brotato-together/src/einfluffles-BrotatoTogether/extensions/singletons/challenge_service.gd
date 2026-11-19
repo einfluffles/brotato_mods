@@ -1,8 +1,7 @@
 extends "res://singletons/challenge_service.gd"
-# A mirrored (puppet) run belongs to the host: nothing this client's copy of the game does there
-# completes a challenge (same while it uses the host's DLC, session/dlc_borrow.gd). What the
-# host's game finds reached is sent to the clients instead and completed there for their own
-# save (session/progress_share.gd), the one way in (Puppet.own_progress).
+# A mirrored run belongs to the host: nothing this client's copy of the game does there completes
+# a challenge (same while it uses the host's DLC). What the host's game finds reached is sent to
+# the clients and completed there for their own save, under Puppet.own_progress.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const BT_SHARE := "/root/ModLoader/einfluffles-BrotatoTogether/ProgressShare"
@@ -17,7 +16,7 @@ const BT_REWARD_LISTS := {
 	RewardType.UPGRADE: ["upgrades_unlocked", "upgrade_id"],
 }
 
-var _bt_share: Node = null  # session/progress_share.gd, once the mod is up
+var _bt_share: Node = null  # the ProgressShare node, once the mod is up
 
 
 # The host's game asks this whenever a value could have reached a challenge, also for challenges
@@ -40,9 +39,8 @@ func complete_challenge(chal_id: int, also_complete_platform_challenge: bool = t
 		_bt_unlock_own(chal_id)
 
 
-# The reward goes onto this client's own list whether its content is registered here or not: a
-# reward behind a DLC the client only has from the host stays unlocked in its save (the game
-# offers it once the DLC is owned).
+# Onto this client's own list whether the content is registered here or not: a reward behind a
+# DLC it only has from the host stays unlocked in its save (the game offers it once owned).
 func _bt_unlock_own(chal_id: int) -> void:
 	var chal = get_chal(chal_id)
 	if chal == null or not chal.reward or not BT_REWARD_LISTS.has(chal.reward_type):

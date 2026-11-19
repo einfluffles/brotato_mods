@@ -1,17 +1,7 @@
 extends Reference
-# Client: the own player picks up consumables (fruit, crates) the moment it reaches them. It is
-# predicted ahead of the host while the consumables show the host's world ~100 ms back, so a
-# crate it ran over vanished a round trip later, behind it. Here the game's own rules run on the
-# predicted position (the scenes' shapes, Player._on_ItemPickupArea_area_entered and
-# _on_ItemAttractArea_area_entered): a touch takes it; a healing one below max health flies to
-# the player first like Item._physics_process moves it. At full health a fruit is only taken by
-# touch, as a crate always is. Only consumables standing where the newest snapshot has them
-# (not pushed out, not attracted by someone else, not gone) count.
-# The host decides: a taken puppet leaves the mirror with its pickup sound, and its id is held
-# (not respawned) until the host drops it too (then its pickup sound isn't played twice). Still
-# there once the host has applied CONFIRM_INPUTS more inputs of this player, it comes back where
-# the host has it and isn't predicted again (no take / come back loop). Taken by another player
-# meanwhile, it is gone all the same.
+# Client: predicts the own player's pickups of consumables (fruit, crates) with the game's own
+# rules on its predicted position. The host decides: a pickup it has not made CONFIRM_INPUTS
+# inputs later comes back where the host has it and is not predicted again.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const SoundRelay := preload(
@@ -38,7 +28,6 @@ class Held:
 	var waited := 0  # newest snapshots that still had it
 
 
-# Data for a consumable type key's tag.
 static func find_data(my_id: String):
 	for data in ItemService.consumables:
 		if data.my_id == my_id:
@@ -75,20 +64,18 @@ static func item_extents(item: Node2D) -> Vector2:
 	return shape_node.shape.extents * shape_node.global_scale.abs()
 
 
-# A puppet the mirror spawned.
 func spawned(id: int, node: Node) -> void:
 	if node is Consumable:
 		_tracked[id] = node
 
 
-# Not to be respawned: taken here, the host not done yet.
+# Taken here and still in the host's snapshots: the mirror must not respawn it.
 func holds(id: int) -> bool:
 	return _held.has(id)
 
 
-# Every frame after the mirror placed the puppets. own: the own player while its prediction runs
-# (else null), at: its predicted position (no correction blend), seq: its newest input. Returns
-# the ids taken now: they leave the mirror.
+# own: the own player while its prediction runs (else null); at: its predicted position without
+# the correction blend; seq: its newest input. Returns the ids taken now.
 func update(
 	entities: Dictionary,
 	own,
@@ -130,7 +117,6 @@ func update(
 	return taken
 
 
-# The newest snapshot: has the host taken what was taken here?
 func confirm(snapshot: Dictionary, you: int, types: Dictionary) -> void:
 	if _held.empty() or you < 0 or you >= snapshot.players.size():
 		return
@@ -149,7 +135,6 @@ func confirm(snapshot: Dictionary, you: int, types: Dictionary) -> void:
 			_refused[id] = true
 
 
-# Still where the host has it, and this player may take it.
 func _standing(id: int, node: Node2D, newest: Dictionary, own) -> bool:
 	if not node.visible or node.consumable_data == null or _refused.has(id):
 		return false
@@ -202,7 +187,7 @@ func _take(id: int, node: Node, seq: int, newest: Dictionary, taken: Array) -> v
 		SoundRelay.replay(Utils.get_rand_element(held.data.pickup_sounds), null, 0.0, 0.0)
 
 
-# Consumable.pickup's sound, played here already.
+# Removes the host's Consumable.pickup sound event: the sound was played here at the take.
 static func _drop_sound(events: Array, data, types: Dictionary) -> void:
 	var paths := []
 	for sound in data.pickup_sounds:

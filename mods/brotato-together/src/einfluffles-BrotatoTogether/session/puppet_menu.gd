@@ -1,8 +1,7 @@
 extends Reference
-# Client: what the host's selection screen offers, for the client's copy of that screen
-# (extensions/ui/*_selection.gd ask here instead of this machine's own unlocks, so every grid
-# has the host's elements in the host's order). Filled by sync/menu_puppet.gd before the scene
-# loads. Names no game classes: script extensions preload it at mod init.
+# Client: what the host's selection screen offers. The *_selection.gd extensions ask here
+# instead of this machine's own unlocks; sync/menu_puppet.gd fills it before the scene loads.
+# Names no game classes: script extensions preload it at mod init.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const META_KEY := "brotato_together_menu_grids"
@@ -35,4 +34,4 @@ static func _inventory(index: int):
 	var inventories = Engine.get_meta(META_KEY) if Engine.has_meta(META_KEY) else []
 	if index >= 0 and index < inventories.size():
 		return inventories[index]
-	return {"elements": [], "unlocked": []}  # nothing of this machine's own
+	return {"elements": [], "unlocked": []}  # not sent by the host: never this machine's own

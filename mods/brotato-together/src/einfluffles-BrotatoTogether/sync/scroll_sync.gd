@@ -1,29 +1,8 @@
 extends Node
-# How far every player's panel is scrolled, the same on every screen of the lobby: item and
-# character descriptions, the gear lists and the stats sheet of the co-op shop, the level-up and
-# crate panels and the selection screens (character, weapon, difficulty).
-#
-# A panel is scrolled where it is driven: the mouse wheel only ever scrolls the own panel of the
-# machine it is on (ui/wheel_scroll.gd), and a client's own shop and level-up panel run on the
-# client, right stick included. So the host saw nothing of a client's scrolling, and a client
-# saw nothing of anybody else's.
-# - Client -> host, PANEL_SCROLL (reliable, on change, at most every CHECK_INTERVAL): its own
-#   panel's positions, {scene, scrolls: [[target, value]]}. The own panel is the one whose
-#   FocusEmulator runs here (FocusSync.local_emulators: shop, level-up) or, on the copy of the
-#   host's selection screens, this machine's player (ui/shared_scroll.gd). The host follows
-#   them on its copy of that panel; a target outside the sender's own panel is ignored.
-# - Host -> clients, state stream section SCROLLS: every panel as the host's screen has it,
-#   {scene, players: [[player, [[target, value]]]]}. A client follows every panel but its own.
-# A target is the ScrollContainer as a ui/focus_targets.gd target: in the shop and the level-up
-# panels by the player's anchors (describe(scroll, scene, player)), on the selection screens,
-# which have no anchors, relative to the player's panel. Only containers that show and have more
-# content than room are sent; their value is scroll_vertical.
-# Following (both sides): the receiver moves the container toward the value at least as fast as
-# a right stick scrolls, faster for a long way (a wheel step is one jump of 70 px), and lets go
-# once it is there, so the receiver's own game (a popup that opens at the top) is not held back
-# by an old value. A target that does not resolve yet (the popup opens with the next cursor
-# state) is retried for FOLLOW_MSEC.
-# Cosmetic: nothing here changes the run.
+# How far every player's panel is scrolled, the same on every screen of the lobby. Cosmetic.
+# - Client -> host, PANEL_SCROLL (on change): its own panel, {scene, scrolls: [[target, value]]}.
+# - Host -> clients, section SCROLLS: {scene, players: [[player, [[target, value]]]]}.
+# A target is the ScrollContainer as a ui/focus_targets.gd target; the value is scroll_vertical.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -44,10 +23,10 @@ const CATCH_UP := 12.0  # share of the remaining way per second, for long ways
 const FOLLOW_MSEC := 2000  # how long a value is followed (or waits for its container)
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 var focus_sync: Node = null  # client: its local_emulators name the own panel
 var input_sync: Node = null  # host: which player a peer is
-var last_sent := {}  # client: the last PANEL_SCROLL body (tests)
+var last_sent := {}  # client: the last PANEL_SCROLL body
 
 var _since := 0.0
 var _sent := ""  # client: the last PANEL_SCROLL body as text
@@ -80,9 +59,6 @@ func _on_lobby_left() -> void:
 	_sent = ""
 	last_sent = {}
 	_follow = {}
-
-
-# --- panels ---
 
 
 # Player p's panels on scene: the co-op shop's player container, the level-up / crate panel
@@ -166,9 +142,6 @@ static func resolve(scene: Node, p: int, target) -> ScrollContainer:
 	return node
 
 
-# --- host (provider and PANEL_SCROLL) ---
-
-
 # Cheap: instance ids and values, no description.
 func state_key(_section: int) -> String:
 	var scene := get_tree().current_scene
@@ -221,10 +194,6 @@ func _player_index_of(steam_id: int) -> int:
 	return -1
 
 
-# --- client (sender and handler) ---
-
-
-# The own panel's positions to the host when they changed.
 func send_own() -> void:
 	var body := own_body()
 	if body.empty():
@@ -280,9 +249,6 @@ func apply_state(_section: int, body, _revision: int) -> bool:
 	return true
 
 
-# --- following (both sides) ---
-
-
 # Player p's panel on scene moves to the positions in scrolls ([[target, value]], network
 # data). False: nothing valid in it.
 func follow(scene: Node, p: int, scrolls) -> bool:
@@ -313,7 +279,8 @@ func follow(scene: Node, p: int, scrolls) -> bool:
 	return any
 
 
-# One frame of following: each followed container a step toward its value.
+# Lets go of a container once it is there, so the receiver's own game (a popup that opens at the
+# top) is not held back by an old value.
 func step_follow(delta: float) -> void:
 	if _follow.empty():
 		return
@@ -348,6 +315,6 @@ func _scroll_of(entry: Dictionary, scene: Node) -> ScrollContainer:
 	return scroll
 
 
-# Followed values that have not arrived yet (tests).
+# Followed values that have not arrived yet.
 func following() -> int:
 	return _follow.size()

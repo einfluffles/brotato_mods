@@ -1,79 +1,7 @@
 extends Node
-# One ordered, reliable stream of host state in named sections (STATE: [section, revision, body]).
-# Replaces the machinery every sync module had its own copy of: a poll loop with a change key,
-# forgetting the key on peer_ready, per-peer sends, and "keep the latest state until the scene
-# is ready, then apply it".
-#
-# Host: register_provider(section, provider, interval, heavy) with a provider object that has
-#   state_key(section) -> String: what the section's state is right now, "" = inactive (nothing
-#     to send). Called every interval, so it must be cheap (text of the state, not the state
-#     packed). It must cover everything the body depends on, the per-peer part included.
-#   state_body(section): the body, built only when something is sent (compress here). Shared by
-#     every peer of one send. Plain data only (no objects).
-#   state_patch(section, steam_id) -> Dictionary (optional): merged into a copy of the body for
-#     each peer (`you`). Split from state_body so the expensive part is built once per send
-#     without the provider caching anything; a patch needs a Dictionary body.
-#   state_sent(section, steam_id) (optional): called right after the section's body went to the
-#     peer (the patch built for it: sync/run_parts.gd records which run parts the peer has).
-#     message_for does not call it: a body built for a test was never sent.
-# flush(section, hold = false): check in the next idle frame whatever the interval (state
-# changed by deferred game code, like a shop intent); with hold, no check before that frame
-# either. mark_dirty(section, steam_id = 0: every ready peer): send the
-# current state again at the next check even when the key did not change.
-# heavy (RUN_SHOP, UPGRADES: bodies of up to 32 KB with run parts): a new state is not handed
-# to a peer whose Steam send queue already holds more than HOLD_BYTES of reliable data
-# (Transport.connection_status's pending_reliable, asked once per peer and check, only when a
-# heavy section sends). The peer stays dirty and the next check (interval) tries again; it then
-# gets the revision current at that time, one message for every change it missed: what Steam
-# has queued cannot be withdrawn, what was never handed to it can be replaced. The run parts
-# stay right because the provider builds a peer's patch (state_patch) and records it (state_sent)
-# only when that peer is actually sent to (sync/run_parts.gd computes the parts against what the
-# peer was last sent). Never held: a null body, a light section, a peer held for MAX_HOLD_MSEC
-# already, a peer Steam has no status for ({}: no Steam, tests). A resync target is held the
-# same way. Each peer's holds are counted per section and logged when the section turns
-# inactive (the screen closed).
-# Order across sections: a held heavy section reaches that peer after lighter sections sent in
-# the meantime (cursors, pause). The client applies each section on its own: a cursor that points
-# at a control not built yet stays pending until it resolves (sync/focus_sync.gd), and the
-# shop's controls are the same nodes before and after a shop state. The heavy sections keep
-# their order among themselves for a peer: both use the one run part record, which only ever
-# sees what was sent, in the order it was sent.
-# Only ready peers get anything; nothing is sent while not host. A key change bumps the
-# section's revision and goes to every ready peer; a section that turns inactive after having
-# been active sends a null body once. On peer_ready the peer gets every section again in section
-# order (current revision, null for one that was active once and is not now): a resync must
-# re-deliver what the peer may have missed.
-# That resync is queued and runs first thing in the next step, never inside the peer_ready
-# emission: what other modules send from their own peer_ready handler (BattleHost's BATTLE_START,
-# which tells the client which battle the battle sections belong to; InputSync's device, which
-# the `you` patches read) is on the reliable channel before any STATE for that peer. Running last
-# in the emission does not work: Godot 3 calls a signal's targets by object id, not in connection
-# order, and this node is created before the modules that register with it. Nothing goes out in
-# between: the stream only sends from step, and that step resyncs before any interval or flush
-# check (a key change meanwhile reaches the new peer in section order with the rest). Held
-# sections (flush with hold) hold the resync too, so the peer still gets every section in order.
-#
-# Client: register_handler(section, handler, timeout_sec) with a handler object that has
-#   apply_state(section, body, revision) -> bool: true = applied, false = not now (scene still
-#     loading, control not built). The latest body of the section then stays pending and is
-#     retried every frame, in section order, until it applies, a newer one replaces it, a null
-#     clears it or timeout_sec passes. Anything but a bool (a handler that hit a script error
-#     returns null) drops the body with a warning; the other sections go on.
-#   clear_state(section) (optional): the host has no state for the section any more. Only called
-#     when the section had a state since the last clear.
-#   accept_state(section, body, revision) (optional): called once for every body that is not
-#     stale, as it arrives and before it becomes pending. For what must not wait for the apply:
-#     a pending body that a newer one replaces is never applied (the run parts it delivered are
-#     stored here, sync/run_parts.gd).
-# retry(): try every pending section now (e.g. on battle_entered). receive(message): one STATE
-# body, validated; the sender check (only the host) is in _on_message.
-# Revisions: a lower revision than the last one received for the section is stale and dropped;
-# an equal one is applied again (that is a resync or a mark_dirty resend), so handlers must be
-# idempotent. lobby_left drops everything on both sides.
-#
-# Tests drive it by hand: message_for(section, steam_id) is the STATE body the host would send
-# that peer now, receive() takes it, step(delta) is one frame (what _process does; after
-# peer_ready, step(0.0) sends the resync).
+# One ordered, reliable stream of host state in sections (STATE: [section, revision, body]).
+# A key change bumps the section's revision and goes to every ready peer; a section that turns
+# inactive sends a null body once. On peer_ready the peer gets every section again, in order.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:StateStream"
@@ -103,7 +31,7 @@ const HOLD_BYTES := 24 * 1024
 const MAX_HOLD_MSEC := 2000  # then sent anyway: a state late is better than none
 
 var session: Node = null
-var hold_lines := []  # host: the lines logged about holds when a heavy section closed last (tests)
+var hold_lines := []  # host: the lines logged about holds when a heavy section closed last
 
 # host: section -> {provider, patched, interval, left, key, rev, flush_frame, dirty {steam_id},
 #   heavy, holds {steam_id: msec its hold began}, held {steam_id: [holds, longest msec]}}
@@ -138,9 +66,15 @@ func step(delta: float) -> void:
 		retry()
 
 
-# --- host ---
-
-
+# The provider object has
+#   state_key(section) -> String: the section's state right now, "" = inactive. Called every
+#     interval, so it must be cheap, and it must cover everything the body depends on, the
+#     per-peer part included.
+#   state_body(section): plain data, built only when something is sent, shared by every peer.
+#   state_patch(section, steam_id) -> Dictionary (optional): merged into a copy of the body for
+#     that peer. Needs a Dictionary body.
+#   state_sent(section, steam_id) (optional): called right after the body went to the peer.
+# heavy: a new state waits while the peer's Steam send queue is over HOLD_BYTES (_unheld).
 func register_provider(
 	section: int, provider: Object, interval := DEFAULT_INTERVAL, heavy := false
 ) -> void:
@@ -251,8 +185,9 @@ func _check(section: int, entry: Dictionary, peers: Array, resend_to: int) -> vo
 		_log_holds(section, entry)
 
 
-# The targets that get a heavy section now; the others (Steam's queue to them over HOLD_BYTES)
-# stay dirty for the next check. Asks Steam once per target, none for a target held too long.
+# The targets that get a heavy section now. The others (Steam's queue to them over HOLD_BYTES)
+# stay dirty for the next check: what Steam has queued cannot be withdrawn, an unsent state can
+# still be replaced. Never held: a peer held for MAX_HOLD_MSEC, or one Steam has no status for.
 func _unheld(entry: Dictionary, targets: Array) -> Array:
 	var now := OS.get_ticks_msec()
 	var free := []
@@ -270,7 +205,6 @@ func _unheld(entry: Dictionary, targets: Array) -> Array:
 	return free
 
 
-# Reliable bytes waiting in Steam's send queue to the peer, -1 when Steam does not say.
 func _queued(peer: int) -> int:
 	var transport = session.transport
 	if transport == null or not transport.has_method("connection_status"):
@@ -345,7 +279,9 @@ func _held(frame: int) -> bool:
 	return false
 
 
-# Queued for the next step (header: after every other peer_ready handler of this emission).
+# Queued for the next step: what other modules send from their own peer_ready handlers must be
+# on the reliable channel first, and Godot 3 calls a signal's targets by object id, not in
+# connection order, so running last in the emission cannot be arranged.
 func _on_peer_ready(steam_id: int) -> void:
 	if session.is_host():
 		_resyncs[steam_id] = true
@@ -362,9 +298,15 @@ func _resync() -> void:
 	_resyncs.clear()
 
 
-# --- client ---
-
-
+# The handler object has
+#   apply_state(section, body, revision) -> bool: false = not now (scene still loading). The
+#     latest body then stays pending and is retried every frame until it applies, a newer one
+#     replaces it, a null clears it or timeout_sec passes. Must be idempotent: a resync or a
+#     mark_dirty resend applies an equal revision again.
+#   clear_state(section) (optional): the host has no state for the section any more.
+#   accept_state(section, body, revision) (optional): called for every body that is not stale,
+#     as it arrives. A pending body that a newer one replaces is never applied, so what must not
+#     wait for the apply (the run parts a body delivers, sync/run_parts.gd) is stored here.
 func register_handler(section: int, handler: Object, timeout_sec := DEFAULT_TIMEOUT_SEC) -> void:
 	assert(section >= 0 and section < NAMES.size())
 	_handlers[section] = {

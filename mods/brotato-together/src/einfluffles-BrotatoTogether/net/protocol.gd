@@ -1,35 +1,32 @@
 extends Reference
-# Wire format: var2bytes([msg_type, body]). Decoding never allows objects.
 
 enum Msg {
-	HELLO,  # client -> host, resent until WELCOME: see session/compat.gd local_info
-	WELCOME,  # host -> client: version, accepted, reason, dlcs (session/dlc_borrow.gd)
+	HELLO,  # client -> host, resent until WELCOME: Compat.local_info (session/compat.gd)
+	WELCOME,  # host -> client: version, accepted, reason, dlcs
 	PING,  # any -> any: t
-	PONG,  # any -> any: t, held (ms the PING waited for the answering frame, see session.gd)
-	KICK,  # host -> client: the host removed it from the lobby; the client leaves
+	PONG,  # any -> any: t, held (ms the PING waited for the answering frame)
+	KICK,  # host -> client, no body: the host removed it from the lobby; the client leaves
 	# client -> host, unreliable: [seq, move: Vector2, aim: Vector2, buttons (held mask),
 	# presses (4-bit counter per button, sync/press_counter.gd), flags (sync/local_aim.gd),
 	# previous: PoolVector2Array (the moves of the up to InputSync.REDUNDANCY inputs right before
-	# seq, oldest first, so a lost packet's move still arrives with a later one; protocol 16),
-	# sent_msec (the client's OS.get_ticks_msec() when it sent it: the host's gap log tells the
-	# client's own stalls from inputs held up on the way, sync/stream_gaps.gd; protocol 22)]
+	# seq, oldest first, so a lost packet's move still arrives with a later one),
+	# sent_msec (the client's OS.get_ticks_msec() when it sent it)]
 	INPUT,
-	# host -> client: battle_id, run (in parts, only those the client lacks: sync/run_parts.gd;
-	# protocol 25), types {idx: scene_path}, colors (palette
-	# index per slot, CoopService extension; also in the shop and menu states)
-	# + holes (hole layout scene, "" none), weapon_slots (per player; sync/battle_scene.gd)
+	# host -> client: battle_id, run (the parts the client lacks, sync/run_parts.gd),
+	# types {idx: scene_path}, colors (palette index per slot), holes (hole layout scene,
+	# "": none), weapon_slots (per player), you (the client's player slot, -1: spectator)
 	BATTLE_START,
 	BATTLE_END,  # host -> client: battle_id
 	TYPE_DEF,  # host -> client: battle_id, idx, path
 	SNAPSHOT,  # host -> client, unreliable: see sync/snapshot.gd
 	UI_SOUNDS,  # host -> client: sounds [[res:// path, volume, pitch, position or null]]
-	# client -> host: battle_id, seq (of the sender's panel), kind ("choose" | "reroll" |
-	# "take" | "discard" | "ban"), id (upgrade / item my_id, "" for reroll), meca (-1: none).
-	# Crate weapon popup: kind "weapon_combine" | "weapon_discard" | "weapon_meca_roll" (the
-	# host rolls the two meca options, sent in the upgrades state) | "weapon_meca" (meca: the
-	# index of the option picked), id (the weapon's my_id), weapon (its slot in the sender's
-	# weapons). Other mods' kinds (UpgradesSync.register_intent; protocol 30): id, arg (theirs
-	# to define) and meca (the panel's meca effect choice)
+	# client -> host: battle_id, seq (of the sender's panel), kind, id, meca (-1: none).
+	# kind "choose" | "reroll" | "take" | "discard" | "ban": id is the upgrade / item my_id
+	# ("" for reroll). The crate weapon popup's "weapon_combine" | "weapon_discard" |
+	# "weapon_meca_roll" | "weapon_meca" (meca: the index of the option picked): id is the
+	# weapon's my_id, plus weapon (its slot in the sender's weapons). Other mods' kinds
+	# (UpgradesSync.register_intent): id, plus arg (theirs to define); meca is the panel's meca
+	# effect choice
 	UPGRADE_INTENT,
 	# client -> host: battle_id, page (the sender's carousel page), target (its cursor as a
 	# ui/focus_targets.gd target inside its own panel, []: none). Cosmetic: what the others see.
@@ -40,39 +37,25 @@ enum Msg {
 	# client -> host: shop_id, page, target (like UPGRADE_FOCUS, inside the sender's shop panel)
 	SHOP_FOCUS,
 	# host -> client: shop_id, player, stat (Keys hash), value: the icon and number the shop
-	# floats over a player's reroll button when a reroll gave a stat (bone dice; protocol 18)
+	# floats over a player's reroll button when a reroll gave a stat (bone dice)
 	SHOP_TEXT,
-	# host -> client: challenges (ids reached in the host's run), stats (lifetime counters ->
-	# how often they went up), won: what the run earns for the client's own save
-	# (session/progress_share.gd; protocol 20)
+	# host -> client: challenges (ids reached in the host's run), stats (lifetime counter ->
+	# how often it went up), won: what the run earns for the client's own save
 	PROGRESS,
-	# client -> host: a client's frame times, scene-change stalls and prediction corrections for
-	# the host's log, numbers only (sync/client_report.gd; protocol 24)
+	# client -> host: kind, scene and that kind's numbers (a window of frame times and prediction
+	# corrections, or a scene-change stall) for the host's log, built in sync/client_report.gd
 	CLIENT_REPORT,
 	# client -> host: scene (its filename), scrolls ([[target, value]]: how far each
-	# ScrollContainer of the sender's own panel is scrolled, sync/scroll_sync.gd; protocol 27)
+	# ScrollContainer of the sender's own panel is scrolled)
 	PANEL_SCROLL,
-	# host -> client: [section, revision, body or null (the section has no state now)], see
-	# sync/state_stream.gd; each section's body is described where it is built (shop:
-	# sync/shop_sync.gd, pause_shop: sync/pause_control.gd). The run state of sections shop and
-	# upgrades travels in parts, only those the client lacks (sync/run_parts.gd; protocol 23)
+	# host -> client: [section (a StateStream constant), revision, body or null (the section has
+	# no state now)]; the body is built by the section's provider (state_body)
 	STATE,
 }
 
-# 27: scroll positions of every player's panel travel both ways (PANEL_SCROLL, state section
-# scrolls); the menu state no longer carries `scrolls`.
-# 28: a snapshot's player flags carry Player.dead (PLAYER_DEAD); clients no longer take health 0
-# for dead (a Veteran who died starts the next wave alive at 0 health).
-# 29: the snapshot's player stats end with the player's hit protection (tardigrade charges), so
-# a client's HUD counter and life bar tint follow the host's blocked hits.
-# 30: other mods' decisions on the level-up / crate panels (UPGRADE_INTENT with their own kinds
-# and arg; the upgrades state names the host's kinds).
 const VERSION := 30
-# How long one side carries on without the other's stream (snapshots on a client, INPUT on the
-# host) before it counts as gone rather than late. Both ends share it: a client predicts its own
-# player for that long without snapshots (sync/battle_client.gd PREDICTION_STALE_MSEC), and the
-# host keeps a remote player's held buttons and aim for that long without INPUT
-# (sync/input_sync.gd INPUT_TIMEOUT_MSEC), so a gap the client rides out ends without a release.
+# How long a client predicts without snapshots and the host keeps a remote player's last INPUT.
+# One value for both: a gap the client rides out must not release its buttons on the host.
 const STALL_LIMIT_MSEC := 600
 
 
@@ -80,7 +63,7 @@ static func encode(msg_type: int, body = null) -> PoolByteArray:
 	return var2bytes([msg_type, body])
 
 
-# Returns [msg_type, body] or null when the payload is malformed.
+# null: malformed. bytes2var's false: objects in network data are never decoded.
 static func decode(data: PoolByteArray):
 	if data.empty():
 		return null

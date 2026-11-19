@@ -1,15 +1,6 @@
 extends Reference
-# The path of Steam's message session to each lobby member, for the log: direct or relayed through
-# Steam Datagram Relay (and which relay POP), logged when a session comes up and whenever it
-# changes. Polled once a second (GodotSteam's getSessionConnectionInfo, no per-frame work), and a
-# line only when something changed.
-# A failed session (network_messages_session_failed) is logged with Steam's reason in words, and
-# what happened next gets a line of its own: sends use SEND_AUTO_RESTART_BROKEN_SESSION, so the
-# next message opens a new session; the follow-up says when it was up again and over which path,
-# or that it still was not after FOLLOW_UP_MSEC.
-# With relay-only on (the default, Transport.apply_route) a direct session means the other side
-# still offered the direct route (an older build, or +bt_direct): one warning per member, until
-# the member leaves the lobby.
+# Logs the path of Steam's message session to each lobby member (direct, or relayed and through
+# which relay POP), its changes, and what followed a failed session.
 
 const LOG_NAME := "einfluffles-BrotatoTogether:Transport"
 const POLL_MSEC := 1000
@@ -41,16 +32,15 @@ const END_REASONS := {
 }
 
 var paths := {}  # steam id -> what describe() said at the last poll ("" before a session)
-var lines := 0  # logged so far (tests)
+var lines := 0  # logged so far
 var last_line := ""
-var relay_only := false  # the transport switched Steam's direct route off (Transport.apply_route)
-var direct_warnings := 0  # logged so far (tests)
+var relay_only := false  # the transport switched Steam's direct route off
+var direct_warnings := 0  # logged so far
 var _failures := {}  # steam id -> msec of a failed session whose outcome is not logged yet
 var _direct_warned := {}  # steam id -> true: its session came up direct under relay-only
 var _next_poll_msec := 0
 
 
-# Transport._process: every frame, works once a second.
 func poll(steam: Object, members: Array, now: int) -> void:
 	if now < _next_poll_msec or steam == null or not steam.has_method("getSessionConnectionInfo"):
 		return

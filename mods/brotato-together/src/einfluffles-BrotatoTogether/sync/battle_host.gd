@@ -1,18 +1,10 @@
 extends Node
 # Host: while the battle scene (main.tscn) runs, mirror it to clients.
-# - BATTLE_START (reliable) with the run state + entity type table, also for late joiners. The run
-#   travels in parts, each client gets only those it lacks (sync/run_parts.gd: the record of
-#   what each peer was sent, shared with ShopSync and UpgradesSync; protocol 25). It is the run
-#   as the battle scene entered the tree (_on_node_added), before main._ready started the wave:
-#   that sets every player's health to its start value (a player part), and the client's own
-#   main._ready does the same to the run it gets. After a shop state a start so carries only
-#   what Go changed: the wave (the common part "c"), a player's parts only when Go took one of
-#   its items (hourglass, lifeform scanner). A peer that becomes ready mid-wave gets the run as
-#   it is then, every part (_on_peer_ready). The sends of one start are logged in one line
-#   ("Battle 3 start: 2 states, 2 with run parts (1.6 KB: c 2), ...", RunParts.Sender.close).
+# - BATTLE_START (reliable): the run as the scene entered the tree, before main._ready set the
+#   wave's start health, in parts (sync/run_parts.gd), plus the entity type table
 # - SNAPSHOT (unreliable) at SNAPSHOT_HZ with players, entities and wave time
 # - BATTLE_END (reliable) when the battle scene goes away
-# - section pause_battle of the state stream while the battle is paused (state_key)
+# - section PAUSE_BATTLE of the state stream while the battle is paused
 
 # What is known about a mirrored node once it has its net id (see _record): looked up per
 # snapshot instead of asking the node again.
@@ -49,9 +41,9 @@ const SPAWNER_RESPAWN_SIGNALS := [
 # (BrachiosaurusFoot finds "Brachiosaurus").
 const SPAWNER_LISTS := ["bosses", "enemies", "neutrals", "structures", "pets"]
 const REST_AFTER := 4  # snapshots without movement before an entity's position is left out
-const REST_REFRESH := 15  # ... but it is still sent every this many snapshots (staggered by id)
-const STATS_REPEAT := 4  # snapshots: player stats are sent this long after they change
-const STATS_REFRESH := 10  # ... and every this many snapshots
+const REST_REFRESH := 15  # snapshots between resends of a resting position (staggered by id)
+const STATS_REPEAT := 4  # snapshots player stats are sent for after they change
+const STATS_REFRESH := 10  # snapshots between resends of the stats
 const MAX_EVENTS := 48  # per snapshot; Snapshot.select_events drops the least valuable
 const KIND_ENTITY := 1  # has `dead` and an AnimationPlayer worth watching
 const KIND_UNIT := 2  # has a sprite whose facing is host state
@@ -63,11 +55,11 @@ const KIND_FACING := 16  # a projectile whose rotation is sent (sync/facing.gd)
 const MAX_CLOCK_DRIFT_MSEC := 250.0
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 var input_sync: Node = null
 var snapshot_bytes := 0  # size of the last snapshot, for the lobby page
-var pause_control: Node = null  # who paused (section pause_battle)
-var run_sender = null  # RunParts.Sender, shared with ShopSync and UpgradesSync (set by mod_main.gd)
+var pause_control: Node = null  # who paused (section PAUSE_BATTLE)
+var run_sender = null  # RunParts.Sender, shared with ShopSync and UpgradesSync
 
 var _main: Node = null
 var _battle_live := false  # between _start_battle and _end_battle
@@ -85,7 +77,7 @@ var _paused := false
 var _events := []  # one-shot feedback since the last snapshot
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
-var _feedback = FeedbackMirror.new()  # explosions, bonus gold, wave end (protocol 11)
+var _feedback = FeedbackMirror.new()
 var _looks = Looks.new()
 var _facing = Facing.new()
 var _battle_scene = BattleScene.new()  # weapons at wave start, sent speeds
@@ -159,9 +151,6 @@ static func advance_clock(sim_msec: float, now_msec: int) -> float:
 	return sim_msec
 
 
-# --- battle lifecycle ---
-
-
 func _start_battle(main: Node) -> void:
 	if _battle_live:
 		_end_battle()
@@ -212,9 +201,8 @@ func _on_battle_scene_exited(battle_id: int) -> void:
 		_end_battle()
 
 
-# The battle scene's entry is watched between battles while the host has a ready peer (gone: a
-# peer that is leaving, -1: the lobby is gone): inside a battle every pooled projectile that
-# comes back would call _on_node_added, and solo play has no handler for every node.
+# Watched only between battles while the host has a ready peer: inside a battle every pooled
+# projectile that comes back would call _on_node_added. gone: a leaving peer, -1: the lobby.
 func _watch_entry(gone := 0) -> void:
 	var on := false
 	if gone != -1 and not _battle_live and session.is_host():
@@ -229,8 +217,7 @@ func _watch_entry(gone := 0) -> void:
 		tree.disconnect("node_added", self, "_on_node_added")
 
 
-# The battle scene enters the tree, its _ready has not run yet: the run of its BATTLE_START
-# (_battle_start_body).
+# The scene's _ready has not run yet: this is the run its BATTLE_START carries.
 func _on_node_added(node: Node) -> void:
 	if node.filename == BATTLE_SCENE:
 		_run_cache.clear()
@@ -260,11 +247,8 @@ func _end_battle() -> void:
 		session.broadcast_reliable(Protocol.Msg.BATTLE_END, {"battle_id": _battle_id})
 
 
-# Its run has every part (what a client with nothing needs: tests); _send_battle_start narrows
-# it to what the peer lacks. The run the scene entered with for the first body of a battle
-# (_on_node_added), else serialized now (a peer joining mid-wave, a battle the host loaded
-# without peers). The cache is cleared after the sends (RunParts.Sender.close): no run text is
-# kept through the battle.
+# Every part; _send_battle_start narrows it to what the peer lacks. The run the scene entered
+# with for a battle's first body, else serialized now (a peer joining mid-wave).
 func _battle_start_body() -> Dictionary:
 	var types_by_idx := {}
 	for path in _types:
@@ -285,10 +269,6 @@ func _battle_start_body() -> Dictionary:
 	}
 
 
-# Every part: the peer may have lost its store (a new process) or missed a body. ShopSync and
-# UpgradesSync forget it too in this emission (RunParts.Sender.forget: once per idle frame, so
-# their call does not drop the record made here). Between battles: the next battle scene's entry
-# is watched from now on.
 func _on_peer_ready(steam_id: int) -> void:
 	if session.is_host() and is_in_battle():
 		run_sender.forget(steam_id)
@@ -297,9 +277,6 @@ func _on_peer_ready(steam_id: int) -> void:
 	_watch_entry()
 
 
-# Section pause_battle: active while this battle is paused (a joining peer gets it on peer_ready
-# like every section), inactive (null: resumed) otherwise. A pause flushes the section
-# (_physics_process), so it does not wait for the next check.
 func state_key(_section: int) -> String:
 	if not is_in_battle() or not get_tree().paused:
 		return ""
@@ -312,8 +289,7 @@ func state_body(_section: int):
 	return {"battle_id": _battle_id, "by": by[0], "by_id": by[1]}
 
 
-# Each client also learns which player slot it controls (-1: spectator), and gets the run parts
-# it lacks: sent directly, not through the state stream, so recorded as sent at once.
+# Sent directly, not through the state stream, so the run parts are recorded as sent at once.
 func _send_battle_start(steam_id: int, start: Dictionary) -> void:
 	var body := start.duplicate()
 	body["you"] = _player_index_of(steam_id)
@@ -335,8 +311,6 @@ func _player_index_of(steam_id: int) -> int:
 	return -1
 
 
-# Newest INPUT seq the peer controlling player i has moved with, one physics tick each
-# (input_sync.last_applied_seq; 0 for local players).
 func _input_ack_of(player_index: int) -> int:
 	if player_index >= CoopService.connected_players.size():
 		return 0
@@ -394,9 +368,6 @@ func _preregister_types(main: Node) -> void:
 			_types[path] = _types.size()
 
 
-# --- snapshot ---
-
-
 func _build_snapshot() -> Array:
 	var view := {
 		"battle_id": _battle_id,
@@ -438,7 +409,7 @@ func _build_snapshot() -> Array:
 		group.append(record[Rec.ID])
 		by_id[record[Rec.ID]] = record
 	var flags := []
-	var ids := PoolIntArray()  # pool arrays are values: filled locally, stored at the end
+	var ids := PoolIntArray()
 	var types := PoolIntArray()
 	var positions := PoolVector2Array()
 	var live := {}
@@ -455,9 +426,8 @@ func _build_snapshot() -> Array:
 			types.append(type_idx)
 			positions.append(position)
 			# Facing is host state: behaviors turn units toward their target, and knockback would
-			# flip a puppet that faced its interpolated motion. flip_h: JumpAttackBehavior turns
-			# the sprite toward its landing spot (and leaves it so). Hidden: e.g. stampede dinos
-			# before their charge.
+			# flip a puppet that faced its interpolated motion. flip_h: JumpAttackBehavior turns the
+			# sprite toward its landing spot. Hidden: e.g. stampede dinos before their charge.
 			var node_flags := 0 if node.visible else Snapshot.FLAG_HIDDEN
 			if kind & KIND_UNIT:
 				var sprite = node.sprite
@@ -514,8 +484,7 @@ func _build_snapshot() -> Array:
 	return [Protocol.Msg.SNAPSHOT, Snapshot.encode(view)]
 
 
-# A node enters the snapshots: its net id (the one a spawn signal just gave it, else a new
-# one), its type, what kind of thing it is, the damage hook.
+# The net id is the one a spawn signal just gave the node, else a new one.
 func _record(node: Node, key: int) -> Array:
 	if not node.has_meta(NET_ID_META) or not _fresh_ids.has(key):
 		_assign_net_id(node)
@@ -549,7 +518,7 @@ func _capture_players() -> Array:
 			RunData.get_player_gold(i),
 			RunData.get_player_level(i),
 			float(RunData.get_player_xp(i)),
-			int(player._hit_protection),  # tardigrade charges: the HUD counter and life bar tint
+			int(player._hit_protection),
 		]
 		var entry := [player.global_position, null, null, _input_ack_of(i), null, null, null]
 		entry.append(Snapshot.pack_weapons(player.current_weapons))
@@ -569,9 +538,6 @@ func _capture_players() -> Array:
 				entry[Snapshot.STAT_FIELDS[k]] = stats[k]
 		players.append(entry)
 	return players
-
-
-# --- one-shot feedback (damage numbers, hit flashes/particles, sounds) ---
 
 
 # player_target: -(player_index + 1) for players, 0 for entities (looked up by net id).
@@ -604,10 +570,8 @@ func _on_took_damage(
 	_events.append([Snapshot.EVENT_DAMAGE, target, value, knockback, flags, hit_type])
 
 
-# Called by SoundRelay for every sound the host's sound managers accept during the battle
-# (cooldown: playSingle's duplicate_cooldown, 0 for play()).
-# Not while paused: the pause menu isn't shown on clients, and its sounds would arrive as a
-# burst with the first snapshot after unpausing.
+# cooldown: playSingle's duplicate_cooldown, 0 for play(). Not while paused: the pause menu's
+# sounds would arrive as a burst with the first snapshot after unpausing.
 func record_sound(
 	sound: Resource, position, volume_mod: float, pitch_rand: float, always := false, cooldown := 0.0
 ) -> void:
@@ -629,7 +593,6 @@ func _tracked_nodes() -> Array:
 		var list = _main.get(list_name)
 		if list is Array:
 			nodes += list
-	# Spawn markers: where the next enemies, trees and turrets appear.
 	var births = _main.get("_births_container")
 	if births != null:
 		for child in births.get_children():

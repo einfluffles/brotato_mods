@@ -1,13 +1,7 @@
 extends Reference
 # Host: one remote player's buttons on its virtual device, from the INPUT held mask plus the
-# client's press counters (sync/press_counter.gd).
-# - A press needs a counted edge: a button still held after a timeout release (or at rejoin) does
-#   nothing until the client releases it, so a held accept can't accept twice.
-# - A tap lost in a loss burst (counter moved, button no longer held) is replayed once.
-# - ui_pause is never held here: the game pauses on its release (main._check_for_pause,
-#   BaseShop._is_pause_requested), so it's delivered as press + release when the client releases
-#   it. A timeout or a disconnect therefore never synthesizes a pause.
-# - Menu directions repeat while held, like InputService's echo for real pads (devices 0..7 only).
+# client's press counters (sync/press_counter.gd). A press needs a counted edge, so a button still
+# held after a timeout release or a rejoin does nothing until the client releases it.
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -15,7 +9,7 @@ const VirtualDevices := preload(
 const PressCounter := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/press_counter.gd"
 )
-# InputService._echo_delay / _echo_interval
+# InputService._echo_delay / _echo_interval. Its own echo covers real pads (devices 0..7) only.
 const ECHO_DELAY := 0.3
 const ECHO_INTERVAL := 0.09
 
@@ -82,7 +76,7 @@ func is_down(i: int) -> bool:
 	return bool(_down & (1 << i))
 
 
-# Called every frame on the host; enabled mirrors the game's own echo switch.
+# enabled: the game's own echo switch.
 func process_echo(delta: float, enabled: bool) -> void:
 	var nav_down := false
 	for i in VirtualDevices.NAV_INDICES:
@@ -103,7 +97,8 @@ func process_echo(delta: float, enabled: bool) -> void:
 			VirtualDevices.press_button(_action(i), device, true)
 
 
-# Releases since the last packet: presses - (still held) + (was held).
+# The game pauses on the release of ui_pause (main._check_for_pause, BaseShop._is_pause_requested),
+# so it is delivered as press + release when the client releases it. A timeout never pauses.
 func _apply_pause(is_held: bool, presses: int) -> void:
 	var releases := presses - int(is_held) + int(_pause_held)
 	if releases > 0:

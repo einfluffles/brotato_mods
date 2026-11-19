@@ -1,16 +1,11 @@
 extends Reference
 # The gear page and the crate weapons list of a puppet's level-up / crate panels, rebuilt when
-# the host's run state changes (sync/upgrades_sync.gd apply). Static helpers, moved out of
-# upgrades_sync.gd (its line budget).
+# the host's run state changes (static helpers of sync/upgrades_sync.gd).
 
 
-# What a new run state changed, per player: p -> whether its gear (its "g<p>" part, weapons and
-# items) changed, for each player whose parts changed. apply rebuilds only these: stats, gold
-# and crate weapons of a changed player, the gear (about 250 elements each late in a run, the
-# slow part) only where it changed. store: the RunParts.Store right after its state_for(ids);
-# old: the ids the panels showed before, {} for panels that showed none yet (a new UI: every
-# player, gear too). The store compares with its own last state_for, which is the panels' unless
-# another section built one in between, so the ids the panels showed count too.
+# p -> whether its gear ("g<p>" part) changed, for each player whose parts changed. store: the
+# RunParts.Store right after its state_for(ids); old: the ids the panels showed before ({}: none
+# yet, so every player, gear too), compared as well: another section may have built a state since.
 static func changed_players(store, old: Dictionary, ids: Dictionary) -> Dictionary:
 	var changed := {}
 	var rebuilt: Array = store.changed_players()
@@ -26,9 +21,8 @@ static func changed_players(store, old: Dictionary, ids: Dictionary) -> Dictiona
 	return changed
 
 
-# Whether apply's refresh can have taken the popup p's cursor was in (in_popup): the crate list's
-# refresh closes it, a gear rebuild frees the gear element it was opened from. Without either
-# (a changed player whose gear did not change, no crate weapons) it stays open as it was.
+# Whether apply's refresh can have taken the popup p's cursor was in: the crate list's refresh
+# closes it, a gear rebuild frees the gear element it was opened from.
 static func popup_refreshed(ui: Node, p: int, in_popup: bool, gear: bool) -> bool:
 	return in_popup and (gear or ui._weapons_inventory_enabled[p])
 
@@ -37,10 +31,9 @@ static func _same_id(a, b) -> bool:
 	return typeof(a) == TYPE_ARRAY and typeof(b) == TYPE_ARRAY and a == b
 
 
-# UpgradesUI._show_next_player_options refreshes the crate weapons list (only there for a
-# player whose crates give weapons) on the host; a puppet never runs it. The run state brings
-# new weapon objects, so the list is rebuilt with it. A cursor that was in the list (slot)
-# keeps its place; returns whether it did.
+# UpgradesUI._show_next_player_options refreshes the crate weapons list on the host; a puppet
+# never runs it, and the run state brings new weapon objects. slot: where the cursor was in the
+# list; returns whether it kept its place.
 static func refresh_weapons(ui: Node, container: Node, p: int, slot: int, own: bool) -> bool:
 	if not ui._weapons_inventory_enabled[p]:
 		return false
@@ -76,13 +69,9 @@ static func weapon_slot(ui: Node, container: Node, p: int) -> int:
 	return -1
 
 
-# update_inventory frees every element of the gear page (weapons and items) and builds new
-# ones. Nothing may keep an old one: a FocusEmulator whose control was freed crashes a released
-# game (extensions/ui/focus_emulator.gd), and a focus neighbour naming one makes the game's
-# Inventory log "Node not found" for each element it relinks. So the cursor is taken off first
-# (returned: where it was, [] when not in the gear; put_gear_cursor puts it back), and the
-# game's way back to the gear page (_resume_inventory_control_focus) and the gear's focus
-# neighbours move to the new elements.
+# update_inventory frees every gear element. Nothing may keep an old one (a FocusEmulator with a
+# freed control crashes, a focus neighbour naming one logs "Node not found"), so the cursor is
+# taken off first. Returns where it was ([] when not in the gear) for put_gear_cursor.
 static func rebuild_gear(ui: Node, container: Node, p: int) -> Array:
 	var emulator = container.focus_emulator
 	var cursor := _gear_place(container, emulator.focused_control)
@@ -99,7 +88,7 @@ static func rebuild_gear(ui: Node, container: Node, p: int) -> Array:
 	return cursor
 
 
-# The cursor back on the rebuilt gear (see _gear_element). Returns whether it is there.
+# Returns whether the cursor is back on the rebuilt gear.
 static func put_gear_cursor(container: Node, place: Array) -> bool:
 	var element = _gear_element(container, place)
 	if element == null or not element.is_visible_in_tree() or container.item_popup._focused:
@@ -124,9 +113,8 @@ static func _gear_place(container: Node, control) -> Array:
 	return []
 
 
-# The element of the rebuilt gear that stands for place: the same item (the one nearest its
-# old index; items are shown newest first, so a new item moves the others on), else the one at
-# the same index (the last one if there are fewer). null when that inventory is empty.
+# The same item (the one nearest its old index: items are shown newest first), else the element
+# at the same index (the last one if there are fewer). null when that inventory is empty.
 static func _gear_element(container: Node, place: Array):
 	if place.empty():
 		return null
@@ -146,10 +134,8 @@ static func _gear_element(container: Node, place: Array):
 	return best
 
 
-# The gear's focus neighbours after a rebuild. On the gear page the game's own links are redone
-# (CoopUpgradesUIPlayerContainer._set_focus_neighbours, which the game runs on a page change
-# only: weapons to the last item and items to the first weapon, by node path). On another page
-# a path to a freed element is dropped; the page change links it again.
+# On the gear page the game's own links are redone (_set_focus_neighbours, which the game runs on
+# a page change only). On another page a path to a freed element is dropped.
 static func _relink_gear(container: Node) -> void:
 	var gear = container.player_gear_container
 	for inventory in [gear.weapons_container, gear.items_container]:

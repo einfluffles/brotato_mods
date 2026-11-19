@@ -1,25 +1,18 @@
 extends Reference
 # Entity parts that game physics code turns, moves, shows or hides relative to the entity. Puppets
-# freeze physics, so the host sends these values (only for scenes that have such parts) and clients
-# interpolate. Turrets (Structure/Turret) never rotate in this game version; the parts found are:
+# freeze physics, so the host sends these values and clients interpolate. The layout depends only
+# on the scene, so both sides derive it from a pristine instance. The parts:
 # - stampede dinos (GoTowardsBorderOppositeMovementBehavior): the whole unit turns along its run
-# - Pivot children (predator, giant, jellyfish, unused corrupted tree): spinning rings of enemy
-#   bullets, plus each EnemyProjectileRotating's distance from the center (it flies outwards first)
-# - catling gun pet: both gun pivots aim at targets (rotation + scale.y mirror)
-# - enemy lasers: aim (they don't move, so motion can't give it) and beam/aura visibility
+# - Pivot children (predator, giant, jellyfish): spinning rings of enemy bullets, plus each
+#   EnemyProjectileRotating's distance from the center
+# - catling gun pet: both gun pivots (rotation + scale.y mirror)
+# - enemy lasers: aim and beam / aura visibility
 # - brachiosaurus foot: visibility of its shadow / foot / release sprites, foot flip_h
-# - bosses and elites (Boss): their health as a fraction, for the life bar over them (the
-#   brachiosaurus' across the screen). Damage numbers are capped events; this is state.
-#
+# - bosses and elites (Boss): their health as a fraction, for the life bar over them
 # Optional group, sent after the base values only while active (the value count tells the client):
-# - PIVOTS: boss pivots added at runtime (eel, tyrannosaurus, brachiosaurus instance `pivots_scene`
-#   in a phase change); the client instances the same scene on its puppet
-# - JUMP: JumpAttackBehavior's landing warning (position) and ground shadow (height, size) mid-jump
+# - PIVOTS: boss pivots added at runtime (eel, tyrannosaurus, brachiosaurus `pivots_scene`)
+# - JUMP: JumpAttackBehavior's landing warning (position) and ground shadow (height, size)
 # - WARNING_LINE: WarningChargingAttackBehavior's red charge line (direction)
-#
-# The layout (which nodes, in which order) depends only on the scene, so it is derived from a
-# pristine instance of it (not from a live, possibly damaged one) identically on host and client,
-# and cached per scene path.
 
 enum Kind { ROTATION, POSITION_X, SCALE_Y, POSITION_Y, SCALE, BITS, LINE_ANGLE, HEALTH }
 enum Group { NONE, PIVOTS, JUMP, WARNING_LINE }
@@ -59,7 +52,7 @@ func layout_of(scene_path: String) -> Dictionary:
 # frees a unit's pivots when it dies and does not restore them on pool reuse).
 func capture(entity: Node) -> PoolRealArray:
 	var lay := layout(entity)
-	var values := []  # an Array: _read appends to it (pool arrays are passed by value)
+	var values := []  # an Array, not a pool array: _read appends to it
 	if not _read(entity, lay.parts, values):
 		return PoolRealArray()
 	if lay.group != Group.NONE and _group_active(entity, lay):
@@ -103,9 +96,8 @@ func spawned(entity: Node, main: Node) -> void:
 		main._shake_zone_sprites(entity.global_position, STAMPEDE_SHAKE_SEC)
 
 
-# Client: the boss' own handler moves its bar (and hides it when this client's "life bars on
-# bosses" option is off). Boss.init makes the brachiosaurus' bar across the screen; puppets never
-# run it. Boss.die frees it.
+# Client: the boss' own handler moves its bar (and hides it when the "life bars on bosses" option
+# is off here). Boss.init makes the brachiosaurus' bar across the screen; puppets never run it.
 static func _show_health(boss: Node, fraction: float) -> void:
 	var value := int(round(clamp(fraction, 0.0, 1.0) * HEALTH_STEPS))
 	if boss.has_meta(HEALTH_META) and boss.get_meta(HEALTH_META) == value:
@@ -119,9 +111,6 @@ static func _show_health(boss: Node, fraction: float) -> void:
 		boss._fullscreen_lifebar_canvas = canvas
 		boss._fullscreen_lifebar = canvas.get_node("UIProgressBar")
 	boss.on_health_updated(boss, value, HEALTH_STEPS)
-
-
-# --- layout ---
 
 
 static func _derive(scene_path: String) -> Dictionary:
@@ -245,9 +234,6 @@ static func _unique(root: Node, node_name: String) -> Node:
 	return node if node != null else root.find_node(node_name, true, false)
 
 
-# --- host ---
-
-
 static func _group_active(entity: Node, lay: Dictionary) -> bool:
 	match lay.group:
 		Group.PIVOTS:
@@ -300,9 +286,6 @@ static func _read(entity: Node, parts: Array, values: Array) -> bool:
 					return false
 				values.append(line.points[0].angle())
 	return true
-
-
-# --- client ---
 
 
 static func _write(

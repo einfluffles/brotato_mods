@@ -1,27 +1,7 @@
 extends Node
-# Client: the local player's keyboard, mouse and pad on a co-op screen whose own panel runs on
-# this client (the level-up / crate panels, sync/upgrades_sync.gd; the shop, sync/shop_local.gd).
-#
-# Co-op screens are driven by one FocusEmulator per player, and an emulator with a cursor marks
-# every event that is not a co-op action as handled. So the mouse never reaches the GUI there,
-# and InputService (an autoload: last in _input order) never learns which device is in use.
-# This node must be added AFTER the emulators (the last child of their parent): _input runs in
-# reverse tree order, so it sees every event first.
-# - Device: the own slot takes the PlayerType of what the player used last. Puppet slots start
-#   as gamepads; a keyboard has no trigger binding, so a keyboard player needs the game's
-#   keyboard co-op panel (page arrows reachable by focus, keyboard glyphs). The game fixes the
-#   type when a co-op player joins; a client is one player who may put the pad down, so it is
-#   followed here, and the panel is refreshed (refresh_player_type) when it changes.
-# - Mouse: moving over a focusable control of the own panel puts the own emulator's cursor
-#   there; a left click presses it through the emulator, so the press belongs to the own
-#   player (a native GUI press has no player: PopupManager would book it on player 0).
-# - A mouse event over any player's panel ends here: another player's panel never reacts.
-# - The wheel scrolls what is under the pointer in the own panel only (ui/wheel_scroll.gd), and
-#   ends here wherever the pointer is.
-# Nothing here knows a particular screen. A screen sets panels, keeps blocked up to date,
-# calls set_own(panel, emulator, player_index) while its own panel is local, and redoes its
-# own focus neighbours on player_type_changed. hold_cursor is for a screen whose cursor
-# position means something (the shop's Go only counts while the cursor rests on it).
+# Client: the local player's keyboard, mouse and pad on a co-op screen whose own panel runs here.
+# An emulator with a cursor marks every event that is not a co-op action as handled, so this
+# node must be the emulators' last sibling: _input runs in reverse tree order.
 
 # cursor_lost: the cursor sat on a control that cannot hold it any more (a page arrow).
 signal player_type_changed(player_type, cursor_lost)
@@ -50,7 +30,6 @@ var _hover_pending := false
 var _held_device := -1  # the device whose accept a mouse press stands for, until released
 
 
-# The own panel takes local input (null: none does, the mouse does nothing on any panel).
 func set_own(panel: Control, emulator: Node, player_index: int) -> void:
 	_own = panel
 	_emulator = emulator
@@ -113,8 +92,8 @@ func _process(_delta: float) -> void:
 		_emulator.focused_control = control  # the setter emits the focus signals as this player
 
 
-# Accept on a control of the own panel, as the own emulator does it: toggles, option buttons,
-# disabled buttons and the pressed signal with its player index are the game's.
+# Through the own emulator, so the press belongs to the own player: a native GUI press has no
+# player, and PopupManager would book it on player 0.
 func press(control: Control) -> void:
 	if _emulator.focused_control != control:
 		_emulator.focused_control = control
@@ -147,10 +126,8 @@ func _cursor_root() -> Control:
 	return _own
 
 
-# The control of the panel that a cursor can land on at pos (viewport coordinates): what the
-# emulator could focus, not what the GUI would hit. The game's co-op panels are not laid out
-# for a mouse (CoopUpgradesUIPlayerContainer has a Control that stops the mouse over all of
-# its content), so mouse filters say nothing here.
+# What the emulator could focus at pos (viewport coordinates), not what the GUI would hit:
+# CoopUpgradesUIPlayerContainer has a Control that stops the mouse over all of its content.
 static func control_at(panel: Control, pos: Vector2) -> Control:
 	if not panel.is_visible_in_tree():
 		return null
@@ -222,6 +199,8 @@ static func event_player_type(event: InputEvent) -> int:
 	return -1
 
 
+# The game fixes the type when a co-op player joins. A client is one player who may put the pad
+# down, so the type follows the device used last.
 func _set_player_type(player_type: int) -> void:
 	if not VirtualDevices.set_slot_type(_player_index, player_type):
 		return
@@ -233,7 +212,6 @@ func _set_player_type(player_type: int) -> void:
 
 # A panel built for one PlayerType shows another: carousels switch between trigger glyphs and
 # focusable arrows, key hints reload their glyph. The game only does this once, in _ready.
-# The caller redoes what is its screen's own (focus neighbours, a cursor that lost its place).
 static func refresh_player_type(node: Node, player_index: int, emulator: Node) -> void:
 	if node is Carousel:
 		_refresh_carousel(node, emulator)
