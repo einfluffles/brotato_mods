@@ -1,23 +1,6 @@
 extends Reference
-# Suite run_parts: the run state of the shop and of the level-up panels travels in parts, and
-# each client gets only the parts it lacks (sync/run_parts.gd). On a host stream of its own (a
-# fake session with two peers, stepped by hand) with the real co-op shop and the host's battle
-# with its panels, in late endless runs with 2 and 4 players (250 items each):
-# - a page flip or a Go flag sends no run part, not even its ids (under 1 KB on the wire); a
-#   purchase by player 0 sends exactly c, p0 and g0, a (paid) reroll c and p0, a level-up choice
-#   p<p> only;
-# - a client's store builds the same run state as the whole text did (its parts joined and
-#   printed equal RunStateCodec.encode_json), keeps the PlayerRunData objects of the players
-#   that did not change and names the ones that did;
-# - peer_ready sends every part to that peer and only the change to the other; message_for
-#   records nothing; a body replaced while pending leaves the store complete; a missing part
-#   asks the host for a resync and applies nothing; the shop's counters for its log line;
-# - a peer the stream held back (Steam's queue to it full) later gets one body whose parts are
-#   the union of the changes it missed, and its store builds the exact run from it.
-# RunParts.changed_paths (what the host's miss warning names) and the warning's list of paths.
-# Prints the bytes per page flip, Go, lock, reroll, purchase and level-up choice, the host's
-# time per change and a client's time per changed state, before (the whole run in every body,
-# parsed and deserialized whole) and now.
+# Suite run_parts: the run state of the shop and of the level-up panels travels in parts, and each
+# client gets only the parts it lacks (sync/run_parts.gd).
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const StateStream := preload(
@@ -45,8 +28,8 @@ const VIEW_LIMIT := 1024  # bytes on the wire for a change that moves no run par
 
 var _t: Node = null
 var _together: Node = null
-var _stream: Node = null  # the host stream of this suite
-var _provider: Node = null  # ShopSync or UpgradesSync
+var _stream: Node = null
+var _provider: Node = null
 var _store = null  # what the client P1 has (RunParts.Store)
 var _state := {}  # the run state P1's store built last
 var _numbers := []  # [change, bytes before, now, host usec before, now, client before, now]
@@ -93,9 +76,6 @@ func run(t: Node, together: Node):
 	together.battle_host.set_process(true)
 
 
-# --- the shop ---
-
-
 func _shop(players: int):
 	yield(_panel_tests()._blank_scene(), "completed")  # no battle may see the new run's players
 	var provider_node: Node = _together.shop_sync
@@ -128,7 +108,7 @@ func _shop(players: int):
 		_change("lock", null)
 		node.change_lock_status(false)
 		_change("unlock", null)
-	shop._free_rerolls[0] = 0  # a paid reroll
+	shop._free_rerolls[0] = 0
 	shop._reroll_price[0] = int(max(shop._reroll_price[0], 1))
 	FocusEmulatorSignal.emit(shop._get_reroll_button(0), "pressed", 0)
 	yield(_frames(1), "completed")
@@ -151,7 +131,6 @@ func _shop(players: int):
 	_end_stream()
 
 
-# message_for builds what the peer would get now and records nothing: twice the same parts.
 func _test_message_for(provider_node: Node) -> void:
 	var record := var2str(provider_node.run_sender.sent_to(P1))
 	RunData.add_gold(1, 0)
@@ -168,9 +147,7 @@ func _test_message_for(provider_node: Node) -> void:
 	_change("gold", ["p0"])
 
 
-# Steam's queue to P1 is over the stream's limit: P2 gets each change, P1 none; once the queue
-# has room, P1 gets one message whose parts are the union of the changes it missed, and its
-# store builds the host's exact run from it.
+# Steam's queue to P1 is over the stream's limit: P2 gets each change, P1 none until it has room.
 func _test_held(label: String) -> void:
 	var statuses: Dictionary = _stream.session.transport.statuses
 	statuses[P1] = {"pending_reliable": StateStream.HOLD_BYTES + 1}
@@ -212,8 +189,6 @@ func _test_held(label: String) -> void:
 	_check_join(label + ", held changes")
 
 
-# peer_ready: the providers forget what the peer has, the stream's resync (its next step) sends
-# that peer every part; a change made meanwhile goes to the other peer as that change only.
 func _test_peer_ready(provider_node: Node, label: String) -> void:
 	provider_node._on_peer_ready(P2)
 	_together.upgrades_sync._on_peer_ready(P2)  # both providers forget it, in one emission
@@ -276,8 +251,6 @@ func _test_pending(provider_node: Node, label: String) -> void:
 	client.free()
 
 
-# A body that names a part the client has neither stored nor been sent: the host is asked for a
-# full resync (Session.ask_resync) and the shop applies nothing of the body.
 func _test_missing(provider_node: Node, label: String) -> void:
 	RunData.add_gold(1, 0)
 	_stream.step(1.0)
@@ -326,9 +299,6 @@ func _test_close(provider_node: Node, label: String) -> void:
 	print("  info: run parts, %s: shop log line: %s" % [label, sender.summary("shop")])
 
 
-# --- the level-up panels ---
-
-
 func _panels(players: int):
 	var provider_node: Node = _together.upgrades_sync
 	var tests = _panel_tests()
@@ -363,9 +333,6 @@ func _panel_tests():
 	tests._sync = _together.upgrades_sync
 	tests._cache = _together.upgrades_sync.run_cache
 	return tests
-
-
-# --- RunParts.changed_paths and the list in the miss warning (RunCache.miss_text) ---
 
 
 func _test_changed_paths() -> void:
@@ -412,9 +379,6 @@ func _expect_paths(label: String, old, new, depth: int, expected: Array) -> void
 		paths == expected,
 		"changed paths: %s (%s)" % [label, ", ".join(PoolStringArray(paths))]
 	)
-
-
-# --- helpers ---
 
 
 func _start(section: int, provider: Node) -> void:
@@ -465,8 +429,7 @@ func _first(label: String) -> void:
 	_check_join(label + ", first state")
 
 
-# One check of the host stream after a change: both peers get it, the parts are the expected
-# ones (sorted; null: any), P1's store builds the same run as the whole text. Measured.
+# One check of the host stream after a change. expected: the part ids (sorted; null: any).
 func _change(change: String, expected) -> void:
 	var started := OS.get_ticks_usec()
 	_stream.step(1.0)

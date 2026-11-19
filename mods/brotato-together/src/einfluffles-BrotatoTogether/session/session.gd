@@ -1,22 +1,11 @@
 extends Node
-# Session state on top of the transport: role, handshake, per-peer liveness/RTT.
-# RTT: a PING once a second, answered with a PONG. Both are read once a frame, so the time until
-# the PONG is handled (answer_ms) holds up to a frame of each side, and all of a stalled one (a
-# scene load, a big run state). rtt_ms is that time without what both messages waited for their
-# frame (transport.held_msec): the network's part, Steam's send queue included.
-# Handshake: the client sends HELLO (session/compat.gd local_info) every HELLO_INTERVAL_MSEC
-# until WELCOME: the first one can be lost while Steam's member list / session acceptance on the
-# host lags behind the join. The host answers every HELLO; a repeated HELLO from a ready peer
-# means it missed WELCOME (and everything after it), so it gets a full resync.
-# WELCOME carries the host's DLCs: the client borrows the ones it lacks while it is that host's
-# client (session/dlc_borrow.gd); every way out (lobby_left, a new lobby) reverts them.
+# Session state on top of the transport: role, handshake, per-peer liveness and RTT.
 
 # Became ready, or needs a full resync (every sync module resends its whole state on this).
 signal peer_ready(steam_id)
 signal peer_removed(steam_id)
 signal message(steam_id, msg_type, body)
-# Client: a message of the host, right before `message` (mod_main.gd takes the host's DLC back
-# before anything reads the message).
+# Client: a message of the host, emitted right before `message`.
 signal host_message(msg_type, body)
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
@@ -43,11 +32,12 @@ const STEAM_STATUS_TEXT := (
 
 var transport: Node = null
 # steam_id -> {name, ready, rtt_ms, answer_ms, last_seen_msec, resync, last_resync_msec}
+# answer_ms: from a PING until its PONG is handled, both sides' frames included. rtt_ms: that
+# without what the two messages waited for their frame (transport.held_msec).
 var peers := {}
-var slow_answers := 0  # logged so far (tests)
+var slow_answers := 0  # logged so far
 # Client in its own menus: the host's DLC is handed back meanwhile (set_borrow_parked).
 var borrow_parked := false
-# What went out reliably to each peer lately (net/traffic.gd), for the log.
 var traffic = Traffic.new()
 
 var _host_dlcs = null  # client: the DLCs of the host's WELCOME
@@ -89,9 +79,6 @@ func send_reliable(steam_id: int, msg_type: int, body = null) -> void:
 	_note_reliable(steam_id, msg_type, body, data.size())
 
 
-# Noted for the log (net/traffic.gd); a message over 32 KB or a reliable queue over 64 KB gets a
-# line of its own, at most one per peer in 5 s (Steam's queue is only asked when one may follow,
-# and after small messages at most every 250 ms: Traffic.query_due).
 func _note_reliable(steam_id: int, msg_type: int, body, size: int) -> void:
 	var now := OS.get_ticks_msec()
 	var text := Traffic.label(msg_type, body)
@@ -126,7 +113,6 @@ func broadcast_unreliable(msg_type: int, body = null) -> void:
 			send_unreliable(steam_id, msg_type, body)
 
 
-# Host: out of the lobby, like a peer that left. It may join again once its game has left.
 func kick(steam_id: int) -> void:
 	if not is_host() or not peers.has(steam_id):
 		return
@@ -136,9 +122,8 @@ func kick(steam_id: int) -> void:
 	_on_peer_left(steam_id)  # also when the transport did not know it
 
 
-# Client: while it is in its own menus (the host is in its main menu) the borrowed DLC is given
-# back, so that these run on this machine's own content and saves; taken again before the first
-# thing of the host that needs it. No-op without a welcome that lent something.
+# Client in its own menus: the borrowed DLC is given back, so they run on this machine's own
+# content and saves. No-op without a welcome that lent something.
 func set_borrow_parked(parked: bool) -> void:
 	borrow_parked = parked
 	if parked:
@@ -184,7 +169,7 @@ func _host_timed_out(now: int) -> bool:
 	return now - peers[host_id].last_seen_msec > HOST_TIMEOUT_MSEC
 
 
-# Client: (re)send HELLO until the host's WELCOME arrives.
+# The first HELLO can be lost while Steam's member list on the host lags behind the join.
 func resend_hello(now: int) -> void:
 	if _next_hello_msec < 0 or now < _next_hello_msec or not is_client():
 		return
@@ -218,10 +203,8 @@ func request_resync(steam_id: int) -> void:
 		peers[steam_id].resync = true
 
 
-# Client: the host's state named something this client lacks (a run part, sync/run_parts.gd).
-# HELLO again: the host takes a HELLO from a ready peer as a missed WELCOME and resyncs it fully
-# (request_resync, at most once per RESYNC_INTERVAL_MSEC); asked at most that often from here too
-# (the host's entry's last_resync_msec, unused on a client otherwise).
+# Client: the host's state named something this client lacks (a run part). The host takes a
+# HELLO from a ready peer as a missed WELCOME and resyncs it fully.
 func ask_resync() -> void:
 	if not is_ready_client():
 		return
@@ -341,7 +324,6 @@ func arrival_msec() -> int:
 	return OS.get_ticks_msec() - transport.held_msec(_received_usec)
 
 
-# The PING's body and how long the PING waited here for this frame.
 func _pong(body, received_usec: int):
 	if typeof(body) != TYPE_DICTIONARY:
 		return body
@@ -368,8 +350,7 @@ func _handle_pong(steam_id: int, body, received_usec: int) -> void:
 
 
 # Where a late answer's time went: the network, the other game's frame, this one's (0 and 0
-# without Steam's receive times; the time since this game's last frame shows its stall then),
-# the screen, and Steam's own numbers for the connection. At most one a second per peer.
+# without Steam's receive times), the screen, and Steam's own numbers for the connection.
 func slow_answer_text(steam_id: int, held_there: int, held_here: int) -> String:
 	var peer: Dictionary = peers[steam_id]
 	var scene := get_tree().current_scene
@@ -384,8 +365,6 @@ func slow_answer_text(steam_id: int, held_there: int, held_here: int) -> String:
 	return text + steam_status_text(steam_id)
 
 
-# For log lines about a peer: Steam's numbers for the connection and its path (direct / relayed,
-# net/link_watch.gd); "" when neither is known.
 func steam_status_text(steam_id: int) -> String:
 	var text := ""
 	var status: Dictionary = transport.connection_status(steam_id)

@@ -1,12 +1,7 @@
 extends Reference
 # The shop that runs on the clients themselves (sync/shop_sync.gd, shop_intents.gd,
-# shop_local.gd). Host: a remote player's intent is only applied to what its panel offers right
-# now (revision + identity), by the game's own code, and its raw buttons stay off the host's
-# copy. Client: the own panel takes local input and sends intents without changing anything
-# here (gold, items, locks, slots, Go), the other panels are dead, and a panel is only rebuilt
-# when its part of the state changed.
-# Called from mod_main.gd after the shop loopback (needs its two-player run); checks go
-# through its _check.
+# shop_local.gd). Host: a remote player's intent is applied only to what its panel offers right now
+# (revision + identity). Client: the own panel sends intents without changing anything here.
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -57,11 +52,11 @@ var _states := {}  # name -> RUN_SHOP body as a client receives it
 var _meca = ShopMecaTests.new()  # kept alive across its yields
 var _locks = ShopLockTests.new()
 var _texts = ShopTextTests.new()
-var _wheel = null  # WheelScrollTests, kept alive across its yields
+var _wheel = null
 var _mods = ShopModIntentTests.new()
-var _gear = ShopGearTests.new()  # kept alive across its yields
-var _popups = ShopPopupMouseTests.new()  # kept alive across its yields
-var _cursors = ShopCursorTests.new()  # kept alive across its yields
+var _gear = ShopGearTests.new()
+var _popups = ShopPopupMouseTests.new()
+var _cursors = ShopCursorTests.new()
 
 
 func run(t: Node, together: Node):
@@ -81,9 +76,6 @@ func run(t: Node, together: Node):
 	Puppet.set_active(false)
 	_sync._host_shop = null  # set by hand in _host_part: the host shop is gone
 	_sync.set_process(true)
-
-
-# --- host: player 1 is remote (virtual device), player 0 local ---
 
 
 func _host_part(together: Node):
@@ -168,7 +160,6 @@ func _host_blocked_buttons(together: Node):
 	_input._remote.erase(_t.FAKE_PEER)
 
 
-# A remote player's own cursor and page, shown on the host.
 func _host_focus() -> void:
 	var panel = _shop._get_coop_player_container(REMOTE)
 	var emulator = Utils.get_focus_emulator(REMOTE, _shop)
@@ -201,7 +192,6 @@ func _host_focus() -> void:
 	_shop_targets()
 
 
-# Every kind of shop cursor target, by meaning, with extra nodes on one side only.
 func _shop_targets() -> void:
 	var panel = _shop._get_coop_player_container(REMOTE)
 	var reroll: Node = _shop._get_reroll_button(REMOTE)
@@ -248,7 +238,6 @@ func _host_rejections() -> void:
 
 
 func _host_slot_intents():
-	# Lock / unlock: wanted states, applied once, no new revision.
 	var slot := _pick(REMOTE)
 	var node = _node(REMOTE, slot)
 	var id: String = node.item_data.my_id
@@ -267,7 +256,6 @@ func _host_slot_intents():
 	_t._check(RunData.get_player_locked_shop_items(REMOTE).empty(), "host unlocked the item")
 	_t._check(_seq() == seq, "locks leave the revision alone")
 
-	# Buy: identity wins over a wrong index; the same press twice applies once.
 	var other_slot := (slot + 1) % 4
 	var others := _slots(0)
 	var gold: int = RunData.get_player_gold(REMOTE)
@@ -298,7 +286,6 @@ func _host_slot_intents():
 	_t._check(not _sync.host_apply_intent(_shop, REMOTE, reroll), "a second reroll needs a new press")
 	_t._check(_shop._reroll_count[REMOTE] == 1 and _seq() > seq, "rerolled panel has a new revision")
 
-	# Steal: only with a steal left; costs nothing.
 	slot = _pick(REMOTE)
 	node = _node(REMOTE, slot)
 	id = node.item_data.my_id
@@ -318,7 +305,7 @@ func _host_slot_intents():
 	)
 	yield(_buy_delay(), "completed")
 
-	# Ban: dead while the game doesn't offer it; the container checks the token.
+	# The ban button is disabled while the game does not offer a ban; the container checks the token.
 	slot = _pick(REMOTE)
 	node = _node(REMOTE, slot)
 	id = node.item_data.my_id
@@ -400,9 +387,6 @@ func _host_ready_intents() -> void:
 	endless.visible = false
 
 
-# --- client: becomes player 0 of the host's shop ---
-
-
 func _client_part(together: Node):
 	var local = _sync.local
 	var focus_sync: Node = together.focus_sync
@@ -422,7 +406,6 @@ func _client_part(together: Node):
 	_t._check(focus_sync.local_emulators == [emulator], "own shop cursor is not the host's")
 	var before := _run_view(shop)
 
-	# Buy with the own device's accept: an intent, and nothing bought here.
 	var slot := _pick(0)
 	var node = _node(0, slot)
 	emulator.focused_control = node._button
@@ -478,7 +461,6 @@ func _client_part(together: Node):
 	_mods.client(self, shop)
 	yield(_client_keyboard_mouse(emulator), "completed")
 
-	# The host pauses: nothing runs here meanwhile. Leaving the shop ends local control.
 	var local_panel: Node = local.local_panel
 	local.set_paused(true)
 	_t._check(_input._local_buttons == null, "local buttons off while the host is paused")
@@ -500,7 +482,6 @@ func _client_part(together: Node):
 	_t._check(not local_panel.has_own(), "and LocalPanel lets go of the own panel")
 
 
-# Hold-to-ban keeps its local bar and sends the intent when the hold completes.
 func _client_ban(node: Node, before: String):
 	var local = _sync.local
 	node._ban_button.activate()
@@ -576,7 +557,6 @@ func _client_other_panel(shop: Node, before: String) -> void:
 	)
 
 
-# The own cursor moves here and is reported; the host's cursor for it is never applied.
 func _client_view(together: Node, emulator: Node, node: Node):
 	var local = _sync.local
 	var shop: Node = _shop
@@ -611,7 +591,6 @@ func _client_view(together: Node, emulator: Node, node: Node):
 	)
 
 
-# Only what changed is rebuilt; Go is the host's flag, kept while the cursor rests on it.
 func _client_states(emulator: Node, node: Node):
 	var local = _sync.local
 	var shop: Node = _shop
@@ -666,10 +645,7 @@ func _client_states(emulator: Node, node: Node):
 	)
 
 
-# The own panel's device and mouse (sync/local_panel.gd, added by ShopLocal.guard). A pad
-# button types the own slot as a pad (trigger glyphs), a key as the keyboard (page arrows that
-# take focus, by the panel's own focus neighbours); the mouse moves and presses the own cursor
-# only, stays inside an open popup, and leaves a cursor on Go while ready is on its way.
+# The own panel's device and mouse (sync/local_panel.gd, added by ShopLocal.guard).
 func _client_keyboard_mouse(emulator: Node):
 	var local = _sync.local
 	var shop: Node = _shop
@@ -708,7 +684,6 @@ func _client_keyboard_mouse(emulator: Node):
 		blocked and not local_panel.blocked, "LocalPanel stands back while the lobby popup is open"
 	)
 
-	# Pad on the stats page: trigger glyphs, Go leads down to the first stat.
 	yield(_pad_button(), "completed")
 	_t._check(
 		(
@@ -723,7 +698,6 @@ func _client_keyboard_mouse(emulator: Node):
 	yield(_frames(2), "completed")
 	_t._check(carousel.index == 1, "pad: own shop panel on the stats page")
 
-	# Keyboard: arrows, and the panel's focus neighbours lead to them.
 	yield(_t._tap_key(KEY_SHIFT), "completed")
 	_t._check(
 		CoopService.get_player_input_type(0) == keyboard and not InputService.using_gamepad,
@@ -753,7 +727,6 @@ func _client_keyboard_mouse(emulator: Node):
 	_t._check(carousel.index == 0, "keyboard: accept on the arrow pages the shop panel")
 	yield(_frames(2), "completed")
 
-	# Mouse: hover and click on the own panel; another player's panel never reacts.
 	var hovered: Control = null
 	var hovered_slot := -1
 	for i in 4:
@@ -805,7 +778,6 @@ func _client_keyboard_mouse(emulator: Node):
 
 	yield(_popups.inventory(self, emulator), "completed")
 
-	# A cursor on a page arrow when the arrows become trigger glyphs again.
 	yield(_click(arrows[1]), "completed")
 	_t._check(
 		carousel.index == 1 and emulator.focused_control == arrows[1],
@@ -825,9 +797,6 @@ func _client_keyboard_mouse(emulator: Node):
 	carousel._on_ArrowLeft_pressed()
 	yield(_frames(2), "completed")
 	InputService.using_gamepad = was_using_gamepad
-
-
-# --- helpers ---
 
 
 func _capture(name: String) -> void:
@@ -959,7 +928,7 @@ func _mouse(control: Control, kind: String):
 
 func _mouse_at(canvas_pos: Vector2, kind: String):
 	var pos: Vector2 = _t.get_viewport().get_final_transform().xform(canvas_pos)
-	var event = null  # InputEventMouseMotion or InputEventMouseButton
+	var event = null
 	if kind == "move":
 		event = InputEventMouseMotion.new()
 	else:

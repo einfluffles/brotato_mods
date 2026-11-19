@@ -1,14 +1,7 @@
 extends "res://ui/menus/shop/coop_shop.gd"
-# Trading in the co-op shop: every player's item popup asks here who can take an item
-# (trade_receivers) and reports the player picked (extensions/ui/coop_item_popup.gd).
-# On the game that owns the run the item changes hands at once (trade/transfer.gd) and both
-# players' panels show it. In a brotato:together client's copy of the shop nothing changes:
-# the request goes to the host (trade/together.gd), which answers with its next state.
-# Buying for another player: every offered item gets a Trade button (right of its price, where
-# the single-player shop has its Lock / Steal buttons); it opens the item's popup with the
-# other players (trade_buy_receivers). The buy is the game's own (trade_buy): the giver's shop
-# item, price, coupons and slot as for a buy, only BaseShop.buy_item / buy_weapon run for the
-# receiver, so the item enters the receiver as a bought one does.
+# Trading in the co-op shop: giving owned gear (trade_give) and buying an offered item for another
+# player (trade_buy). In a brotato:together client's copy of the shop nothing changes: the request
+# goes to the host (trade/together.gd).
 
 const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules.gd")
 const Transfer := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/transfer.gd")
@@ -32,7 +25,6 @@ func _ready() -> void:
 				_trade_buy_add_button(node, player_index)
 
 
-# The shop items' Trade buttons follow what they offer and who could take it.
 func _process(_delta: float) -> void:
 	for node in _trade_buy_buttons:
 		var entry: Array = _trade_buy_buttons[node]
@@ -47,7 +39,6 @@ func _process(_delta: float) -> void:
 			node._button.focus_neighbour_right = right
 
 
-# Whether player `from` can buy the item of this shop item for somebody else.
 func trade_buy_offered(shop_item: Node, from: int) -> bool:
 	if RunData.get_player_count() < 2 or not Together.can_request_buy(self, from):
 		return false
@@ -55,7 +46,7 @@ func trade_buy_offered(shop_item: Node, from: int) -> bool:
 	return shop_item.active and item != null and not item.is_meca
 
 
-# Every other player, in player order: [player, has room for it, combines it].
+# [player, has room for it, combines it] for every other player.
 func trade_buy_receivers(shop_item: Node, from: int) -> Array:
 	var entries := []
 	for to in RunData.get_player_count():
@@ -67,8 +58,6 @@ func trade_buy_receivers(shop_item: Node, from: int) -> Array:
 	return entries
 
 
-# The game's rule for a weapon bought by player `to` (its own ShopItemsContainer's), an item's
-# limit counted as for a trade (Rules.can_receive: what `to` owns and its shop offers).
 func trade_buy_room(shop_item: Node, to: int) -> bool:
 	var item = shop_item.item_data
 	if item == null or not Rules.is_player(to):
@@ -78,9 +67,8 @@ func trade_buy_room(shop_item: Node, to: int) -> bool:
 	return Rules.can_receive(item, to, self)
 
 
-# Player `from` buys the shop item for player `to`. As ShopItemsContainer's buy press: the
-# delay, the giver's gold (else the game's shake), then the container's signal, which runs
-# BaseShop.on_shop_item_bought for the giver, and the slot goes. False: nothing bought.
+# The steps of ShopItemsContainer's buy press: the delay, the giver's gold (else the game's shake),
+# then the container's signal, which runs BaseShop.on_shop_item_bought for the giver.
 func trade_buy(shop_item: Node, from: int, to: int) -> bool:
 	if get_tree().paused or Together.is_puppet(self):
 		return false
@@ -111,8 +99,6 @@ func trade_buy(shop_item: Node, from: int, to: int) -> bool:
 	return true
 
 
-# brotato:together, host: a remote player's buy for another. slot is the shop item's place in
-# the giver's offers and id its item's my_id (found by id when the slot holds something else).
 func trade_buy_apply_request(from: int, slot: int, id: String, to: int) -> bool:
 	if not Rules.is_player(from):
 		return false
@@ -126,7 +112,8 @@ func trade_buy_apply_request(from: int, slot: int, id: String, to: int) -> bool:
 	return found != null and trade_buy(found, from, to)
 
 
-# BaseShop.buy_item / buy_weapon: the receiver's, while a buy goes to another player.
+# While a buy goes to another player, BaseShop.buy_item / buy_weapon run for the receiver: the
+# item enters the receiver as a bought one does.
 func buy_item(item_data: ItemData, player_index: int) -> void:
 	.buy_item(item_data, _trade_buy_to if _trade_buy_to >= 0 else player_index)
 
@@ -135,19 +122,16 @@ func buy_weapon(item_data: WeaponData, player_index: int) -> void:
 	.buy_weapon(item_data, _trade_buy_to if _trade_buy_to >= 0 else player_index)
 
 
-# The players `from` can give the item to right now ([]: nobody, or no trading here).
 func trade_receivers(item, from: int) -> Array:
 	if not Together.can_request(self, from):
 		return []
 	return Rules.receivers(_trade_own(item, from), from, self)
 
 
-# A weapon that finds no free slot there is combined with one of the receiver's.
 func trade_combines(item, to: int) -> bool:
 	return Rules.is_weapon(item) and Rules.weapon_plan(item, to) == Rules.COMBINE
 
 
-# Gives the item and shows it on both panels. False: nothing changed.
 func trade_give(item, from: int, to: int) -> bool:
 	if get_tree().paused or Together.is_puppet(self):
 		return false
@@ -161,10 +145,6 @@ func trade_give(item, from: int, to: int) -> bool:
 	return true
 
 
-# brotato:together, host: a remote player's request. slot is the object's place in the giver's
-# weapons / items and id its my_id. When the slot holds something else the first object with
-# that id is given (Rules.find_named, like brotato:together's own weapon intents); a request
-# naming nothing the giver owns is dropped.
 func trade_apply_request(weapon: bool, from: int, slot: int, id: String, to: int) -> bool:
 	if not Rules.is_player(from):
 		return false
@@ -209,7 +189,6 @@ func _trade_buy_close(player_index: int) -> void:
 	_get_coop_player_container(player_index).on_hide_focused_inventory_popup()
 
 
-# The cursor back on the shop item's Trade button (else its buy button, else the default).
 func _trade_buy_refocus(shop_item: Node, player_index: int) -> void:
 	var emulator = Utils.get_focus_emulator(player_index, self)
 	if emulator == null:
@@ -224,8 +203,7 @@ func _trade_buy_refocus(shop_item: Node, player_index: int) -> void:
 		emulator.focused_control = target
 
 
-# The receiver's part of BaseShop.on_shop_item_bought (which ran for the giver): stats, prices,
-# a cheaper reroll and free rerolls the item gives.
+# The receiver's part of BaseShop.on_shop_item_bought, which ran for the giver.
 func _trade_buy_after(to: int, reroll_price_before: int) -> void:
 	_update_stats(to)
 	_get_shop_items_container(to).reload_shop_items()
@@ -293,8 +271,7 @@ static func _trade_offers(node: Node, id: String) -> bool:
 	return node.active and node.item_data != null and node.item_data.my_id == id
 
 
-# A button like the shop item's own (my_menu_button: press and focus sounds), right of its
-# price, shown by _process.
+# Right of the price, where the single-player shop has its Lock / Steal buttons.
 func _trade_buy_add_button(node: Node, player_index: int) -> void:
 	var template: Button = node._steal_button
 	var button := Button.new()
@@ -312,7 +289,8 @@ func _trade_buy_add_button(node: Node, player_index: int) -> void:
 	_trade_buy_buttons[node] = [button, player_index]
 
 
-# shown: visible; ok: can be pressed (the game's own disable / activate: no focus, no mouse).
+# ok: can be pressed. The game's own disable / activate: a disabled button takes no focus and no
+# mouse.
 static func _trade_buy_set(button: Button, shown: bool, ok: bool) -> void:
 	if button.visible != shown:
 		button.visible = shown
@@ -335,10 +313,9 @@ func _on_trade_requested(item, to: int, from: int) -> void:
 		_on_item_cancel_button_pressed(item, from)
 
 
-# The giver's object for the item an element or popup shows. A brotato:together client's run
-# gets fresh objects whenever a player's data changes (a reroll's gold), but its gear rows are
-# only built again when the gear itself changed: their elements may still show the objects of
-# an older state, which the player owns no more. Here they stand for the player's own.
+# A brotato:together client's run gets fresh objects whenever a player's data changes (a reroll's
+# gold), but its gear rows are only built again when the gear changed: an element can show an
+# object the player owns no more.
 func _trade_own(item, from: int):
 	if item == null or not Together.is_puppet(self):
 		return item
@@ -346,7 +323,7 @@ func _trade_own(item, from: int):
 	return own if own != null else item
 
 
-# What the shop redoes for a player whose gear changed (the per-player part of a buy).
+# The per-player part of what the shop redoes after a buy.
 func _trade_refresh_player(player_index: int) -> void:
 	_trade_refresh_gear(player_index)
 	_update_stats(player_index)
@@ -362,9 +339,7 @@ func _trade_refresh_player(player_index: int) -> void:
 
 
 # Both gear rows are built again, as the game does after a buy that changed more than one
-# element. The player's cursor may rest on an element or in the popup opened from one: it
-# leaves first and comes back to the same place (a FocusEmulator must never keep a freed
-# control), or to the shop's default when the row is empty now.
+# element. The cursor leaves them first: a FocusEmulator must never keep a freed control.
 func _trade_refresh_gear(player_index: int) -> void:
 	var gear = _get_gear_container(player_index)
 	var rows := [gear.weapons_container._elements, gear.items_container._elements]

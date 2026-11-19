@@ -1,8 +1,7 @@
 extends Reference
-# The crate panels in plain local co-op (no brotato:together), on the battle scene's own
-# CoopUpgradesUI: the Trade button below Take, its list of players driven with the giver's
-# buttons, and what everybody has afterwards. Three players: 0 opens the crates, 1 has the
-# unique item and no free slot for a pistol, 2 has room and looks at its gear meanwhile.
+# The crate panels in plain local co-op, on the battle scene's own CoopUpgradesUI. Three players:
+# 0 opens the crates, 1 has the unique item and no free slot for a pistol, 2 has room and looks
+# at its gear meanwhile.
 
 const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules.gd")
 
@@ -100,7 +99,7 @@ func _give_item():
 	var before: Array = _counts()
 	yield(_press_delay(), "completed")
 	yield(_t.tap("ui_accept", 0), "completed")
-	yield(_t.tap("ui_accept", 0), "completed")  # the cursor is on player 3
+	yield(_t.tap("ui_accept", 0), "completed")  # the cursor is on the only player with room
 	yield(_t.frames(2), "completed")
 	_t.check(
 		_count(2, _unique) == 1 and _count(0, _unique) == 0 and _count(1, _unique) == 1,
@@ -170,9 +169,6 @@ func _give_weapon():
 	)
 	_t.check(panel._checkmark_group.visible, "and is done: both crates processed")
 	_cursors_valid("after a crate weapon was traded")
-
-
-# --- helpers ---
 
 
 func _press_delay():

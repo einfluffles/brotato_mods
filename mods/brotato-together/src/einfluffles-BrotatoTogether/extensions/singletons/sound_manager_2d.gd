@@ -1,5 +1,4 @@
 extends "res://singletons/sound_manager_2d.gd"
-# See session/sound_relay.gd. Only sounds the game actually queues are recorded.
 
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"

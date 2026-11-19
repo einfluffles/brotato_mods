@@ -1,11 +1,7 @@
 extends Reference
-# Run state <-> bytes, reusing the game's own save-file path exactly:
-# serialize_run_state -> JSON text -> (zstd) ... -> JSON.parse -> deserialize_run_state.
-# The game's deserializers expect JSON-shaped data (string keys, float numbers), so the JSON step
-# is required, not cosmetic. Host: encode() and send reliably. Client: apply() before loading the
-# battle scene.
-# What parse, deserialize and apply take on a client goes into its scene-change report
-# (sync/client_report.gd).
+# Run state <-> bytes through the game's own save-file path: serialize_run_state -> JSON text ->
+# zstd ... -> JSON.parse -> deserialize_run_state. The JSON step is required: the game's
+# deserializers expect JSON-shaped data (string keys, float numbers).
 
 const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
@@ -14,21 +10,18 @@ const EffectArgs := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const MAX_UNCOMPRESSED_SIZE := 8 * 1024 * 1024
 
 
-# Returns {"size": int, "data": PoolByteArray} — plain data, safe for var2bytes.
-# shop_args: the shop's own save_run_state arguments ([shop_items, reroll_count, paid_reroll_count,
-# initial_free_rerolls, free_rerolls, item_steals]) to include the shop, or [] for none.
+# Returns {"size": int, "data": PoolByteArray}: plain data, safe for var2bytes. shop_args: the
+# shop's own save_run_state arguments to include the shop (ShopSync.shop_args), or [] for none.
 static func encode(shop_args := []) -> Dictionary:
 	return pack(encode_json(shop_args))
 
 
-# The JSON text alone, before compressing.
 static func encode_json(shop_args := []) -> String:
 	return JSON.print(serialize(shop_args))
 
 
-# The run state as the save file has it before JSON.print (plain data, about a quarter of the
-# cost of the text: sync/run_cache.gd compares its hash() first). Every effect in it carries its
-# custom args, whether its text was shown or not (sync/effect_args.gd).
+# The run state as the save file has it before JSON.print. Every effect in it carries its custom
+# args, whether its text was shown or not (sync/effect_args.gd).
 static func serialize(shop_args := []) -> Dictionary:
 	var state: Dictionary = ProgressData.callv("get_run_state", shop_args)
 	EffectArgs.settle(state, true)
@@ -46,7 +39,7 @@ static func decode(payload) -> Dictionary:
 
 
 # The run state as it was sent (JSON-shaped: string keys, serialized items), or {} if the
-# payload is invalid. For callers that compare parts of it before building game objects.
+# payload is invalid.
 static func parse(payload) -> Dictionary:
 	var started := OS.get_ticks_usec()
 	if (
@@ -76,9 +69,8 @@ static func deserialize(raw: Dictionary) -> Dictionary:
 	return state
 
 
-# The game only refreshes its item-count caches when an item is added or removed there, and
-# resume_from_state reads them (LinkedStats): without the reset a client's stats that count
-# items would stay at what the first state gave.
+# The game refreshes its item-count caches only when an item is added or removed, and
+# resume_from_state reads them (LinkedStats): without the reset, item-counting stats go stale.
 static func apply(state: Dictionary) -> void:
 	var started := OS.get_ticks_usec()
 	RunData.reset_run_caches()

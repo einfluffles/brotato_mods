@@ -1,42 +1,23 @@
 extends Reference
-# Lasting looks of mirrored entities (protocol 12): states the game shows for seconds or for the
-# rest of an entity's life, which puppets never get because the game logic behind them only runs
-# on the host. One byte per entity (bits below), in the snapshot's looks section.
-#   BURNING: Unit.apply_burning starts the unit's BurningParticles; BURN_RED / BURN_BLUE are the
-#     gradient BurningParticles._update_color picked (elemental / engineering), neither: the
-#     scene's own.
-#   CHARMED: CharmEnemyEffectBehavior.charm adds a CHARM_COLOR outline at alpha 0.4 and
-#     desaturation 0.75 and sets the sprite's self_modulate to white; on an enemy projectile it is
-#     the hue shift material ShootingAttackBehavior gives the shots of a charmed enemy.
-#   CURSED: a CURSE_COLOR outline (CurseEnemyEffectBehavior.init, cursed structures and pets); an
-#     enemy also gets the behavior scene's CurseParticles, a pet its curse_particles.
-#   BOOSTED: Entity.boost with show_outline adds a BOOST_COLOR outline (buffers, boosted turrets).
-#   MECA / MUTANT (protocol 18): Meca / MutantEnemyEffectBehavior.init adds a MECA_COLOR /
-#     MUTANT_COLOR outline and swaps the sprite for the enemy's evolution_meca / evolution_mutant
-#     texture (the brachiosaurus foot: its foot sprite).
-# All of them read and write only visuals: a puppet never burns, charms, boosts or pays out.
-#
-# Host: a look is sent for REPEAT snapshots after it changes (also when it becomes plain) and,
-# while not plain, every REFRESH snapshots (staggered by net id). Plain entities that stay plain
-# cost nothing but the section's count byte.
-# Client: resolve() keeps the last look per net id; a look not confirmed for EXPIRE_SNAPSHOTS
-# received snapshots is plain again (all the snapshots that said it ended were lost).
+# Lasting looks of mirrored entities: states the game shows for seconds or for the rest of an
+# entity's life, which puppets never get because the game logic behind them only runs on the
+# host. One byte per entity in the snapshot's looks section; only visuals are read and written.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
-const BURNING := 1
-const BURN_RED := 2
+const BURNING := 1  # Unit.apply_burning starts the unit's BurningParticles
+const BURN_RED := 2  # the gradient BurningParticles._update_color picked; neither: the scene's own
 const BURN_BLUE := 4
-const CHARMED := 8
-const CURSED := 16
-const BOOSTED := 32
-const MECA := 64
+const CHARMED := 8  # CharmEnemyEffectBehavior.charm; on an enemy projectile the hue shift material
+const CURSED := 16  # CurseEnemyEffectBehavior.init, cursed structures and pets
+const BOOSTED := 32  # Entity.boost with show_outline (buffers, boosted turrets)
+const MECA := 64  # Meca / MutantEnemyEffectBehavior.init: outline and evolution texture
 const MUTANT := 128
 const ALL := Snapshot.LOOK_BITS
 const BURN_BITS := BURNING | BURN_RED | BURN_BLUE
 const EVOLUTION_BITS := MECA | MUTANT
 const OUTLINE_BITS := CHARMED | CURSED | BOOSTED | EVOLUTION_BITS
-const REPEAT := 4
-const REFRESH := 10
+const REPEAT := 4  # snapshots a look is sent for after it changes (also when it becomes plain)
+const REFRESH := 10  # snapshots between resends while not plain, staggered by net id
 const EXPIRE_SNAPSHOTS := 45  # 1.5 s at 30 Hz: four refreshes in a row lost
 const CHARM_ALPHA := 0.4  # CharmEnemyEffectBehavior.charm's add_outline arguments
 const CHARM_DESATURATION := 0.75
@@ -60,17 +41,12 @@ var _looked := {}
 var _charm_material: ShaderMaterial = null
 
 
-# --- host ---
-
-
-# Can this node ever show a look? Asked once, when it enters the snapshots.
 static func can_have_look(node: Node) -> bool:
 	return node is Entity or node is EnemyProjectile
 
 
-# For each node can_have_look() accepted, while building a snapshot (end_snapshot() afterwards).
-# entity / unit: what the host's record already knows, so the hundreds of plain entities of a
-# late wave cost two property reads and no class checks.
+# entity / unit: what the host's record already knows, so the many plain entities of a late wave
+# cost two property reads and no class checks.
 func capture(
 	node: Node, net_id: int, index: int, snapshot_count: int, entity: bool, unit: bool
 ) -> void:
@@ -97,7 +73,6 @@ func _capture_look(look: int, net_id: int, index: int, snapshot_count: int) -> v
 		_sent[index] = look
 
 
-# The looks section of the snapshot just built: {entity index: look}.
 func end_snapshot() -> Dictionary:
 	var sent := _sent
 	_last = _next
@@ -145,12 +120,8 @@ func _is_charm_material(material) -> bool:
 	return material.shader == _hue_shader
 
 
-# --- client ---
-
-
-# Turns the looks of a parsed snapshot (entity indices) into the resolved looks of every entity
-# that is not plain, view.looks_by_id {net id: look}. Before Snapshot.resolve, which may drop
-# entities and so change the indices. cache: owned by the caller, empty at battle start.
+# Sets view.looks_by_id {net id: look}. Must run before Snapshot.resolve, which may drop
+# entities and so change the indices. The caller owns cache, empty at battle start.
 static func resolve(view: Dictionary, cache: Dictionary) -> void:
 	if not cache.has("looks"):
 		cache["looks"] = {}  # net id -> [look, host t, received count when confirmed]
@@ -178,8 +149,8 @@ static func resolve(view: Dictionary, cache: Dictionary) -> void:
 	view["looks_by_id"] = current
 
 
-# Once per new snapshot to render: puppets take the looks of `looks` ({net id: look}); puppets
-# that had one and are no longer listed (plain again, despawned, reused for another id) lose it.
+# looks: {net id: look}. Puppets that had a look and are no longer listed (plain again,
+# despawned, reused for another id) lose it.
 func apply(entities: Dictionary, looks: Dictionary) -> void:
 	for id in _looked.keys():
 		var node = _looked[id]
@@ -300,10 +271,8 @@ static func _set_burning(unit: Node, look: int) -> void:
 	particles.start_emitting()
 
 
-# An enemy's curse particles are the CurseParticles inside CurseEnemyEffectBehavior's scene; the
-# puppet gets that scene without its script (the curse's damage and gold are the host's), next
-# to its effect behaviors rather than among them (Unit calls into every one of those). Cursed
-# structures already get theirs from their type (BattleHost.CURSED_TAG).
+# The CurseParticles inside CurseEnemyEffectBehavior's scene: the puppet gets that scene without
+# its script, next to its effect behaviors, not among them (Unit calls into every one of those).
 static func _set_curse_particles(node: Node, cursed: bool) -> void:
 	if node is Pet:
 		var instance = node.curse_particle_instance

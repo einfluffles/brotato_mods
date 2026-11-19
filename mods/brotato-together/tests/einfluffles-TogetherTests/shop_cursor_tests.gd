@@ -1,8 +1,7 @@
 extends Reference
 # A remote player's cursor on the host's copy of its panel after its recycle / combine
-# (ShopSync._settle_host_cursor), in the local shop suite (s: its shop, helpers and checks).
-# The client reports its cursor only when it moves, and after a recycle it keeps its place in the
-# row; the game's handler on the host moved the host's copy to the row's first weapon.
+# (ShopSync._settle_host_cursor). The client reports its cursor only when it moves and keeps its
+# place after a recycle; the game's handler on the host moves its copy to the row's first weapon.
 
 const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"

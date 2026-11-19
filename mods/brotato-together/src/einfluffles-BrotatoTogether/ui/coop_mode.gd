@@ -1,20 +1,8 @@
 extends OptionButton
-# Character selection, run options box: the Co-op row as one option with three values, in the
-# place of the game's Co-op toggle and at its height, so the box keeps its vanilla rows:
-#  - "Co-op: Off": the game's solo (CoopButton off);
-#  - "Co-op: Local": the game's co-op (CoopButton on);
-#  - "Co-op: Online": co-op and hosting a lobby (LobbyMenu.host()); off without Steam.
-# A dropdown like the zone's above it (its theme): the game builds its own play mode choice the
-# same way on consoles (CharacterSelection._mode_selection_button, an OptionButton in this box).
-# The game's CoopButton stays in the tree, hidden, and still switches co-op: this option sets its
-# `pressed` (the game's toggled -> RunData.play_mode, coop_initialized, set_coop_run).
-# Leaving Online (to Off or Local) leaves the lobby.
-# Focus: it is in the run options box, a focus base of player 1's FocusEmulator only; the grid's
-# way up (Inventory1.focus_neighbour_top, the game's: CoopButton) leads to it, and on it the game's
-# bookkeeping for going back to the grid runs as on CoopButton. While hosting, left goes to
-# "Invite friends" in the next free player slot (ui/slot_invite.gd), right from there back here.
-# A remote player holding slot 1 changes nothing. On a client it shows the host's value (Online)
-# and takes no input.
+# Character selection, run options box: the Co-op row as one option with three values (Off,
+# Local, Online) in the place of the game's Co-op toggle. The game's CoopButton stays in the
+# tree, hidden, and still switches co-op: this option sets its `pressed`. Online also hosts a
+# lobby; on a client the option shows the host's value and takes no input.
 
 enum Mode { OFF, LOCAL, ONLINE }
 
@@ -27,18 +15,17 @@ const NODE_NAME := "BrotatoTogetherCoopMode"
 const VALUES := ["Off", "Local", "Online"]
 const NO_STEAM := "Online co-op needs Steam"
 
-var lobby: Node = null  # ui/lobby_menu.gd
+var lobby: Node = null
 var scene: Node = null
-var coop_button: CheckButton = null  # the game's
-var zone_button: OptionButton = null  # the game's, its look
+var coop_button: CheckButton = null
+var zone_button: OptionButton = null
 
 var _invites := []  # SlotInvite per CoopJoinPanel
 var _grid: Control = null
-var _shown: Control = null  # the SlotInvite on screen
-var _emulators := []  # the scene's FocusEmulators
+var _shown: Control = null  # the invite button left of this option (null: none)
+var _emulators := []
 
 
-# Into the run options box of a character selection scene. Null if it has none.
 static func add_to(scene: Node, lobby_menu: Node) -> Node:
 	var coop = scene.get_node_or_null("%CoopButton")
 	var zone = scene.get_node_or_null("%ZoneSelectionButton")
@@ -85,7 +72,7 @@ func _ready() -> void:
 			var invite: Control = SlotInvite.add_to(panel)
 			invite.button.connect("pressed", self, "_on_invite_pressed", [invite.button])
 			invite.button.focus_neighbour_right = invite.button.get_path_to(self)
-			for side in [MARGIN_LEFT, MARGIN_TOP]:  # nothing focusable there: stay
+			for side in [MARGIN_LEFT, MARGIN_TOP]:  # nothing focusable on these sides: the cursor stays
 				invite.button.set_focus_neighbour(side, NodePath("."))
 			_invites.append(invite)
 			_add_focus_base(emulator, invite)
@@ -205,13 +192,9 @@ func _on_invite_pressed(button: Control) -> void:
 		lobby.invite()
 
 
-# A dropdown's popup in the theme's look: player 1's cursor stays on the dropdown. A mouse press
-# in an open popup gives it Godot's focus, and a FocusEmulator takes a focused control inside its
-# focus bases (FocusEmulator._on_focus_changed; the popup is a child of its dropdown, inside the
-# run options box) and styles it as a focused button: its font_color becomes its
-# font_color_focus, which a PopupMenu does not have (black). The rows the mouse was not over were
-# black on black from then on, in the game's zone dropdown too. Run deferred on the popup's
-# focus (before the frame is drawn) and every frame.
+# A mouse press in a dropdown's open popup gives the popup Godot's focus. A FocusEmulator then
+# takes it as its control and styles it with font_color_focus, which a PopupMenu lacks (black
+# rows on black), so the cursor is put back on the dropdown.
 func _keep_cursor_on(button: OptionButton) -> void:
 	if not is_instance_valid(button):
 		return

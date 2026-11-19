@@ -1,12 +1,6 @@
 extends Reference
-# Suite traffic: what went out reliably to a peer, for the log (net/traffic.gd, Session).
-#  - labels (message type, STATE with its section) and their counts and bytes per peer
-#  - the two-second window of one-second buckets
-#  - Session.steam_status_text names the largest of them only when Steam's reliable queue holds
-#    4 KB or more
-#  - a line of its own for a message over 32 KB or a queue over 64 KB, at most one per peer in 5 s
-#  - nothing is kept for a peer that left, or after the lobby
-# A real Session on a fake transport whose connection_status reports a chosen pending value.
+# Suite traffic: what went out reliably to a peer, for the log (net/traffic.gd, Session). A real
+# Session on a fake transport whose connection_status reports a chosen pending value.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Traffic := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/traffic.gd")
@@ -19,7 +13,7 @@ const PEER := 7
 const OTHER := 8
 const SUMMARY := "; reliable in the last 2 s: "
 
-var _t: Node  # the test mod: _check
+var _t: Node
 
 
 class FakeTransport:

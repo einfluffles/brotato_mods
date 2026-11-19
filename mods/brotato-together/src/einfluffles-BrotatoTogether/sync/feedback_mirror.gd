@@ -1,23 +1,7 @@
 extends Reference
-# One-shot feedback that needs no game logic on the client (protocol 11). One instance per battle
-# on each side (BattleHost / BattleClient replace it), holding no node references.
-#
-# Sent (sync/snapshot.gd events):
-# - Player explosions (WeaponService.explode: rockets, grenades, mines, exploding hits) as
-#   EVENT_EXPLOSION. The client plays the scene's own "explode" animation (flash, smoke) on a
-#   pooled puppet without hitbox or physics: damage numbers and the sound are the host's events.
-# - Bonus gold (the bag under player 1's life bar: value and visibility) and the wave's end (dim
-#   screen, "wave completed" label) as state: sent when they change, repeated STATE_REPEAT times
-#   and every STATE_REFRESH snapshots, so a lost snapshot does not lose them.
-# - The "x2" over a boosted gold pickup (EVENT_GOLD_BOOST): the boost is host data.
-# - The icon and number over a player whose stat changed (EVENT_STAT, protocol 18: evolution from
-#   a meca / mutant fruit, a mutation fruit's stat, an item's gain mid-wave): the game shows them
-#   from RunData.stat_added / stat_removed, which a client's puppet run never emits.
-# - A weapon that attacks with an animation of its own (AnimatedHitboxShootingBehavior: whip,
-#   flail) as EVENT_WEAPON_ANIM when the animation starts: sprite frames, the lash and its tip.
-#   The weapon's place and angle already travel with every snapshot (Snapshot.pack_weapons).
-# Derived by the client from what it already has (no bytes): screen shake (damage events), the
-# level-up and heal texts (player stats), the gold pickup sparkle (a gold puppet that vanished).
+# One-shot feedback that needs no game logic on the client, sent as snapshot events: explosions,
+# bonus gold, the wave's end, gold boost and stat texts, whip and flail animations. One instance
+# per battle on each side, holding no node references.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const PuppetEntity := preload(
@@ -28,11 +12,10 @@ const PF := Snapshot.PlayerField
 # Announced with BATTLE_START (rockets, grenades, landmines, ... all use it).
 const EXPLOSION_SCENE := "res://projectiles/explosion.tscn"
 const EXPLODE_ANIMATION := "explode"
-const STATE_REPEAT := 4
-const STATE_REFRESH := 15
+const STATE_REPEAT := 4  # snapshots a state event is sent for after it changes
+const STATE_REFRESH := 15  # snapshots between resends, so a lost snapshot does not lose it
 const MAX_STAT_TEXTS := 16  # per snapshot (a build can add a stat with every kill)
 
-# --- host ---
 var _explosions := {}  # instance id -> animation position at the last capture
 var _picked := []  # [position, boost] of boosted gold picked up since the last capture
 var _stat_texts := []  # [player, stat, value] added (removed: negative) since the last capture
@@ -41,7 +24,6 @@ var _bonus := []  # [value, visible] last captured
 var _bonus_since := -STATE_REFRESH
 var _wave_end := -1  # WAVE_* flags last captured, -1 while the wave runs
 var _wave_end_since := -STATE_REFRESH
-# --- client ---
 var _last_stats := {}  # player index -> [health, max health, level] of the host's last stats
 var _state_t := {}  # event kind -> host t of the last state event applied
 var _wave_ended := false
@@ -49,10 +31,7 @@ var _label_shown := false
 var _anims = AnimMirror.new()  # weapon animations without their method tracks
 
 
-# --- host ---
-
-
-# Appends this snapshot's feedback events (type_idx: BattleHost._type_idx).
+# type_idx: BattleHost._type_idx.
 func capture(main: Node, events: Array, snapshot_count: int, type_idx: FuncRef) -> void:
 	_capture_explosions(main, events, type_idx)
 	_capture_weapon_anims(main, events)
@@ -82,9 +61,8 @@ static func _due(snapshot_count: int, since: int) -> bool:
 	return snapshot_count - since < STATE_REPEAT or snapshot_count % STATE_REFRESH == 0
 
 
-# Live explosions are the children of main._explosions (the pool takes finished ones out). One is
-# new when it was not there at the last capture, or its animation started over (pooled and
-# reused in between: the game's pools are LIFO).
+# Live explosions are the children of main._explosions. One is new when it was not there at the
+# last capture or its animation started over (pooled and reused in between).
 func _capture_explosions(main: Node, events: Array, type_idx: FuncRef) -> void:
 	var container = main.get("_explosions")
 	var seen := {}
@@ -134,7 +112,6 @@ func _capture_weapon_anims(main: Node, events: Array) -> void:
 	_lashes = seen
 
 
-# The AnimationPlayer a weapon attacks with, or null (every other weapon).
 static func attack_player(weapon: Node):
 	if not is_instance_valid(weapon):
 		return null
@@ -147,8 +124,8 @@ static func attack_player(weapon: Node):
 	return player
 
 
-# What the end of the wave shows: main.clean_up_room's outcome, and whether the label is up
-# (it starts later on a won run and is hidden again before the level-up panels).
+# main.clean_up_room's outcome, and whether the label is up: it starts later on a won run and is
+# hidden again before the level-up panels.
 static func wave_end_flags(main: Node) -> int:
 	var flags := 0
 	flags |= Snapshot.WAVE_FAILED if main.get("_is_wave_failed") else 0
@@ -162,23 +139,19 @@ static func wave_end_flags(main: Node) -> int:
 	return flags
 
 
-# RunData.stat_added / stat_removed during the battle (BattleHost).
+# RunData.stat_added / stat_removed, which a client's puppet run never emits.
 func stat_changed(stat: int, value: int, player_index: int) -> void:
 	if player_index >= 0 and _stat_texts.size() < MAX_STAT_TEXTS:
 		_stat_texts.append([player_index, stat, value])
 
 
-# A mirrored node enters the snapshots: gold gets the pickup hook (once per node, pools reuse it).
 func track(node: Node) -> void:
 	if node is Gold and not node.is_connected("picked_up", self, "_on_gold_picked_up"):
 		node.connect("picked_up", self, "_on_gold_picked_up")
 
 
-# Bag pickups (player -1) only happen while cleaning up, when the game shows no text either.
-# A signal calls its targets in order of instance id: this object is made after main, so
-# main.on_gold_picked_up has already doubled `boosted` (metal detector), and Gold.pickup resets
-# it right after the signal. main's handler also pools the gold (out of the tree; its container
-# sits at the origin).
+# Bag pickups (player -1) happen while cleaning up, when the game shows no text either. By now
+# main.on_gold_picked_up has doubled `boosted` (metal detector) and pooled the gold (off the tree).
 func _on_gold_picked_up(gold: Node, player_index: int) -> void:
 	if player_index < 0 or gold.get("boosted") == null or gold.boosted <= 1:
 		return
@@ -186,10 +159,7 @@ func _on_gold_picked_up(gold: Node, player_index: int) -> void:
 	_picked.append([position, gold.boosted])
 
 
-# --- client ---
-
-
-# Protocol 11 events at render time (t: host time of their snapshot; types: BattleClient._types).
+# t: host time of the event's snapshot; types: BattleClient._types.
 func fire(main: Node, types: Dictionary, t: int, event: Array) -> void:
 	match event[0]:
 		Snapshot.EVENT_EXPLOSION:
@@ -211,9 +181,8 @@ func fire(main: Node, types: Dictionary, t: int, event: Array) -> void:
 				_show_wave_end(main, event[1])
 
 
-# The visual part of WeaponService.explode + PlayerExplosion.start_explosion, through main's pool
-# like the game's. No hitbox (it would find nothing: puppets have no layers, but its damage is
-# the host's), no physics (its first physics frame plays the sound, which is the host's event).
+# The visual part of WeaponService.explode + PlayerExplosion.start_explosion, through main's
+# pool. No hitbox and no physics: the damage and the sound (first physics frame) are the host's.
 func explode(main: Node, scene, position: Vector2, scale: float, smoke: int) -> Node:
 	if not scene is PackedScene:
 		return null

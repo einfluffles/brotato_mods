@@ -1,23 +1,7 @@
 extends Reference
-# Entity animations the game starts from physics code, which never runs on frozen puppets: turret
-# shots, enemy attack wind-ups ("shoot", whose method tracks call start_shoot()/shoot()), charges,
-# jump attacks, boss foot stomps, pet states (catling gun mad mode, petting, attacks).
-#
-# Host: per snapshot, an EVENT_ANIM when an entity's AnimationPlayer starts an animation (new
-# name, or a non-looping one restarted). Entities that stay in their autoplay animation send
-# nothing. Snapshots are unreliable, so the current state is re-sent about once a second while an
-# entity is away from its autoplay animation, and for a few seconds after any change.
+# Entity animations the game starts from physics code, which never runs on frozen puppets.
+# The host sends an EVENT_ANIM when an entity's AnimationPlayer starts an animation:
 #   [Snapshot.EVENT_ANIM, net id, animation name, position (s), playback speed]
-#
-# Client: plays it at render time on the puppet's own AnimationPlayer, under the same name (the
-# game's update_animation guards check names, e.g. the catling gun keeps "idle_attack"). Names are
-# whitelisted by the puppet's own animation list. Method tracks call game logic (shoot() spawns
-# projectiles), so an animation that has them is replaced on the puppet by a shared copy without
-# them; the original resource is shared with real entities and stays untouched.
-# Every entity puppet loses the game's own animation_finished handlers when it spawns
-# (detach_game_handlers): they compute cooldowns from stats puppets don't have and call attack
-# behaviors that were never initialized (a puppet spitter's death animation ended in a script
-# error). The host sends the animation that follows instead.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const REFRESH_SNAPSHOTS := 30  # ~1 s at 30 Hz, staggered by net id
@@ -36,16 +20,11 @@ var _copies := {}
 var _is_copy := {}
 
 
-# Death (the client plays it itself when an entity leaves the snapshots; its method track returns
-# the puppet to the pool) and RESET are never mirrored.
+# Death is not mirrored: the client plays it itself when an entity leaves the snapshots.
 static func is_mirrored_name(name: String) -> bool:
 	return name != "" and name != "RESET" and not name.begins_with("death")
 
 
-# --- host ---
-
-
-# For each mirrored entity while building a snapshot (call end_snapshot() afterwards).
 func capture(node: Node, net_id: int, events: Array) -> void:
 	if not node is Entity:
 		return
@@ -84,10 +63,7 @@ func end_snapshot() -> void:
 	_count += 1
 
 
-# --- client ---
-
-
-# event: an EVENT_ANIM from the network; entities: net id -> puppet. False if it was ignored.
+# entities: net id -> puppet.
 func replay(entities: Dictionary, event: Array) -> bool:
 	if (
 		event.size() != 5
@@ -120,7 +96,8 @@ func replay(entities: Dictionary, event: Array) -> bool:
 	return true
 
 
-# Client, for every entity puppet (pooled ones keep it).
+# The game's animation_finished handlers compute cooldowns from stats puppets lack and call attack
+# behaviors that were never initialized. The host sends the animation that follows instead.
 static func detach_game_handlers(node: Node) -> void:
 	var player = node.get("_animation_player") if node is Entity else null
 	if not player is AnimationPlayer or node.has_meta(DETACHED_META):
@@ -131,9 +108,8 @@ static func detach_game_handlers(node: Node) -> void:
 			player.disconnect("animation_finished", node, connection.method)
 
 
-# Client, for every projectile puppet: its own animation without method tracks (an enemy pillar's
-# autoplay "shoot" ends in stop(), which returns it to the game's pool: no pool id on clients).
-# Returns the animation it will play, or null.
+# An enemy pillar's autoplay "shoot" ends in stop(), which returns it to the game's pool; puppets
+# have no pool id, so a projectile puppet plays its animation without method tracks.
 func strip_projectile(projectile: Node) -> Animation:
 	var player = projectile.get("_animation_player")
 	if not player is AnimationPlayer or player.assigned_animation == "":
@@ -141,6 +117,8 @@ func strip_projectile(projectile: Node) -> Animation:
 	return _without_method_tracks(player, player.assigned_animation)
 
 
+# Method tracks call game logic (shoot() spawns projectiles). The Animation is shared with real
+# entities, so the puppet gets a copy without them.
 func _without_method_tracks(player: AnimationPlayer, name: String) -> Animation:
 	var animation: Animation = player.get_animation(name)
 	if _is_copy.has(animation) or not _has_method_tracks(animation):

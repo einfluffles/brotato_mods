@@ -2,39 +2,38 @@ extends Reference
 # Battle snapshot (host -> clients, unreliable, ~30 Hz): a hand-packed PoolByteArray, little endian.
 # A view (Dictionary) is what encode() takes and parse() returns:
 #   battle_id, t (host msec), wave_time_left,
-#   players: Array of [position: Vector2, health, max_health, input_ack, gold, level, xp: float,
-#            weapons: PoolRealArray, per weapon [rotation, sprite_x, sprite_y, sprite_rotation]]
-#            health/max_health/gold/level/xp are null when not sent (see below),
-#            weapon_slots: PoolIntArray (wave-start slot of each weapon) or null (all still held),
-#            speed: px/s or null when not sent (see sync/battle_scene.gd), dead: bool]
-#   ids, types: PoolIntArray; positions: PoolVector2Array (Vector2.ZERO for FLAG_REST entities)
+#   players: Array of entries indexed by PlayerField. The STAT_FIELDS are null when not sent, as
+#     is speed; weapon_slots (the wave-start slot of each weapon) is null while all are still held.
+#     input_ack: the last INPUT seq the host applied for that player (0 for host-local players).
+#     weapons: PoolRealArray, per weapon [rotation, sprite_x, sprite_y, sprite_rotation]
+#   ids (host-assigned net ids), types (indices into the battle's table of scene paths, sent with
+#     BATTLE_START / TYPE_DEF): PoolIntArray; positions: PoolVector2Array (Vector2.ZERO for
+#     FLAG_REST entities)
 #   flags: PoolByteArray, FLAG_BITS per entity (entity i at bit i * FLAG_BITS)
-#   poses: {entity index: PoolRealArray} (see sync/pose.gd)
+#   poses: {entity index: PoolRealArray} (sync/pose.gd)
 #   events: Array of
 #     [EVENT_DAMAGE, target, value, knockback: Vector2, DAMAGE_* flags, hit_type]
 #       target: entity net id, or -(player_index + 1) for players
 #     [EVENT_SOUND, type idx of the stream, position: Vector2 or null, volume, pitch_rand,
 #      always_play: bool, single cooldown (s, 0: SoundManager.play)]
-#     [EVENT_ANIM, net id, animation name, position (s), speed] (see sync/anim_mirror.gd)
-#     protocol 11 (see sync/feedback_mirror.gd):
+#     [EVENT_ANIM, net id, animation name, position (s), speed]
 #     [EVENT_EXPLOSION, type idx of the scene, position: Vector2, scale, smoke amount]
-#     [EVENT_BONUS_GOLD, value, label visible: bool] (state, repeated)
-#     [EVENT_WAVE_END, WAVE_* flags] (state, repeated)
+#     [EVENT_BONUS_GOLD, value, label visible: bool]
+#     [EVENT_WAVE_END, WAVE_* flags]
 #     [EVENT_GOLD_BOOST, position: Vector2, boost]
 #     [EVENT_STAT, player index, stat (Keys hash), value] (the icon and number over a player)
 #     [EVENT_WEAPON_ANIM, player index, weapon index, position (s)] (a whip's or flail's lash)
-#   looks: {entity index: look bits} (since protocol 12, see sync/looks.gd; indices of the parsed
-#     entity order: Looks.resolve reads them before resolve() may drop entities)
-#   angles: the rotation of projectiles (protocol 18, see sync/facing.gd); encode() takes
-#     {entity index: radians}, parse() returns {net id: radians}
+#   looks: {entity index: look bits} (sync/looks.gd; indices of the parsed entity order:
+#     Looks.resolve reads them before resolve() may drop entities)
+#   angles: the rotation of projectiles (sync/facing.gd); encode() takes {entity index: radians},
+#     parse() returns {net id: radians}
 #
 # Wire layout:
 #   u32 battle_id, u32 t, u16 wave time left (1/100 s)
 #   u8 player count; per player: u8 PLAYER_* bits, i16 x, i16 y (1/POS_SCALE px),
 #     varint input_ack, [stats: zigzag health, zigzag max_health, zigzag gold, varint level,
-#     f32 xp, varint hit protection (protocol 29)], u8 weapon count, bitmask (1 bit per
-#     weapon: sprite moved), per weapon i16 angle [+ i16 sprite x, i16 sprite y (1/8 px),
-#     i16 sprite angle],
+#     f32 xp, varint hit protection], u8 weapon count, bitmask (1 bit per weapon: sprite moved),
+#     per weapon i16 angle [+ i16 sprite x, i16 sprite y (1/8 px), i16 sprite angle],
 #     [PLAYER_WEAPON_SLOTS: u8 bit count, slot bitmask], [PLAYER_SPEED: varint px/s]
 #   u16 entity count; varint run count, runs of [varint type idx, varint length] (types in
 #     entity order); net ids as zigzag varint deltas to the previous one (the host sorts each run
@@ -45,14 +44,9 @@ extends Reference
 #   varint angle count; per angle: varint gap like the looks', i16 angle
 # Nothing may follow. Angles are i16 over [-PI, PI].
 #
-# Rarely changing data is sparse; the client fills the gaps from earlier snapshots (resolve()):
-# - FLAG_REST: the entity has not moved for a few snapshots (gold on the ground, structures): its
-#   position is left out, except in a refresh every BattleHost.REST_REFRESH snapshots.
-# - Player stats (HUD values) only for a while after they change and in periodic refreshes.
-#
-# Entity ids are host-assigned net ids (u16, stable while the entity lives); types index a
-# per-battle table of scene paths sent reliably (BATTLE_START / TYPE_DEF). input_ack is the last
-# INPUT seq the host applied for that player (0 for host-local players).
+# Rarely changing data is sparse, and the client fills the gaps from earlier snapshots
+# (resolve()): a FLAG_REST entity leaves its position out, player stats travel only for a while
+# after they change, and both come again in periodic refreshes.
 
 enum PlayerField {
 	POSITION, HEALTH, MAX_HEALTH, INPUT_ACK, GOLD, LEVEL, XP, WEAPONS, WEAPON_SLOTS, SPEED,
@@ -86,10 +80,10 @@ const WAVE_WON := 4
 const WAVE_LABEL := 8  # the "wave completed" label is showing
 const WAVE_FLAGS := 15
 const EXPLOSION_SCALE := 100.0
-const PLAYER_WEAPON_SLOTS := 2  # wire only (protocol 13, sync/battle_scene.gd)
-const PLAYER_SPEED := 4  # wire only (protocol 13)
-# wire only (protocol 28): Player.dead. Not health 0: a Veteran who died starts the next wave
-# alive at 0 health (no_cure_between_wave, Player._get_health_kept_between_waves).
+const PLAYER_WEAPON_SLOTS := 2  # wire only (sync/battle_scene.gd)
+const PLAYER_SPEED := 4  # wire only
+# wire only: Player.dead. Not health 0: a Veteran who died starts the next wave alive at 0 health
+# (no_cure_between_wave, Player._get_health_kept_between_waves).
 const PLAYER_DEAD := 8
 const MAX_SPEED := 1 << 20  # px/s; parse rejects more
 const STAT_FIELDS := [
@@ -123,9 +117,6 @@ const PITCH_SCALE := 100.0
 const COOLDOWN_SCALE := 50.0
 const ANIM_TIME_SCALE := 1000.0
 const RANK_STRIDE := 1 << 20
-
-
-# --- encode ---
 
 
 static func encode(view: Dictionary) -> PoolByteArray:
@@ -246,8 +237,6 @@ static func _put_player(buf: StreamPeerBuffer, entry: Array) -> void:
 	_put_scene_fields(buf, entry)
 
 
-# Protocol 13: [weapon slots: u8 bit count, mask (1 bit per wave-start weapon still held)],
-# [speed: varint px/s], after the weapons and only when their flag bit is set.
 static func _scene_flags(entry: Array) -> int:
 	var flags := 0
 	if entry.size() > PlayerField.WEAPON_SLOTS and entry[PlayerField.WEAPON_SLOTS] != null:
@@ -356,13 +345,13 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 			_put_feedback_event(buf, event)
 
 
-# Protocol 11 kinds, after the kind byte:
+# After the kind byte:
 #   EXPLOSION: varint type idx, i16 x, i16 y, u16 scale (1/100, >= 1), u8 smoke amount
 #   BONUS_GOLD: u8 BONUS_VISIBLE bit, varint value
 #   WAVE_END: u8 WAVE_* flags
 #   GOLD_BOOST: i16 x, i16 y, u8 boost
-#   STAT (protocol 18): u8 player index, u32 stat hash, zigzag varint value
-#   WEAPON_ANIM (protocol 18): u8 player index, u8 weapon index, u16 position (ms)
+#   STAT: u8 player index, u32 stat hash, zigzag varint value
+#   WEAPON_ANIM: u8 player index, u8 weapon index, u16 position (ms)
 static func _put_feedback_event(buf: StreamPeerBuffer, event: Array) -> void:
 	match event[0]:
 		EVENT_WEAPON_ANIM:
@@ -432,10 +421,6 @@ static func quantize_position(position: Vector2) -> Vector2:
 	return Vector2(_quantize(position.x, POS_SCALE), _quantize(position.y, POS_SCALE))
 
 
-# --- parse ---
-
-
-# Returns the view, or {} if the body is malformed in any way.
 static func parse(body) -> Dictionary:
 	if typeof(body) != TYPE_RAW_ARRAY or body.size() < 11:
 		return {}
@@ -749,7 +734,6 @@ static func _get_position(buf: StreamPeerBuffer) -> Vector2:
 	return Vector2(x, buf.get_16() / POS_SCALE)
 
 
-# -1 if truncated or longer than 5 bytes.
 static func _get_varint(buf: StreamPeerBuffer) -> int:
 	var value := 0
 	var shift := 0
@@ -770,12 +754,9 @@ static func _unzigzag(value: int):
 	return value / 2 if value % 2 == 0 else -(value + 1) / 2
 
 
-# --- client: fill what was left out ---
-
-
 # Fills positions of resting entities and missing player stats from earlier snapshots (cache:
-# a Dictionary owned by the caller, empty at battle start). Resting entities the client has never
-# seen a position for are left out of the view until their next refresh. Builds the id index.
+# a Dictionary owned by the caller, empty at battle start). A resting entity the client has never
+# seen a position for is left out of the view until its next refresh.
 static func resolve(view: Dictionary, cache: Dictionary) -> Dictionary:
 	if not cache.has("t"):
 		cache["t"] = -1
@@ -891,9 +872,6 @@ static func index_of(snapshot: Dictionary, id: int) -> int:
 	return snapshot.index.get(id, -1)
 
 
-# --- flags ---
-
-
 static func flags_size(entity_count: int) -> int:
 	return (entity_count * FLAG_BITS + 7) / 8
 
@@ -913,9 +891,6 @@ static func pack_flags(values: Array) -> PoolByteArray:
 static func get_flags(flags: PoolByteArray, i: int) -> int:
 	var bit := i * FLAG_BITS
 	return (flags[bit / 8] >> (bit % 8)) & ((1 << FLAG_BITS) - 1)
-
-
-# --- events ---
 
 
 # At most `limit` events, the least valuable dropped first: duplicate sounds (same stream already
@@ -952,9 +927,6 @@ static func select_events(events: Array, limit: int) -> Array:
 # State rather than a moment: still applied when it arrives late, never dropped first.
 static func is_state_event(kind: int) -> bool:
 	return kind == EVENT_ANIM or kind == EVENT_BONUS_GOLD or kind == EVENT_WAVE_END
-
-
-# --- weapons ---
 
 
 # Weapon attack visuals: aim rotation + the tweened sprite offset/rotation (melee thrusts, recoil).

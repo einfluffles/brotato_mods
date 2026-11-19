@@ -1,24 +1,15 @@
 extends Node
-# The "wave failed" prompt (main.tscn > UI/RetryWave, MenuRetryWave): main.gd shows it from
-# _on_EndWaveTimer_timeout, which never runs on a client (timer callbacks are disconnected).
-# Host: section retry of the state stream (sync/state_stream.gd), active while the prompt is
-# visible, with the host's retry setting (Retry / End run buttons vs a single OK) and retry count,
-# plus who decides: the prompt's FocusEmulator is player 0's (retry_wave.tscn), the host's GUI
-# focus answers to the host machine's keys/pad. Hidden or no battle: inactive, the client hides
-# its copy (clear_state).
-# Client: shows the same prompt on the puppet battle scene with presses disabled; FocusSync
-# mirrors the cursor. The prompt can arrive before the puppet battle scene is ready: the stream
-# keeps it pending until then (BattleClient retries the stream on battle_entered).
+# The "wave failed" prompt (main.tscn > UI/RetryWave): main.gd shows it from
+# _on_EndWaveTimer_timeout, which never runs on a client. Section RETRY is active while the host's
+# prompt shows; the client shows its copy with presses disabled.
 
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const WAITING_LABEL := "BrotatoTogetherRetryWaiting"
 const DECIDING_PLAYER := 0  # player_index of RetryWave/FocusEmulator
-# Pending that long at most: a (re)joining peer gets the prompt right after its BATTLE_START,
-# while the battle scene loads.
 const PENDING_TIMEOUT_SEC := 30.0
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
 
@@ -29,9 +20,6 @@ func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> voi
 	battle_client = client_battle
 	state_stream.register_provider(StateStream.RETRY, self)
 	state_stream.register_handler(StateStream.RETRY, self, PENDING_TIMEOUT_SEC)
-
-
-# --- host ---
 
 
 func state_key(_section: int) -> String:
@@ -63,11 +51,6 @@ func _name_of_player(player_index: int) -> String:
 	return session.transport.get_persona_name(session.transport.local_id)
 
 
-# --- client ---
-
-
-# false (pending) until the puppet battle of that battle_id is ready; a prompt of an earlier
-# battle is dropped.
 func apply_state(_section: int, body, _revision: int) -> bool:
 	if typeof(body) != TYPE_DICTIONARY or typeof(body.get("battle_id")) != TYPE_INT:
 		return true

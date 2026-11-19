@@ -1,9 +1,7 @@
 extends Node
-# Client: mirror the host's battle.
-# BATTLE_START -> apply its run state (in parts: sync/battle_run.gd), load main.tscn in puppet
-# mode (simulation frozen right after main._ready, before its first physics frame). SNAPSHOTs
-# are buffered and rendered INTERP_DELAY_MSEC in the past, interpolating between the two
-# snapshots around render time: smooth motion at any fps, independent of the 30 Hz network rate.
+# Client: mirror the host's battle. BATTLE_START applies the run state and loads main.tscn in
+# puppet mode (simulation frozen right after main._ready). SNAPSHOTs are buffered and rendered
+# INTERP_DELAY_MSEC in the past, interpolated between the two snapshots around render time.
 
 signal battle_entered
 signal battle_left
@@ -54,20 +52,11 @@ const WAVE_TIMER_TOLERANCE := 0.3
 # A killing blow's damage event arrives with the snapshot that drops the enemy, which the client
 # despawns a frame or two before replaying the event: keep the target findable for a moment.
 const DESPAWN_GRACE_MSEC := 1000
-# Own-player prediction only while the host's world moves: not while paused, not after the wave's
-# end, not when the newest snapshot is older than this (stall), and never more than
-# MAX_REPLAY_INPUTS (0.75 s) ahead.
-# Network stalls of 300 to 500 ms (seen every 20 to 50 s on some connections) are ridden out: at
-# 250 ms the player snapped back to the host's last position and jumped ahead again when the
-# snapshots came. Inputs still reach the host during a stall of the snapshots alone, so the
-# prediction is right; past 600 ms the connection is gone rather than late, and the player stays
-# with the frozen world (the same limit as the host's INPUT timeout, Protocol.STALL_LIMIT_MSEC).
-# The replay covers that stall plus the round trip (on a good connection the host acks within a
-# few inputs, so the cap changes nothing there); it is above the host's catch-up backlog
-# (InputSync.MAX_BACKLOG), so whatever the host still catches up on is in the replay.
+# No own-player prediction past this snapshot age (shared with the host's INPUT timeout). The
+# replay cap must stay above InputSync.MAX_BACKLOG: what the host catches up on is replayed.
 const PREDICTION_STALE_MSEC := Protocol.STALL_LIMIT_MSEC
 const MAX_REPLAY_INPUTS := 45
-# Faster than anything moves: a pooled node reused for a new entity under an old id; snap.
+# A jump faster than this is a pooled node reused for a new entity under an old id: no lerp.
 const MAX_INTERP_SPEED := 6000.0  # px/s
 const MAX_POOLED_PER_TYPE := 128  # non-Entity puppets (projectiles, gold, consumables)
 const BRACHIOSAURUS_FOOT := (
@@ -79,16 +68,16 @@ const PUPPET_TYPE_META := "brotato_together_puppet_type"
 # After a stall the queued sounds and damage numbers of that time would all fire in one frame.
 const STALE_EVENT_MSEC := 250
 const KIND_UNIT := 1  # its sprite's facing and flip_h come with the flags
-const KIND_PROJECTILE := 2  # faces its motion
+const KIND_PROJECTILE := 2  # its rotation is the host's angle (sync/facing.gd)
 const KIND_BIRTH := 4  # a spawn marker: started when it appears
 const KIND_ANIMATED := 8  # has an update_animation of its own (pets)
 const KIND_POSE := 16  # its scene has parts sync/pose.gd moves
 const LOADING_TIMEOUT_MSEC := 10000  # a scene that never got ready must not block the next
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 var input_sync: Node = null
-var run_store = null  # RunParts.Store, shared with ShopSync and UpgradesSync (set by mod_main.gd)
+var run_store = null  # RunParts.Store, shared with ShopSync and UpgradesSync
 var interp_lag_msec := 0  # render time vs newest snapshot, for the lobby page
 
 var _battle_id := 0
@@ -124,7 +113,7 @@ var _pause_text := ""
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
-var _feedback = FeedbackMirror.new()  # explosions, texts, shake, wave end (protocol 11)
+var _feedback = FeedbackMirror.new()
 var _looks = Looks.new()
 var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppets
 var _render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
@@ -138,7 +127,7 @@ func setup(netplay_session: Node, local_input: Node) -> void:
 	session.connect("message", self, "_on_message")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
 	# Pending up to 30 s: a (re)joining peer gets it right after its BATTLE_START, while the scene
-	# loads (and copes with it arriving first all the same).
+	# loads.
 	state_stream.register_handler(StateStream.PAUSE_BATTLE, self, 30.0)
 	# Sections waiting for the puppet battle (pause, retry prompt) apply the frame it is ready.
 	if not is_connected("battle_entered", state_stream, "retry"):
@@ -174,9 +163,8 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 			_on_snapshot(Snapshot.parse(body))
 
 
-# Section pause_battle (BattleHost.state_body): the host's battle is paused. Pending until the
-# puppet battle of that battle_id is ready (a peer joining a paused battle gets it before its
-# BATTLE_START); a pause of an earlier battle is dropped.
+# Pending until the puppet battle of that battle_id is ready (a peer joining a paused battle
+# gets it before its BATTLE_START); a pause of an earlier battle is dropped.
 func apply_state(_section: int, body, _revision: int) -> bool:
 	if typeof(body) != TYPE_DICTIONARY or typeof(body.get("battle_id")) != TYPE_INT:
 		return true
@@ -200,9 +188,6 @@ func clear_state(_section: int) -> void:
 	_snapshot_gaps.reset()  # the pause was no stall
 	_pause_text = ""
 	_set_paused(false)
-
-
-# --- battle lifecycle ---
 
 
 func _on_battle_start(body) -> void:
@@ -246,8 +231,7 @@ func _on_battle_start(body) -> void:
 	ModLoaderLog.info("Entering battle %s (wave %s)" % [_battle_id, RunData.current_wave], LOG_NAME)
 
 
-# What a BATTLE_START says besides the run: this client's slot, the type table. The pause comes
-# with section pause_battle (apply_state).
+# The pause comes with section PAUSE_BATTLE (apply_state).
 func _adopt_start(body: Dictionary) -> void:
 	_you = int(body.get("you", -1)) if typeof(body.get("you")) == TYPE_INT else -1
 	var types = body.get("types")
@@ -257,7 +241,6 @@ func _adopt_start(body: Dictionary) -> void:
 				_define_type(idx, types[idx])
 
 
-# The wave is over here too: its puppets, buffers and tables go, whatever screen comes next.
 func _leave_battle() -> void:
 	_reset_battle_state()
 	# main.on_wave_start set these; only the host's flow would clear them (the shop's stats
@@ -338,7 +321,7 @@ func _on_battle_scene_ready(main: Node) -> void:
 		# The next screen can replace the scene without a BATTLE_END (the shop was faster).
 		main.connect("tree_exited", self, "_on_battle_scene_exited", [_main_id], CONNECT_ONESHOT)
 		_set_paused(_paused)
-		SoundRelay.set_muted(true)  # only the host's sounds from now on
+		SoundRelay.set_muted(true)
 		emit_signal("battle_entered")
 	if not _queued_start.empty():
 		var next := _queued_start
@@ -402,9 +385,6 @@ func _disconnect_timer_callbacks(main: Node) -> void:
 			connection.source.disconnect("timeout", main, connection.method_name)
 
 
-# --- snapshots ---
-
-
 # Type key: "<scene path>[#<data id>]" (see BattleHost._type_key).
 func _define_type(idx, key) -> void:
 	if typeof(idx) != TYPE_INT or typeof(key) != TYPE_STRING:
@@ -435,7 +415,6 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		_has_clock = true
 	else:
 		_clock_offset += CLOCK_CREEP_MSEC
-	# Insert sorted by host time; drop duplicates and stale ones.
 	var i := _buffer.size()
 	while i > 0 and _buffer[i - 1].t > snapshot.t:
 		i -= 1
@@ -466,7 +445,6 @@ func _process(delta: float) -> void:
 	var render_t: float = _render_delay.render_time(
 		OS.get_ticks_msec(), _clock_offset, _buffer[-1].t, delta
 	)
-	# Drop snapshots that are fully in the past (keep one before render_t).
 	while _buffer.size() > 2 and _buffer[1].t <= render_t:
 		_buffer.pop_front()
 	var from: Dictionary = _buffer[0]
@@ -516,11 +494,8 @@ func _apply_players(
 		)
 
 
-# Own player: newest host position + replay of inputs the host hasn't applied yet, so movement
-# responds immediately. Corrections (host disagrees) are blended out instead of snapping. The steps
-# of the inputs sent since the last frame are the player's own motion, not a correction: counted as
-# one, they pulled the display back by the newest step on every snapshot (a lag of a few steps
-# while running, and a glide after the stop).
+# Newest host position plus a replay of the inputs the host hasn't applied yet. Corrections are
+# blended out; the player's own steps since the last frame are not a correction.
 func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> void:
 	var predicted := _own_target(player, newest.players[i])
 	var history: Array = input_sync.history
@@ -542,8 +517,7 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 	_move(player, "p%s" % i, _own_display)
 
 
-# Where the own player gets from `from` with the inputs after seq, from history[first] on (nowhere
-# unless predicting).
+# Where the own player gets from `from` with the inputs after seq, from history[first] on.
 func _walk_since(player: Node2D, from: Vector2, seq: int, first := 0) -> Vector2:
 	if not _predicting():
 		return from
@@ -555,27 +529,21 @@ func _walk_since(player: Node2D, from: Vector2, seq: int, first := 0) -> Vector2
 	return from
 
 
-# The host's world moves: not paused, the wave not over, and the newest snapshot is fresh.
 func _predicting() -> bool:
 	var fresh: bool = OS.get_ticks_msec() - _newest_rx_msec <= PREDICTION_STALE_MSEC
 	return not _paused and not _wave_over and fresh
 
 
-# A snapshot's events say the host's wave is over (EVENT_WAVE_END, repeated state): the frame that
-# set main._cleaning_up also stopped its players (main.clean_up_room -> Player.on_room_cleanup:
-# _can_move false), and they stand until the shop or the level-ups replace the battle. So the own
-# player is no longer predicted either: it ran ahead on every held input and every snapshot pulled
-# it back. Taken on arrival, not at render time like the label (FeedbackMirror), and for the rest
-# of this battle (the next one starts with a fresh battle state).
+# On EVENT_WAVE_END the host's players stand (main.clean_up_room -> Player.on_room_cleanup), so
+# prediction stops for the rest of this battle. Taken on arrival, not at render time.
 func _note_wave_end(events: Array) -> void:
 	for event in events:
 		if typeof(event) == TYPE_ARRAY and not event.empty() and typeof(event[0]) == TYPE_INT:
 			_wave_over = _wave_over or event[0] == Snapshot.EVENT_WAVE_END
 
 
-# Host position + the last MAX_REPLAY_INPUTS un-acked inputs; just the host position while the
-# host's world or its players stand still (paused, the wave over, or no fresh snapshots): else the
-# client would walk through a frozen world and glide back.
+# Just the host position while the host's world or its players stand still: else the client
+# would walk through a frozen world and glide back.
 func _own_target(player: Node2D, entry: Array) -> Vector2:
 	if not _predicting():
 		return entry[PF.POSITION]
@@ -701,7 +669,6 @@ func _apply_entities(from: Dictionary, to: Dictionary, alpha: float) -> void:
 				_pose.spawned(node, _main)
 		if kind & KIND_ANIMATED and not node.dead:
 			node.update_animation(position - last)
-		# The host's facing: behaviors turn units toward their target, not their motion.
 		var bit: int = i * Snapshot.FLAG_BITS
 		var node_flags: int = flags[bit >> 3] >> (bit & 7)
 		if kind & KIND_UNIT:
@@ -785,11 +752,8 @@ func _move(node: Node, key, position: Vector2) -> void:
 		PuppetEntity.animate(node, motion)
 
 
-# The own player runs while its keys are held (the move it sends, also zero while the lobby popup
-# or its Esc menu has the input), not while a correction still blends out of the displayed
-# position (_predict_own): that never quite stops and kept it running for about a second. Facing
-# follows the held keys too, as on the host. Nothing runs while the host's world stands still,
-# where _own_target predicts nothing either.
+# The own player runs while its keys are held, not while a correction still blends out of the
+# displayed position: that never quite stops. Nothing runs while the host's world stands still.
 func _own_motion() -> Vector2:
 	var history: Array = input_sync.history if input_sync != null else []
 	if history.empty() or not _predicting():
@@ -855,8 +819,6 @@ static func _pop_valid(pool: Array):
 	return null
 
 
-# Boss parts find their boss in _ready (BrachiosaurusFoot: find_node("Brachiosaurus"), then calls
-# into it): wait for the boss puppet (snapshots list bosses first; its type may arrive later).
 func _boss_present(scene: PackedScene) -> bool:
 	var boss_name = BOSS_PARTS.get(scene.resource_path)
 	return boss_name == null or _main.find_node(boss_name, true, false) != null

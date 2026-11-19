@@ -1,10 +1,7 @@
 extends Node
-# Co-op character selection on the machine that runs it (host, or local co-op without a lobby):
-# - every empty player slot shows "Player N" and the game's own hold-to-join hint (the game only
-#   shows it in the next free slot, and not at all before the first player joined);
-# - players pick their colour with ui_info (F / Y), which the game doesn't use on this screen;
-#   colours are applied by the CoopService extension, this node refreshes what is on screen.
-# Solo play is untouched (nothing here runs outside a co-op run).
+# Co-op character selection on the machine that runs it. Every empty slot shows "Player N" and
+# the game's hold-to-join hint (the game shows it in the next free slot only, and not before the
+# first player joined); players pick their colour with ui_info (F / Y), unused on this screen.
 
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const SLOT_LABEL := "BrotatoTogetherSlotLabel"
@@ -59,7 +56,6 @@ func _process(_delta: float) -> void:
 	_update_color_hint(scene, count)
 
 
-# "Player N" at the top of an empty slot, in that slot's colour.
 func _slot_label(panel: Control, i: int) -> void:
 	var label: Label = panel.get_node_or_null(SLOT_LABEL)
 	if label == null:
@@ -67,8 +63,7 @@ func _slot_label(panel: Control, i: int) -> void:
 		label.name = SLOT_LABEL
 		label.align = Label.ALIGN_CENTER
 		label.valign = Label.VALIGN_TOP
-		# A Label centres itself vertically in a container (SIZE_SHRINK_CENTER): right over the
-		# game's hold-to-join hint in the middle of the slot. At the top instead.
+		# A Label centres itself vertically in a container, right over the game's hold-to-join hint.
 		label.size_flags_vertical = 0  # shrink to the top (Godot 3 has no SIZE_SHRINK_BEGIN)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.add_child(label)
@@ -85,10 +80,8 @@ func _update_color_hint(scene: Node, count: int) -> void:
 		_color_hint.visible = RunData.is_coop_run and count > 0
 
 
-# "[F] / [Y]  Change colour" with the game's own key glyphs, in the free strip at the top right:
-# level with the Back button and the DLC bar (top left), above the title (y 75 in the game's
-# 1920x1080 layout). A child of the scene root, anchored to its top right corner, so it takes no
-# space in the game's containers (under the title it pushed the grid down until it scrolled).
+# In the free strip at the top right, level with the Back button. A child of the scene root, so
+# it takes no space in the game's containers (under the title it pushed the grid down).
 func _add_color_hint(scene: Node) -> Control:
 	if scene.get_node_or_null("MarginContainer/VBoxContainer/Title") == null:
 		return null
@@ -140,7 +133,6 @@ static func add_icon(row: Control, texture: Texture) -> void:
 	row.add_child(icon)
 
 
-# Runs after the scene's own nodes (reverse tree order); nothing on this screen uses ui_info.
 func _input(event: InputEvent) -> void:
 	if not RunData.is_coop_run or _current() == null:
 		return

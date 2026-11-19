@@ -1,8 +1,7 @@
 extends Reference
-# This mod's settings on this machine, in the Mod Loader's own config store
-# (ModLoaderConfig: user://mod_configs/<mod id>/, checked against the config_schema of
-# manifest.json, which also gives the defaults). The loader's "default" config cannot be
-# written, so the values live in a config of their own, made with the first change.
+# This mod's settings on this machine, in the Mod Loader's config store (ModLoaderConfig, checked
+# against manifest.json's config_schema, which also gives the defaults). The loader's "default"
+# config cannot be written, so the values live in a config of their own, made on first change.
 
 const MOD_ID := "einfluffles-BrotatoTogether"
 const CONFIG := "settings"

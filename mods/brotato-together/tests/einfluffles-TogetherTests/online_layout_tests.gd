@@ -1,16 +1,6 @@
 extends Reference
-# What the mod adds to the host's co-op character selection takes no space from the game's
-# layout (ui/coop_mode.gd, ui/slot_invite.gd):
-#  - the Co-op row (Off / Local / Online) takes the place and the rect of the game's Co-op toggle:
-#    the run options box, its other rows, the player panels and the grid get their vanilla rects,
-#    the grid scrolls no further;
-#  - Invite friends and the lobby status in the next free player slot: every slot keeps its rect,
-#    nothing of it is over "Player N", the join hint or the join progress, and it stays inside
-#    its slot and on screen, also with a long status line;
-#  - their texts are shown whole (the row's three values, the button; the usual status lines).
-# Checked at the viewport sizes of the colour hint's check (coop_selection_tests.gd). How the
-# cursor reaches them and what the values do: lobby_menu_tests.gd.
-# Run from coop_selection_tests.gd on the host's co-op character selection (no Steam).
+# What the mod adds to the host's co-op character selection takes no space from the game's layout
+# (ui/coop_mode.gd, ui/slot_invite.gd). Run from coop_selection_tests.gd at its viewport sizes.
 
 # coop_selection_tests.gd preloads this file: loaded when used (no cyclic preload).
 const HELPERS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
@@ -27,7 +17,7 @@ const STATUSES := [
 	"Online: a much longer status line than any of the mod's own, as a translation could be",
 ]
 
-var t: Node = null  # the test mod: _check()
+var t: Node = null
 var helpers = null  # coop_selection_tests.gd: SIZES, _layout_rects(), _stretch_tree()
 
 

@@ -38,7 +38,7 @@ static func revive(entity: Node) -> void:
 
 
 # Visual part of Player.die(). The real die() emits "died" (main ends the wave when everyone is
-# dead) and resets TempStats — host decisions. Parts are hidden instead of freed.
+# dead) and resets TempStats, which are host decisions. Parts are hidden instead of freed.
 static func player_died(player: Node) -> void:
 	player.dead = true
 	player._animation_player.playback_speed = 1
@@ -54,9 +54,8 @@ static func player_died(player: Node) -> void:
 			appearance.hide()
 
 
-# Not the hit flash's, nor a life bar's: they are started by what the client shows and their
-# timeout only puts a material / a tint back (a paused Timer never fires: the unit, the bar
-# would stay white).
+# Not the hit flash's, nor a life bar's: the client starts them itself, and a paused Timer never
+# fires (the unit or the bar would stay white).
 static func _pause_timers(node: Node) -> void:
 	for child in node.get_children():
 		if child is Timer:
@@ -65,8 +64,7 @@ static func _pause_timers(node: Node) -> void:
 
 
 # A spawn marker (EntityBirth) runs its own flicker and hides itself after the same time as the
-# host's; with no collision layers it never finds a player on it (the host moves it then, see
-# BattleClient._apply_entities). tag: BIRTH_TAGS key from the type.
+# host's. tag: BIRTH_TAGS key from the type.
 static func start_birth(birth: Node, tag: String) -> void:
 	var request := SpawnRequest.new(BIRTH_TAGS.get(tag, EntityType.ENEMY), null, birth.global_position)
 	request.charmed_by = 0 if tag == BIRTH_CHARMED else -1

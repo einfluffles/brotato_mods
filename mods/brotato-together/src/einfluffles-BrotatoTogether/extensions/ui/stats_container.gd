@@ -1,12 +1,7 @@
 extends "res://ui/menus/shop/stats_container.gd"
-# A third tab for the damage meter's board next to Primary / Secondary, in the solo shop and the
-# solo end of run (ui/damage_views.gd add_tab arms it). Every other stats panel (pause menu,
-# level-up, the co-op stats pages) never calls bt_add_tab and stays as the game made it.
-#
-# The game's _input toggles between the two tabs on LB / RB (update_tab(the other one)). Godot 3
-# runs this script's _input first, so it notes which trigger it was, and update_tab then steps
-# through the three tabs instead: RB forward, LB back, around at the ends. The button is a copy
-# of Secondary without its signals, an icon only (the row has no room for a third text tab).
+# A third tab for the damage meter's board next to Primary / Secondary, inert until
+# DamageViews.add_tab arms it. The game's _input toggles between its two tabs on LB / RB; Godot 3
+# runs this script's _input first, so it notes the trigger and update_tab steps through three.
 
 const BT_TAB := 2
 const BT_TITLE := "Damage"
@@ -54,8 +49,6 @@ func bt_add_tab(page: Control, icon: Texture) -> void:
 	bt_set_tab_enabled(true)
 
 
-# Off (the meter's switch): the tab is gone, an open one falls back to Primary, and the row has
-# the game's widths again.
 func bt_set_tab_enabled(on: bool) -> void:
 	if _bt_button == null or on == _bt_enabled:
 		return

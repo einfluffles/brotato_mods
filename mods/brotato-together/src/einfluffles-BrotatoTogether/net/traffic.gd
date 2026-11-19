@@ -1,15 +1,8 @@
 extends Reference
-# What went out reliably to each peer lately, for the log: per peer two one-second buckets of
-# label -> [count, bytes] (the current second and the one before). A label is the message type
-# (Protocol.Msg's name), for STATE with the section (StateStream.NAMES): "STATE shop".
-# Session.send_reliable notes every message with its encoded size. The session's Steam status
-# text (slow answer and gap lines) names the largest of them when Steam's reliable queue holds
-# BACKLOG_TEXT_BYTES or more, and a line of its own says when one message is larger than
-# BIG_MESSAGE_BYTES or the queue holds more than BIG_BACKLOG_BYTES (at most one per peer per
-# LINE_INTERVAL_MSEC). Forgotten when the peer leaves.
+# What went out reliably to each peer in the last two seconds, by message type (and STATE
+# section), for the log lines about a slow answer or a full Steam send queue.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
-# For its NAMES only: the stream itself is not used here.
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const BUCKET_MSEC := 1000
 const MAX_LABELS := 4  # in one summary, largest first
@@ -17,16 +10,15 @@ const BACKLOG_TEXT_BYTES := 4096
 const BIG_MESSAGE_BYTES := 32768
 const BIG_BACKLOG_BYTES := 65536
 const LINE_INTERVAL_MSEC := 5000
-# Steam's queue is asked after every message of QUERY_MIN_BYTES or more (those make a backlog),
-# after smaller ones at most once per QUERY_INTERVAL_MSEC per peer: a stream of small messages
-# (sounds, cursors) costs no Steam call per send, and a backlog they build is still seen.
+# Steam's queue is asked after every message of QUERY_MIN_BYTES or more, after smaller ones at
+# most once per QUERY_INTERVAL_MSEC per peer: a stream of small messages costs no call each.
 const QUERY_MIN_BYTES := 4096
 const QUERY_INTERVAL_MSEC := 250
 
 # steam_id -> {second, now: {label: [count, bytes]}, before: {...}, next_line_msec,
 # next_query_msec}
 var peers := {}
-var lines := 0  # standalone lines logged so far (tests)
+var lines := 0  # standalone lines logged so far
 var last_line := ""
 
 
@@ -86,7 +78,6 @@ func summary(steam_id: int, now_msec: int) -> String:
 	return PoolStringArray(parts).join(", ")
 
 
-# For the Steam status text: "" unless the reliable queue holds BACKLOG_TEXT_BYTES or more.
 func backlog_text(steam_id: int, pending_reliable: int, now_msec: int) -> String:
 	if pending_reliable < BACKLOG_TEXT_BYTES:
 		return ""
@@ -94,8 +85,7 @@ func backlog_text(steam_id: int, pending_reliable: int, now_msec: int) -> String
 	return "; reliable in the last 2 s: " + text if text != "" else ""
 
 
-# After note(): the standalone line for this send, "" when it is neither big nor behind a big
-# queue, or the peer had one less than LINE_INTERVAL_MSEC ago.
+# After note(): the standalone line for this send, or "".
 func burst_line(
 	steam_id: int, peer_name: String, text: String, size: int, pending_reliable: int, now_msec: int
 ) -> String:
@@ -115,12 +105,10 @@ func burst_line(
 	return last_line
 
 
-# Whether a standalone line for the peer may be logged now (the caller then asks Steam's queue).
 func line_due(steam_id: int, now_msec: int) -> bool:
 	return not peers.has(steam_id) or now_msec >= peers[steam_id].next_line_msec
 
 
-# After note(): whether Steam's queue may be asked for this send (see QUERY_MIN_BYTES).
 func query_due(steam_id: int, size: int, now_msec: int) -> bool:
 	if not peers.has(steam_id):
 		return true

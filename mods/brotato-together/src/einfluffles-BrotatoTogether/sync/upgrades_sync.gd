@@ -1,27 +1,7 @@
 extends Node
-# The end-of-wave level-up / crate panels (main.tscn's coop UpgradesUI).
-#
-# Host: owns every decision. While the panels are visible it provides the state stream's
-#   UPGRADES section (sync/state_stream.gd; see body() for the fields): run state + per player
-#   what its panel shows, a panel revision, the carousel page and the meca upgrade rolls. The
-#   run state is serialized only when it can have changed (run_cache, sync/run_cache.gd, as in
-#   the shop): a page, a revision, a meca roll or a resend reuses the last one. It travels in
-#   parts, per peer only those it lacks (sync/run_parts.gd: a level-up choice is one part).
-# Client: shows those options in its own copy of the panels; nothing is rolled locally.
-#   Its OWN panel runs here: its buttons drive its slot's FocusEmulator locally
-#   (InputSync.set_local_device), so cursor, pages (upgrades / gear / stats), popups and the
-#   description scroll cost no round trip. The panel's decision signals are rewired from the
-#   game's handlers to UPGRADE_INTENT messages. The host checks an intent against the sender's
-#   current panel (revision + option id) and runs the panel's own handler, so the rules stay
-#   in the game's code and nothing is decided on a client.
-#   The same goes for the crate weapon popup (characters whose crates give weapons): combine,
-#   recycle and meca upgrade leave as intents that name the weapon by slot and id. The meca
-#   upgrade's two options are rolled on the host on request and shown from the state (mecas);
-#   the pick is an option index (sync/meca_choice.gd).
-#   Its cursor and page also travel as UPGRADE_FOCUS: what the host and the others see.
-#   Other mods' buttons on a panel leave as intents of their own kinds (register_intent).
-#   Keyboard and mouse on the own panel, and the mouse kept off the others: sync/local_panel.gd.
-# The other players' panels stay mirrored: cursors by FocusSync, pages from the state.
+# The end-of-wave level-up / crate panels (main.tscn's coop UpgradesUI). Host: owns every
+# decision and provides section UPGRADES while the panels show (see body()). Client: its own
+# panel runs locally and sends UPGRADE_INTENT; the other panels stay mirrored.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const RunStateCodec := preload(
@@ -45,9 +25,6 @@ const UpgradesGear := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_gear.gd"
 )
 const CHECK_INTERVAL := 0.1
-# A state can wait for the puppet battle scene to load (on a rejoin the stream's resync comes
-# right after BATTLE_START, which starts the load); it used to wait for battle_entered without
-# a limit.
 const PENDING_TIMEOUT_SEC := 30.0
 const ITEM_KINDS := ["take", "discard", "ban"]
 # UpgradesUI._ready: container signal -> UpgradesUI handler (bound to the player index).
@@ -58,14 +35,12 @@ const DECISION_HANDLERS := {
 	"item_ban_button_pressed": "_on_ban_button_pressed",
 }
 # UpgradesUI._setup_weapons_inventory (crates that give weapons): popup signal -> UpgradesUI
-# handler. These change RunData directly, so no client keeps them; the own popup's presses
-# leave as WEAPON_KINDS intents instead.
+# handler. These change RunData directly; the own popup's presses leave as WEAPON_KINDS intents.
 const WEAPON_POPUP_HANDLERS := {
 	"item_combine_button_pressed": "_on_weapon_combine_button_pressed",
 	"item_discard_button_pressed": "_on_weapon_discard_button_pressed",
 	"item_meca_upgrade_selected": "_on_weapon_meca_upgrade_selected",
 }
-# weapon_meca_roll: the host rolls (or finds) the two meca options; weapon_meca: picks one.
 const WEAPON_KINDS := ["weapon_combine", "weapon_discard", "weapon_meca_roll", "weapon_meca"]
 const OWN_KINDS := ["choose", "reroll"] + ITEM_KINDS + WEAPON_KINDS
 const MAX_HELD := 8  # intents held while the host is paused (a few presses per player)
@@ -73,17 +48,16 @@ const LOG_NAME := "einfluffles-BrotatoTogether:UpgradesSync"
 const DEVICE_OWNER := "upgrades"  # InputSync.set_local_device
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
 var focus_sync: Node = null
 var input_sync: Node = null
-var last_intent := {}  # client: the last decision sent (also read by the tests)
+var last_intent := {}  # client: the last decision sent
 var run_cache = RunCache.new("upgrades")  # host: the run state, serialized on change
-var run_sender = null  # host: RunParts.Sender, shared with ShopSync (set by mod_main.gd)
-var run_store = null  # client: RunParts.Store, shared with ShopSync (set by mod_main.gd)
+var run_sender = null  # host: RunParts.Sender, shared with ShopSync
+var run_store = null  # client: RunParts.Store, shared with ShopSync
 
-# host
 var _seq_ui_id := 0  # instance id of the UpgradesUI the revisions belong to
 var _seqs := []  # per player: bumped whenever the panel shows something new
 var _seq_keys := []
@@ -93,7 +67,6 @@ var _held := []
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method]
 
-# client
 var _guarded_ui: Node = null  # the puppet UpgradesUI whose decision signals are rewired
 var _applied := {}  # player index -> key of the entry last applied
 var _run_key := {}  # the run part ids RunData has
@@ -139,7 +112,6 @@ func _process(_delta: float) -> void:
 		# run's text does not outlive the wave.
 		run_sender.close(run_cache)
 	_apply_held(ui)
-	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
 	var showing: bool = session.is_host() and ui != null
 	_block_remote_buttons(showing and not get_tree().paused)
 
@@ -158,16 +130,7 @@ func _on_message(steam_id: int, msg_type: int, msg) -> void:
 				)
 
 
-# --- for other mods: a decision of their own on a player's panel (a button they add) ---
-# The same contract as ShopSync's. Host: register_intent(kind, target, method).
-#   method(ui, player, id, arg) -> bool runs for a remote player's press after the checks every
-#   intent gets (its own player, its panel's revision, panel not done, not paused), with the
-#   panel's meca effect choice set as for take; true counts like an applied press of the game.
-# Client: nothing may change the run here (is_puppet_ui). The mod sends the press of this
-#   client's own panel (send_intent) when the host has the kind (host_handles); the result
-#   arrives with the host's next state.
-
-
+# For other mods: ShopSync.register_intent's contract, with method(ui, player, id, arg) -> bool.
 # kind: namespaced by the mod ("trade.crate"); id and arg are the mod's to define.
 func register_intent(kind: String, target: Object, method: String) -> bool:
 	if kind == "" or kind in OWN_KINDS or target == null:
@@ -184,12 +147,10 @@ func host_handles(kind: String) -> bool:
 	return kind in _host_kinds
 
 
-# The player whose panel runs on this client (-1: none).
 func own_player() -> int:
 	return _own.player_index if _local_active and is_instance_valid(_own) else -1
 
 
-# False: not sent (not this client's own panel, or the host does not know the kind).
 func send_intent(ui: Node, player: int, kind: String, id: String, arg: int) -> bool:
 	if ui != _guarded_ui or player != own_player() or not host_handles(kind):
 		return false
@@ -203,11 +164,8 @@ func _kinds() -> Array:
 	return kinds
 
 
-# --- host ---
-
-
 # The host's UpgradesUI while its battle shows the panels, else null. No host check: the stream
-# only asks its provider while host, and the tests ask it on a battle without a session.
+# only asks its provider while host.
 func _showing_ui():
 	if not battle_host.is_in_battle():
 		return null
@@ -215,10 +173,8 @@ func _showing_ui():
 	return ui if ui != null and ui.visible else null
 
 
-# StateStream provider: "" (inactive: the clients get null once) unless the panels show. Called
-# every CHECK_INTERVAL and on peer_ready, so it is the text of the panels and the run state's
-# revision (run_cache: serialized only when it can have changed), never the run. Also where the
-# revisions follow the panels between intents (_update_seqs, as the old poll did).
+# "" unless the panels show. Also where the revisions follow the panels between intents
+# (_update_seqs).
 func state_key(_section: int) -> String:
 	var ui = _showing_ui()
 	if ui == null:
@@ -236,7 +192,6 @@ func state_key(_section: int) -> String:
 	return str(run_cache.rev) + var2str(rest)
 
 
-# Built only when the stream sends.
 func state_body(_section: int):
 	var ui = _showing_ui()
 	return body(capture(ui)) if ui != null else null
@@ -248,12 +203,10 @@ func state_body(_section: int):
 #     | ["item", json, id]
 #   seqs: the panel revision (bumped when it shows something new; an intent names it)
 #   pages: the carousel page
-#   mecas: the meca upgrade rolls its crate weapon popup remembers ([[weapon slot, weapon my_id,
-#     stat key hash, value, stat key hash, value]], MecaChoice.entries, as in the shop state)
+#   mecas: the meca upgrade rolls its crate weapon popup remembers (MecaChoice.entries)
 # and kinds: other mods' intent kinds the host handles (register_intent).
-# The run is run_cache's, compressed once per change. Its refresh here is free right after
-# state_key (same check: nothing new); called alone (tests, StateStream.message_for) it still
-# sees a change of the fingerprint, so no body carries a run older than its own check.
+# The refresh is free right after state_key in the same check; called alone it still sees a
+# change of the fingerprint, so no body carries a run older than its own check.
 func body(players: Array) -> Dictionary:
 	var ui = battle_host._main.get("_coop_upgrades_ui")
 	_update_seqs(ui, players)
@@ -272,7 +225,6 @@ func body(players: Array) -> Dictionary:
 	return body
 
 
-# The run parts the peer lacks (state_sent records them as sent).
 func state_patch(_section: int, steam_id: int) -> Dictionary:
 	return {"run": run_sender.run_for(steam_id)}
 
@@ -288,7 +240,6 @@ static func _pages(ui: Node, count: int) -> Array:
 	return pages
 
 
-# Per player, the meca upgrade rolls its crate weapon popup remembers ([] without that popup).
 static func _mecas(ui: Node) -> Array:
 	var mecas := []
 	for p in RunData.get_player_count():
@@ -316,21 +267,9 @@ static func capture(ui: Node) -> Array:
 	return players
 
 
-# The panels' part of run_cache's fingerprint (the shared part, RunData and every player, is
-# RunCache.fingerprint's), per player: the option its panel processes, the crate item it shows,
-# its rerolls and whether it is done. Every decision moves it (an absent player's and the host's
-# own presses too, which no intent forces), also one whose effect on the run the shared part
-# might not see (a crate item recycled for 0 gold). What the decisions write to the run:
-# - choose (main.on_upgrade_selected -> RunData.add_upgrade): upgrades_taken, stats
-# - reroll (UpgradesUIPlayerContainer._on_RerollButton_pressed): gold, spyglass tracking
-# - take (main.on_item_box_take_button_pressed): items (try_mutate_item_on_equip), or weapons
-#   (_take_item_box_weapon: add_weapon, combine_weapon without a free slot)
-# - discard (on_item_box_discard_button_pressed): gold, recycling tracking, meca parts refund
-# - ban (on_item_box_ban_button_pressed): banned_items, remaining_ban_token, gold
-# - extra crate items (UpgradesUI._get_extra_crate_item): treasure map tracking, with the above
-# - crate weapon popup (UpgradesUI._on_weapon_combine / discard / meca_upgrade): weapons, gold,
-#   meca parts, all in the shared part
-# Pages, cursors, meca rolls and panel revisions are not run state: the key has them.
+# The panels' part of run_cache's fingerprint, per player: the option its panel processes, the
+# crate item it shows, its rerolls and whether it is done. Every decision moves it, also one
+# whose effect on the run the shared part might not see (a crate item recycled for 0 gold).
 static func _options(ui: Node) -> Array:
 	var values := []
 	for p in RunData.get_player_count():
@@ -344,13 +283,8 @@ static func _options(ui: Node) -> Array:
 	return values
 
 
-# A player's decision, sent from its own panel. Only applied to what that panel shows right
-# now: the revision catches a press that was made on options the host has since replaced, the
-# id a mismatch in content. Returns whether a handler ran.
-# While the host is paused nothing runs: the intent is held and applied once it resumes. The
-# panels run on in a pause (pause_mode process), so the last decision would end them there and
-# main.gd would load the shop with the tree still paused: a shop nobody can use, whose pause
-# state turned every client's own panel off until the host paused and resumed again.
+# Applied only to what the panel shows now (revision + id). Held while the host is paused: the
+# panels run on in a pause, so the last decision would make main.gd load the shop paused.
 func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 	if p < 0 or p >= RunData.get_player_count() or p >= _seqs.size():
 		return false
@@ -409,10 +343,8 @@ func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 		return true  # the panel shows nothing new; the roll goes out with the next state
 	# The handlers show the next options right away: a second press on the old ones is stale.
 	_update_seqs(ui, capture(ui))
-	# The next check (the flush) serializes the run whatever the fingerprint says. The game's
-	# handlers here change the run before they return; only a held ban
-	# (_on_BanButton_pressed with ProgressData.settings.holding_button) ends later, in its own
-	# coroutine, and is found by the fingerprint (banned items, ban tokens, gold).
+	# The next check serializes the run whatever the fingerprint says. Only a held ban ends later,
+	# in its own coroutine (_on_BanButton_pressed), and is found by the fingerprint.
 	run_cache.force()
 	return true
 
@@ -435,10 +367,9 @@ func _host_apply_mod(ui: Node, container: Node, p: int, kind: String, msg: Dicti
 	return typeof(changed) == TYPE_BOOL and changed
 
 
-# The crate weapon popup of a player whose crates give weapons: combine, recycle or meca
-# upgrade one of its weapons, named by its slot in the player's weapons and its id. The game's
-# handlers decide (locked weapons, no partner, too few meca parts). Returns whether the
-# weapons changed (a meca roll: whether the player's popup now remembers one for the weapon).
+# The crate weapon popup: combine, recycle or meca upgrade a weapon named by its slot and id;
+# the game's handlers decide. Returns whether the weapons changed (a meca roll: whether the
+# popup now remembers one for the weapon).
 func _host_apply_weapon(ui: Node, p: int, kind: String, msg: Dictionary) -> bool:
 	if not ui._weapons_inventory_enabled[p]:
 		return false
@@ -475,8 +406,6 @@ static func _weapons_key(p: int) -> Array:
 	return key
 
 
-# A remote player's own cursor and page, for the host's screen and (through FocusSync and the
-# state) the other clients'. Cosmetic: decisions never depend on it.
 # target: a ui/focus_targets.gd target naming one of p's own panel parts.
 func host_apply_focus(ui: Node, p: int, page, target) -> void:
 	if p < 0 or p >= RunData.get_player_count():
@@ -501,9 +430,8 @@ func _host_ui(msg):
 	return _showing_ui()
 
 
-# A peer that (re)joins must get the true run state, every part of it: the stream's resync for
-# it (its next step, after every peer_ready handler) is a check that serializes it; a
-# difference found goes to everyone. (Harmless on a client: only the host's state_key refreshes.)
+# A peer that (re)joins must get every part of the true run state: the stream's resync for it
+# (its next step) is a check that serializes it; a difference found goes to everyone.
 func _on_peer_ready(steam_id: int) -> void:
 	run_cache.force()
 	run_sender.forget(steam_id)
@@ -514,9 +442,8 @@ func _on_lobby_left() -> void:
 	_held = []
 
 
-# The revision changes with what the panel shows, even when two options in a row look the same
-# (the same crate item twice): the option being processed and the reroll count are part of it.
-# So are the player's weapons: the crate weapon popup changes them under the same crate item.
+# The revision changes with what the panel shows, even when two options in a row look the same:
+# the option being processed, the reroll count and the player's weapons are part of it.
 func _update_seqs(ui: Node, players: Array) -> void:
 	if ui.get_instance_id() != _seq_ui_id:
 		_seq_ui_id = ui.get_instance_id()
@@ -543,8 +470,8 @@ func _update_seqs(ui: Node, players: Array) -> void:
 			_seqs[p] += 1
 
 
-# Every frame: the intents held during a pause, once the host resumed, in the order they came,
-# on the panels they were sent for (gone panels drop them). The revision check still applies.
+# The intents held during a pause, in the order they came, on the panels they were sent for
+# (gone panels drop them). The revision check still applies.
 func _apply_held(ui) -> void:
 	if _held.empty() or get_tree().paused:
 		return
@@ -569,23 +496,17 @@ func _block_remote_buttons(block: bool) -> void:
 	input_sync.blocked_buttons = all & ~(1 << VirtualDevices.PAUSE_INDEX) if block else 0
 
 
-# --- client ---
-
-
 # A state that came before the puppet scene was ready is applied now, not a frame later.
 func _on_battle_entered() -> void:
 	state_stream.retry()
 
 
-# StateStream: every body as it arrives, also one a newer body replaces before it is applied:
-# its run parts are stored now (a missing one asks the host for a full resync).
 func accept_state(_section: int, state, _revision: int) -> void:
 	if typeof(state) == TYPE_DICTIONARY:
 		run_store.take(state.get("run"), "level-up")
 
 
-# StateStream handler. false keeps the state pending in the stream: its battle has not started
-# here yet (not expected: a rejoin's resync follows its BATTLE_START) or its puppet scene is
+# false keeps the state pending: its battle has not started here yet or its puppet scene is
 # still loading. Applied again on a resync: apply() only rebuilds what changed.
 func apply_state(_section: int, state, _revision: int) -> bool:
 	if typeof(state) != TYPE_DICTIONARY or typeof(state.get("battle_id")) != TYPE_INT:
@@ -599,10 +520,8 @@ func apply_state(_section: int, state, _revision: int) -> bool:
 	return true
 
 
-# The host's panels are gone (everyone done, or its battle is over). The puppet's panels stay
-# as they are until its scene goes (_on_battle_left), as before; the own panel stops taking
-# input (its intents would name a revision the host no longer has), and a later state
-# rebuilds every panel.
+# The host's panels are gone. The puppet's panels stay as they are until its scene goes; the own
+# panel stops taking input (its intents would name a revision the host no longer has).
 func clear_state(_section: int) -> void:
 	stop_local("host's panels closed")
 	_applied = {}
@@ -694,8 +613,7 @@ func _on_battle_left() -> void:
 	_host_kinds = []
 
 
-# The own panel stops taking local input. Gives up only this screen's device and cursor: a stop
-# that comes late (the shop already took over) leaves the shop's alone.
+# Gives up only this screen's device and cursor: a late stop leaves the shop's alone.
 func stop_local(reason := "stopped") -> void:
 	if not _local_active:
 		return
@@ -722,10 +640,9 @@ func _show_entry(container, p: int, entry: Array) -> void:
 				_show_item(container, entry[1], entry[2])
 
 
-# The run state is only re-applied when its part ids changed. Returns player -> whether its
-# gear changed, for each player the change touched ({} when the ids did not change; every
-# player, gear too, on the first state of these panels: UpgradesGear.changed_players), null when
-# a part is missing (or the run malformed).
+# The run state is only re-applied when its part ids changed. Returns player -> whether its gear
+# changed for each player the change touched (UpgradesGear.changed_players), {} when the ids did
+# not change, null when a part is missing or the run malformed.
 func _apply_run(run):
 	var ids = run_store.ids_for(run)
 	if RunParts.same_ids(ids, _run_key):
@@ -739,10 +656,8 @@ func _apply_run(run):
 	return changed
 
 
-# Once per puppet scene. On a client no panel may decide anything: the containers' decision
-# signals lose the game's handlers (which change RunData and roll options), and this client's
-# own container gets ours instead. A new button the game adds stays unconnected here, so it
-# does nothing rather than change the local copy of the run.
+# Once per puppet scene: the containers' decision signals lose the game's handlers (which change
+# RunData and roll options), and this client's own container gets ours instead.
 func _guard(ui: Node, you: int) -> void:
 	if ui == _guarded_ui:
 		return
@@ -791,8 +706,7 @@ static func _disconnect(source: Object, signal_name: String, target: Object, met
 		source.disconnect(signal_name, target, method)
 
 
-# This client's panel shows new options: it takes local control (or gives it up when done).
-# on_weapon: the cursor kept its place in the crate weapons list (see UpgradesGear.refresh_weapons).
+# on_weapon: the cursor kept its place in the crate weapons list.
 func _on_own_panel_changed(ui: Node, container: Node, kind: String, on_weapon := false) -> void:
 	if kind != "upgrades" and kind != "item":
 		stop_local("own panel shows %s" % kind)
@@ -859,8 +773,7 @@ func _on_own_reroll() -> void:
 	_send_intent("reroll", "")
 
 
-# The crate weapon popup's combine / recycle / meca pick. The weapon goes out as its slot in
-# the own weapons plus its id, never as an object.
+# The weapon goes out as its slot in the own weapons plus its id, never as an object.
 func _on_own_weapon(weapon, kind: String, meca := -1) -> void:
 	var slot: int = RunData.get_player_weapons(_own.player_index).find(weapon)
 	if slot >= 0:
@@ -870,15 +783,12 @@ func _on_own_weapon(weapon, kind: String, meca := -1) -> void:
 	_guarded_ui._on_weapon_cancel_button_pressed(weapon, _own.player_index)
 
 
-# The popup's upgrade button: the host rolls the two options (the popup stays as it is, so
-# Cancel still closes it); they arrive with the next state (MecaChoice.set_rolls).
 func _on_own_meca_roll(weapon) -> void:
 	var slot: int = RunData.get_player_weapons(_own.player_index).find(weapon)
 	if slot >= 0:
 		_send_intent("weapon_meca_roll", weapon.my_id, -1, {"weapon": slot})
 
 
-# One of the host's two options, by index.
 func _on_own_meca_picked(weapon, index: int) -> void:
 	_on_own_weapon(weapon, "weapon_meca", index)
 
@@ -948,14 +858,12 @@ static func _find(elements: Array, my_id: String):
 	return null
 
 
-# values[index] when it is a list, else [] (network data: mecas may be missing).
 static func _list_at(values, index: int) -> Array:
 	if typeof(values) != TYPE_ARRAY or index < 0 or index >= values.size():
 		return []
 	return values[index] if typeof(values[index]) == TYPE_ARRAY else []
 
 
-# values[index] when it is an int, else -1 (network data: seqs / pages may be missing).
 static func _int_at(values, index: int) -> int:
 	if typeof(values) != TYPE_ARRAY or index >= values.size():
 		return -1

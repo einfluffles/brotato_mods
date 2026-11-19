@@ -1,19 +1,7 @@
 extends Node
-# Client: sample local input every physics frame and send it to the host (unreliable and
-# state-based, so a lost packet only delays; button presses also travel as counters, see
-# press_counter.gd). Host: apply each peer's input to that peer's virtual device
-# (remote_buttons.gd: edges, pause, menu echo).
-#
-# Movement is the one part a client predicts (battle_client.gd _own_target: the host's position
-# plus one physics step per input newer than the snapshot's INPUT_ACK). So the host moves a remote
-# player by exactly one input per physics tick, and the ack names the newest input whose tick has
-# run. Packets don't arrive one per tick (jitter bunches them, or a tick gets none), so the host
-# queues them (see _tick_movement). Aim and buttons are not predicted and stay newest-wins, applied
-# on arrival: no added delay, and the press counters already cover lost or bunched presses.
-# Each INPUT also carries the moves of the REDUNDANCY inputs before it, so a lost packet (or a
-# burst of up to REDUNDANCY) still gets its step, and a late one is in the queue before its
-# successor. After a gap the host catches up on what piled up instead of dropping it (see
-# _tick_movement), so the steps the client predicted meanwhile are taken.
+# Client: sample local input every physics frame and send it to the host. Host: apply it to
+# the peer's virtual device, movement as exactly one input per physics tick (the client predicts
+# it) with an ack of the newest one whose tick has run; aim and buttons are newest-wins.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const VirtualDevices := preload(
@@ -29,28 +17,20 @@ const LocalAim := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/
 const SharedScroll := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/shared_scroll.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:InputSync"
-# host: without INPUT for this long a remote player lets go of its buttons, aim and stick. The
-# client's prediction limit (Protocol.STALL_LIMIT_MSEC): at 300 ms every input gap of 300 to 600 ms
-# released a player the client still showed running. Movement doesn't need the timeout to stop:
-# with nothing queued the player stands (_tick_movement), so it never runs on into a wall when the
-# packets stop. Longer than a full backlog takes to drain (about 20 ticks with nothing arriving),
-# so the release never cuts a catch-up short.
+# host: without INPUT for this long a remote player lets go of its buttons, aim and stick. Equal
+# to the client's prediction limit and longer than a full backlog takes to drain.
 const INPUT_TIMEOUT_MSEC := Protocol.STALL_LIMIT_MSEC
-# host: queued inputs beyond the one the next tick takes. Each one delays this player on the host
-# by a tick; jitter rarely leaves more than one, more only piles up after a stall (see
-# CATCH_UP_PER_TICK).
+# host: queued inputs beyond the one the next tick takes. Each one delays this player on the
+# host by a tick.
 const MAX_WAITING := 2
-# Moves of the inputs right before the current one that ride along in each INPUT (8 bytes each).
+# Moves of the inputs right before the current one that ride along in each INPUT (8 bytes each),
+# so a lost packet still gets its step.
 const REDUNDANCY := 4
-# host: queued inputs kept after a gap: STALL_LIMIT_MSEC at 60 Hz, below the client's replay
-# (BattleClient.MAX_REPLAY_INPUTS), so a gap the client predicts through is caught up in full. The
-# oldest beyond it are dropped: the client predicted steps the host never takes and its own player
-# blends back by that much (BattleClient._predict_own).
+# host: queued inputs kept after a gap: STALL_LIMIT_MSEC at 60 Hz, below
+# BattleClient.MAX_REPLAY_INPUTS, so a gap the client predicts through is caught up in full.
 const MAX_BACKLOG := 36
-# host: extra inputs taken per tick while more than MAX_WAITING wait, each moved as a physics step
-# of its own (_extra_step), so the ack stays one step per input. 1: the player runs at most twice
-# its speed for at most MAX_BACKLOG ticks, back to where the client already showed it, instead of
-# lagging that far behind on the host for good (or jumping there at once, past enemies).
+# host: extra inputs taken per tick while more than MAX_WAITING wait, each as a physics step of
+# its own. 1: at most double speed while catching up, instead of lagging or jumping ahead.
 const CATCH_UP_PER_TICK := 1
 const RECOVERY_LOG_INTERVAL_MSEC := StreamGaps.LOG_INTERVAL_MSEC
 const HISTORY_SIZE := 180  # 3 s at 60 Hz
@@ -67,21 +47,19 @@ var devices := {}
 var history := []
 # client: the lobby popup is open and owns the keyboard/pad; the host gets neutral input
 var local_input_blocked := false
-# host: BUTTON_ACTIONS bits not delivered to remote players' virtual devices. Set while a
-# screen runs on the clients themselves and sends its decisions as messages (level-up panels,
-# sync/upgrades_sync.gd): a remote accept must not also press the host's copy of the panel.
+# host: BUTTON_ACTIONS bits not delivered to remote players' virtual devices while a screen runs
+# on the clients themselves: a remote accept must not also press the host's copy of the panel.
 var blocked_buttons := 0
 # host: more masks of that kind, one per screen (key: its name), so that two screens never
-# overwrite each other's block (the shop, sync/shop_sync.gd). OR-ed with blocked_buttons.
+# overwrite each other's block. OR-ed with blocked_buttons.
 var blocked_by := {}
 # client: owner ("battle", "shop") -> true while the host's game is paused there
 var host_paused := {}
 # client: what last switched the local buttons ("owner: reason"), for the logs
 var last_local_change := ""
-# host: the last line about filled-in, caught-up or dropped inputs (tests)
+# host: the last line about filled-in, caught-up or dropped inputs
 var last_recovery_line := ""
 
-# client
 var _seq := 0
 var _presses = PressCounter.new()
 # client: this player's own slot device while a screen runs locally (see set_local_device)
@@ -146,16 +124,9 @@ func _input(event: InputEvent) -> void:
 		(_menu_presses if _menu_buttons != null else _presses).on_event(event)
 
 
-# --- client ---
-
-
-# A screen that runs on this client itself (its own cursor, pages, popups): the local buttons
-# also drive this player's slot device here, exactly as the host applies a remote player's
-# (RemoteButtons: counted edges, menu echo). Pause always goes to the host.
-# owner names the screen ("shop", "upgrades"). Each one claims the device for itself, and -1
-# gives up only its own claim: one screen never switches off another screen's input (the level-up
-# panels' late stop used to turn off the shop's). The newest claim drives; claiming again, also
-# with the same device, makes it the newest. reason goes to the log.
+# A screen that runs on this client itself: the local buttons also drive this player's slot
+# device, as the host applies a remote player's. Each owner ("shop", "upgrades") has its own
+# claim, so a late stop of one screen never turns off another's. The newest claim drives.
 func set_local_device(owner: String, device: int, reason := "") -> void:
 	var index := _claim_index(owner)
 	var old: int = _local_claims[index][1] if index >= 0 else -1
@@ -169,12 +140,10 @@ func set_local_device(owner: String, device: int, reason := "") -> void:
 	_apply_local_claims("%s: %s" % [owner, reason])
 
 
-# The device the local buttons drive now (-1: none).
 func local_device() -> int:
 	return _local_buttons.device if _local_buttons != null else -1
 
 
-# The screen whose claim drives the local device ("" for none).
 func local_device_owner() -> String:
 	return _local_claims[-1][0] if not _local_claims.empty() else ""
 
@@ -186,7 +155,6 @@ func _claim_index(owner: String) -> int:
 	return -1
 
 
-# The local buttons follow the newest claim (also when something else had cleared them).
 func _apply_local_claims(why: String) -> void:
 	var device: int = _local_claims[-1][1] if not _local_claims.empty() else -1
 	if local_device() == device:
@@ -204,7 +172,7 @@ func _apply_local_claims(why: String) -> void:
 
 
 # This client's own Esc menu is open (sync/pause_control.gd): the local buttons drive its slot
-# device and nothing else; the host sees a player who lets go of everything. -1 turns it off.
+# device and nothing else; the host sees a player who lets go of everything.
 func set_local_menu(device: int) -> void:
 	if menu_device() == device:
 		return
@@ -224,7 +192,6 @@ func menu_device() -> int:
 	return _menu_buttons.device if _menu_buttons != null else -1
 
 
-# The host's battle or shop is paused (BattleClient, ShopLocal): buttons are dropped here.
 func set_host_paused(owner: String, paused: bool) -> void:
 	if paused == host_paused.has(owner):
 		return
@@ -250,7 +217,6 @@ func _send_local_input() -> void:
 	session.send_unreliable(host_id, Protocol.Msg.INPUT, sample_local())
 
 
-# One INPUT body from what the local player holds now; also feeds the screens that run here.
 func sample_local() -> Array:
 	_seq += 1
 	var buttons := 0
@@ -293,7 +259,6 @@ static func redundant_moves(inputs: Array, seq: int) -> PoolVector2Array:
 	return PoolVector2Array(moves)
 
 
-# The slot device the local right stick drives (-1: none); the one driven before lets go.
 func _drive_stick_of(device: int) -> void:
 	if device != _stick_device and _stick_device >= 0:
 		for pair in [["rjoy_left", "rjoy_right"], ["rjoy_up", "rjoy_down"]]:
@@ -307,9 +272,8 @@ func _drive_stick_of(device: int) -> void:
 		_drive_local_stick(device)
 
 
-# The copy of a host's selection screen (sync/menu_puppet.gd) decides nothing, but each player's
-# panel scrolls its description with that player's right stick (CharacterPanelUI._process,
-# ItemDescription._process): this player's slot device there, -1 while no copy shows.
+# Each player's panel on a copy of the host's selection screen scrolls its description with that
+# player's right stick (CharacterPanelUI._process, ItemDescription._process).
 func _menu_copy_device() -> int:
 	if menu_puppet == null or menu_puppet.current() == null:
 		return -1
@@ -317,9 +281,7 @@ func _menu_copy_device() -> int:
 
 
 # A screen running here scrolls item descriptions, item lists and the stats sheet with its slot
-# device's right stick (Utils.get_player_rjoy_vector), which only the host's copy got before (as
-# the INPUT's aim): give the local slot device this player's right stick too. The same for this
-# player's panel on a copy of the host's selection screens (nothing else there reads the stick).
+# device's right stick (Utils.get_player_rjoy_vector).
 func _drive_local_stick(device: int) -> void:
 	var stick := Vector2.ZERO
 	if not local_input_blocked:
@@ -365,9 +327,6 @@ static func local_buttons() -> int:
 	return buttons
 
 
-# --- host ---
-
-
 func blocked_mask() -> int:
 	var mask := blocked_buttons
 	for screen in blocked_by:
@@ -375,15 +334,12 @@ func blocked_mask() -> int:
 	return mask
 
 
-# INPUT_ACK: the newest input whose physics tick has run, so the player's position holds one step
-# for each input up to it and none for later ones. Valid from this tick's _tick_movement up to
-# the player's own _physics_process: battle_host.gd builds snapshots in that window (its node sits
-# under the ModLoader autoload, before the battle scene in the physics order).
+# INPUT_ACK: the newest input whose physics tick has run. Valid from this tick's _tick_movement
+# up to the player's own _physics_process, the window in which battle_host.gd builds snapshots.
 func last_applied_seq(steam_id: int) -> int:
 	return _remote[steam_id].ack if _remote.has(steam_id) else 0
 
 
-# msec timestamp of the last pause press delivered for this device (-1: none).
 func last_pause_msec(device: int) -> int:
 	for steam_id in _remote:
 		if _remote[steam_id].buttons.device == device:
@@ -416,10 +372,8 @@ func _on_peer_removed(steam_id: int) -> void:
 		CoopService._remove_player(device)
 
 
-# Host leaving mid-run keeps the run: remote players' slots stay (idle, like a local pad
-# unplugged mid-run in the base game) and so does their steam id -> device mapping, so the same
-# friends get their own characters back if the host opens a new lobby. Before the run starts
-# (players can still join) their slots go away.
+# A host leaving mid-run keeps the run: remote players' slots and their steam id -> device
+# mapping stay, so the same friends get their characters back in a new lobby.
 func _on_lobby_left() -> void:
 	history.clear()
 	_remote.clear()
@@ -449,8 +403,7 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 		_apply_input(steam_id, body)
 
 
-# Protocol 22 bodies only (8 fields): compat.gd already turns away other protocols at HELLO, and a
-# body of another shape is dropped whole, like any malformed one.
+# 8 fields; a body of another shape is dropped whole.
 func _apply_input(steam_id: int, body) -> void:
 	if (
 		typeof(body) != TYPE_ARRAY
@@ -518,10 +471,8 @@ static func _finite(v: Vector2) -> bool:
 	return not (is_nan(v.x) or is_nan(v.y) or is_inf(v.x) or is_inf(v.y))
 
 
-# In seq order, so a reordered packet still gets its tick if the next one hasn't taken it yet; a
-# duplicate or an input whose turn went by (taken, or dropped) is ignored. Beyond MAX_BACKLOG the
-# oldest goes: the client predicted a step the host then never takes (a one-off correction).
-# True when the input is new in the queue.
+# In seq order, so a reordered packet still gets its tick if the next one hasn't taken it yet.
+# Beyond MAX_BACKLOG the oldest goes. True when the input is new in the queue.
 static func _queue_movement(state: Dictionary, seq: int, move: Vector2) -> bool:
 	if seq <= state.applied or seq <= state.dropped_to:
 		return false
@@ -546,18 +497,9 @@ func _on_physics_frame() -> void:
 			_log_recovery(steam_id, _remote[steam_id])
 
 
-# One remote player's movement for the physics tick that starts now. The input put on the device
-# in the previous tick has been moved with (or the world was paused, then neither side moved for
-# it): it becomes the ack. Then this tick takes the oldest queued input.
-# With none queued, the player stands still for this tick and the ack waits. Repeating the last
-# input instead would look smoother on the host, but the client counts no step for it: when the
-# late input then differs (above all a stop), its own player gets pulled. Standing still keeps
-# the client's replay exact; the late input gets the next tick, and the queue it leaves behind
-# absorbs the next bit of jitter (it drains while the player stands, see below).
-# More than MAX_WAITING waiting only happens after a gap (the packets held up on the way arrive
-# together; redundancy brings the moves of lost ones): the client predicted all of them, so the
-# host takes CATCH_UP_PER_TICK of them as extra steps before the snapshot of this tick, which
-# then acks them too (one step per acked input still holds, the ack just moves faster).
+# The input put on the device in the previous tick has been moved with: it becomes the ack.
+# With nothing queued the player stands and the ack waits: repeating the last input would add a
+# step the client never predicted. A backlog is caught up as extra steps, acked at once.
 func _tick_movement(state: Dictionary, device: int) -> void:
 	state.ack = state.applied
 	var queue: Array = state.queue
@@ -585,11 +527,8 @@ static func _skip_standing(queue: Array) -> void:
 		queue.pop_front()
 
 
-# One physics step of a remote player with move, outside its own _physics_process: the way
-# Unit._physics_process moves a kinematic body (test_motion, then a slide along what it hit), at
-# the speed the client predicts with (BattleClient._own_target; knockback is not predicted either).
-# Where that player's own tick wouldn't move it (paused, dead, no battle) it doesn't move here
-# either, and the client predicts no step there.
+# One physics step outside the player's own _physics_process, the way Unit._physics_process
+# moves a kinematic body (test_motion, then a slide), at the speed the client predicts with.
 func _extra_step(device: int, move: Vector2) -> void:
 	var player = _player_of(device)
 	if player == null or move == Vector2.ZERO or get_tree().paused:
@@ -609,7 +548,6 @@ func _extra_step(device: int, move: Vector2) -> void:
 	player._on_moved(moved)
 
 
-# The battle's player driven by device, else null.
 func _player_of(device: int) -> Node:
 	var scene: Node = get_tree().current_scene
 	var players = scene.get("_players") if scene != null else null
@@ -637,7 +575,6 @@ static func _set_move(state: Dictionary, device: int, move: Vector2) -> void:
 	)
 
 
-# Never leave a remote player running into a wall because their packets stopped.
 func _release_timed_out() -> void:
 	var now := OS.get_ticks_msec()
 	for steam_id in _remote:
@@ -662,11 +599,8 @@ static func _count_dropped(state: Dictionary, inputs: Array) -> void:
 			state.dropped_moving += 1
 
 
-# host: one line when redundancy filled in missing inputs, a backlog was caught up, or moving
-# inputs were dropped (the client's own player then blends back by that many steps): once the queue
-# is back to normal, at most one per RECOVERY_LOG_INTERVAL_MSEC (the counts add up meanwhile).
-# Dropped standing inputs alone (the timeout clearing a queue of them) cost nothing: no line. With
-# the input gap line (note_input_gap) it shows what a stall cost.
+# host: one line when missing inputs were filled in, a backlog was caught up or moving inputs
+# were dropped, once the queue is back to normal. Dropped standing inputs alone cost nothing.
 func _log_recovery(steam_id: int, state: Dictionary) -> void:
 	if state.filled + state.caught_up + state.dropped_moving == 0:
 		state.dropped = 0
@@ -690,10 +624,8 @@ func _log_recovery(steam_id: int, state: Dictionary) -> void:
 	state.dropped_moving = 0
 
 
-# Host: a stall in a client's INPUT stream is logged (sync/stream_gaps.gd), with the client's clock
-# at sending (field 7) and the seq (one per physics step of the client), which tell its own stalls
-# from inputs held up or lost on the way. Called before _apply_input: when the timeout released
-# the player during the gap, the line says so.
+# The client's clock at sending (field 7) and the seq tell its own stalls from inputs held up or
+# lost on the way. Called before _apply_input, so the line can say the timeout released the player.
 func note_input_gap(steam_id: int, body) -> void:
 	if (
 		typeof(body) != TYPE_ARRAY

@@ -1,30 +1,7 @@
 extends Node
-# Where the damage meter (sync/damage_meter.gd) shows, on every machine, in the game's own
-# screens:
-# - In a wave: a block under each player's life bar (above it for the two lower players, in
-#   reverse, so the total stays next to the bar). Main: the wave's total, in co-op the player's
-#   share of the team's, and the damage per second. Below, one line per source (4, with 3 or 4
-#   players 3: DamageMeter.live_sources), icon with the count in its corner, number; the
-#   strongest first, the last line goes to the strongest of the other kind (weapon or not) when
-#   it dealt 5% (DamageMeter.strongest). Last the biggest single hit, what dealt it tilted over
-#   the crit icon. All icons in one 32 px column, so the numbers line up; on a dark rounded
-#   backing as wide as the lines, against the battle's scenery; numbers short from 1,000
-#   (7.01K). The right-hand players' lines are mirrored: the icons stay at the screen's edge.
-# - In the co-op shop and the co-op end of run: a fourth page "Damage" in each player's carousel
-#   (after Shop / Items and the two Stats pages), reached like the others with LB / RB or the
-#   arrows. The panels build it in their own _ready (extensions/ui/coop_*_player_container.gd
-#   call add_page), before any page from the network is applied. Online the page index travels
-#   like the game's own pages (shop_sync, shop_intents, menu_sync).
-# - In the solo shop and the solo end of run: a third tab "Damage" (an icon) in the stats panel
-#   next to Primary / Secondary; LB / RB cycle through the three (extensions/ui/stats_container.gd).
-# The board on a page or tab is the wave before: "Wave N" over one line as the wave's HUD (the
-# total with, in co-op, the share of the team's; damage per second; biggest hit), and a row per
-# source: a bar in its tier colour against the strongest as the row's background, icon, name,
-# number and share (56.83%, <0.01%) on it.
-# Numbers from 10,000 on are short (12.3K, 4.56M, 7.89B): late runs deal billions.
-# All of it is gone while the meter is switched off on this machine (DamageMeter.shown): the
-# page can no longer be reached (carousel.max_index) and a player on it goes back one page; the
-# solo tab is hidden and an open one falls back to Primary.
+# Where the damage meter shows: a block at each player's life bar in a wave, a carousel page in
+# the co-op shop / end of run, a third stats tab in the solo ones. All of it is gone while the
+# meter is switched off on this machine (DamageMeter.shown).
 
 const BATTLE_SCENE := "res://main.tscn"
 const SOLO_END_RUN := "res://ui/menus/run/end_run.tscn"
@@ -38,10 +15,6 @@ const TOTAL_ICON := "res://items/stats/percent_damage.png"
 const DPS_ICON := "res://items/stats/attack_speed.png"
 const HIT_ICON := "res://items/stats/crit_chance.png"
 const HUD_FONT := "res://resources/fonts/actual/base/font_26_outline.tres"
-# The HUD: one column of 32 px icons, so every number starts at the same x; the first line all
-# at 22 (one baseline), amounts and the hit 20, 10 px between icon and number. A count sits in
-# the icon's lower right corner, as in the game's inventory ("x3"); the biggest hit's source
-# lies tilted over the crit icon.
 const HUD_ICON := Vector2(32, 32)
 const HUD_HIT_SOURCE := Vector2(26, 26)
 const HUD_HIT_SOURCE_ANGLE := -20.0
@@ -58,14 +31,10 @@ const HUD_AMOUNT_COLOR := Color(0.88, 0.88, 0.88)
 const HUD_BACK := Color(0, 0, 0, 0.45)
 const HUD_BACK_RADIUS := 6
 const HUD_BACK_MARGIN := Vector2(8, 4)
-# The board's head: "Wave N" over one line as the wave's HUD, all at HUD_MAIN_SIZE; icons a
-# little smaller than the HUD's, so the line fits a four-player panel.
 const STAT_ICON := Vector2(28, 28)
 const STAT_HIT_SOURCE := Vector2(22, 22)
 const STAT_GAP := 12  # between total, damage per second and hit, past the line's 6
 const BOARD_ICON := Vector2(32, 32)
-# The board's source rows: the bar is the row (dark rounded track, filled in the tier colour as
-# far as the source reaches against the strongest), icon, name, number and share in white on it.
 const ROW_HEIGHT := 40
 const ROW_RADIUS := 6
 const ROW_BORDER := 2
@@ -87,7 +56,7 @@ const HIT_COLOR := Color(1.0, 0.8, 0.35)
 const LINE_COLOR := Color(1, 1, 1, 0.12)
 const PAGE_META := "brotato_together_damage_page"  # on a container: the page's carousel index
 
-var meter: Node = null  # sync/damage_meter.gd (set by mod_main.gd)
+var meter: Node = null
 
 var _scene_id := 0
 var _rows := []  # per player: the HUD row, or null
@@ -115,15 +84,13 @@ func _process(_delta: float) -> void:
 		add_tab(scene.get_node_or_null("%StatsContainer"))
 
 
-# Told by what it can do: naming the shop's classes here would load base_shop.gd while the mods
-# load, which breaks the game's shop scripts.
+# Told by what it can do: naming the shop's classes here would load them at mod init.
 static func _is_solo_shop(scene: Node) -> bool:
 	var shop: bool = scene.has_method("_get_reroll_button")
 	return shop and not scene.has_method("_get_coop_player_container")
 
 
-# A source's share of the player's total on the board, to two places: 56.83%, 0.04%; "<0.01%"
-# for what dealt something but rounds to nothing (a few dozen next to millions).
+# To two places; "<0.01%" for what dealt something but rounds to nothing.
 static func percent(part: int, whole: int) -> String:
 	if part <= 0 or whole <= 0:
 		return "0.00%"
@@ -152,12 +119,8 @@ static func short(number: int, from := SHORT_FROM) -> String:
 	return text + UNITS[unit]
 
 
-# Damage per second over the wave's time, -1 before the wave has run a second.
 static func per_second(total: int, time: float) -> int:
 	return int(round(total / time)) if time >= 1.0 else -1
-
-
-# --- HUD ---
 
 
 func _build_rows(main: Node) -> void:
@@ -211,8 +174,7 @@ func _build_rows(main: Node) -> void:
 	_fill()
 
 
-# A HUD line of these parts, mirrored for a right-hand player: the first part (the icon) at the
-# screen's edge.
+# Mirrored for a right-hand player: the first part (the icon) stays at the screen's edge.
 static func _hud_line(line_name: String, right: bool, parts: Array) -> Node:
 	var align := BoxContainer.ALIGN_END if right else BoxContainer.ALIGN_BEGIN
 	var line := _line(line_name, align, HUD_SEPARATION)
@@ -221,8 +183,6 @@ static func _hud_line(line_name: String, right: bool, parts: Array) -> Node:
 	return line
 
 
-# A source's icon (Icon) with its count (Count) in the lower right corner, a little past it, as
-# the game's inventory shows one.
 func _badged_icon() -> TextureRect:
 	var icon := _icon(HUD_ICON, "Icon")
 	var count := _label(_hud_font(HUD_COUNT_SIZE), "Count")
@@ -242,7 +202,6 @@ func _badged_icon() -> TextureRect:
 	return icon
 
 
-# The crit icon (Icon) with the source of the biggest hit (Source) tilted over its middle.
 static func _hit_icon(
 	size := HUD_ICON, source_size := HUD_HIT_SOURCE, icon_name := "Icon"
 ) -> TextureRect:
@@ -262,8 +221,7 @@ static func _hit_icon(
 	return burst
 
 
-# What dealt the biggest hit (an id, "" when unknown) over a _hit_icon; under a source the
-# burst steps back, so the weapon reads.
+# id: what dealt the biggest hit, "" when unknown.
 func _show_hit_source(burst: TextureRect, id: String) -> void:
 	var data = meter.data_of(id) if id != "" else null
 	var source: TextureRect = burst.get_node("Source")
@@ -273,7 +231,6 @@ func _show_hit_source(burst: TextureRect, id: String) -> void:
 		source.texture = data.icon
 
 
-# The HUD block's backing: a dark rounded panel as wide as its lines, at the screen's edge.
 static func _hud_back(right: bool) -> PanelContainer:
 	var back := PanelContainer.new()
 	back.name = ROW_NAME
@@ -330,11 +287,8 @@ func _hud_font(size: int) -> DynamicFont:
 	return _hud_fonts[size]
 
 
-# --- the pages and the tab ---
-
-
-# A co-op player container (shop or end of run): a heading and a page at the end of its
-# carousel. Called from the container's own _ready.
+# For a co-op player container (shop or end of run), from its own _ready: the page has to exist
+# before a page index from the network is applied to the carousel.
 func add_page(container: Control) -> void:
 	var carousel = container.get("carousel")
 	if carousel == null or container.has_meta(PAGE_META):
@@ -363,8 +317,7 @@ func add_page(container: Control) -> void:
 	_add_view(container, list)
 
 
-# The solo stats panel (shop, end of run): a third tab. StatsContainer is extended
-# (extensions/ui/stats_container.gd) and inert until this arms it.
+# The solo stats panel's third tab. The StatsContainer extension is inert until this arms it.
 func add_tab(stats: Node) -> void:
 	if stats == null or not stats.has_method("bt_add_tab") or stats.bt_has_tab():
 		return
@@ -392,9 +345,8 @@ func _drop_view(holder: Control) -> void:
 	_views = kept
 
 
-# The board: List > Wave, Stats (as the wave's HUD: TotalIcon, Total, Share; DpsIcon, Dps;
-# HitIcon with Source over it, Hit), a line, Sources (MAX_SOURCES rows: the bar itself,
-# Content > Icon, Name, Amount, Share on it).
+# List > Head (Wave; Stats: TotalIcon, Total, Share, DpsIcon, Dps, HitIcon > Source, Hit), a
+# line, Sources (MAX_SOURCES bars, each with Content > Icon, Name, Amount, Share).
 func _board_list() -> VBoxContainer:
 	var font := _hud_font(HUD_MAIN_SIZE)
 	var list := VBoxContainer.new()
@@ -462,8 +414,7 @@ static func _spacer(width: int) -> Control:
 	return spacer
 
 
-# A source's row: a bar against the strongest source, the row's own background (a dark rounded
-# track, filled in the source's tier colour), with its parts on top (Content).
+# The bar is the row's own background; its parts go on top (Content).
 static func _bar() -> ProgressBar:
 	var bar := ProgressBar.new()
 	bar.percent_visible = false
@@ -510,8 +461,8 @@ func _fill_board(list: Node, entry: Array, team_share: int, hit: Array) -> void:
 		content.get_node("Share").text = percent(source[2], entry[0])
 
 
-# The switch: the page stays in the carousel but past its max_index; a player on it goes back
-# one page, as if they had pressed LB. The solo tab is hidden.
+# Switched off, the page stays in the carousel but past its max_index, and a player on it goes
+# back one page. The solo tab is hidden.
 func _apply_shown(holder: Control) -> void:
 	if holder.has_method("bt_set_tab_enabled"):
 		holder.bt_set_tab_enabled(meter.shown)
@@ -526,7 +477,7 @@ func _apply_shown(holder: Control) -> void:
 		carousel.index = page - 1
 		holder._on_Carousel_index_changed(carousel.index)
 	else:
-		carousel.index = carousel.index  # the setter: arrows for the new last page
+		carousel.index = carousel.index  # the setter, as in add_page
 	# Without trigger glyphs the arrows take the cursor; one that is now the disabled end of the
 	# row hands it to the other, as the carousel does itself after a page change.
 	var emulator = Utils.get_focus_emulator(holder.player_index, get_tree().current_scene)
@@ -535,9 +486,6 @@ func _apply_shown(holder: Control) -> void:
 		if emulator != null and emulator.focused_control == arrows[k] and arrows[k].disabled:
 			if not arrows[1 - k].disabled:
 				emulator.focused_control = arrows[1 - k]
-
-
-# --- both ---
 
 
 func _fill() -> void:
@@ -567,7 +515,7 @@ static func _hit(hits: Array, p: int) -> Array:
 	return hits[p] if p < hits.size() else [0, ""]
 
 
-# In co-op: the player's part of what the team dealt, else -1.
+# -1 outside co-op.
 static func _share(players: Array, p: int, team: int) -> int:
 	if players.size() < 2 or team <= 0:
 		return -1

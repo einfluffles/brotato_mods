@@ -1,17 +1,7 @@
 extends Reference
-# Suite upgrades_change: the host serializes the run state of the level-up / crate panels
-# (section upgrades) only when it can have changed (UpgradesSync.run_cache, sync/run_cache.gd).
-# On a stream of its own (fake session, stepped by hand) and the host's real battle scene with
-# its panels up (the wave cleaned up as the game does before them): every kind of change the
-# panels make to the run is detected and goes out once, serialized once and only its changed
-# run parts compressed; pages, revisions and meca rolls go out without serializing; an unchanged
-# run serializes nothing between safety-net checks; a change only the safety net can see goes
-# out and counts as missed; an applied intent forces the next check; peer_ready resends every
-# part without compressing again; the cache is gone with the battle. Prints the cost of a send
-# before and after, and of a typical level-up sequence, in a small and in late runs.
-# A client applying that sequence's states in the late runs (UpgradesSync.apply) rebuilds only
-# the player that changed: a crate item its gear and stats, a reroll or an upgrade choice its
-# stats only, new panels every player. Prints the client's time per applied state.
+# Suite upgrades_change: the host serializes the run state of the level-up / crate panels (section
+# upgrades) only when it can have changed (UpgradesSync.run_cache, sync/run_cache.gd), and a client
+# applying the states rebuilds only the player that changed.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -32,7 +22,7 @@ const LATE_ITEMS := 250
 const LATE_WEAPONS := 6
 const IDLE_CHECKS := 20
 const BUTTON_DELAY_SEC := 0.15  # UpgradesUIPlayerContainer's ButtonDelayTimer: 0.1 s
-const CLIENT_KINDS := ["crate item", "reroll", "upgrade choice"]  # _sequence's steps 2, 3, 4 and 5
+const CLIENT_KINDS := ["crate item", "reroll", "upgrade choice"]
 const NEW_PANELS := "new panels"
 const STATS_MARK := "-"  # a stat value no update leaves (the level shown in each panel's stats)
 const POKE := "test.poke"  # another mod's kind (_test_mod_intent)
@@ -40,10 +30,10 @@ const POKE := "test.poke"  # another mod's kind (_test_mod_intent)
 var _t: Node = null
 var _together: Node = null
 var _sync: Node = null
-var _cache = null  # UpgradesSync.run_cache
+var _cache = null
 var _main: Node = null
 var _ui: Node = null
-var _stream: Node = null  # the host stream of this suite
+var _stream: Node = null
 var _run := ""  # the run part ids last sent (var2str)
 var _client = RunParts.Store.new()  # what a client has of the run, from what was sent
 var _client_ok := true  # no body named a part the client lacked
@@ -72,9 +62,6 @@ func run(t: Node, together: Node):
 	together.battle_host.set_process(true)
 
 
-# --- small run: what is detected, and how often the run is serialized ---
-
-
 # Player 0: two crates (recycled, banned), then two level-ups. Player 1 (crates give weapons,
 # three pistols): a crate weapon, then a level-up.
 func _small_run():
@@ -86,8 +73,8 @@ func _small_run():
 	yield(_enter_battle(), "completed")
 	_show([[_crate(0), _crate(0)], [_crate(1)]], [[_level(0, 2), _level(0, 3)], [_level(1, 2)]])
 	_measure("small run, 2 players", 20)
-	_cache.clear()  # as when the panels come up
-	_sync.run_sender.forget(PEER)  # the client has nothing yet
+	_cache.clear()
+	_sync.run_sender.forget(PEER)
 	var serialized: int = _cache.serialized
 	_stream.step(1.0)
 	var sent := _take()
@@ -166,8 +153,6 @@ func _test_weapons() -> void:
 		ProgressData.active_update_data.erase(MecaChoice.MECA_DLC)
 
 
-# Another mod's press on player 1's panel (UpgradesSync.register_intent): its handler runs for
-# the remote player after the game's checks, once; the state names the host's kinds.
 func _test_mod_intent() -> void:
 	_t._check(
 		not _sync.register_intent("take", self, "_on_poke"),
@@ -193,7 +178,7 @@ func _test_mod_intent() -> void:
 		not _sync.host_apply_intent(_ui, 1, press), "upgrades change: the same press twice: once"
 	)
 	_sync._mod_kinds.erase(POKE)
-	_stream.step(1.0)  # the revision and the kinds went out
+	_stream.step(1.0)
 	_take()
 
 
@@ -202,8 +187,7 @@ func _on_poke(_ui_node: Node, player: int, id: String, arg: int) -> bool:
 	return true
 
 
-# Player 0's crates: recycled by intent, then banned (ban token and button given here: the
-# headless profile has not unlocked bans); player 1 takes its crate weapon.
+# The ban token and button are given here: the headless profile has not unlocked bans.
 func _test_crate():
 	var item = _ui._get_player_container(0)._item_data
 	_expect_intent("discard (discard intent)", 0, "discard", item.my_id)
@@ -221,10 +205,8 @@ func _test_crate():
 	)
 
 
-# Level-ups: a reroll by intent, a second press inside the button delay (the game ignores it:
-# the forced check finds what a stat written meanwhile changed, a miss of the fingerprint), the
-# host's own press (no intent, nothing forced), an absent player's automatic choice and the
-# last choice by intent.
+# A second press inside the button delay is ignored by the game: the forced check then finds what
+# a stat written meanwhile changed (a miss of the fingerprint).
 func _test_level_ups():
 	yield(_button_delay(), "completed")
 	_expect_intent("reroll (reroll intent)", 0, "reroll", "")
@@ -300,8 +282,7 @@ func _test_safety_net() -> void:
 	_cache.missed = 0
 
 
-# UpgradesSync's own peer_ready handler forces a check, and the stream's resync (its next step)
-# is that check: the new peer gets the true run, serialized once, not compressed again.
+# The stream's resync (its next step) is the check UpgradesSync's own peer_ready handler forced.
 func _test_peer_ready() -> void:
 	var serialized: int = _cache.serialized
 	var packs: int = _cache.packs
@@ -361,9 +342,6 @@ func _test_lobby_left() -> void:
 	)
 
 
-# --- late runs: the cost ---
-
-
 func _late_run(players: int):
 	yield(_blank_scene(), "completed")  # the old battle must not see the new run's players
 	_build_run(players, LATE_ITEMS)
@@ -382,10 +360,8 @@ func _late_run(players: int):
 	yield(_client_replay(label, players), "completed")
 
 
-# A typical level-up sequence, on the stream: every player looks at its gear page and back,
-# takes its crate item, rerolls and chooses twice; player 0 presses on the host, the others send
-# intents; a peer joins in the middle. Counts the sends (each encoded the run before), the
-# serializations and parts compressed now, and the time the stream's checks take now.
+# A typical level-up sequence: every player looks at its gear page and back, takes its crate item,
+# rerolls and chooses twice. Player 0 presses on the host, the others send intents.
 func _sequence(label: String, players: int, encode: float):
 	var serialized: int = _cache.serialized
 	var packs: int = _cache.packs
@@ -441,10 +417,8 @@ func _sequence(label: String, players: int, encode: float):
 	)
 
 
-# Prints the cost of a send before (RunStateCodec.encode in every body), and now: the key's
-# check with nothing changed (and of it, capture() of the panels), the safety net's check once
-# a second, a send that reuses the run (a page, a resend) and a change (serialize, print, pack).
-# Returns the encode's usec.
+# Prints the cost of a send next to a baseline (RunStateCodec.encode in every body). Returns the
+# encode's usec.
 func _measure(label: String, slow_calls: int) -> float:
 	var section := StateStream.UPGRADES
 	_sync.state_key(section)
@@ -493,14 +467,8 @@ func _measure(label: String, slow_calls: int) -> float:
 	return before
 
 
-# --- late runs: a client applying the states ---
-
-
-# The sequence's states as a client applies them (UpgradesSync.apply, each after the stream's
-# accept_state), in order, on the host's panels made a spectator's puppet (its own store; the
-# panels' decisions are cut, which is why this comes after the sequence). Counts per state the
-# players whose gear was rebuilt (their elements' instance ids) and whose stats were updated, and
-# prints the time per applied state (apply only: the freed elements go at the end of the frame).
+# On the host's panels made a spectator's puppet (the panels' decisions are cut, which is why this
+# comes after the sequence). The time is of apply only: freed elements go at the end of the frame.
 func _client_replay(label: String, players: int):
 	var client: Node = _together.battle_client
 	var saved_you: int = client._you
@@ -529,7 +497,6 @@ func _client_replay(label: String, players: int):
 				% [label, kind, p, gear, stats, done[0], done[1]]
 			)
 		)
-	# New panels (another wave's) on a run the store already built: every player again.
 	_sync._guarded_ui = null
 	var again: Array = yield(_client_apply(_bodies[-1][2], players), "completed")
 	_t._check(
@@ -594,9 +561,6 @@ func _record(kind: String, p: int) -> void:
 	_bodies.append([kind, p, body])
 
 
-# --- the battle ends ---
-
-
 # The next scene replaces the battle (nobody calls a cleanup): the cache is dropped and keeps
 # nothing of the wave.
 func _test_battle_end():
@@ -612,9 +576,6 @@ func _test_battle_end():
 	_t._check(_sync.state_key(StateStream.UPGRADES) == "", "upgrades change: section inactive")
 	_main = null
 	_ui = null
-
-
-# --- helpers ---
 
 
 # A scene with nothing in it, changed to like the game changes scenes (the battle is gone first).

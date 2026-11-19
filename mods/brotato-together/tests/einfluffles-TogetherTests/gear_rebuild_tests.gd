@@ -1,13 +1,7 @@
 extends Reference
-# The gear page (carousel page 1) of the level-up panels while this client's own panel runs
-# locally, and the host's run state changes under it. UpgradesSync.apply then rebuilds the gear
-# of each player whose gear changed (CoopUpgradesUIPlayerContainer.update_inventory frees each
-# InventoryElement and builds new ones), and leaves the others' gear and cursors alone.
-# A real session crashed there: the own FocusEmulator kept its freed element
-# (a released build dereferences it; a debug build reads it as null, so these checks look at
-# the references themselves), and the weapons inventory's focus neighbour named a freed item
-# element ("Node not found" from Inventory._inherit_or_set_neighbour for each weapon).
-# Called from local_panel_tests.client_part with the own panel (player 0) on its gear page.
+# The gear page of the level-up panels while the host's run state changes under the client's own
+# local panel. Past crash: the own FocusEmulator kept a freed InventoryElement. A release build
+# dereferences it, a debug build reads it as null, so the checks look at the references themselves.
 
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
@@ -55,8 +49,6 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 		"gear: both cursors on an item element"
 	)
 
-	# The other player's pick adds an item: only its gear is rebuilt (under its mirrored cursor),
-	# the own gear and the own cursor's element stay as they are.
 	var start_id: String = start.item.my_id
 	var start_index: int = start.get_index()
 	var other_id: String = other_start.item.my_id
@@ -85,9 +77,7 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 	)
 	emulator.focused_control = items.get_child(start_index)
 
-	# This player's own pick: the new item is shown first (newest first), so the cursor's item
-	# moved one place on; the cursor goes with its item. Only the own gear is rebuilt: the
-	# mirrored cursor keeps its element.
+	# The new item is shown first (newest first), so the cursor's item moved one place on.
 	var own_before = emulator.focused_control
 	var other_cursor = mirrored.focused_control
 	RunData.add_item(coupon, 0)
@@ -126,10 +116,8 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 	yield(_tap("rtrigger"), "completed")
 	_check_cursor(emulator, items, start_id, start_index, "own cursor back on the gear page")
 
-	# Safety net (extensions/ui/focus_emulator.gd): an element freed under a cursor by a path
-	# that did not move it first is dropped without being touched, and the cursor goes to the
-	# element now at its place. The elements freed here are ones no focus neighbour names (the
-	# gear links the first weapon and the last item): the mod never frees one this way.
+	# Safety net (extensions/ui/focus_emulator.gd): an element freed under a cursor that was not moved
+	# first. The elements freed here are ones no focus neighbour names.
 	var other_weapons = other.player_gear_container.weapons_container._elements
 	t._check(
 		other_items.get_child_count() >= 3 and other_weapons.get_child_count() >= 2,
@@ -172,11 +160,8 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 	)
 
 
-# msg with the run as it is now (the host's state after a change of the gear); the other
-# player's page is mirrored from it (its gear page while these tests look at it). A part whose
-# JSON text did not change keeps its id, as in the host's RunCache: this process's RunData holds
-# the objects the client deserialized, and their values can hash differently (an int read back
-# as a float) with the same text.
+# msg with the run as it is now. A part whose JSON text did not change keeps its id: the objects
+# the client deserialized can hash differently (an int read back as a float) with the same text.
 func _with_run(msg: Dictionary, other_page := 1) -> Dictionary:
 	var parts := RunParts.split(RunStateCodec.serialize())
 	var run := {"ids": {}, "parts": {}}
@@ -210,7 +195,6 @@ func _check_cursor(emulator: Node, inventory: Node, id: String, index: int, labe
 	)
 
 
-# Every focus neighbour of the gear's inventories and their elements names a node that exists.
 func _check_neighbours(container: Node, label: String) -> void:
 	var gear = container.player_gear_container
 	var nodes := []

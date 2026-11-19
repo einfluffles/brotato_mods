@@ -1,16 +1,7 @@
 extends Reference
 # A client without one of the host's DLCs borrows it for the session (session/dlc_borrow.gd).
-# Host and client share one process, so both sides are simulated: primal_dread is registered
-# (as ItemService.init_dlc_content does for owners) while the host's run state is encoded, then
-# unregistered the way ProgressData / ItemService look on a machine without it. Headless, Steam is
-# missing, so the game owns no DLC; the harness's real state is put back at the end.
-# Synchronous (no frame passes while the fake lobby is up), like session_lifecycle_tests.gd.
-#  - without borrowing, the host's DLC character / items / weapons / effects / background are lost
-#  - WELCOME's DLC list -> borrowed (validated), the lobby page's note, run state round-trips,
-#    client lookups,
-#    DLC consumable / enemy types render, enemy pillar puppets
-#  - leaving / hosting / leaving client mode by any path: everything is exactly as before, and
-#    nothing save() writes changed
+# Host and client share one process: primal_dread is registered while the host's run is encoded,
+# then unregistered. Headless the game owns no DLC; the real state is put back at the end.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
@@ -42,9 +33,9 @@ const LOCAL := 1
 const HOST := 2
 const LOBBY := 98
 
-var _t: Node = null  # test runner: _check()
+var _t: Node = null
 var _together: Node = null
-var _steam = null  # SessionLifecycleTests.FakeSteam
+var _steam = null
 var _update = null  # UpdateData of DLC
 
 
@@ -210,7 +201,6 @@ func _test_borrowed_session(
 	_t._check(Puppet.blocks_progress(), "saves / challenges blocked while borrowed")
 	_t._check(save_fingerprint() == save_before, "borrowing changes nothing save() writes")
 
-	# Run state round trip + puppet run on the client.
 	var state := RunStateCodec.decode(host_run.payload)
 	_t._check(not state.empty(), "host run decodes while borrowed")
 	if not state.empty():
@@ -241,7 +231,6 @@ func _test_borrowed_session(
 	_t._check(save_fingerprint() == save_before, "nothing DLC-related saved after leaving")
 
 
-# Enemy / consumable types the host announces: DLC scenes and drop data resolve on the client.
 func _test_dlc_types() -> void:
 	var client: Node = _together.battle_client
 	var other_data = ItemService.get_dlc_data_by_id(OTHER_DLC)
@@ -264,8 +253,8 @@ func _test_dlc_types() -> void:
 		client._types.erase(idx)
 		client._type_data.erase(idx)
 
-	# Finding (DLC zones, not ownership): a puppet enemy pillar's autoplay "shoot" ends in stop(),
-	# which returned it to the game's pool by a pool id clients don't have (script errors).
+	# A puppet enemy pillar's autoplay "shoot" ends in stop(), which returned it to the game's pool by
+	# a pool id clients don't have (script errors).
 	var pillar: Node = load(PILLAR_SCENE).instance()
 	_t.add_child(pillar)
 	PuppetEntity.puppetize(pillar)
@@ -289,7 +278,7 @@ func _test_host_while_borrowed(transport: Node, before: Dictionary) -> void:
 	_join(transport, [DLC])
 	_t._check(DlcBorrow.is_active(), "borrowed again on the next join")
 	_steam.created = 0
-	_together.get_node("LobbyMenu").host()  # as if asked anyway
+	_together.get_node("LobbyMenu").host()
 	_t._check(_steam.created == 1 and not DlcBorrow.is_active(), "hosting reverts the borrow first")
 	_expect_reverted(before, "before hosting")
 	transport._on_lobby_created(1, LOBBY)
@@ -366,9 +355,6 @@ func _expect_reverted(before: Dictionary, when: String) -> void:
 		"%s: DLC ids, registrations, item lists, pools, lookups, unlocks, music as before %s"
 		% [when, changed]
 	)
-
-
-# --- client simulation ---
 
 
 # What the game reads to decide what's registered and what save() writes from it.

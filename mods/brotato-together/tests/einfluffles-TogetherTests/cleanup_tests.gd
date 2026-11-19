@@ -1,10 +1,7 @@
 extends Reference
-# Endless runs: nothing a wave allocated may outlive it. Plays several short waves as the host,
-# then replays one as a client several times (battle -> shop -> battle ...), and compares the
-# engine's object counts at the same point of every round. The first rounds still load scenes
-# and fill caches; after them the counts must stand still. The waves end the way they do in a
-# session: the next scene replaces the battle, nobody calls the cleanup.
-# Three suites (run_host, run_client, run_misc); each records the host wave it needs itself.
+# Endless runs: nothing a wave allocated may outlive it. Compares the engine's object counts at the
+# same point of every round; the first rounds still load scenes and fill caches. The waves end as
+# in a session: the next scene replaces the battle, nobody calls the cleanup.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const StateStream := preload(
@@ -45,7 +42,6 @@ var _flash_ended := false
 var _ignored_logs := []
 
 
-# Suite cleanup_host: the host plays ROUNDS waves.
 func run_host(test_mod: Node, together: Node):
 	yield(_begin(test_mod, together), "completed")
 	var host: Node = together.battle_host
@@ -76,7 +72,6 @@ func run_host(test_mod: Node, together: Node):
 	yield(_end(), "completed")
 
 
-# Suite cleanup_client: the client replays one host wave ROUNDS times, with the shop in between.
 func run_client(test_mod: Node, together: Node):
 	yield(_begin(test_mod, together), "completed")
 	var client: Node = together.battle_client
@@ -103,8 +98,6 @@ func run_client(test_mod: Node, together: Node):
 	yield(_end(), "completed")
 
 
-# Suite cleanup_misc: battle starts and shop states that arrive together, and what a late
-# endless wave costs.
 func run_misc(test_mod: Node, together: Node):
 	yield(_begin(test_mod, together), "completed")
 	var host: Node = together.battle_host
@@ -136,9 +129,8 @@ func _begin(test_mod: Node, together: Node):
 	yield(_t.get_tree(), "idle_frame")
 
 
-# The game's sound players (12 per sound manager, used in turn) keep a playback object from the
-# first stream they get on: until each has had one, a wave leaves one more of them behind. Bounded
-# and not the mod's; in the full sequence the suites before had used every player.
+# The game's sound players (12 per sound manager) each keep a playback object from their first
+# stream: warm them all so a wave leaves none behind.
 func _load_every_sound_player() -> void:
 	var sound: AudioStream = load(SOUND)
 	for manager in [SoundManager, SoundManager2D]:
@@ -328,14 +320,12 @@ func _test_starts(client: Node, recording: Dictionary):
 		not main.is_processing() and not main._wave_manager.is_physics_processing(),
 		"and its scene is frozen"
 	)
-	# A resync of the battle the client is in keeps the scene.
 	client._on_battle_start(second)
 	yield(tree, "idle_frame")
 	yield(tree, "idle_frame")
 	_t._check(
 		tree.current_scene == main and client._main == main, "a resync mid-wave keeps the battle"
 	)
-	# The battle ends while the next one's scene is still loading.
 	var third: Dictionary = first.duplicate()
 	third["battle_id"] = first.battle_id + 2
 	client._on_battle_start(third)

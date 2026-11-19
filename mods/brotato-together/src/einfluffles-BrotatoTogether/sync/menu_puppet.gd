@@ -1,23 +1,7 @@
 extends Node
-# Client: the host's menus outside battle and shop as the game's own scenes (character / weapon
-# / difficulty selection, end of run), built from the host's state (sync/menu_sync.gd) and
-# deciding nothing:
-# - the grids come from the host's element lists (session/puppet_menu.gd, read by the script
-#   extensions of the three selection scenes), not from this machine's unlocks;
-# - whatever would select, go back, start the run or write this machine's settings is cut in
-#   those extensions; the end-of-run buttons are spent (BaseEndRun._button_pressed);
-# - nobody joins here (CoopService.listening_for_inputs stays off), the mouse is kept off the
-#   scene's controls and no control keeps the keyboard focus;
-# - who selected, the zone, the run options, the join progress, the picks, whose weapon panel
-#   shows the player's character (ui_info held) and the end-of-run pages are set from the host's
-#   state; the cursors arrive with FocusSync, through the game's own focus code, so the panels
-#   show what each cursor is on;
-# - the character grid, which all cursors share, scrolls after this machine's own player only
-#   (ui/shared_scroll.gd, from the state's `you`);
-# - each panel's description: this player's own with its right stick (sync/input_sync.gd drives
-#   its slot device here) and its mouse wheel (ui/wheel_scroll.gd); sync/scroll_sync.gd sends
-#   its positions to the host and moves the other panels to where the host has them.
-# All input still goes to the host (the players are virtual devices nobody presses here).
+# Client: the host's menus outside battle and shop as the game's own scenes, built from the
+# host's state (sync/menu_sync.gd) and deciding nothing. The grids come from the host's element
+# lists (session/puppet_menu.gd); all input still goes to the host.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const PuppetMenu := preload(
@@ -51,7 +35,7 @@ const MAX_PLAYERS := 4
 const MAX_ELEMENTS := 400
 const MAX_ID_LENGTH := 96
 
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 
 var _screen := 0  # the host screen the copy stands for
 var _kind := ""
@@ -71,8 +55,8 @@ func setup(session: Node) -> void:
 	session.transport.connect("lobby_left", self, "_on_lobby_left", [session.transport])
 
 
-# A menu state with its grids (MenuSync.menu_state). False: not a screen with a copy (title
-# screen, a page of it): the caller shows the waiting screen.
+# False: not a screen with a copy (title screen, a page of it); the caller shows the waiting
+# screen.
 func show(state: Dictionary) -> bool:
 	var kind = state.get("kind")
 	var grids = state.get("grids")
@@ -152,7 +136,6 @@ func _enter(kind: String, state: Dictionary) -> bool:
 	_grids_key = hash(grids.get("inventories"))
 	PuppetMenu.set_inventories(_inventories(grids.get("inventories")))
 	get_tree().paused = false
-	# Only while the copy loads: no node_added handler for every node otherwise.
 	if not get_tree().is_connected("node_added", self, "_on_node_added"):
 		get_tree().connect("node_added", self, "_on_node_added")
 	_loading_msec = OS.get_ticks_msec()
@@ -163,7 +146,6 @@ func _enter(kind: String, state: Dictionary) -> bool:
 	return true
 
 
-# The copy reacts to mirrored cursors with its own sounds; the host's replace them (UI_SOUNDS).
 func _on_node_added(node: Node) -> void:
 	if _kind != "" and node.filename == SCENES[_kind] and node.get_parent() == get_tree().root:
 		node.connect("ready", self, "_on_scene_ready", [node], CONNECT_ONESHOT)
@@ -242,11 +224,8 @@ static func _count(state: Dictionary) -> int:
 	return int(clamp(state.get("count", 0), 0, MAX_PLAYERS))
 
 
-# CharacterSelection._on_connected_players_updated puts a joining player's cursor on the first
-# element of the character grid, which it fills from the host's list when the grid appears. The
-# host's state names the new player before its grids carry that grid (menu_grids follows menu,
-# and the host's grid is hidden while nobody has joined): the player is added once they do.
-# Before, the game read the empty grid (get_child(0) out of bounds) and gave no cursor.
+# The host's state names a joining player before its grids carry the character grid. The player
+# is added once they do: CharacterSelection puts its cursor on the grid's first element.
 func _grid_ready_for(count: int) -> bool:
 	if _kind != CHARACTERS or count <= CoopService.connected_players.size():
 		return true
@@ -254,12 +233,8 @@ func _grid_ready_for(count: int) -> bool:
 	return elements == null or not elements.empty()
 
 
-# --- grids ---
-
-
-# The host's element lists as this machine's items, for session/puppet_menu.gd. An id this
-# machine does not know (content only the host has) is left out, and logged: the cursors
-# behind it are then one off.
+# An id this machine does not know (content only the host has) is left out and logged: the
+# cursors behind it are then one off.
 func _inventories(inventories) -> Array:
 	var built := []
 	if typeof(inventories) != TYPE_ARRAY:
@@ -283,7 +258,7 @@ func _inventories(inventories) -> Array:
 	return built
 
 
-# One inventory of the grids as [[id, flags, tier]], whatever arrived (network data).
+# One inventory of the grids as [[id, flags, tier]] (network data).
 static func _entries(inventory) -> Array:
 	var entries := []
 	if typeof(inventory) != TYPE_ARRAY:
@@ -320,10 +295,8 @@ static func _shown(inventory: Node) -> Array:
 	return shown
 
 
-# The grids changed while the screen is up (a zone's colours, the first player joining): a
-# grid that shows other elements than the host's is built again the way
-# BaseSelection._set_base_ui_player_count builds it, with every cursor on it put back on the
-# element at the same place.
+# The grids changed while the screen is up (a zone's colours, the first player joining): a grid
+# that differs from the host's is built again, as BaseSelection._set_base_ui_player_count does.
 func _apply_grids(scene: Node, inventories) -> void:
 	if typeof(inventories) != TYPE_ARRAY or not scene.has_method("_get_inventories"):
 		return
@@ -350,7 +323,7 @@ func _rebuild(scene: Node, inventory: Node, index: int) -> void:
 		var control = emulator.focused_control if emulator != null else null
 		if control != null and is_instance_valid(control) and control.get_parent() == inventory:
 			cursors[emulator] = control.get_index()
-			emulator.focused_control = null  # never a cursor on a freed element
+			emulator.focused_control = null
 	var possible: Array = scene._get_all_possible_elements(index)
 	scene.displayed_elements[index] = scene._get_displayed_elements(
 		possible, scene._get_unlocked_elements(index)
@@ -366,9 +339,8 @@ func _rebuild(scene: Node, inventory: Node, index: int) -> void:
 			emulator.focused_control = inventory.get_child(int(min(cursors[emulator], last)))
 
 
-# Character grid: the colour of a cell is the highest danger level beaten with that character,
-# from the host's progress. CharacterSelectionInventory.update_elements_color would take it
-# from this machine's.
+# The colour of a character cell is the highest danger level beaten with that character.
+# CharacterSelectionInventory.update_elements_color would take it from this machine's progress.
 func _apply_tiers(scene: Node, inventories) -> void:
 	if typeof(inventories) != TYPE_ARRAY or inventories.empty():
 		return
@@ -383,9 +355,6 @@ func _apply_tiers(scene: Node, inventories) -> void:
 			item.tier = entries[i][2]
 			element.item = item
 			element.update_background_color()
-
-
-# --- what changes while the screen is up ---
 
 
 # BaseSelection._has_player_selected and the panel's "selected" look, without the game's
@@ -456,10 +425,8 @@ func _apply_run_options(scene: Node, state: Dictionary) -> void:
 		panel._update_bg()
 
 
-# The host's hold-to-join progress in the free slots (CoopService extension;
-# ui/coop_selection.gd adds its hints from it). null: the host lets nobody join right now.
-# The state comes ten times a second in steps of 0.1 and a hold takes 0.7 s: between states
-# _advance_join fills the wheels here at the game's speed, the host's values only correct them.
+# null: the host lets nobody join right now. The state comes in steps of 0.1 and a hold takes
+# 0.7 s, so _advance_join fills the wheels in between and the host's values only correct them.
 func _apply_join(_scene: Node, join) -> void:
 	var progress = null
 	if typeof(join) == TYPE_ARRAY:
@@ -515,12 +482,8 @@ static func _character_shown(state: Dictionary, p: int) -> bool:
 	return typeof(shown) == TYPE_ARRAY and p < shown.size() and shown[p] == true
 
 
-# WeaponSelection: a player holding ui_info (F / Y) sees their character in their panel instead
-# of the weapon under their cursor. The button goes to the host, whose WeaponSelection._input
-# switches its panel; the copy switches with the same calls when the host's state says so. Only
-# when that differs from what the panel shows: the cursors (FocusSync) show the focused weapon
-# again the way they do on the host, and a player without weapon slots shows the character for
-# good (WeaponSelection._ready, here too).
+# WeaponSelection: a player holding ui_info sees their character instead of the weapon under
+# their cursor. A player without weapon slots shows it for good (WeaponSelection._ready).
 func _apply_character_shown(scene: Node, shown) -> void:
 	if typeof(shown) != TYPE_ARRAY:
 		return
@@ -541,7 +504,6 @@ func _apply_character_shown(scene: Node, shown) -> void:
 			panel.selected = scene._has_player_selected[p]
 
 
-# End of run: each player's carousel page (items / stats).
 func _apply_pages(scene: Node, pages) -> void:
 	if typeof(pages) != TYPE_ARRAY:
 		return
@@ -551,7 +513,6 @@ func _apply_pages(scene: Node, pages) -> void:
 		var page = pages[p]
 		if typeof(page) != TYPE_INT or page < 0:
 			continue
-		# Clamped: the damage page may be off here (ui/damage_views.gd).
 		if carousel.index != min(page, carousel._get_max_index()):
 			carousel.index = page
 
@@ -560,8 +521,6 @@ func _on_lobby_left(transport: Node) -> void:
 	release(not transport.was_host)
 
 
-# Done with the host's screens: the lobby is left, or the host is back in its main menu and a
-# client in its own (mod_main.gd).
 func release(as_client: bool) -> void:
 	var mirrored := _screen != 0
 	forget()

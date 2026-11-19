@@ -1,18 +1,7 @@
 extends Reference
-# Scrolling online (ui/wheel_scroll.gd, sync/local_panel.gd, sync/input_sync.gd,
-# sync/scroll_sync.gd):
-#  - the mouse wheel scrolls what is under the pointer in the mouse player's own panel and nothing
-#    of another player: on the host (its keyboard player) in the shop, the level-up panels and
-#    character selection; on a client in its own shop and level-up panel and on its copy of the
-#    host's character selection;
-#  - character selection: a player's right stick scrolls their own panel's description on the
-#    host, on a client's copy the own player's stick scrolls its own panel there;
-#  - on all three screens (check_sync) the host's state carries how far each panel is scrolled
-#    and a client's PANEL_SCROLL its own panel's; the receiver moves the other panels there and
-#    never the own one.
-# The descriptions are made taller than their box here, so the checks need no particular item.
-# Called from the shop, level-up and selection tests while their screen is up; checks go
-# through the test mod's _check.
+# Scrolling online (ui/wheel_scroll.gd, sync/scroll_sync.gd): wheel and right stick scroll the own
+# panel only; positions are mirrored. The descriptions are made taller than their box, so the
+# checks need no particular item.
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -74,16 +63,12 @@ func check_wheel(label: String, own: Control, other: Control):
 	yield(_frames(1), "completed")
 
 
-# sync/scroll_sync.gd on scene, with own the panel of this machine's player p_own and other the
-# panel of player p_other (a remote player on the host, another player on a client):
-# - host: its state carries the own panel's position; a client's PANEL_SCROLL moves that client's
-#   panel here, never another one, and not on another scene;
-# - client: PANEL_SCROLL carries the own panel's position; the host's state moves the other
-#   panel and leaves the own one alone.
+# own: the panel of this machine's player p_own; other: the panel of player p_other (a remote
+# player on the host, another player on a client).
 func check_sync(
 	label: String, scroller: Node, scene: Node, own: Control, other: Control, players: Array
 ):
-	yield(_frames(1), "completed")  # a coroutine also when it returns early
+	yield(_frames(1), "completed")
 	var p_own: int = players[0]
 	var p_other: int = players[1]
 	var selection := ScrollSync.is_selection(scene)
@@ -139,7 +124,7 @@ func check_sync(
 		_t._check(ignored, "%s: another scene's scrolls ignored" % label)
 		var message := {"scene": scene.filename, "scrolls": [[other_target, 140]]}
 		if not selection:
-			message.scrolls.append([own_target, 210])  # the host's own player's: ignored
+			message.scrolls.append([own_target, 210])
 		_t._check(
 			scroller.host_apply(p_other, bytes2var(var2bytes(message), false)),
 			"%s: a client's PANEL_SCROLL applied" % label
@@ -245,11 +230,8 @@ func _frames(count: int):
 		yield(_t.get_tree(), "idle_frame")
 
 
-# --- character selection ---
-
-
-# Host: two remote players (virtual devices 12, 13) and the keyboard player 2 of this machine,
-# every cursor on a character (else a panel shows the random element, without a description).
+# Host: two remote players P1 and P2 (virtual devices 12, 13) and this machine's keyboard player
+# P3, every cursor on a character (else a panel shows the random element, without a description).
 func host_selection(scene: Node, scroller: Node):
 	var panels: Array = scene._get_panels()
 	var grid: Node = scene._get_inventories()[0]
@@ -257,7 +239,6 @@ func host_selection(scene: Node, scroller: Node):
 		Utils.get_focus_emulator(p, scene).focused_control = grid.get_child(1 + p)
 	yield(_frames(2), "completed")
 	yield(check_wheel("character selection, host", panels[2], panels[0]), "completed")
-	# The right stick of remote player 2 (P2's virtual device) scrolls its own panel only.
 	var scrolls := [panels[0].get_description_scroll(), panels[1].get_description_scroll()]
 	for scroll in scrolls:
 		make_tall(scroll)
@@ -276,12 +257,12 @@ func host_selection(scene: Node, scroller: Node):
 	restore()
 	for scroll in scrolls:
 		scroll.scroll_vertical = 0
-	# The keyboard player 3 is this machine's, P2 a client's.
+	# P3 (the keyboard player) is this machine's, P2 a client's.
 	var label := "character selection, host"
 	yield(check_sync(label, scroller, scene, panels[2], panels[1], [2, 1]), "completed")
 
 
-# Client: its copy of the host's screen, this machine's player is P2 (you = 1).
+# Client: its copy of the host's screen; this machine's player is P2 (you = 1).
 func client_selection(scene: Node, input_sync: Node, scroller: Node):
 	var panels: Array = scene._get_panels()
 	var grid: Node = scene._get_inventories()[0]

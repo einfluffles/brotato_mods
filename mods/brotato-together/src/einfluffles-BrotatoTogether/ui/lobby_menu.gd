@@ -1,19 +1,8 @@
 extends Node
-# Online co-op in the game's own menus; the mod has no overlay and no hotkey of its own.
-#  - Title screen: a button below Start hosts a lobby without leaving the main menu, and a small
-#    frame beside the buttons shows who is in it (ui/lobby_frame.gd). A client of a host that is
-#    in its main menu is in its own, with Start and Continue off (mod_main.gd).
-#  - The "Online co-op" page (ui/lobby_page.gd) is put into the page stack of every pause menu,
-#    behind a button added to its main page next to the game's own.
-#    (Both found when the scene changes: no script extension of the menus.)
-#  - Character selection: Co-op Off / Local / Online in its run options, Invite friends and the
-#    lobby status in the next free player slot (ui/coop_mode.gd, ui/slot_invite.gd).
-#  - A client on a screen without a pause menu (the waiting screen, the mirrored selection
-#    screens) has no game menu to open: releasing pause there opens the page as a popup
-#    (ui/lobby_popup.gd). open() falls back to it too.
-# This node is what those talk to: the lobby actions, the texts, the last error.
-#  - Leaving mid-run (also by accepting another Steam invite) asks first; a failed lobby shows in
-#    the page's details, the player slot's status line and the main menu's error label.
+# Online co-op in the game's own menus, found when the scene changes (no script extension of the
+# menus): the title screen's host button and frame, the "Online co-op" page in every pause menu,
+# the Co-op option in character selection, and the page as a popup where a client has no pause
+# menu. This node is what those talk to: the lobby actions, the texts, the last error.
 
 signal open_changed(is_open)  # the popup: it takes keyboard and pad while open
 
@@ -29,14 +18,14 @@ const RUN_SCENE_PREFIXES := ["res://main.tscn", "res://ui/menus/shop/"]
 const PAGE_NAME := "BrotatoTogetherLobbyPage"
 const ENTRY_NAME := "BrotatoTogetherLobbyButton"
 const NOTICE_MAX_AGE_MSEC := 15000  # an error older than this is no news on the title screen
-const NO_STEAM_TEXT := "Steam is unavailable — online play needs the Steam version of the game."
+const NO_STEAM_TEXT := "Steam is unavailable: online play needs the Steam version of the game."
 
 var transport: Node = null
 var session: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
-var absent_players: Node = null  # host: players away mid-run (sync/absent_players.gd)
-var pause_control: Node = null  # opens the scene's pause menu for the local player
+var absent_players: Node = null
+var pause_control: Node = null
 
 var last_error := ""
 var creating := false  # Host lobby asked, Steam has not answered yet
@@ -88,9 +77,6 @@ func _process(_delta: float) -> void:
 	_poll_pause(scene)
 
 
-# --- lobby actions ---
-
-
 func steam_available() -> bool:
 	return transport.steam != null
 
@@ -112,7 +98,6 @@ func leave() -> void:
 	transport.leave_lobby()
 
 
-# Host: out of the lobby (session/session.gd).
 func kick(steam_id: int) -> void:
 	session.kick(steam_id)
 
@@ -125,7 +110,6 @@ func decline_invite() -> void:
 	transport.pending_join_id = 0
 
 
-# A run is in progress on this machine (host) or mirrored from the host (client).
 func is_mid_run() -> bool:
 	if not transport.is_active():
 		return false
@@ -140,11 +124,8 @@ func is_mid_run() -> bool:
 	return false
 
 
-# --- texts ---
-
-
-# The lobby's players for a list, this game's first when it hosts and the host's first
-# otherwise: [{id, name, note, local}]. A client knows the other clients by name only.
+# [{id, name, note, local}]: this game first when it hosts, else the host first. A client knows
+# the other clients by name only.
 func players() -> Array:
 	var list := []
 	if not transport.is_active():
@@ -220,7 +201,7 @@ func details_text() -> String:
 			var answer: int = peer.get("answer_ms", -1)
 			if peer.rtt_ms >= 0 and answer > peer.rtt_ms:  # what the games' frames added
 				rtt += " (%d ms with frame time)" % answer
-			lines.append("  %s — %s — %s" % [peer.name, state, rtt])
+			lines.append("  %s - %s - %s" % [peer.name, state, rtt])
 	if absent_players != null:
 		lines += absent_players.describe()
 	if battle_host.is_in_battle():
@@ -265,10 +246,6 @@ func leave_question() -> String:
 	return what + " You leave the host's run; your own saved run is kept."
 
 
-# --- the page, wherever it can be shown ---
-
-
-# The page that is on screen, or null.
 func open_page() -> Control:
 	if _popup.is_open():
 		return _popup.page
@@ -277,8 +254,7 @@ func open_page() -> Control:
 	return null
 
 
-# Shows the page: in the scene's menu (the pause menu opens for it) or, without one, as the
-# popup. Returns it.
+# In the scene's menu (the pause menu opens for it) or, without one, as the popup.
 func open() -> Control:
 	if open_page() != null:
 		return open_page()
@@ -333,9 +309,6 @@ func _on_popup_open_changed(is_open: bool) -> void:
 	emit_signal("open_changed", is_open)
 
 
-# --- the game's menus ---
-
-
 func _enter_scene(scene: Node, previous_file: String) -> void:
 	if scene.filename == MenuData.title_screen_scene:
 		var main_menu = scene.get("_main_menu")
@@ -361,8 +334,6 @@ func _enter_scene(scene: Node, previous_file: String) -> void:
 				listed.append(_page.entry_button)
 
 
-# The page into a Menus, and below `neighbour` on its main page a button that opens it the way
-# the Options button does.
 func _add_page(menus: Node, neighbour) -> Control:
 	var button := _add_entry(neighbour)
 	if button == null:
@@ -379,7 +350,6 @@ func _add_page(menus: Node, neighbour) -> Control:
 	return page
 
 
-# A button like `neighbour` below it: one more of the game's menu buttons.
 func _add_entry(neighbour) -> Button:
 	if not (neighbour is Button):
 		return null
@@ -406,9 +376,6 @@ func _on_page_back(page: Control) -> void:
 	page.menus.switch(page, page.menus._main_menu)
 	if page.entry_button.is_visible_in_tree():
 		page.entry_button.grab_focus()
-
-
-# --- errors and invites ---
 
 
 func _on_lobby_ready(_lobby_id: int, _is_host: bool) -> void:
@@ -446,7 +413,6 @@ func _show_notice() -> void:
 	_notice = ""
 
 
-# Steam invite accepted while in a lobby: join right away unless that would end a run here.
 func _on_join_invite(_lobby_id: int) -> void:
 	if not is_mid_run():
 		transport.accept_pending_join()

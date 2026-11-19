@@ -1,23 +1,7 @@
 extends Node
-# What a run with the host earns counts for every player's own save, like in local co-op, where
-# one profile gets whatever any player achieves. Until protocol 20 a client earned nothing: its
-# copy of the game decides nothing, and its save is closed while it mirrors.
-#
-# Host -> clients, PROGRESS (reliable, at most once a second): {challenges, stats, won}.
-# - challenges: ids the host's game found reached just now (ChallengeService extension: every
-#   try_complete_challenge whose value is there, every complete_challenge), each once per
-#   session, also when the host completed it long ago.
-# - stats: how often the host's lifetime counters went up (ProgressData.increment_stat: enemies
-#   killed, materials collected, trees, ...). Each client adds them to its own counters; the
-#   challenges that hang on a lifetime counter (LIFETIME_*) are never sent, each client reaches
-#   them with its own count.
-# - won: the run was won. The client runs the game's own RunData.apply_run_won on its mirrored
-#   run: the characters' challenges and the danger levels, as local co-op gives them.
-# The client completes a challenge with the game's own code (popup, platform achievement, the
-# reward) under Puppet.own_progress, and its save is written with its own values
-# (ProgressData.bt_save_own). A reward behind a DLC the client only has from the host is kept
-# unlocked in its save; without the DLC the game does not offer it.
-# Not yet: the species lists (trophy hunter, clever girl, egg hunt) and the codex's kill counts.
+# What a run with the host earns counts for every player's own save, as in local co-op: the host
+# sends PROGRESS, the client completes challenges with the game's own code (Puppet.own_progress).
+# Not shared: the species lists (trophy hunter, clever girl, egg hunt), the codex's kill counts.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -51,7 +35,7 @@ const HOST_ONLY := ["chal_hourglass", "chal_trophy_hunter", "chal_clever_girl", 
 const WON := "run_won"
 
 var session: Node = null
-var last_sent := {}  # host: the last PROGRESS body (tests)
+var last_sent := {}  # host: the last PROGRESS body
 var test_sharing := false  # tests: a host with a ready peer, without a session
 
 var _sent := {}  # host: challenge ids sent in this session
@@ -83,9 +67,6 @@ func _process(delta: float) -> void:
 		_unsaved += delta
 		if _unsaved >= SAVE_SEC:
 			_save()
-
-
-# --- host ---
 
 
 func sharing() -> bool:
@@ -160,9 +141,6 @@ func _on_lobby_left() -> void:
 		_save()
 
 
-# --- client ---
-
-
 func _on_message(steam_id: int, msg_type: int, body) -> void:
 	if msg_type != Protocol.Msg.PROGRESS or not session.is_client():
 		return
@@ -170,7 +148,6 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 		client_apply(body)
 
 
-# Returns how many challenges it completed.
 func client_apply(body) -> int:
 	if typeof(body) != TYPE_DICTIONARY:
 		return 0
@@ -184,7 +161,6 @@ func client_apply(body) -> int:
 				ChallengeService.complete_challenge(id)
 	for key in counted:
 		_check_lifetime(key)
-	# The game's own end of a won run, on the run this client mirrors.
 	if body.get("won") == true and Puppet.is_active() and RunData.get_player_count() > 0:
 		RunData.apply_run_won()
 	Puppet.set_own_progress(false)
@@ -198,7 +174,6 @@ func client_apply(body) -> int:
 	return completed
 
 
-# Adds the host's counts to this client's own counters; returns the counters that moved.
 func _add_stats(stats) -> Array:
 	var counted := []
 	if typeof(stats) != TYPE_DICTIONARY:
@@ -214,7 +189,6 @@ func _add_stats(stats) -> Array:
 	return counted
 
 
-# The challenges that hang on this counter, against this client's own count.
 func _check_lifetime(key: String) -> void:
 	var count: int = int(Puppet.own_data().get(key, 0))
 	if LIFETIME_IDS.has(key):

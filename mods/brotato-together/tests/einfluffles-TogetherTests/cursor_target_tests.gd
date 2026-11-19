@@ -1,11 +1,7 @@
 extends Reference
 # Cursors by meaning (ui/focus_targets.gd): a target described on one tree resolves to the same
-# control on a tree that has extra nodes another mod added on one side only, and the other way
-# round. The two machines are simulated on one tree: described, extras inserted (or removed),
-# resolved. Extras: a node at index 0 of the root (shifts every child index of the old paths),
-# a Damage-Meter-like button right before the given sibling (the shop's reroll button) and a
-# button right before every named target. Called from the suites that have the screens; checks
-# go through t._check.
+# control on a tree with extra nodes another mod added on one side only, and the other way round.
+# The two machines are simulated on one tree: described, extras inserted (or removed), resolved.
 
 const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
@@ -89,7 +85,6 @@ static func first_button(node: Node) -> Node:
 	return null
 
 
-# Junk from the network is null, never an error.
 static func check_junk(t: Node, root: Node) -> void:
 	var junk := [
 		null,

@@ -1,11 +1,10 @@
 extends Reference
-# A cursor's control named by what it is, not by where it sits in the tree, so a node another
-# mod adds on one machine only (Damage Meter's summary button next to the shop's reroll button)
-# moves no cursor on the other. Used for the cursors section, SHOP_FOCUS and UPGRADE_FOCUS.
+# A cursor's control named by what it is, not by its place in the tree, so a node another mod
+# adds on one machine only moves no cursor on the other.
 #
 # Target (wire format): [anchor, player, index, steps]
-#   anchor  one of ANCHORS: a control the game hands out per player through its own accessors
-#           (BaseShop._get_reroll_button(p), UpgradesUI._get_player_container(p), ...), or
+#   anchor  one of SHOP_ANCHORS / UPGRADE_ANCHORS: a control the game hands out per player
+#           through its own accessors (BaseShop._get_reroll_button(p), ...), or
 #           "scene": the root the target is relative to (player and index -1).
 #   index   the element of a list both machines build from the same run state: the slot in
 #           ShopItemsContainer._shop_items ("shop_item"), the option in
@@ -16,9 +15,8 @@ extends Reference
 #           without an owner that have the same script (else class), not counting nodes queued
 #           for deletion. That covers inventory elements (the n-th weapon / item of a gear
 #           list); an extra like-typed node added by code into such a list would still shift it.
-# The nearest anchor above the control is used, so the steps are short and only run through
-# named nodes or mirrored lists. A target that does not resolve on the receiver (a control only
-# one side has) resolves to null: cosmetic, the caller ignores it.
+# The nearest anchor above the control is used. A target that does not resolve on the receiver
+# is null: cosmetic, the caller ignores it.
 
 const SCENE := "scene"
 const INDEXED := ["shop_item", "up_option"]
@@ -35,9 +33,8 @@ const MAX_NAME := 128
 const MAX_TYPE := 256
 
 
-# The target of control below root, or [] when it is not below root. player >= 0: only that
-# player's anchors count and there is no "scene" fallback (a player's own panel reports only
-# what is inside it).
+# [] when control is not below root. player >= 0: only that player's anchors count and there
+# is no "scene" fallback (a player's own panel reports only what is inside it).
 static func describe(control: Node, root: Node, player := -1) -> Array:
 	if control == null or root == null or not is_instance_valid(control):
 		return []
@@ -58,8 +55,8 @@ static func describe(control: Node, root: Node, player := -1) -> Array:
 	return []
 
 
-# The node a target names below root, or null. Network data: anything malformed is null.
-# player >= 0: only that player's anchors (what the sender's own panel may name).
+# Network data: anything malformed is null. player >= 0: only that player's anchors (what the
+# sender's own panel may name).
 static func resolve(target, root: Node, player := -1) -> Node:
 	if root == null or not is_valid(target):
 		return null

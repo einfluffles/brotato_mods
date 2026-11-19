@@ -1,9 +1,7 @@
 extends Reference
-# Projectile angles (sync/facing.gd) and the meca / mutant look (sync/looks.gd), protocol 18:
-# the angles section of the wire format, the host's sparse sending, the client's resolve, then a
-# host battle with two enemy slashes (one turned away from its flight) and a meca and a mutant
-# enemy, replayed on a client. Part of the looks suite (looks_tests.gd); checks go through the
-# test mod's _check.
+# Projectile angles (sync/facing.gd) and the meca / mutant look (sync/looks.gd): the angles section
+# of the wire format, the host's sparse sending, the client's resolve, then a host battle replayed
+# on a client. Part of the looks suite (looks_tests.gd).
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Facing := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/facing.gd")
@@ -61,7 +59,7 @@ func _test_host_sparse() -> void:
 	var sent := []
 	for count in 40:
 		if count == 20:
-			shot.rotation = -1.2  # a bounce
+			shot.rotation = -1.2
 		facing.capture(shot, 7, 3, count)
 		var section: Dictionary = facing.end_snapshot()
 		if not section.empty():
@@ -114,9 +112,6 @@ func _view(t: int, ids: Array, angles: Dictionary) -> Dictionary:
 	return {"t": t, "ids": PoolIntArray(ids), "index": index, "angles": angles}
 
 
-# --- battle ---
-
-
 func _test_battle(together: Node):
 	var host: Node = together.battle_host
 	var client: Node = together.battle_client
@@ -141,7 +136,6 @@ func _test_battle(together: Node):
 			for name in nodes:
 				ids[name] = nodes[name].get_meta(host.NET_ID_META)
 	var host_values := _host_values(nodes)
-	# 3 times after it appears, then only its refresh (every 15th snapshot, staggered by id).
 	var carried := []
 	for i in recorded.size():
 		if Snapshot.parse(recorded[i][1]).angles.has(ids.slash):
@@ -187,9 +181,8 @@ func _test_battle(together: Node):
 	host.set_process(true)
 
 
-# Two slashes at the mad slasher's speed, where a puppet's angle from rounded positions swung by
-# several degrees: one flying where it points, one the game did not turn into its flight. A meca
-# and a mutant enemy, evolved by the game's own behaviors. Far from the players, weapons off.
+# Two slashes at the mad slasher's speed (one flying where it points, one the game did not turn
+# into its flight), a meca and a mutant enemy. Far from the players, weapons off.
 func _spawn(main: Node) -> Dictionary:
 	for player in main.get("_players"):
 		player._weapons_container.propagate_call("set_physics_process", [false])

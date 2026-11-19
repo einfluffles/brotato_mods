@@ -2,16 +2,6 @@ extends Reference
 # Session lifecycle without Steam: a fake GodotSteam object stands in for the transport.
 # Synchronous on purpose: no frame passes while the fake lobby is up, so the sync modules'
 # _process (which would act on the fake host/client role) never runs.
-#  - leaving as a client restores the client's own saved run / stats (session/puppet.gd)
-#  - host leaving mid-run keeps the co-op slots; pre-run it frees them; the lobby page's leave
-#    confirmation; Steam invite while mid-run waits for confirmation
-#  - HELLO resend until WELCOME, duplicate HELLO -> WELCOME again + resync, failed reliable
-#    send -> resync, member join accepts the session
-#  - join compatibility (game / mod version; DLC never rejects) with the reason shown on the client
-#  - the ping is the network's round trip: not the frames either game let the messages wait
-#  - sessions are relayed by default (Steam's direct route off), +bt_direct opts out, +bt_relay is
-#    still accepted; a direct path while relay-only is on gets one warning per connection
-#  - Steam's send rate is raised to 512 KB/s (min and max), Steam's default when refused
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
@@ -28,9 +18,9 @@ const RESULT_NO_CONNECTION := 3
 const STALL_MSEC := 60  # a frame that takes this long (a scene load takes several of these)
 const TIMER_SLACK_MSEC := 40
 
-var _t: Node = null  # test runner: _check()
+var _t: Node = null
 var _together: Node = null
-var _steam = null  # FakeSteam
+var _steam = null
 var _peer_ready_count := 0
 
 
@@ -214,8 +204,8 @@ func _enter_lobby(transport: Node, host_id: int, members: Array) -> void:
 	_together.session._on_lobby_ready(LOBBY, host_id == LOCAL)
 
 
-# Finding: the shop resume path put the host's run into ProgressData.saved_run_state and nothing
-# put the client's own back, so "Continue" (and the next save) used the host's run.
+# The shop resume path put the host's run into ProgressData.saved_run_state and nothing put the
+# client's own back, so "Continue" (and the next save) used the host's run.
 func _test_client_leave_restores_own_run(transport: Node) -> void:
 	var own := {"has_run_state": true, "marker": "own"}
 	ProgressData.saved_run_state = own.duplicate()
@@ -242,7 +232,7 @@ func _test_client_leave_restores_own_run(transport: Node) -> void:
 	_t._check(CoopService.connected_players.empty(), "client puppet slots cleared")
 
 
-# Finding: lobby_left cleared every co-op slot even on the host, destroying a running run.
+# lobby_left cleared every co-op slot even on the host, destroying a running run.
 func _test_host_leave(transport: Node, input_sync: Node) -> void:
 	var device := VirtualDevices.FIRST + 1
 	for listening in [false, true]:
@@ -290,7 +280,6 @@ func _test_leave_confirmation(transport: Node) -> void:
 	_t._check(not transport.is_active(), "confirming leaves")
 	close_page(lobby)
 
-	# Steam invite while mid-run: nothing happens until the player confirms.
 	_enter_lobby(transport, HOST, [HOST])
 	Puppet.set_active(true)
 	_steam.joined.clear()
@@ -306,14 +295,13 @@ func _test_leave_confirmation(transport: Node) -> void:
 	_t._check(not Puppet.is_active(), "joining elsewhere ends puppet mode")
 	close_page(lobby)
 
-	# Outside a run an invite is taken right away (as before).
 	_enter_lobby(transport, LOCAL, [])
 	_steam.joined.clear()
 	transport._on_join_requested(556, 9)
 	_t._check(_steam.joined == [556], "invite outside a run joins directly")
 
 
-# Finding: HELLO was sent once; a lost one left the client "connecting" forever.
+# A lost HELLO left the client "connecting" forever: it is resent until WELCOME.
 func _test_client_handshake(transport: Node, session: Node) -> void:
 	_together._client_active = true  # no client view scene switch on peer_ready
 	_enter_lobby(transport, HOST, [HOST])
@@ -338,7 +326,6 @@ func _test_client_handshake(transport: Node, session: Node) -> void:
 	_t._check(_count_sent(Protocol.Msg.HELLO) == 2, "no HELLO after WELCOME")
 	_together._client_active = false  # else leaving would switch to the title screen
 
-	# Rejected: the client leaves, the reason is kept for the lobby page and the status lines.
 	var lobby: Node = _together.get_node("LobbyMenu")
 	_enter_lobby(transport, HOST, [HOST])
 	session._on_peer_joined(HOST)
@@ -405,8 +392,8 @@ func _test_host_handshake(transport: Node, session: Node, input_sync: Node) -> v
 	input_sync.devices.erase(CLIENT)
 
 
-# Finding: the ping was the time until the PONG was handled. Messages are read once a frame, so
-# a frame that stalled on either side (a scene load, a big run state) showed as ping.
+# Messages are read once a frame, so a frame that stalled on either side (a scene load, a big run
+# state) showed as ping: the ping is the network's round trip only.
 func _test_ping(transport: Node, session: Node) -> void:
 	_enter_lobby(transport, LOCAL, [CLIENT])
 	var peer: Dictionary = session._add_peer(CLIENT)
@@ -436,7 +423,7 @@ func _test_ping(transport: Node, session: Node) -> void:
 		peer.answer_ms >= 2 * STALL_MSEC and peer.rtt_ms >= 0 and peer.rtt_ms < TIMER_SLACK_MSEC,
 		"stalled frames are not ping (%d ms, %d ms with them)" % [peer.rtt_ms, peer.answer_ms]
 	)
-	# No receive time and no "held" (what the ping was before): the stalls are all in it.
+	# No receive time and no "held": the stalls are all in it.
 	_ask(session)
 	ping = _last_body(Protocol.Msg.PING)
 	OS.delay_msec(STALL_MSEC)
@@ -450,7 +437,6 @@ func _test_ping(transport: Node, session: Node) -> void:
 	)
 	_t._check(_steam.inbox.empty(), "every queued message was read")
 	_t._check(session.slow_answers == logged, "answers under the limit are not logged")
-	# A late answer is logged with where its time went and what Steam says about the connection.
 	_ask(session)
 	ping = _last_body(Protocol.Msg.PING)
 	var late := {"t": ping.get("t") - session.SLOW_ANSWER_MSEC, "held": 100}
@@ -544,9 +530,8 @@ func _test_join_presence(transport: Node) -> void:
 	_t._check(not _steam.presence.has("connect") and transport.join_presence == "", "left: Join off")
 
 
-# Sessions go through Steam's relays only (its direct (ICE) route off) unless +bt_direct is given;
-# +bt_relay, the old opt-in, still works. Steam refusing the setting, or a GodotSteam without it,
-# is never claimed as relay-only.
+# Sessions go through Steam's relays only (its direct (ICE) route off) unless +bt_direct is given.
+# Steam refusing the setting, or a GodotSteam without it, is never claimed as relay-only.
 func _test_relay_route(transport: Node) -> void:
 	var saved_watch = transport.link_watch
 	transport.link_watch = LinkWatch.new()
@@ -616,8 +601,7 @@ func _test_relay_route(transport: Node) -> void:
 
 
 # Steam's send rate goes from its default 256 KB/s to 512 KB/s: SendRateMin (10) and SendRateMax
-# (11) both, since Steam paces at the min for any real ping. Refused or not available: Steam's
-# default, said so, nothing claimed. The route's own setting is not touched.
+# (11) both, since Steam paces at the min for any real ping.
 func _test_send_rate(transport: Node) -> void:
 	var saved_rate: int = transport.send_rate
 	var saved_watch = transport.link_watch

@@ -19,7 +19,7 @@ static func counter(packed: int, i: int) -> int:
 	return (packed >> (BITS * i)) & MASK
 
 
-# Presses between two packed counter values (wraps at 16; more than 15 lost presses collapse).
+# Wraps at 16: more than 15 lost presses collapse.
 static func presses_between(old: int, new: int, i: int) -> int:
 	return (counter(new, i) - counter(old, i)) & MASK
 

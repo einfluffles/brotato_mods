@@ -1,10 +1,7 @@
 extends CanvasLayer
-# The lobby page (ui/lobby_page.gd) as a popup over the screen, for where no game menu can hold
-# it: a client on a screen without a pause menu (ui/lobby_menu.gd opens it on pause).
-# Co-op screens have FocusEmulators that mark every foreign event as handled, so while it is open
-# ui/menu_input_guard.gd takes every key/pad and mouse event away from the game and hands it to
-# handle_panel_input() / handle_panel_mouse(). The cursor is kept visible (the game hides it in
-# co-op). The buttons hold the Godot focus meanwhile; the screen gets its own back on close.
+# The lobby page as a popup over the screen, where no game menu can hold it: a client on a
+# screen without a pause menu. While open, ui/menu_input_guard.gd takes every key, pad and mouse
+# event away from the game and hands it to handle_panel_input() / handle_panel_mouse().
 
 signal open_changed(is_open)
 
@@ -72,8 +69,6 @@ func _process(_delta: float) -> void:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 
-# The mouse while open (from MenuInputGuard): pointing takes the cursor, as on the game's menu
-# buttons; a left click that starts and ends on a button presses it.
 func handle_panel_mouse(event: InputEvent) -> void:
 	var button: Button = page.button_at(event.position)
 	if event is InputEventMouseMotion:
@@ -86,7 +81,6 @@ func handle_panel_mouse(event: InputEvent) -> void:
 			page.press(button)
 
 
-# Keyboard / gamepad while open (from MenuInputGuard).
 func handle_panel_input(event: InputEvent) -> void:
 	if event is InputEventKey:
 		if not event.pressed:

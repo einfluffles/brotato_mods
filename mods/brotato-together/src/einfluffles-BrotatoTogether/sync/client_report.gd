@@ -1,24 +1,7 @@
 extends Node
-# Clients report how their game runs into the host's log (CLIENT_REPORT, protocol 24): after a
-# session only the host's modloader.log is at hand, and it sees a client's frame only through one
-# PING a second. Reliable, numbers only. A ready client measures and sends:
-# - frames: per window of WINDOW_MSEC of unpaused frames in one scene, their count, average,
-#   worst and how many took SLOW_FRAME_MSEC or more; in a battle also what BattleClient._process
-#   took (the mirror, mirror_cost) and the most entities it mirrored. Sent when the worst frame
-#   took SLOW_FRAME_MSEC or more, else once every BASELINE_MSEC.
-# - scene changes: the longest frame within STALL_WATCH_MSEC of a change of current_scene (the
-#   frame before the change counts too: a scene loaded before this node's _process ran), with
-#   the mod's share of that frame from timing marks (mark(): RunStateCodec's parse, deserialize
-#   and apply, BattleClient's puppet setup).
-# - corrections of the own player's prediction longer than one step (BattleClient._predict_own):
-#   per window their count and the largest one with the snapshot's age, the inputs not acked yet
-#   and the player's speed.
-# Frame times are taken between two calls of this node's _process, which runs first in every
-# frame (PROCESS_PRIORITY): an interval holds all of a frame, the deferred scene change included.
-# The host checks every value's type, clamps it and logs one line per part. The Mod Loader keeps
-# every log line in memory, so both ends budget them: a client sends at most
-# WINDOW_LINES_PER_MINUTE window lines (a window waiting for room grows meanwhile) and
-# SCENE_LINES_PER_MINUTE scene lines, the host logs at most MAX_LINES_PER_MINUTE per client.
+# Clients report how their game runs into the host's log (CLIENT_REPORT): after a session only
+# the host's modloader.log is at hand. A ready client sends frame-time windows, the stall after a
+# scene change with the mod's share of it, and corrections of the own player's prediction.
 
 # Timing marks, in the order of a report's "marks" (MARK_NAMES).
 enum Mark { PARSE, DESERIALIZE, APPLY, PUPPET_SETUP }
@@ -26,12 +9,15 @@ enum Mark { PARSE, DESERIALIZE, APPLY, PUPPET_SETUP }
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:ClientReport"
 const META_NODE := "brotato_together_client_report"
+# First in every frame: the time between two _process calls then holds a whole frame, the
+# deferred scene change included.
 const PROCESS_PRIORITY := -1000
 const WINDOW_MSEC := 10000
 const BASELINE_MSEC := 60000
 const SLOW_FRAME_MSEC := 50.0
 const STALL_WATCH_MSEC := 3000
 const MINUTE_MSEC := 60000
+# The Mod Loader keeps every log line in memory, so both ends budget them.
 const WINDOW_LINES_PER_MINUTE := 6
 const SCENE_LINES_PER_MINUTE := 2
 const MAX_LINES_PER_MINUTE := 8
@@ -60,11 +46,11 @@ const MAX_PX := 100000.0
 
 var session: Node = null
 var active := false  # a ready client: nothing is measured otherwise
-var test_client := false  # tests: measure and keep what would be sent, without a session
-var sent := []  # tests (test_client): the bodies sent
-var window_msec := WINDOW_MSEC  # tests shorten these
+var test_client := false  # measure and keep what would be sent, without a session
+var sent := []  # the bodies kept while test_client
+var window_msec := WINDOW_MSEC
 var baseline_msec := BASELINE_MSEC
-# Host: what was logged (tests), and per peer the times of the lines of the last minute.
+# Host: what was logged.
 var lines_logged := 0
 var lines_dropped := 0
 var last_lines := []
@@ -94,6 +80,7 @@ func _ready() -> void:
 
 
 func _enter_tree() -> void:
+	# The static reporters find this node through the meta: RunStateCodec has no node.
 	Engine.set_meta(META_NODE, self)
 
 
@@ -102,17 +89,12 @@ func _exit_tree() -> void:
 		Engine.remove_meta(META_NODE)
 
 
-# --- what the mod's code reports (static: RunStateCodec has no node) ---
-
-
-# usec the mod spent on one of Mark in this frame.
 static func mark(label: int, usec: int) -> void:
 	var report = _active_report()
 	if report != null and label >= 0 and label < report._marks.size():
 		report._marks[label] += usec
 
 
-# BattleClient._process: what mirroring the host's battle took this frame.
 static func mirror_cost(usec: int, entities: int) -> void:
 	var report = _active_report()
 	if report == null or report._window.empty():
@@ -124,10 +106,8 @@ static func mirror_cost(usec: int, entities: int) -> void:
 	window.entities = max(window.entities, entities)
 
 
-# BattleClient._predict_own, on a new snapshot: px between where the own player was shown and
-# where the host's position puts it now. Counted when longer than one step at speed (px/s).
-# late_msec: how much later the snapshot came than the fastest one so far (BattleClient's clock
-# offset); its age is that plus half the round trip.
+# px: from where the own player was shown to where the host's position puts it now. late_msec:
+# how much later the snapshot came than the fastest so far (its age: plus half the round trip).
 static func note_correction(px: float, late_msec: float, unacked: int, speed: float) -> void:
 	var report = _active_report()
 	if report == null or report._window.empty():
@@ -143,7 +123,7 @@ static func note_correction(px: float, late_msec: float, unacked: int, speed: fl
 		window.speed = speed
 
 
-# The own inputs in history ([seq, move] each) the host has not acked yet.
+# history: [seq, move] each.
 static func unacked(history: Array, ack: int) -> int:
 	var count := 0
 	for k in range(history.size() - 1, -1, -1):
@@ -162,9 +142,6 @@ static func _active_report():
 	return report
 
 
-# --- client ---
-
-
 func _process(_delta: float) -> void:
 	var now_usec := OS.get_ticks_usec()
 	var previous := _last_usec
@@ -181,7 +158,6 @@ func _process(_delta: float) -> void:
 	step(now_usec - previous, tree.current_scene, tree.paused, OS.get_ticks_msec())
 
 
-# One frame of frame_usec that ended now, current_scene at its end.
 func step(frame_usec: int, scene: Node, paused: bool, now_msec: int) -> void:
 	var frame_marks := _marks
 	_marks = _no_marks()
@@ -198,6 +174,7 @@ func step(frame_usec: int, scene: Node, paused: bool, now_msec: int) -> void:
 			_last_window_sent_msec = now_msec
 		else:
 			_stall = {"scene": _window.scene, "until": now_msec + STALL_WATCH_MSEC}
+			# The frame before counts too: the scene may have loaded before this _process ran.
 			_stall.frame = previous[0]
 			_stall.marks = previous[1]
 	if not _stall.empty():
@@ -228,7 +205,6 @@ static func scene_index(scene: Node) -> int:
 	return index if index > 0 else 0
 
 
-# Half the round trip to the host (0 unknown): how long a snapshot was on its way at the least.
 func half_rtt_msec() -> float:
 	if session == null or session.transport == null:
 		return 0.0
@@ -248,7 +224,6 @@ func _window_due(now_msec: int) -> void:
 	# else: no room this minute; the window goes on and is sent once there is
 
 
-# The window of the scene left: its frames so far, if they are worth a line now.
 func _flush_window(now_msec: int) -> void:
 	if _window.empty() or _window.frames == 0:
 		return
@@ -354,9 +329,6 @@ static func _take_lines(times: Array, limit: int, lines: int, now_msec: int) -> 
 	return true
 
 
-# --- host ---
-
-
 func _on_message(steam_id: int, msg_type: int, body) -> void:
 	if msg_type == Protocol.Msg.CLIENT_REPORT:
 		host_receive(steam_id, body, OS.get_ticks_msec())
@@ -389,7 +361,6 @@ func host_receive(steam_id: int, body, now_msec: int) -> void:
 		ModLoaderLog.info(line, LOG_NAME)
 
 
-# The log lines of a report from the client called client_name; [] when it is malformed.
 static func report_lines(client_name: String, body) -> Array:
 	if typeof(body) != TYPE_DICTIONARY:
 		return []
@@ -463,7 +434,6 @@ static func _frame_lines_of(client_name: String, where: String, body: Dictionary
 	return lines
 
 
-# body[key] clamped to lo..hi, null when it is not a number.
 static func _number(body: Dictionary, key: String, lo: float, hi: float):
 	var value = body.get(key)
 	if typeof(value) != TYPE_INT and typeof(value) != TYPE_REAL:

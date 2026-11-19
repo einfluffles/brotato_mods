@@ -2,7 +2,7 @@
 	"name": "BrotatoTogether",
 	"namespace": "einfluffles",
 	"version_number": "0.2.1",
-	"description": "brotato:together — online co-op over Steam P2P (host-authoritative, built on local co-op).",
+	"description": "brotato:together - online co-op over Steam P2P (host-authoritative, built on local co-op).",
 	"website_url": "",
 	"dependencies": [],
 	"extra": {

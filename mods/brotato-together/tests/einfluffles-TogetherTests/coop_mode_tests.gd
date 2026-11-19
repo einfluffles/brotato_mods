@@ -1,17 +1,7 @@
 extends Reference
-# Character selection with the lobby (ui/coop_mode.gd, ui/slot_invite.gd), run by
-# lobby_menu_tests.gd with its fake Steam and its key / pad / action / mouse helpers:
-#  - the Co-op row (Off / Local / Online) in the place of the game's Co-op toggle; Online off
-#    without Steam; reached like the toggle (keyboard, pad, the grid's way up);
-#  - the values: Off = solo, Local = the game's co-op, Online = co-op and a lobby; leaving Online
-#    leaves the lobby; chosen with keys in Godot's popup and with player 1's FocusEmulator;
-#  - Invite friends and the status in the next free player slot while hosting, reached by player 1
-#    left from the Co-op row, opening Steam's invite dialog; players 2 to 4 never reach it;
-#  - a mouse over Invite friends and away again leaves it as it was (no stuck hover / focus look);
-#  - the Co-op and zone popups keep the zone theme's look when opened, hovered, picked from with
-#    the mouse in co-op and reopened, and player 1's cursor stays on the dropdown;
-#  - a remote player holding slot 1 changes nothing; a client's copy shows Online, inert.
-# The layout (vanilla rects, nothing over the slot's texts): online_layout_tests.gd.
+# Character selection with the lobby (ui/coop_mode.gd, ui/slot_invite.gd): the Co-op row (Off /
+# Local / Online) and Invite friends. Run by lobby_menu_tests.gd with its fake Steam and its
+# input helpers.
 
 const CoopMode := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_mode.gd")
 const SlotInvite := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/slot_invite.gd")
@@ -64,7 +54,6 @@ func run(suite):
 		"selection: the grid's way up leads to the Co-op row"
 	)
 
-	# Solo: Godot's focus, keyboard and pad, as the toggle.
 	var above: Control = _row_above(coop)
 	above.grab_focus()
 	yield(s._tap_key(KEY_DOWN), "completed")
@@ -73,7 +62,6 @@ func run(suite):
 	t._check(scene.get_focus_owner() == above, "selection: and up again")
 	yield(s._tap_pad(JOY_DPAD_DOWN), "completed")
 	t._check(scene.get_focus_owner() == mode, "selection: pad down reaches Co-op too")
-	# Keys in Godot's popup: Local.
 	yield(s._tap_key(KEY_ENTER), "completed")
 	t._check(mode.get_popup().visible, "selection: accept opens the values")
 	yield(s._tap_key(KEY_DOWN), "completed")
@@ -108,15 +96,12 @@ func run(suite):
 		% [invite.status.text, _shown(panels)]
 	)
 
-	# Co-op: player 1's FocusEmulator. The next free slot is now the second.
 	CoopService._add_player(KEYBOARD, CoopService.PlayerType.KEYBOARD_AND_MOUSE)
 	yield(s._frames(2), "completed")
 	invite = panels[1].get_node(SlotInvite.NODE_NAME)
 	t._check(_shown(panels) == [1], "selection: a player joined: the invite moves on a slot")
 	var emulator = Utils.get_focus_emulator(0, scene)
-	# The popups: the zone dropdown theme's look (a fresh PopupMenu under the zone dropdown) on first
-	# opening, with the mouse over a row, after a mouse pick (Godot then focuses the popup and
-	# player 1's FocusEmulator took it) and reopened; the cursor stays on the dropdown.
+	# The popups keep the zone dropdown theme's look (a fresh PopupMenu under the zone dropdown).
 	var fresh := PopupMenu.new()
 	zone.add_child(fresh)
 	var theme_look := _popup_look(fresh)
@@ -157,8 +142,7 @@ func run(suite):
 	)
 	s.session.peers.clear()
 
-	# The mouse over Invite friends and away: its normal look again, no focus left on it (after
-	# the 0.05 s a MyMenuButton stays off after a press).
+	# A MyMenuButton stays off for 0.05 s after a press.
 	yield(s._wait(PRESS_DELAY_SEC), "completed")
 	emulator.focused_control = mode
 	yield(s._frames(1), "completed")
@@ -175,7 +159,6 @@ func run(suite):
 		% [hovered, invite.button.get_draw_mode(), invite.button.has_focus()]
 	)
 
-	# Player 1's FocusEmulator in the values: Online -> Local leaves the lobby, co-op stays.
 	emulator.focused_control = mode
 	yield(s._tap_action("ui_accept", KEYBOARD), "completed")
 	yield(s._tap_action("ui_up", KEYBOARD), "completed")
@@ -186,7 +169,6 @@ func run(suite):
 		"selection: player 1 picks Local: the lobby is left, co-op stays, no invite"
 	)
 
-	# A remote player who holds player 1's slot does not switch the host's lobby.
 	yield(_choose(mode, CoopMode.Mode.ONLINE), "completed")
 	s.transport._on_lobby_created(s.transport.RESULT_OK, LOBBY)
 	yield(s._frames(2), "completed")
@@ -206,7 +188,6 @@ func run(suite):
 		"selection: Online -> Off leaves the lobby, solo"
 	)
 
-	# A client's copy of the screen: the host's value, inert, no invite.
 	RunData.play_mode = RunData.PlayMode.COOP
 	coop.pressed = true
 	s._enter_lobby(HOST, [HOST])

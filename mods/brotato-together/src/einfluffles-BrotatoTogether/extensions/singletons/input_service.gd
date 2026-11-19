@@ -1,10 +1,8 @@
 extends "res://singletons/input_service.gd"
-# Re-register virtual device actions every time the game rebuilds its per-device InputMap.
-# Remote players get the game's menu echo on the host (sync/remote_buttons.gd), following the
-# game's own on/off switch. On a client (one local player whose input goes to the host) the local
-# co-op handling would get in the way: track pad vs. mouse use like solo play, show the mouse
-# when it moves, and don't emulate local ui_* echo actions (they'd stay pressed: the client
-# sends held buttons and the host repeats them itself).
+# Virtual device actions are registered again whenever the game rebuilds its per-device InputMap.
+# On a client (one local player whose input goes to the host) the local co-op handling would get
+# in the way: pad vs. mouse use is tracked as in solo play, and no local ui_* echo is emulated
+# (it would stay pressed: the client sends held buttons and the host repeats them itself).
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"

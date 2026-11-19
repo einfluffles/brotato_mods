@@ -1,25 +1,18 @@
 extends Reference
-# The shop's weapons row (ui/shop_gear.gd, extensions/ui/coop_shop.gd and shop.gd).
-# entry(): the Anvil's upgrade at shop entry, in the co-op and the solo shop: the run changes as
-#   the game's combine changes it, and no inventory element is made (and freed again by the
-#   rows' set_weapons_data) before the rows are filled; then a local purchase of the Cybernetic
-#   Arm (+1 weapon slot) shows in the "WEAPONS (n/m)" label at once. Part of the shop loopback
-#   suite (after its own checks; it leaves a solo shop behind).
-# host() / client() / client_anvil(): online, in the local shop suite (s below: its shop,
-#   helpers and checks). Host: a remote player's Arm, then a weapon into the new slot right
-#   away, the label of the host's copy of that panel. Client: the label as the host's state
-#   rebuilds it, and the host's Anvil is not applied a second time in the client's copy.
+# The shop's weapons row (ui/shop_gear.gd, extensions/ui/coop_shop.gd and shop.gd): the Anvil's
+# upgrade at shop entry and the "WEAPONS (n/m)" label after a new weapon slot. entry() runs in the
+# shop loopback suite and leaves a solo shop behind; the rest runs in the local shop suite.
 
 const PISTOL := "weapon_pistol_1"
 const ARM := "item_cybernetic_arm"
-const REMOTE := 1  # the remote player's slot on the host (local shop suite)
+const REMOTE := 1
 const DMG := 321  # last wave's damage of the weapons the Anvil may upgrade
 
 var _t: Node = null
 var _added := {}  # instance id -> [element, its first inventory] as weakrefs, while a shop loads
 
 
-# The item from the BrotatoOnline bug report, as mod_main.coop_run finds it.
+# The Cybernetic Arm, as mod_main.coop_run finds it.
 static func arm_item(t: Node):
 	var arm = t._find_by_id(ItemService.items, ARM)
 	if arm == null:
@@ -29,9 +22,6 @@ static func arm_item(t: Node):
 
 static func label_of(shop: Node, p: int) -> String:
 	return shop._get_gear_container(p).weapons_container._label.text
-
-
-# --- shop entry, host or alone ---
 
 
 func entry(t: Node):
@@ -97,7 +87,6 @@ func _entry_shop(coop: bool):
 	anvil.clear()
 
 
-# The local player buys the Arm with the item's own buy button.
 func _buy_arm(shop: Node, what: String):
 	var slots: int = RunData.get_player_effect(Keys.weapon_slot_hash, 0)
 	var count: int = RunData.get_player_weapons(0).size()
@@ -136,9 +125,6 @@ func _dropped(shop: Node) -> int:
 		if element == null or element.is_queued_for_deletion() or element.get_parent() != parent:
 			dropped += 1
 	return dropped
-
-
-# --- online (local shop suite) ---
 
 
 # Host, after the remote player's other decisions: without the Arm its slots are full and a
@@ -194,8 +180,6 @@ func host(s):
 	yield(s._buy_delay(), "completed")
 
 
-# Client, once its copy shows the host's state after host(): that panel's gear was rebuilt
-# from the host's run, the label with it.
 func client(s, shop: Node) -> void:
 	var slots: int = RunData.get_player_effect(Keys.weapon_slot_hash, REMOTE)
 	var count: int = RunData.get_player_weapons(REMOTE).size()

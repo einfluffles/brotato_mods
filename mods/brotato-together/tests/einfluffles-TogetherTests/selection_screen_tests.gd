@@ -1,17 +1,7 @@
 extends Reference
 # Selection screens, one screen per machine (ui/shared_scroll.gd, sync/menu_puppet.gd,
-# ui/coop_selection.gd):
-#  - the character grid, which every cursor shares, scrolls after this machine's own players
-#    only: on the host its local players (not the remote ones' virtual devices), on a client its
-#    own player (the state's `you`), not the mirrored cursors; without a lobby after everybody;
-#  - "Player N" sits above the hold-to-join hint of an empty slot on the client's copy too;
-#  - a client's copy entered before anybody joined adds the first player only once the grid has
-#    the host's elements (no get_child(0) on an empty grid) and the player gets a cursor;
-#  - the wheel and the right stick scroll a player's own panel only, the panels follow each other
-#    (wheel_scroll_tests.gd);
-#  - weapon selection: a player holding ui_info (F / Y) on the host sees their character in their
-#    panel on the client's copy too, the weapon again on release, and stays selected.
-# Last in the selection suite: sets up its own scenes and leaves no run behind.
+# ui/coop_selection.gd): the grid scrolls after this machine's own players only. Last in the
+# selection suite: sets up its own scenes and leaves no run behind.
 
 const MenuSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/menu_sync.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -34,12 +24,12 @@ const WheelScrollTests := preload(
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
 const INFO := "ui_info"  # CoopShowCharacterHint.UI_ACTION
 
-var t: Node = null  # the test mod: _check()
-var _menus: Node = null  # MenuPuppet
+var t: Node = null
+var _menus: Node = null
 var _menu_sync: Node = null
 var _input_sync: Node = null
 var _scroll_sync: Node = null
-var _wheel = null  # WheelScrollTests, kept alive across its yields
+var _wheel = null  # kept alive across its yields
 # [players, elements the copy builds its grid from] at each connected_players_updated. Not the
 # grid itself: Godot 3 calls the handlers of a signal in no fixed order.
 var _updates := []
@@ -163,9 +153,6 @@ func _shorten_grid_box(scene: Node):
 	yield(_frames(2), "completed")
 
 
-# --- character selection ---
-
-
 func _host_characters():
 	var scene: Node = yield(_host_screen(MenuData.character_selection_scene, false), "completed")
 	if not CoopSelection.is_character_selection(scene):
@@ -173,9 +160,7 @@ func _host_characters():
 	yield(_shorten_grid_box(scene), "completed")
 	if not _scrollable(scene):
 		return {}
-	# Two remote players and nobody of this machine: the grid follows them (as before).
 	t._check(_scrolls(scene, 0), "scroll: host without own players follows the remote cursors")
-	# A local keyboard player joins: only its cursor scrolls this screen now.
 	CoopService._add_player(KEYBOARD, CoopService.PlayerType.KEYBOARD_AND_MOUSE)
 	yield(_frames(2), "completed")
 	t._check(
@@ -184,7 +169,6 @@ func _host_characters():
 	)
 	t._check(_scrolls(scene, 2), "scroll: the host's own player's cursor does")
 	yield(_wheel.host_selection(scene, _scroll_sync), "completed")
-	# Local co-op without a lobby: every player is on this screen, every cursor scrolls.
 	var online: Array = CoopService.connected_players.duplicate(true)
 	CoopService.connected_players = [
 		[0, CoopService.PlayerType.GAMEPAD_XBOX], [1, CoopService.PlayerType.GAMEPAD_XBOX]
@@ -215,7 +199,6 @@ func _client_characters(host: Dictionary):
 	)
 	t._check(_scrolls(scene, 1), "scroll: the client's own player's cursor does")
 	yield(_wheel.client_selection(scene, _input_sync, _scroll_sync), "completed")
-	# "Player N" of the empty slots 3 and 4 sits above the hold-to-join hint.
 	yield(_frames(2), "completed")
 	var apart := true
 	var shown := true
@@ -270,9 +253,6 @@ func _client_first_player(host: Dictionary):
 
 func _on_players_updated(players: Array) -> void:
 	_updates.append([players.size(), PuppetMenu.elements(0).size()])
-
-
-# --- weapon selection ---
 
 
 func _host_weapons():
@@ -348,7 +328,6 @@ func _client_weapons(host: Dictionary):
 		panels[1].item_data != null and panels[1].item_data.my_id == host.weapon,
 		"show character: released, the copy shows the focused weapon again"
 	)
-	# Another player (P1) holds it while selected: not shown as selected meanwhile, then again.
 	var other: Dictionary = host.held.duplicate(true)
 	other["character_shown"] = [true, false]
 	other["selected"] = [true, false]

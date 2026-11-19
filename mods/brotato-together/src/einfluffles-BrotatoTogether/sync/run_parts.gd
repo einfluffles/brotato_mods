@@ -1,6 +1,5 @@
 extends Reference
-# The run state in parts, so that a state stream body carries only the parts a client lacks
-# (sections shop and upgrades: sync/shop_sync.gd, sync/upgrades_sync.gd).
+# The run state in parts, so that a state stream body carries only the parts a client lacks.
 #
 # split(data) cuts RunStateCodec.serialize()'s dictionary into ordered parts:
 #   "c": the dictionary with players_data replaced by its size (shop items, locked items,
@@ -8,42 +7,12 @@ extends Reference
 #   per player p "g<p>": {weapons, items} (the big lists);
 #   per player p "p<p>": the rest of the player's dictionary (weapons and items kept as null, so
 #     that join puts them back at their place and the JSON text is the same).
-# join(parts) is the inverse. A part's id is [hash(part), length of its JSON text]: ids are
-# compared, never the content. (Different content with equal ids, 1 in 2^32 and the same length,
-# would keep a client on the old part until the next change, like RunCache's check before.)
+# A part's id is [hash(part), length of its JSON text]: ids are compared, never the content.
 #
 # Wire format (the body's "run"): {"ids": {key: id}, "parts": {key: {size, data}}}: every key of
 # the run with its id, and the zstd-compressed JSON of the parts the client does not have yet.
-# {} when the run is the one the client was last sent (no id differs): the ids of four players
-# are 350 of the 1100 bytes of a page flip. The client's store fills in the ids of the last run
-# it got, in place (ingest), so that every later reader of the body sees them.
-#
-# Sender (host, one for ShopSync and UpgradesSync, created by mod_main.gd): what each peer was
-# sent. The provider's state_body calls offer(its RunCache); state_patch calls run_for(peer),
-# which lists every id and includes only the parts whose id differs from what that peer was last
-# sent (or is {}, see above); the stream's state_sent hook calls commit(peer), which records that
-# offer as sent.
-# StateStream.message_for (tests) builds bodies without state_sent, so it records nothing.
-# forget(peer) makes the next send to the peer full: on peer_ready (every provider calls it from
-# its own handler; Godot 3 calls a signal's targets by object id, not in connection order, so it
-# is idempotent per idle frame: the second call of one emission must not drop a commit made in
-# between), on peer_removed and on lobby_left. Counters per screen (RunCache.label) for the log
-# line when the screen closes (summary).
-#
-# Store (client, one for both handlers, created by mod_main.gd): ingest(run) at receive (the
-# stream's accept_state hook: a body replaced while pending is never applied, so its parts must
-# be stored when it arrives; take() is ingest plus the resync below) keeps the compressed parts
-# by key and id, the last two of each key, and returns false when an id is neither stored nor
-# delivered (the handler then asks the host for a full resync and applies nothing). ids_for(run)
-# is the ids at apply time (it ingests a body that did not come through the stream: tests).
-# Every body of both sections reaches the store in the order the host sent them (one reliable
-# channel), so its last ids are the sender's record of the peer. state_for(ids) builds the run
-# state: it decompresses and parses only parts it has not parsed yet, runs the game's
-# deserializer (ProgressDataLoaderV3.deserialize_run_state) on a copy of "c" whose players_data
-# holds only the players whose parts changed since the last state_for, and puts the
-# PlayerRunData objects of that last state back for the others. changed_players() and
-# gear_changed(p): what that state_for moved against the one before it (also over bodies
-# replaced while pending).
+# {} when the run is the one the client was last sent: the client's store fills in its last ids,
+# in place (ingest), so that every later reader of the body sees them.
 
 const EffectArgs := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/effect_args.gd")
 const RunStateCodec := preload(
@@ -106,7 +75,7 @@ static func entry(part, part_hash: int, text := "") -> Dictionary:
 	}
 
 
-# Every part of data in the wire format: what a client with nothing needs (tests).
+# Every part of data in the wire format: what a client with nothing needs.
 static func pack_all(data: Dictionary) -> Dictionary:
 	var parts := split(data)
 	var run := {"ids": {}, "parts": {}}
@@ -117,13 +86,9 @@ static func pack_all(data: Dictionary) -> Dictionary:
 	return run
 
 
-# The paths under which old and new differ (hash() differs), for a log line: dictionary keys
-# joined by ".", array elements as "[i]". A path ends where the values differ in type or are
-# no dictionaries or arrays, depth levels down ("p1.effects.stat_max_hp"), or at an array whose
-# size changed, with both sizes ("g0.items (250 -> 251)"); an array cut by depth keeps its size
-# ("c.tracked_item_effects (4)"). A key on one side only: " (added)" / " (removed)". A key the
-# game hashed from a name shows that name (_path). Only RunCache's miss warning calls it: one
-# hash() per value it walks into.
+# The paths under which old and new differ, for RunCache's miss warning: dictionary keys joined
+# by ".", array elements as "[i]", depth levels down ("p1.effects.stat_max_hp"). An array whose
+# size changed ends the path with both sizes; a key on one side only is " (added)" / " (removed)".
 static func changed_paths(old, new, depth := 3) -> Array:
 	var paths := []
 	_changed_paths(old, new, "", depth, paths)
@@ -219,6 +184,8 @@ class Sender:
 		_sent[steam_id] = offer[1].duplicate()
 		_count(offer, view_bytes)
 
+	# Idempotent per idle frame: every provider calls it from its own peer_ready handler, and the
+	# second call of one emission must not drop a commit made in between.
 	func forget(steam_id: int) -> void:
 		var frame := Engine.get_idle_frames()
 		if _forgotten.get(steam_id, -1) == frame:
@@ -233,8 +200,7 @@ class Sender:
 		_forgotten.clear()
 		stats.clear()
 
-	# The provider's screen is gone: cache cleared, and one log line for what the screen sent
-	# ("Shop 12: 37 states, ...", the title its provider gave the cache).
+	# The provider's screen is gone: the cache is cleared, with one log line for what it sent.
 	func close(cache) -> void:
 		if cache.parts.empty():
 			return
@@ -243,12 +209,10 @@ class Sender:
 		if line != "":
 			ModLoaderLog.info("%s: %s" % [cache.title, line], LOG_NAME)
 
-	# The ids the peer was last sent (tests).
 	func sent_to(steam_id: int) -> Dictionary:
 		return _sent.get(steam_id, {})
 
-	# "37 states, 14 with run parts (212 KB), 23 view only (9 KB), largest 15 KB" for the screen's
-	# sends so far ("" when none); its counters start over.
+	# One line for the screen's sends so far ("" when none); its counters start over.
 	func summary(label: String) -> String:
 		var screen = stats.get(label)
 		stats.erase(label)
@@ -296,8 +260,8 @@ class Store:
 	extends Reference
 	const MAX_UNCOMPRESSED_SIZE := 8 * 1024 * 1024  # RunStateCodec's
 	const KEEP := 2  # versions per key: a body still pending in one section while another moved on
-	var misses := 0  # bodies that named a part neither stored nor delivered (tests)
-	var parsed := 0  # parts decompressed and parsed (tests)
+	var misses := 0  # bodies that named a part neither stored nor delivered
+	var parsed := 0  # parts decompressed and parsed
 	var session: Object = null  # ask_resync on a missing part (session/session.gd)
 	var _parts := {}  # key -> [{id, size, data, raw (parsed, or null)}], newest first
 	var _ids := {}  # the ids of the last state_for
@@ -311,7 +275,7 @@ class Store:
 		session.transport.connect("lobby_left", self, "clear")
 
 	# ingest for a body as it arrives: a missing part is logged and the host asked for a full
-	# resync (session/session.gd ask_resync). what: the section, for the log.
+	# resync. what: the section, for the log.
 	func take(run, what: String) -> bool:
 		if ingest(run):
 			return true
@@ -358,9 +322,8 @@ class Store:
 			misses += 1
 		return complete
 
-	# The ids of a body's run with its parts stored: after ingest at receive (the stream's
-	# accept_state) as they are; a body that did not come through the stream (tests) is ingested
-	# here. null when malformed.
+	# The ids of a body's run with its parts stored. A body that did not come through the stream's
+	# accept_state is ingested here. null when malformed.
 	func ids_for(run):
 		if typeof(run) != TYPE_DICTIONARY:
 			return null

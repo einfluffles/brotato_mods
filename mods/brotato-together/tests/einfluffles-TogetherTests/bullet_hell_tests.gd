@@ -1,11 +1,11 @@
 extends Reference
-# Suites bullet_hell_*: a bullet-hell wave, every visible enemy bullet on the host must be in the
-# snapshot and mirrored. Checks go through mod_main's _check.
+# Suites bullet_hell_*: in a bullet-hell wave, every visible enemy bullet on the host must be in
+# the snapshot and mirrored.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 
-var t: Node  # the test mod: _check, helpers, scene tree
+var t: Node
 
 
 func _init(test_mod: Node) -> void:

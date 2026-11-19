@@ -1,18 +1,7 @@
 extends Node
-# Menus outside battle and shop (character / weapon / difficulty selection, end of run, title...).
-# The host runs them; a client runs a copy of the same game scene that decides nothing
-# (sync/menu_puppet.gd) and is told here what the host's shows. Two sections of the state stream
-# (sync/state_stream.gd), both inactive while the host is in a battle or the shop (their own
-# messages take over there):
-#  - menu: what changes while the screen is up, see _state(); `you` (the peer's player slot,
-#    -1: spectator) is the per-peer patch. The cursors travel with FocusSync.
-#  - menu_grids: what the screen is built from, see grids_state(): the elements of every visible
-#    grid (id, flags, tier) in the host's order, since they depend on each machine's own unlocks
-#    / DLC, and the run state for the screens that show it (packed once per screen). Sent only
-#    when it changes.
-# Both carry `screen` (the host scene's instance id): the client shows a state only with the grids
-# of the same screen, so a new screen never shows with the previous screen's grids. Its grids
-# come right after it (menu is ordered before menu_grids).
+# Menus outside battle and shop: the host runs them, a client shows a copy that decides nothing
+# (sync/menu_puppet.gd). Sections MENU (see _state()) and MENU_GRIDS (see grids_state()) both
+# carry `screen`: the client shows a state only with the grids of the same screen.
 
 signal menu_state(state)
 
@@ -28,7 +17,7 @@ const RUN_KINDS := ["weapon_selection", "difficulty_selection", "coop_end_run"]
 const MIRRORED_ELSEWHERE := ["res://main.tscn", "res://ui/menus/shop/coop_shop.tscn"]
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
+var state_stream: Node = null
 var battle_host: Node = null  # for the SteamID -> player slot mapping
 
 var _scene: Node = null
@@ -46,11 +35,6 @@ func setup(netplay_session: Node, host_battle: Node) -> void:
 		state_stream.register_handler(section, self)
 
 
-# --- host ---
-
-
-# The host's menu scene, its focus emulators looked up again when it changes; false: none (no
-# scene, or one mirrored by its own messages).
 func _track_scene() -> bool:
 	var scene := get_tree().current_scene
 	if scene == null or scene.filename in MIRRORED_ELSEWHERE:
@@ -60,7 +44,6 @@ func _track_scene() -> bool:
 	return true
 
 
-# Built every check (0.1 s) like before the stream: the text of the state is the cheap part.
 # The menu key covers every ready peer's `you`.
 func state_key(section: int) -> String:
 	if not _track_scene():
@@ -175,7 +158,8 @@ func grids_state() -> Dictionary:
 	return state
 
 
-# The grids alone (also the section's key: no run in it).
+# The grids alone (also the section's key: no run in it). The elements travel in the host's
+# order because they depend on each machine's own unlocks and DLC.
 func _grids() -> Dictionary:
 	var inventories := []
 	for inventory in _inventories():
@@ -197,7 +181,6 @@ func _grids() -> Dictionary:
 	return {"screen": _scene.get_instance_id() if _scene != null else 0, "inventories": inventories}
 
 
-# The selection screens' own grids (BaseSelection._get_inventories), visible ones only.
 func _inventories() -> Array:
 	var found := []
 	if _scene == null or not _scene.has_method("_get_inventories"):
@@ -216,12 +199,8 @@ static func _elements_of(inventory: Node) -> Array:
 	return elements
 
 
-# --- client ---
-
-
-# Either section shows the latest state with the latest grids once both are of one screen
-# (mod_main.gd::_on_menu_state). Never pending: a state waits for its grids here, not in the
-# stream, so that the grids section shows it the moment they arrive.
+# Never pending: a state waits for its grids here, not in the stream, so that the grids section
+# shows it the moment they arrive.
 func apply_state(section: int, body, _revision: int) -> bool:
 	if typeof(body) != TYPE_DICTIONARY:
 		return true
@@ -242,8 +221,7 @@ func apply_state(section: int, body, _revision: int) -> bool:
 	return true
 
 
-# The host left the menus for a battle or the shop: nothing to show, its own message takes over
-# (as before the stream). Forgotten so that a later screen never pairs with them.
+# Forgotten so that a later screen never pairs with them.
 func clear_state(section: int) -> void:
 	if section == StateStream.MENU_GRIDS:
 		_client_grids = {}

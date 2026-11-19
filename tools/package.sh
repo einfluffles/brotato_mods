@@ -26,7 +26,6 @@ for manifest in "${manifests[@]}"; do
   out="$TARGET/$name"
   rm -rf "$out"
   mkdir -p "$out"
-  # Validate + zip inside the toolchain container (python3/zip live there).
   podman run --rm --userns=keep-id -e HOME=/tmp \
     -v "$ROOT:/work:ro,Z" -v "$out:/out:Z" -w /work brotato-modtools bash -euc '
       python3 -I - "$1" "$2" <<PY

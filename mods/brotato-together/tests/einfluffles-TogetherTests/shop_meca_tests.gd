@@ -1,19 +1,17 @@
 extends Reference
 # The shop item popup's meca upgrade (sync/meca_choice.gd), host and client side. Part of the
-# local shop suite (local_shop_tests.gd, s below: its shop, helpers and checks), in its own
-# file for the file length limit.
+# local shop suite (local_shop_tests.gd; s: that suite).
 
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const MECA_DLC := "primal_dread"
-const REMOTE := 1  # the remote player's slot on the host
+const REMOTE := 1
 
 
-# The item popup's meca upgrade (primal_dread, switched on for these checks): the host rolls
-# the two options into its copy of the player's popup and sends them with the state; a pick by
-# index applies exactly that roll through the popup's signal (BaseShop's handler).
+# primal_dread is switched on for these checks. The host rolls the two options into its copy of
+# the player's popup and sends them with the state; a pick by index applies exactly that roll.
 func host(s):
 	yield(s._frames(1), "completed")
 	var dlc = ItemService.get_dlc_data_by_id(MECA_DLC)
@@ -79,8 +77,6 @@ func host(s):
 		ProgressData.active_update_data.erase(MECA_DLC)
 
 
-# The own popup's meca upgrade (primal_dread switched on): the button asks the host, the
-# host's two options (from a state) fill the game's own choice, the pick leaves as an index.
 func client(s, shop: Node, emulator: Node, before: String):
 	var local = s._sync.local
 	yield(s._frames(1), "completed")

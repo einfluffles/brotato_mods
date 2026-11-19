@@ -1,17 +1,7 @@
 extends Reference
-# Acid, petrol and fire puddles (GPESpawner, protocol 12): enemies and projectiles of evolved
-# enemies leave acid / petrol, molotovs, explosions, fire trails and burning deaths leave fire.
-# They are mirrored like gold: static nodes, so after their first snapshots only their net id and
-# a FLAG_REST nibble travel. What they hurt, slow or set on fire is decided by the host's own
-# puddles; a puppet has no collision layers and no running timers.
-#
-# Their look is chosen once in init(): one of the scene's puddle_sprites and the scale the spawn
-# tween grows to (GPESpawner's size, for fire also the owner's fire_puddle_size stat). Both
-# travel in the type key, "<scene>#puddle:<sprite>:<scale x>:<scale y>" (scale in 1/100), which
-# is defined once per battle and shared by every puddle from the same source. The sprite's random
-# rotation is picked by the client itself (it would cost a type per puddle or bytes per snapshot).
-# A puddle leaves the snapshots when it starts to fade (despawn(): timeout or eviction), and the
-# client plays the same fade before pooling its puppet.
+# Acid, petrol and fire puddles (GPESpawner), mirrored as static nodes: the host's puddles decide
+# what they hurt. The look chosen once in init() travels in the type key,
+# "<scene>#puddle:<sprite>:<scale x>:<scale y>" (scale in 1/100); the client picks the rotation.
 
 const TAG := "puddle"
 const SCALE_STEPS := 100.0
@@ -21,9 +11,6 @@ const MAX_SPRITES := 64
 
 static func is_puddle(node: Node) -> bool:
 	return node is AcidPuddle or node is PetrolPuddle or node is FirePuddle
-
-
-# --- host ---
 
 
 # Puddles that are on the ground and not fading. Pooled ones are out of the tree.
@@ -45,9 +32,6 @@ static func tag(puddle: Node) -> String:
 	return "%s:%d:%d:%d" % [
 		TAG, sprite_index, int(round(size.x * SCALE_STEPS)), int(round(size.y * SCALE_STEPS))
 	]
-
-
-# --- client ---
 
 
 static func is_tag(tag: String) -> bool:
@@ -77,8 +61,7 @@ static func container(main: Node, puddle: Node) -> Node:
 	return main.get("_fire_puddles_container" if puddle is FirePuddle else "_gpe_container")
 
 
-# A fresh or pooled puppet: the host's sprite and size, the game's own spawn tween. Its lifetime
-# timer never starts: the host's puddle decides when it goes.
+# The lifetime timer never starts on a puppet: the host's puddle decides when it goes.
 static func start(puddle: Node, spec) -> void:
 	puddle._is_dying = false
 	puddle.set_deferred("monitoring", false)

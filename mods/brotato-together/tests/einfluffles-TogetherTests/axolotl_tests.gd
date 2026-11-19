@@ -1,25 +1,17 @@
 extends Reference
 # Suite axolotl: the Axolotl's text (DLC 1) never calls a method on null
-# (extensions/effects/swap_max_min_stat_effect.gd).
-#  - the game's own way there in co-op: player 1 owns an Axolotl bought from a shop (its effect is
-#    the ItemService original's), the game rolls an Axolotl for player 0 and empties that shared
-#    effect's stats_swapped while has_been_applied stays set; the offer's description in the
-#    co-op shop then builds (in a release build of the game it killed the process)
-#  - get_args with fewer than two entries, null, an unknown hash, a string or a float names the
-#    player's own lowest and highest stats, logs a warning and leaves the effect as it was
-#  - a normal Axolotl (applied or not) shows the game's own text, without a warning
-#  - deserialize_and_merge: a run state without stats_swapped warns, float hashes do not
-# Without the extension the broken states give null (debug: a script error) and the checks fail.
+# (extensions/effects/swap_max_min_stat_effect.gd). In co-op the game empties the shared effect's
+# stats_swapped while has_been_applied stays set: in a release build that killed the process.
 
 const AXOLOTL := "item_axolotl"
 const AXOLOTL_PATH := "res://dlcs/dlc_1/items/axolotl/axolotl_data.tres"
 const DLC := "abyssal_terrors"  # DLC 1
 const OWNER := 1  # bought the Axolotl
 const VIEWER := 0  # gets one offered
-const SLOT := 3  # the shop slot of the offer (the 4th, as in the crash)
+const SLOT := 3  # the shop slot of the offer
 const UNKNOWN_HASH := 12345
 
-var _t: Node  # the test mod: _check, _find_by_id, coop_run
+var _t: Node
 var _script: Script = null  # the Axolotl effect's script (the mod's extension)
 
 
@@ -49,7 +41,6 @@ func run(_together: Node):
 	shared.stats_swapped = []
 
 
-# Fresh effects in the states get_args could not render.
 func _broken_states() -> void:
 	_t.coop_run(36)
 	var expected := _own_text(VIEWER)
@@ -72,7 +63,6 @@ func _broken_states() -> void:
 		_t._check(_script.bt_warning_count() == warned + 1, "and one warning for it")
 
 
-# Applied with two known stats, or not applied: the game's own get_args, no warning.
 func _normal_states() -> void:
 	var vanilla: Script = _script.get_base_script()
 	var swapped := [Keys.stat_engineering_hash, Keys.stat_range_hash]

@@ -1,14 +1,14 @@
 extends Reference
 # Snapshot wire format (sync/snapshot.gd): round trip and quantization, strict parsing, sizes of
-# realistic small/mid/late-wave snapshots against the previous var2bytes format, the O(1) id index,
-# resolve() (resting entities, sparse player stats) and event selection. Driven from mod_main.gd.
+# realistic small/mid/late-wave snapshots, the O(1) id index, resolve() (resting entities, sparse
+# player stats) and event selection.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const PF := Snapshot.PlayerField
 const MAP := Vector2(2048, 1536)
 
-var _t: Node  # the test mod: _check
+var _t: Node
 var _rng := RandomNumberGenerator.new()
 
 
@@ -117,7 +117,6 @@ func _events_match(a: Array, b: Array) -> bool:
 	return true
 
 
-# The client drops any snapshot that isn't exactly well-formed (no script errors on the way).
 func _test_malformed() -> void:
 	var view := scenario(2, 12, 6, 4, 2, 4, 3, 2, true)
 	var bytes := Snapshot.encode(view)
@@ -168,7 +167,7 @@ func _reals(count: int) -> PoolRealArray:
 	return values
 
 
-# Sizes on the wire (message envelope included) for realistic waves, old format vs new.
+# Sizes on the wire (message envelope included) for realistic waves, against old_format().
 func _test_sizes() -> void:
 	var scenarios := {
 		"small (wave 3, 2 players)": [2, 20, 15, 10, 0, 4, 3, 1],
@@ -200,7 +199,7 @@ func _test_sizes() -> void:
 	_t._check(sizes["late (wave 18, 4 players)"] < 2200, "late-wave snapshot about a quarter")
 
 
-# The previous format (protocol 3): var2bytes of plain arrays, for the size comparison.
+# var2bytes of plain arrays (the format of protocol 3), for the size comparison.
 static func old_format(view: Dictionary) -> Array:
 	var players := []
 	for entry in view.players:
@@ -228,7 +227,7 @@ static func old_format(view: Dictionary) -> Array:
 	]
 
 
-# One side of the reviewer's measurement: 600 entities looked up per frame.
+# 600 entities looked up per frame.
 func _test_index() -> void:
 	var view := scenario(4, 300, 200, 80, 20, 0, 0, 0, false)
 	var count: int = view.ids.size()
@@ -236,7 +235,7 @@ func _test_index() -> void:
 	var found := 0
 	for i in count:
 		var id: int = view.ids[count - 1 - i]
-		for k in count:  # the previous linear index_of
+		for k in count:  # a linear index_of, for comparison
 			if view.ids[k] == id:
 				found += 1
 				break

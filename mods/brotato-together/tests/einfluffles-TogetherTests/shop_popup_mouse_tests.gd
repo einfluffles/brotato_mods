@@ -1,6 +1,6 @@
 extends Reference
-# The mouse on the own shop panel's item popup (sync/local_panel.gd), in the local shop suite
-# (s: its shop, helpers and checks).
+# The mouse on the own shop panel's item popup (sync/local_panel.gd). Part of the local shop suite
+# (local_shop_tests.gd; s: that suite).
 
 
 # The popup of the hovered item covers what lies below it: the mouse over it (scrolling its

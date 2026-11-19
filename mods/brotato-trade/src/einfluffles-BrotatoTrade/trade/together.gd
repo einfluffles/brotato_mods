@@ -1,20 +1,17 @@
 extends Reference
-# brotato:together, when it is loaded (optional). There the host owns the run and a client's
-# shop is a copy that decides nothing: a client's trade leaves as a shop intent
-# (ShopSync.register_intent / send_intent), the host checks and applies it like its own
-# players' and its next state brings the result to everybody.
+# brotato:together is optional. With it the host owns the run: a client's trade leaves as an
+# intent and the host applies it. The shop's intents (ShopSync):
 #   kind            slot                          id            arg
 #   "trade.buy"     index in the giver's offers   item my_id    receiving player
 #   "trade.weapon"  index in the giver's weapons  weapon my_id  receiving player
 #   "trade.item"    index in the giver's items    item my_id    receiving player
-# The crate panels (level-up / crate, UpgradesSync) take a client's crate trade the same way:
+# The crate panels' intent (UpgradesSync) has no slot:
 #   "trade.crate"   -                             crate item my_id   receiving player
-# Without brotato:together every shop is this game's own. With a version that has no intents
-# for other mods a client cannot trade (it could only change its own copy); the host and an
-# offline game still can.
+# With a brotato:together that has no intents for other mods a client cannot trade; the host and
+# an offline game still can.
 
 const NODE_PATH := "/root/ModLoader/einfluffles-BrotatoTogether"
-const KIND_BUY := "trade.buy"  # an offered item bought for another player
+const KIND_BUY := "trade.buy"
 const KIND_WEAPON := "trade.weapon"
 const KIND_ITEM := "trade.item"
 const KIND_CRATE := "trade.crate"
@@ -25,8 +22,8 @@ static func is_loaded() -> bool:
 	return _node() != null
 
 
-# Host side: handler gets on_remote_weapon / on_remote_item(shop, player, slot, id, arg) and
-# on_remote_crate(ui, player, id, arg) -> bool.
+# Host side: the handler gets on_remote_weapon / on_remote_item / on_remote_buy(shop, player,
+# slot, id, arg) and on_remote_crate(ui, player, id, arg), each returning a bool.
 static func register(handler: Object) -> void:
 	if not is_loaded():
 		return
@@ -48,11 +45,11 @@ static func register(handler: Object) -> void:
 	_register(shop_sync, KIND_WEAPON, handler, "on_remote_weapon")
 	_register(shop_sync, KIND_ITEM, handler, "on_remote_item")
 	# A buy keeps the revision, like the game's own buy press.
-	shop_sync.register_intent(KIND_BUY, handler, "on_remote_buy")  # (shop, player, slot, id, arg)
+	shop_sync.register_intent(KIND_BUY, handler, "on_remote_buy")
 
 
 # Without the panel revision: a second trade sent before the host's state with the first
-# arrived carries the same revision and was dropped as stale. The host checks it all again.
+# arrives carries the same revision and would be dropped as stale. The host checks it all again.
 static func _register(shop_sync: Object, kind: String, handler: Object, method: String) -> void:
 	for info in shop_sync.get_method_list():
 		if info.name == "register_intent" and info.args.size() > 3:
@@ -61,7 +58,6 @@ static func _register(shop_sync: Object, kind: String, handler: Object, method: 
 	shop_sync.register_intent(kind, handler, method)
 
 
-# Whether player `from` can trade from its panel of this shop.
 static func can_request(shop: Node, from: int) -> bool:
 	if not is_loaded():
 		return true
@@ -70,7 +66,6 @@ static func can_request(shop: Node, from: int) -> bool:
 		return not _is_client()
 	if not shop_sync.is_puppet_shop(shop):
 		return true
-	# A client: only its own panel, and only when the host trades too.
 	return (
 		shop_sync.own_player() == from
 		and shop_sync.host_handles(KIND_WEAPON)
@@ -78,7 +73,6 @@ static func can_request(shop: Node, from: int) -> bool:
 	)
 
 
-# Whether player `from` can buy an offered item for another player from its panel of this shop.
 static func can_request_buy(shop: Node, from: int) -> bool:
 	if not is_loaded():
 		return true
@@ -90,7 +84,6 @@ static func can_request_buy(shop: Node, from: int) -> bool:
 	return shop_sync.own_player() == from and shop_sync.host_handles(KIND_BUY)
 
 
-# A client's buy for another player, to its host. False: not sent.
 static func send_buy(shop: Node, from: int, shop_item: Node, to: int) -> bool:
 	var shop_sync = _shop_sync()
 	if shop_sync == null or not can_request_buy(shop, from) or shop_item.item_data == null:
@@ -107,7 +100,6 @@ static func is_puppet(shop: Node) -> bool:
 	return shop_sync.is_puppet_shop(shop)
 
 
-# A client's request to its host. False: not sent.
 static func send(shop: Node, from: int, item, to: int) -> bool:
 	var shop_sync = _shop_sync()
 	if shop_sync == null or not can_request(shop, from):
@@ -122,7 +114,6 @@ static func send(shop: Node, from: int, item, to: int) -> bool:
 	return shop_sync.send_intent(shop, from, kind, owned.find(item), item.my_id, to)
 
 
-# Whether player `from` can trade the crate item its panel of these level-up panels shows.
 static func can_request_crate(ui: Node, from: int) -> bool:
 	if not is_loaded():
 		return true
@@ -134,7 +125,6 @@ static func can_request_crate(ui: Node, from: int) -> bool:
 	return upgrades_sync.own_player() == from and upgrades_sync.host_handles(KIND_CRATE)
 
 
-# The level-up panels are a client's copy of the host's: nothing may change the run here.
 static func is_puppet_ui(ui: Node) -> bool:
 	if not is_loaded():
 		return false
@@ -144,7 +134,6 @@ static func is_puppet_ui(ui: Node) -> bool:
 	return upgrades_sync.is_puppet_ui(ui)
 
 
-# A client's crate trade to its host. False: not sent.
 static func send_crate(ui: Node, from: int, id: String, to: int) -> bool:
 	var upgrades_sync = _upgrades_sync()
 	if upgrades_sync == null or not can_request_crate(ui, from):
@@ -157,7 +146,6 @@ static func _node() -> Node:
 	return tree.root.get_node_or_null(NODE_PATH) if tree is SceneTree else null
 
 
-# In a session as a client (asked of a brotato:together without intents for other mods).
 static func _is_client() -> bool:
 	var together := _node()
 	var session = together.get("session") if together != null else null
@@ -166,7 +154,7 @@ static func _is_client() -> bool:
 	return session.is_client()
 
 
-# brotato:together's UpgradesSync when it takes other mods' intents, else null.
+# null for a brotato:together that takes no intents from other mods (_shop_sync likewise).
 static func _upgrades_sync():
 	var together := _node()
 	var upgrades_sync = together.get("upgrades_sync") if together != null else null
@@ -175,7 +163,6 @@ static func _upgrades_sync():
 	return upgrades_sync if upgrades_sync.has_method("register_intent") else null
 
 
-# brotato:together's ShopSync when it takes other mods' intents, else null.
 static func _shop_sync():
 	var together := _node()
 	var shop_sync = together.get("shop_sync") if together != null else null

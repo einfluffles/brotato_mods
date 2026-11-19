@@ -1,11 +1,7 @@
 extends Reference
 # Level-up / crate panels that run on the client itself (sync/upgrades_sync.gd): the host only
-# applies a decision that matches what the sender's panel shows, a client's own panel takes
-# local input and sends intents instead of deciding, and the other panels stay mirrored.
-# Called from mod_main.gd's battle loopback (host part while the host battle exists, client
-# part on the puppet); checks go through its _check.
-# Player 1's crates give weapons (give_crate_weapons), so its crate panel has the weapons list
-# whose popup combines / recycles / meca-upgrades: those are intents too.
+# applies a decision that matches what the sender's panel shows; a client's own panel takes local
+# input and sends intents. Driven by battle_loopback_tests.gd (host part, then client part).
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -37,7 +33,7 @@ const BIT_ACCEPT := 1
 
 var _t: Node = null
 var _gear = GearRebuildTests.new()  # kept alive across its yields
-var _wheel = null  # WheelScrollTests, kept alive across its yields
+var _wheel = null
 
 
 # Before the host's battle scene loads (UpgradesUI reads the effect in _ready): player p's
@@ -58,8 +54,8 @@ class MouseCounter:
 			events += 1
 
 
-# host_panels: player 0 has a level-up, player 1 a crate item (see _test_battle_loopback).
-# Runs after the state message for the client was captured, so the host may move on.
+# host_panels: player 0 has a level-up, player 1 a crate item. Runs after the state message for
+# the client was captured, so the host may move on.
 func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dictionary):
 	_t = t
 	var panels: Node = together.upgrades_sync
@@ -88,7 +84,6 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 		emulator.set_process_input(false)
 	CoopService.connected_players = players
 
-	# While the panels run on the clients, a remote button never presses the host's copy.
 	var saved_devices: Dictionary = input_sync.devices.duplicate()
 	input_sync._remote.erase(t.FAKE_PEER)
 	input_sync.devices[t.FAKE_PEER] = t.DEVICE
@@ -110,7 +105,6 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 	input_sync._remote.erase(t.FAKE_PEER)
 	input_sync.devices = saved_devices
 
-	# A remote player's own cursor and page, shown on the host.
 	var second_button: Control = container._get_upgrade_uis()[1].button
 	var target := FocusTargets.describe(second_button, ui, 0)
 	var extra := Control.new()  # another mod's node on the host only
@@ -133,7 +127,6 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 
 	_host_weapons(t, panels, ui, msg.battle_id)
 
-	# Decisions: only for what the sender's panel shows right now.
 	var intent := {"battle_id": msg.battle_id, "seq": msg.seqs[0], "kind": "choose", "id": upgrade_id}
 	var stale := intent.duplicate()
 	stale.seq -= 1
@@ -153,9 +146,8 @@ func host_part(t: Node, together: Node, ui: Node, host_panels: Array, msg: Dicti
 	t._check(panels.capture(ui)[1][0] != "item", "crate panel moved on")
 
 
-# Every kind of level-up / crate cursor target, by meaning, with extra nodes on one side only:
-# from the UpgradesUI (UPGRADE_FOCUS) and from the scene (FocusSync, through main's
-# _coop_upgrades_ui), plus the emulators by player.
+# Every kind of level-up / crate cursor target, from the UpgradesUI (UPGRADE_FOCUS) and from the
+# scene (FocusSync, through main's _coop_upgrades_ui), plus the emulators by player.
 func _panel_targets(t: Node, ui: Node) -> void:
 	var level_up = ui._get_player_container(0)
 	var crate = ui._get_player_container(1)
@@ -188,8 +180,7 @@ func _panel_targets(t: Node, ui: Node) -> void:
 	t._check(found, "the panels' emulators are found by player")
 
 
-# Crate weapon popup intents (player 1, whose crate panel shows an item): the host applies
-# them to the weapon the intent names, by the game's own rules.
+# Crate weapon popup intents of player 1, whose crate panel shows an item.
 func _host_weapons(t: Node, panels: Node, ui: Node, battle_id: int) -> void:
 	var list = ui._get_player_container(1).crate_weapons_container
 	t._check(
@@ -249,10 +240,8 @@ func _host_weapons(t: Node, panels: Node, ui: Node, battle_id: int) -> void:
 	_host_meca(t, panels, ui, battle_id)
 
 
-# Meca upgrade (primal_dread): the client asks, the host rolls the two options with the game's
-# code and remembers them (sent in the state), the pick names one by index. Headless the game
-# owns no DLC, so it is switched on for these checks only, and the meca weapon is gone again
-# afterwards.
+# Meca upgrade (primal_dread): the host rolls the two options and remembers them, the pick names
+# one by index. Headless the game owns no DLC, so it is switched on for these checks only.
 func _host_meca(t: Node, panels: Node, ui: Node, battle_id: int) -> void:
 	var dlc = ItemService.get_dlc_data_by_id(MECA_DLC)
 	if dlc == null:
@@ -403,7 +392,6 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 		"own cursor starts on an upgrade"
 	)
 
-	# Decisions leave as intents; nothing is decided or rolled here.
 	var upgrades: Array = own._old_upgrades.duplicate()
 	own._on_choose_button_pressed(upgrades[0])
 	t._check(
@@ -422,7 +410,6 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 		"another player's panel decides nothing here"
 	)
 
-	# The own page flips locally, with the trigger of the own slot's device.
 	for pressed in [true, false]:
 		VirtualDevices.press_button("rtrigger_%s" % t.DEVICE, t.DEVICE, pressed)
 		yield(t.get_tree(), "idle_frame")
@@ -437,7 +424,6 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 		"own cursor reported by meaning (%s)" % [target]
 	)
 
-	# The host's cursor for the own panel is not applied; the others' pages are mirrored.
 	var own_cursor = emulator.focused_control
 	var cursor := FocusSync.cursor_of(emulator, own._reroll_button, main)
 	t._check(
@@ -457,7 +443,6 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	t._check(other.carousel.index == 2, "another player's page mirrored")
 	t._check(own.carousel.index == 1, "own page stays local")
 	t._check(own._level == 99, "unchanged panel not rebuilt")
-	# The host's run changes while the own panel shows its gear page.
 	yield(_gear.run(t, panels, main, msg), "completed")
 
 	yield(_keyboard_and_mouse(panels, own, other, ui), "completed")
@@ -468,7 +453,6 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 		_wheel.check_sync("level-up, client", scroller, main, own, other, [0, 1]), "completed"
 	)
 
-	# Done: local control ends.
 	var finished := msg.duplicate(true)
 	finished.players[0] = ["done"]
 	finished.seqs[0] += 1
@@ -479,9 +463,8 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	)
 	t._check(focus_sync.local_emulators.empty(), "own emulator mirrored again")
 
-	# No emulator swallows the mouse now (the own one is parked, the other has no cursor):
-	# only LocalPanel stops a mouse event over another player's panel.
-	# The counter sits in the other panel, so it comes after LocalPanel in _input order.
+	# No emulator swallows the mouse now (the own one is parked, the other has no cursor). The
+	# counter sits in the other panel, so it comes after LocalPanel in _input order.
 	other.focus_emulator.focused_control = null
 	var counter := MouseCounter.new()
 	other.add_child(counter)
@@ -505,8 +488,8 @@ func client_part(t: Node, together: Node, main: Node, msg: Dictionary):
 	client._own_error = Vector2.ZERO
 
 
-# This client as player 1: its crate panel lists its weapons, and the popup's actions leave
-# as intents. msg is the host's state from before it applied any (three pistols).
+# This client as player 1. msg is the host's state from before it applied any intent (three
+# pistols).
 func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
 	var panels: Node = together.upgrades_sync
 	var client: Node = together.battle_client
@@ -550,7 +533,6 @@ func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
 	t._check(
 		sent.get("kind") == "weapon_discard" and sent.get("weapon") == 2, "recycle sends an intent"
 	)
-	# Meca upgrade: the popup's selection alone (no effect button pressed) sends nothing.
 	popup.emit_signal("item_meca_upgrade_selected", weapons[0], weapons[0])
 	t._check(panels.last_intent.get("kind") == "weapon_discard", "no meca intent before the choice")
 	t._check(
@@ -578,7 +560,6 @@ func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
 	yield(_popup_mouse(panels, own, weapons), "completed")
 	yield(_client_meca(main, msg, panels, own, weapons), "completed")
 
-	# The host's answer (a recycled pistol): the list follows and the cursor keeps its slot.
 	own.focus_emulator.focused_control = list.get_element(2)
 	RunData.players_data[1].weapons.remove(2)
 	var answer: Dictionary = msg.duplicate(true)
@@ -600,9 +581,6 @@ func _client_weapons(t: Node, together: Node, main: Node, msg: Dictionary):
 	t._check(not panels._local_active, "local control ends when the crate panel is done")
 
 
-# The mouse on the own crate weapons list and its popup (this client is player 1, three
-# pistols): a click on a weapon opens the popup, which keeps the cursor like it does for the
-# keys; its buttons are pressed as this player, and a held press ends with the mouse button.
 func _popup_mouse(panels: Node, own: Node, weapons: Array):
 	var t := _t
 	var emulator = own.focus_emulator
@@ -644,7 +622,6 @@ func _popup_mouse(panels: Node, own: Node, weapons: Array):
 		"the popup closed and the cursor is back on the weapon"
 	)
 
-	# Hold to recycle: the hold lasts as long as the mouse button, not for ever.
 	var was_holding: bool = ProgressData.settings.holding_button
 	ProgressData.settings.holding_button = true
 	panels.last_intent = {}
@@ -667,9 +644,6 @@ func _popup_mouse(panels: Node, own: Node, weapons: Array):
 	)
 
 
-# The meca upgrade on the own crate weapon popup, by mouse (this client is player 1): the
-# button asks the host, the host's two options (from a state) fill the game's own choice, and
-# the pick leaves as an index. Nothing is rolled, upgraded or paid here.
 func _client_meca(main: Node, msg: Dictionary, panels: Node, own: Node, weapons: Array):
 	var t := _t
 	yield(t.get_tree(), "idle_frame")
@@ -732,8 +706,7 @@ func _client_meca(main: Node, msg: Dictionary, panels: Node, own: Node, weapons:
 		"nothing upgraded or paid here"
 	)
 
-	# Closed while waiting: the roll that arrives then is not shown. Reopened, the popup shows
-	# the host's remembered roll at once (the game shows its own roll again too).
+	# Reopened, the popup shows the host's remembered roll at once (the game shows its own again too).
 	panels.apply(main, msg)
 	yield(_click(list.get_element(slot)), "completed")
 	panels.last_intent = {}
@@ -776,9 +749,8 @@ static func _meca_cut(popup: Node) -> bool:
 	return not popup._upgrade_button.is_connected("pressed", popup, "_on_UpgradeButton_pressed")
 
 
-# The own panel runs locally and its slot is typed as a pad, page 1. A key makes it the game's
-# keyboard co-op panel (no trigger binding: the page arrows take focus), the mouse moves and
-# presses the own cursor, and a pad button turns it back. sync/local_panel.gd.
+# A key makes the own panel the game's keyboard co-op panel (no trigger binding: the page arrows
+# take focus); a pad button turns it back (sync/local_panel.gd).
 func _keyboard_and_mouse(panels: Node, own: Node, other: Node, ui: Node):
 	var t := _t
 	var emulator = own.focus_emulator
@@ -831,7 +803,6 @@ func _keyboard_and_mouse(panels: Node, own: Node, other: Node, ui: Node):
 		yield(_tap("ui_accept"), "completed")
 	t._check(carousel.index == 0, "keyboard: and pages back with it")
 
-	# Mouse. Hover moves the own cursor, a click presses through the own emulator.
 	var uis: Array = own._get_upgrade_uis()
 	var upgrades: Array = own._old_upgrades
 	var last: int = upgrades.size() - 1
@@ -860,7 +831,6 @@ func _keyboard_and_mouse(panels: Node, own: Node, other: Node, ui: Node):
 	t._check(carousel.index == 1, "a click on the own page arrow pages")
 	t._check(emulator.focused_control == arrows[1], "the cursor is on the clicked arrow")
 
-	# Pad again: glyphs, triggers, and a cursor that is not left on a disabled arrow.
 	for pressed in [true, false]:
 		var button := InputEventJoypadButton.new()
 		button.button_index = JOY_L3
@@ -900,7 +870,7 @@ func _mouse(control: Control, kind: String):
 		control.rect_size / 2.0
 	)
 	var pos: Vector2 = control.get_viewport().get_final_transform().xform(canvas_pos)
-	var event = null  # InputEventMouseMotion or InputEventMouseButton
+	var event = null
 	if kind == "move":
 		event = InputEventMouseMotion.new()
 	else:

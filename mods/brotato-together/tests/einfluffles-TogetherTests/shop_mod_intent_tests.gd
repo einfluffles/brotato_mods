@@ -1,15 +1,14 @@
 extends Reference
-# Another mod's decision on a shop panel (ShopSync.register_intent / send_intent): the host
-# runs its handler for a remote player's press like for the game's own kinds, names the kinds
-# in its state, and a client only sends what the host handles, from its own panel.
-# Part of the local shop suite (local_shop_tests.gd, s below: its shop, helpers and checks).
+# Another mod's decision on a shop panel (ShopSync.register_intent / send_intent): the host runs
+# its handler for a remote player's press like for the game's own kinds, and a client only sends
+# what the host handles. Part of the local shop suite (local_shop_tests.gd; s: that suite).
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const KIND := "test.poke"
 const FREE := "test.give"  # registered without the panel revision
-const REMOTE := 1  # the remote player's slot on the host
+const REMOTE := 1
 
 var calls := []  # what the handler got: [player, slot, id, arg]
 var answer := true

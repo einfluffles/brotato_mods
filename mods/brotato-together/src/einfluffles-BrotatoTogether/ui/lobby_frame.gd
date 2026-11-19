@@ -1,13 +1,7 @@
 extends MarginContainer
-# The lobby on the title screen's main menu: a small frame beside the game's buttons, there
-# while this game is in a lobby. The main menu and its pages stay as they are and usable.
-#  - The players, the host first; the host has Kick behind every other player and Leave lobby
-#    below the list.
-#  - The button ui/lobby_menu.gd added below Start does what is next: Host lobby, then Invite
-#    friends (host) or Leave lobby (client).
-#  - A client's Start and Continue are off: the host starts or continues, and everybody follows.
-# In the row of the two button columns, right of the left one; hidden it takes no room. Cursor:
-# right of the entry button are the frame's buttons, left of them the entry button again.
+# The lobby on the title screen's main menu: a small frame beside the game's buttons while this
+# game is in a lobby, with the players (the host can kick) and Leave lobby. The entry button
+# ui/lobby_menu.gd added below Start does what is next: Host lobby, Invite friends, Leave lobby.
 
 const NODE_NAME := "BrotatoTogetherLobbyFrame"
 const PANEL_STYLE_PATH := "res://resources/themes/panel/panel_style.tres"
@@ -23,7 +17,7 @@ const KICK_TEXT := "Kick"
 const WIDTH := 520
 const GAP := 30  # to the button column
 
-var lobby: Node = null  # ui/lobby_menu.gd
+var lobby: Node = null
 var title_screen: Node = null
 var main_menu: Node = null
 var entry_button: Button = null
@@ -39,7 +33,7 @@ var _entry_right := NodePath()  # the entry button's neighbour without the frame
 var _locked := false  # Start / Continue switched off by us
 
 
-# Into the main menu of a title screen. Null if its buttons are not laid out as expected.
+# Null: the main menu's buttons are not laid out as expected.
 static func add_to(scene: Node, menu: Node, entry: Button, lobby_menu: Node) -> Control:
 	var column: Node = entry.get_parent()
 	var row: Node = column.get_parent()
@@ -154,7 +148,6 @@ static func _set_text(control: Control, text: String) -> void:
 		control.text = text
 
 
-# The frame's buttons the cursor can be on, top to bottom.
 func nav_buttons() -> Array:
 	var buttons := []
 	if not visible:

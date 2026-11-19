@@ -1,13 +1,7 @@
 extends Reference
-# Co-op character selection UX (ui/coop_selection.gd, CoopService extension, client view):
-#  - every empty slot shows "Player N" (above it) + the game's hold-to-join hint;
-#  - players cycle their colour with ui_info (virtual device = remote player, keyboard F), never
-#    onto another player's colour; the colours travel in the menu state, BATTLE_START and the
-#    shop state
-#    and the game's own colour code (cursors, labels, highlight) reads them;
-#  - a locked character under a cursor shows how to unlock it (the client's copy of the screen:
-#    menu_puppet_tests.gd).
-# Needs the character selection scene with two virtual co-op players (after the menu tests).
+# Co-op character selection UX (ui/coop_selection.gd, CoopService extension, client view): the
+# join hint of empty slots, the players' colours (ui_info) and the unlock hint of locked
+# characters. Needs the character selection scene with two virtual co-op players.
 
 const CoopSelection := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_selection.gd"
@@ -25,7 +19,7 @@ const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
 # Viewport sizes the colour hint is checked at (16:9 and 16:10).
 const SIZES := [Vector2(1920, 1080), Vector2(2560, 1440), Vector2(1280, 720), Vector2(1920, 1200)]
 
-var t: Node = null  # the test mod: _check()
+var t: Node = null
 
 
 func run(test_mod: Node, together: Node):
@@ -43,7 +37,7 @@ func run(test_mod: Node, together: Node):
 	yield(_frames(2), "completed")
 	_test_join_hints(scene)
 	yield(check_hint_layout(t, together.coop_selection, scene, "host"), "completed")
-	var layout := OnlineLayoutTests.new()  # kept by this function while it waits
+	var layout := OnlineLayoutTests.new()
 	yield(layout.run(t, scene), "completed")
 	yield(_test_color_picks(scene), "completed")
 	_test_color_mirror(together, scene)
@@ -85,10 +79,8 @@ func _test_join_hints(scene: Node) -> void:
 	t._check(hint != null and hint.is_visible_in_tree(), "colour hint shown")
 
 
-# The colour hint takes no space in the game's layout and covers nothing, at several viewport
-# sizes. The game stretches a 1920x1080 layout to any window (2d / keep), so 1920x1080 is what it
-# lays out on every resolution; the stretch's base size is set to each resolution here so that
-# the layout itself is checked at those sizes too. `where`: host / client, for the messages.
+# The game stretches a 1920x1080 layout to any window (2d / keep); the stretch's base size is set
+# to each resolution here so that the layout itself is checked at those sizes too.
 func check_hint_layout(test_mod: Node, coop_selection: Node, scene: Node, where: String):
 	t = test_mod
 	var hint: Control = scene.find_node(CoopSelection.COLOR_HINT, true, false)
@@ -232,7 +224,6 @@ func _test_color_picks(scene: Node):
 		all_distinct = all_distinct and _distinct(CoopService.bt_slot_colors)
 		all_distinct = all_distinct and CoopService.bt_slot_colors[1] != CoopService.bt_slot_colors[0]
 	t._check(all_distinct, "colours: cycling never takes another player's colour")
-	# A local keyboard player joins (3rd slot) and picks with F.
 	CoopService._add_player(KEYBOARD, CoopService.PlayerType.KEYBOARD_AND_MOUSE)
 	yield(_frames(2), "completed")
 	var joined: int = CoopService.bt_slot_colors[2]
@@ -260,12 +251,11 @@ func _test_color_mirror(together: Node, scene: Node) -> void:
 		together.battle_host._battle_start_body().get("colors") == host,
 		"colours: in BATTLE_START"
 	)
-	# Client side (same process): the host's colours replace the local ones.
 	var remote := [5, 4, 1, 0]
 	state["colors"] = remote
 	state["you"] = 1
 	state["join"] = [0.5]
-	menu_sync.apply_state(StateStream.MENU, state, 1)  # the menu section's handler
+	menu_sync.apply_state(StateStream.MENU, state, 1)
 	t._check(
 		CoopService.bt_slot_colors == remote
 		and CoopService.player_colors[0] == CoopService.bt_palette[5],

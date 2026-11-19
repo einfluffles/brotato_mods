@@ -2,7 +2,7 @@
 	"name": "BrotatoTrade",
 	"namespace": "einfluffles",
 	"version_number": "0.1.0",
-	"description": "brotato:trade — give items and weapons to other players in the co-op shop.",
+	"description": "brotato:trade: give items and weapons to other players in the co-op shop.",
 	"website_url": "",
 	"dependencies": [],
 	"extra": {

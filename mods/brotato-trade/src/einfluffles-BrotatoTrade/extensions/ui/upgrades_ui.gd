@@ -1,11 +1,7 @@
 extends "res://ui/menus/ingame/upgrades_ui.gd"
-# Trading on the co-op crate panels: a player hands the crate's item to another player instead
-# of taking it (extensions/ui/coop_upgrades_ui_player_container.gd: the button and the list).
-# On the game that owns the run the game's own Take runs (the container's press, then
-# _on_take_button_pressed and main.on_item_box_take_button_pressed) with the receiver as the
-# one who takes: the item enters the receiver as a taken crate item does (stat-gain effects,
-# mutation, a weapon combined without a free slot), and the giver's panel goes on to its next
-# option. In a brotato:together client's copy nothing changes: the request goes to the host.
+# Trading on the co-op crate panels. The game's own Take runs with the receiver as the one who
+# takes: the item enters the receiver as a taken crate item does (stat-gain effects, mutation, a
+# weapon combined without a free slot), and the giver's panel goes on to its next option.
 
 const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules.gd")
 const Together := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/together.gd")
@@ -21,12 +17,11 @@ func _ready() -> void:
 			container.connect("trade_requested", self, "_on_trade_crate_requested", [player_index])
 
 
-# Whether player `from`'s crate panel offers Trade (online: its own panel, the host has it).
 func trade_crate_offered(from: int) -> bool:
 	return RunData.get_player_count() > 1 and Together.can_request_crate(self, from)
 
 
-# Every other player, in player order: [player, can take the item, combines it].
+# [player, can take the item, combines it] for every other player.
 func trade_crate_receivers(from: int) -> Array:
 	var entries := []
 	var item = _get_player_container(from)._item_data
@@ -40,7 +35,6 @@ func trade_crate_receivers(from: int) -> Array:
 	return entries
 
 
-# The crate item player `from` is shown goes to player `to`. False: nothing changed.
 func trade_crate(from: int, to: int) -> bool:
 	if get_tree().paused or Together.is_puppet_ui(self):
 		return false
@@ -82,7 +76,7 @@ func trade_crate(from: int, to: int) -> bool:
 	return true
 
 
-# brotato:together, host: a remote player's request. id: the crate item's my_id it was made on.
+# id: the crate item the request was made on. The panel can show another by now.
 func trade_crate_apply_request(from: int, id: String, to: int) -> bool:
 	if not Rules.is_player(from):
 		return false
@@ -101,8 +95,7 @@ func _on_trade_crate_requested(to: int, from: int) -> void:
 		container.trade_back(true)
 
 
-# What the game redoes for a player whose weapons changed (_after_weapons_changed), without
-# moving its cursor: it comes back to the same place.
+# What the game's _after_weapons_changed redoes, without moving the cursor.
 func _trade_refresh_receiver(player_index: int, cursor: Array) -> void:
 	var container = _get_player_container(player_index)
 	LinkedStats.reset_player(player_index)
@@ -124,8 +117,8 @@ func _trade_rows(player_index: int) -> Array:
 
 
 # The receiver's cursor leaves the rows that are built again, and a popup opened from them
-# closes (a FocusEmulator must never keep a freed control). [row, index] of where it was, [-1]
-# when it was in the popup with no element to come back to, [] when it stays where it is.
+# closes. [row, index] of where it was, [-1] when it was in the popup with no element to come
+# back to, [] when it stays where it is.
 func _trade_park_cursor(player_index: int) -> Array:
 	var emulator = _get_player_container(player_index).focus_emulator
 	if emulator == null or emulator.player_index != player_index:

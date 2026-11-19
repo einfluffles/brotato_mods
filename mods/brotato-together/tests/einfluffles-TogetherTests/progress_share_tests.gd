@@ -1,9 +1,7 @@
 extends Reference
 # What the host's run earns for a client's own save (session/progress_share.gd, the
-# ChallengeService / ProgressData extensions, session/puppet.gd): the host sends reached
-# challenges once, its lifetime counters as counts and the win; a client that mirrors the run
-# and uses the host's DLC completes them on its own lists and counters, and nothing else gets
-# through. The last suite of its process: it leaves challenges completed.
+# ChallengeService / ProgressData extensions, session/puppet.gd). Leaves challenges completed: no
+# suite that reads them may share its shard after it.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const ProgressShare := preload(
@@ -26,9 +24,6 @@ func run(together: Node) -> void:
 	_test_client(share)
 	_test_won(share)
 	DebugService.disable_saving = saving
-
-
-# --- host ---
 
 
 func _test_host(share: Node) -> void:
@@ -78,9 +73,6 @@ func _test_host(share: Node) -> void:
 	share.last_sent = {}
 	share.flush()
 	_t._check(share.last_sent.empty(), "without a client nothing is collected")
-
-
-# --- client ---
 
 
 # A challenge with a character as its reward that this profile has not completed.
@@ -136,7 +128,6 @@ func _test_client(share: Node) -> void:
 	)
 	_t._check(not Puppet.own_progress(), "and the way in is closed again")
 
-	# A lifetime challenge, by the client's own count.
 	var survivor = null
 	for other in ChallengeService.challenges:
 		var open: bool = not ChallengeService.is_challenge_completed(other.my_id_hash)
@@ -156,7 +147,6 @@ func _test_client(share: Node) -> void:
 		)
 	_t._check(share.client_apply("challenges") == 0 and share.client_apply({}) == 0, "junk is ignored")
 
-	# The save is written with what was put aside, and the mirrored state is back after it.
 	var run_state = ProgressData.saved_run_state
 	own_characters.append(-7)  # only on the client's own list
 	var saved: Dictionary = ProgressData.bt_own_save_object()
@@ -186,7 +176,6 @@ func _on_challenge_completed(_challenge) -> void:
 	_popups += 1
 
 
-# The win: the game's own apply_run_won on the mirrored run.
 func _test_won(share: Node) -> void:
 	_t.coop_run(3)
 	RunData.current_difficulty = 1

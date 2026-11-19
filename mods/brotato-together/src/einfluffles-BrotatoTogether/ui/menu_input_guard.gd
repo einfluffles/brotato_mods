@@ -1,14 +1,7 @@
 extends Node
-# While the lobby popup (ui/lobby_popup.gd) is open: the last child of the root viewport, so its
-# _input runs before every other node's (_input is dispatched in reverse tree order, then GUI,
-# then unhandled). Keyboard/gamepad events go to the popup only and are marked handled, so the
-# game's scene, FocusEmulators, CoopService (hold-to-join) and GUI focus never see them. Mouse
-# events go to the popup the same way: on most co-op screens the FocusEmulators mark them handled
-# before the GUI gets them.
-# Input state is updated before events are dispatched, so the actions an event pressed are
-# released again: code that polls Input (player movement, InputSync on clients) stays neutral.
-# After the popup closes, the releases of keys/buttons pressed while it was open are swallowed
-# too (closing with Esc / B must not reach the game: it pauses / goes back on *release*).
+# While the lobby popup is open: the last child of the root viewport, so its _input runs before
+# every other node's (_input is dispatched in reverse tree order). Events go to the popup only
+# and are marked handled, so the game, its FocusEmulators and the GUI never see them.
 
 const DRAIN_TIMEOUT_SEC := 2.0
 
@@ -55,7 +48,8 @@ func _input(event: InputEvent) -> void:
 		handler.handle_panel_input(event)
 
 
-# The popup closed: stop routing, wait for the held keys/buttons to come up, then go away.
+# Releases of keys / buttons pressed while the popup was open are swallowed too: the game pauses
+# and goes back on release, and closing with Esc / B must not reach it.
 func finish() -> void:
 	_closing = true
 	handler = null
@@ -65,6 +59,8 @@ func finish() -> void:
 		get_tree().create_timer(DRAIN_TIMEOUT_SEC, true).connect("timeout", self, "queue_free")
 
 
+# Input state is updated before events are dispatched: the actions this event pressed are
+# released again, so code that polls Input (player movement, InputSync) stays neutral.
 static func release_actions(event: InputEvent) -> void:
 	for action in InputMap.get_actions():
 		if Input.is_action_pressed(action) and InputMap.event_is_action(event, action):

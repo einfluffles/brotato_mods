@@ -1,45 +1,14 @@
 extends Reference
-# Host: the run state a state stream section carries, serialized only when it can have changed,
-# in parts (sync/run_parts.gd). One per provider: ShopSync (section shop) and UpgradesSync
-# (section upgrades, the level-up / crate panels). Serializing it (ProgressData.get_run_state,
-# serialize_run_state, JSON.print) grows with the run's items: 2.6 ms for a small 2-player run,
-# 29 / 58 ms for a late endless run with 2 / 4 players (250 items each), three quarters of it
-# JSON.print (shop_change_tests.gd and upgrades_change_tests.gd measure it). The stream checks
-# every 0.1 s, so the check itself must not serialize: a whole key costs 0.05 - 0.3 ms there
-# (shop / panels).
-#
-# refresh(screen, save_args, extra) brings parts / rev up to date and serializes only when
-# - the fingerprint changed: cheap values that every mutation of the run the game does on that
-#   screen moves, whose cost does not grow with the item lists. The shared part (RunData and
-#   every player: fingerprint() names them) is here; the caller adds its screen's part: the
-#   save args (the shop's offered items and rerolls) and extra (UpgradesSync: the option each
-#   panel processes);
-# - a check was forced: after an applied intent and after peer_ready (force());
-# - the safety net is due (SAFETY_NET_MSEC since the last serialization): it catches what the
-#   fingerprint cannot see (a stat or effect written directly, by another mod say). A change
-#   found while the fingerprint stayed the same is a miss of the fingerprint: sent like any
-#   other and logged as a warning (missed, last_miss) that names what changed: the parts whose
-#   text changed, parsed again and compared by RunParts.changed_paths ("p1.effects.stat_max_hp,
-#   c.tracked_item_effects[0].<item hash>"; the first MISS_PATHS, then "+N more"). Only a miss
-#   pays for that (a JSON.parse of the old and the new text of each changed part).
-# The serialized dictionary is split (RunParts.split: "c", per player "g<p>" and "p<p>") and each
-# part's hash() compared with the last one of its key (1.2 / 8 / 15 ms for the whole run in the
-# runs above, a quarter of the text's cost): only a part whose hash changed is printed to JSON,
-# and only one whose text changed too is compressed and gets a new id (RunParts.entry), so a
-# purchase packs the common part and the buyer's two, a level-up choice one. (The hash alone
-# also moves when a value's type or its last bits change, which the text does not show: seen on
-# both players' weapons right after a shop came up. Equal hashes of different content, 1 in
-# 2^32, would wait for the next change of that part.) rev counts the changes of the part ids
-# (the stream's key carries it, so the key changes exactly when the body's run does). Only text,
-# bytes and ints are kept, never a game object; clear() once the screen is gone drops them.
+# Host: a section's run state, serialized only when a cheap fingerprint of it changed, a check
+# was forced, or SAFETY_NET_MSEC passed (JSON.print of a late run costs tens of ms). Only a part
+# (RunParts.split) whose hash and text both changed is compressed and gets a new id.
 
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:RunCache"
-# 1 s: what the fingerprint cannot see is at most that late, and the late 4-player run's check
-# (15 ms, about one frame) costs 1.5 % of the host's time on the screen.
+# What the fingerprint cannot see (a stat or effect written directly) is at most this late.
 const SAFETY_NET_MSEC := 1000
 const MISS_DEPTH := 4  # path levels the miss warning names: down to a weapon's field
 const MISS_PATHS := 6  # paths the miss warning lists
@@ -50,10 +19,10 @@ var title := ""  # the screen as its provider names it (the log line when it clo
 # RunParts.split's order
 var parts := {}
 var rev := 0  # bumped whenever an id of parts changes
-var serialized := 0  # run states serialized (tests)
-var packs := 0  # parts compressed (tests)
-var missed := 0  # changes only a forced check or the safety net found (tests)
-var last_miss := ""  # the warning of the last miss (tests)
+var serialized := 0
+var packs := 0  # parts compressed
+var missed := 0  # changes only a forced check or the safety net found
+var last_miss := ""  # the warning of the last miss
 
 var _screen_id := 0  # instance id of the screen parts belong to (0: none)
 var _fingerprint := []
@@ -71,7 +40,6 @@ func force(frames_ahead := 0) -> void:
 	_force_frame = int(max(_force_frame, Engine.get_idle_frames() + frames_ahead))
 
 
-# Called on every check (or frame) while the screen is not up: nothing to do once cleared.
 func clear() -> void:
 	if _screen_id == 0 and parts.empty():
 		return
@@ -82,8 +50,8 @@ func clear() -> void:
 
 
 # Returns whether parts changed. screen: the node the run state is shown on (another one starts
-# over); save_args: ProgressData.get_run_state's arguments (the shop's, [] elsewhere); extra:
-# the caller's part of the fingerprint (ints and floats only).
+# over); save_args: ProgressData.get_run_state's arguments; extra: the caller's part of the
+# fingerprint (ints and floats only).
 func refresh(screen: Object, save_args := [], extra := []) -> bool:
 	var fingerprint := fingerprint(save_args, extra)
 	var same_screen: bool = screen.get_instance_id() == _screen_id and not parts.empty()
@@ -135,8 +103,7 @@ func refresh(screen: Object, save_args := [], extra := []) -> bool:
 	return true
 
 
-# What moved between two sets of parts ({key: RunParts.entry}): the parts whose id changed (or
-# that came or went), their old and new text parsed and compared (RunParts.changed_paths).
+# The paths that moved between two sets of parts ({key: RunParts.entry}), for the miss warning.
 static func miss_paths(before: Dictionary, after: Dictionary) -> Array:
 	var old := {}
 	var new := {}
@@ -163,7 +130,7 @@ static func miss_text(paths: Array) -> String:
 	return text
 
 
-# The length of the run state's JSON text, all parts (tests, log lines).
+# The length of the run state's JSON text, all parts.
 func text_size() -> int:
 	var size := 0
 	for key in parts:
@@ -180,21 +147,16 @@ func all() -> Dictionary:
 	return run
 
 
-# The shared part: everything a mutation of the run moves, as cheap values (ints and floats
-# only: no object is kept). Sizes and the last element stand for the item lists, so the cost
-# does not grow with them; weapons and locked items are short and listed by instance.
+# The shared part: cheap values (ints and floats only) that every mutation of the run moves. Sizes
+# and the last element stand for the item lists, so the cost does not grow with them.
 # - gold (RunData.add_gold / remove_gold: buy, rerolls, recycling, ban, a crate item discarded)
-# - items: add_item_triggering_stat_gain_effects pushes at the end (buy, a crate item taken),
-#   try_mutate_item_on_equip (DLC) replaces one (recently_mutated)
-# - weapons: add_weapon duplicates; combine_weapon, recycle_weapon, meca_upgrade_weapon replace
-#   or remove (shop item popup, crate weapon popup), meca parts with them
-# - upgrades_taken (RunData.add_upgrade: a level-up option chosen; its stats come with it)
-# - banned_items, remaining_ban_token (ban in the shop or of a crate item)
-# - locked items (RunData.lock_player_shop_item), wave, endless, bonus gold, retries
-# - health, level, xp, pending mutations (consumables, gold and fruit still flying in)
-# A stat or effect written alone (the effects' sizes stay) is the safety net's.
-# save_args: their sizes and values, lists of [item, wave value] (the shop's offered items) by
-# item instance. extra: appended as it is.
+# - items: add_item_triggering_stat_gain_effects pushes at the end, try_mutate_item_on_equip
+#   (DLC) replaces one (recently_mutated)
+# - weapons by instance (add_weapon, combine_weapon, recycle_weapon, meca_upgrade_weapon)
+# - upgrades_taken (RunData.add_upgrade), banned_items, remaining_ban_token, locked items
+# - wave, endless, bonus gold, retries, health, level, xp, pending mutations
+# A stat or effect written alone (the effects' sizes stay) is left to the safety net.
+# save_args: lists of [item, wave value] (the shop's offered items) go in by item instance.
 static func fingerprint(save_args := [], extra := []) -> Array:
 	var background = RunData.current_background
 	var values := [

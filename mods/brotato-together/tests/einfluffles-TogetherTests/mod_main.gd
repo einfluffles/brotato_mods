@@ -1,9 +1,7 @@
 extends Node
-# Headless integration tests, run by tools/check.sh inside the decompiled game (no Steam).
-# The tests are named suites (SUITES). MOD_TEST_SUITES picks some (comma-separated, empty: all),
-# and shards.txt groups them into the processes check.sh runs side by side. Every suite sets up
-# what it needs itself (coop_run and the like), so it passes alone and in any shard.
-# Prints "MOD-TESTS: PASS" or "MOD-TESTS: FAIL" and quits.
+# Headless integration tests, run by tools/check.sh inside the decompiled game without Steam
+# (suites and shards: see there). Every suite sets up what it needs itself (coop_run and the like),
+# so it passes alone and in any shard.
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -233,10 +231,8 @@ func _check_shards() -> void:
 		print("  info: shards.txt has each of the %d suites in one shard" % SUITES.size())
 
 
-# The two-player co-op run the battle and shop suites play in (built and checked by the core
-# suite's run state round trip): characters 0 and 1, a pistol for player 0, a +1 weapon slot
-# item and 37 gold for player 1, both players on pads. wave: the wave the full sequence had
-# reached there (0: the one RunData.reset() picks).
+# The two-player co-op run the battle and shop suites play in: a pistol for player 0, a +1 weapon
+# slot item and 37 gold for player 1, both on pads. wave: 0 keeps the one RunData.reset() picks.
 func coop_run(wave := 0) -> void:
 	get_tree().paused = false
 	Puppet.set_active(false)
@@ -249,7 +245,7 @@ func coop_run(wave := 0) -> void:
 	for i in 2:
 		RunData.add_character(ItemService.characters[i], i)
 	RunData.add_weapon(_find_by_id(ItemService.weapons, "weapon_pistol_1"), 0)
-	# +1 weapon slot (the item from the BrotatoOnline bug report); DLC items may be absent here.
+	# +1 weapon slot; DLC items may be absent here.
 	var arm = _find_by_id(ItemService.items, "item_cybernetic_arm")
 	if arm == null:
 		arm = load("res://items/all/04_primal_dread/cybernetic_arm/cybernetic_arm.tres")
@@ -257,9 +253,6 @@ func coop_run(wave := 0) -> void:
 	RunData.add_gold(37, 1)
 	if wave > 0:
 		RunData.current_wave = wave
-
-
-# --- suites ---
 
 
 func _suite_battle_loopback(together: Node):
@@ -406,83 +399,62 @@ func _suite_dead_player(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
-# sync/state_stream.gd with its own streams on a fake session; touches no game state.
 func _suite_state_stream(together: Node):
 	_suite = StateStreamTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
-# Change detection of the host's shop state, with the cost of a check in small and late runs.
 func _suite_shop_change(together: Node):
 	coop_run(2)
 	_suite = ShopChangeTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
-# The run state of the shop and the level-up panels in parts, only those a client lacks, with
-# what a change costs on the wire, on the host and on a client before and now.
 func _suite_run_parts(together: Node):
 	_suite = RunPartsTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
-# BATTLE_START carries only the run parts a client lacks: bytes per client and the client's
-# time before change_scene, before and now.
 func _suite_battle_start(together: Node):
 	_suite = BattleStartTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
-# The cursors' key against their description on the co-op shop (cursor_key_tests.gd; the
-# level-up panels and the retry prompt are checked in battle_loopback and menu_ux).
 func _suite_cursor_key(together: Node):
 	coop_run(2)
 	_suite = CursorKeyTests.new(self, together)
 	yield(_suite.run_shop(), "completed")
 
 
-# Change detection of the run state of the host's level-up / crate panels, with the cost of a
-# send and of a level-up sequence in small and late runs.
 func _suite_upgrades_change(together: Node):
 	_suite = UpgradesChangeTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
-# The lobby in the game's menus (lobby_menu_tests.gd): title screen, character selection, the
-# client's popup, the pause menu. Sets up its own scenes and run.
 func _suite_lobby_menu(together: Node):
 	_suite = LobbyMenuTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
-# Render delay, gap log lines and session paths; the client side of a stall in a puppet battle
-# runs in battle_loopback.
 func _suite_network_stalls(together: Node) -> void:
 	NetworkStallTests.new(self).run(together)
 
 
-# What went out reliably to a peer, for the slow answer, gap and burst lines (net/traffic.gd).
 func _suite_traffic(_together: Node) -> void:
 	TrafficTests.new(self).run()
 
 
-# Character selection: the menu mirror leaves the scene with two co-op players that the grid and
-# colour tests use. Then each machine's own scroll, join slots and weapon panels.
 func _suite_progress(together: Node) -> void:
 	_suite = ProgressShareTests.new(self)
 	_suite.run(together)
 
 
-# A client's frame, stall and correction reports and the host's lines for them; ends with a
-# short battle the host records and a client replays.
 func _suite_client_report(together: Node):
 	coop_run(3)
 	_suite = ClientReportTests.new(self)
 	yield(_suite.run(together), "completed")
 
 
-# The Axolotl's text (DLC 1) in the broken state the game leaves its shared effect in during
-# co-op: no method call on null (a crash in a release build of the game).
 func _suite_axolotl(together: Node):
 	_suite = AxolotlTests.new(self)
 	yield(_suite.run(together), "completed")
@@ -494,6 +466,7 @@ func _suite_own_pickups(together: Node):
 	yield(_suite.run(together), "completed")
 
 
+# The menu mirror leaves the character selection with two co-op players for the tests after it.
 func _suite_selection(together: Node):
 	yield(_test_menu_mirror(together), "completed")
 	_suite = MenuUxTests.new()
@@ -506,25 +479,21 @@ func _suite_selection(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
-# Input sync, session lifecycle, DLC borrowing, the run state round trip. First in any process:
-# it checks that no session hook is installed yet.
+# First in any process: it checks that no session hook is installed yet.
 func _suite_core(together: Node):
 	var input_sync: Node = together.input_sync
 	PerfTests.new(self).test_no_global_hooks(together)
 	SnapshotTests.new(self).run()
 
-	# Virtual actions exist and survive the game's InputMap rebuild.
 	_check(InputMap.has_action("ui_accept_%s" % DEVICE), "virtual actions registered")
 	InputService.enable_gamepad_movement()
 	_check(InputMap.has_action("analog_move_left_%s" % DEVICE), "actions survive rebuild")
 
-	# No overlay of the mod's own: nothing is open, and without Steam the texts say why.
 	var lobby: Node = together.get_node("LobbyMenu")
 	_check(lobby.open_page() == null, "lobby page starts closed")
 	_check("Steam is unavailable" in lobby.details_text(), "lobby details without Steam")
 	_check(lobby.status_text() == "Online: needs Steam", "lobby status line without Steam")
 
-	# Remote player joins via hold-to-join and is typed as a gamepad.
 	RunData.set_coop_run(true)
 	CoopService.clear_coop_players()
 	CoopService.listening_for_inputs = true
@@ -552,19 +521,16 @@ func _suite_core(together: Node):
 	)
 	_check(move.is_equal_approx(Vector2(0.5, 0.0)), "movement strength exact (got %s)" % move)
 
-	# Reordered (stale) packets are ignored.
 	_seq -= 10
 	_send(input_sync, Vector2(-1.0, 0.0), Vector2.ZERO, 0)
 	yield(get_tree(), "idle_frame")
 	_check(Input.is_action_pressed("ui_accept_%s" % DEVICE), "stale packet ignored")
 	_seq += 20
 
-	# Button release edge.
 	_send(input_sync, Vector2(0.5, 0.0), Vector2.ZERO, 0)
 	yield(get_tree(), "idle_frame")
 	_check(not Input.is_action_pressed("ui_accept_%s" % DEVICE), "button released")
 
-	# Input timeout releases everything.
 	yield(get_tree().create_timer((input_sync.INPUT_TIMEOUT_MSEC + 100) / 1000.0), "timeout")
 	input_sync._release_timed_out()
 	_check(
@@ -643,8 +609,6 @@ func _hold_sounds(hold: bool) -> int:
 	return SoundRelay.dropped_count()
 
 
-# Character selection with two co-op players: the menu state names the screen and who selected,
-# the grids every element. The waiting screen (no copy of the host's screen) shows the key art.
 func _test_menu_mirror(together: Node):
 	var menu_sync: Node = together.menu_sync
 	menu_sync.set_process(false)
@@ -652,7 +616,6 @@ func _test_menu_mirror(together: Node):
 	yield(get_tree(), "idle_frame")
 	yield(get_tree(), "idle_frame")
 	var scene := get_tree().current_scene
-	# Two players join like remote players do (virtual devices), then the grid appears.
 	RunData.set_coop_run(true)
 	CoopService.clear_coop_players()
 	CoopService._add_player(VirtualDevices.FIRST, CoopService.PlayerType.GAMEPAD_XBOX)

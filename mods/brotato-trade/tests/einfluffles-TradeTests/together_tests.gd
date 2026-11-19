@@ -1,12 +1,12 @@
 extends Reference
-# brotato:trade next to brotato:together (this process loads both). Host: a remote player's
-# trade arrives as a shop intent and is applied once, by the same code as a local one.
-# Client: the own panel offers Trade when the host handles it, a press only sends the intent,
-# and the host's next state shows the result.
+# brotato:trade next to brotato:together (this process loads both): first as the host, then as a
+# client in the same shop as the host sent it.
 
 const TOGETHER_DIR := "res://mods-unpacked/einfluffles-BrotatoTogether/"
 const FAKE_PEER := 4242
-const REMOTE := 1  # the remote player's slot on the host, the client's own player later
+# On the host player 0 is local and player 1 remote (a virtual device). Later player 1 is the
+# client's own player.
+const REMOTE := 1
 const ITEM := "trade.item"
 const WEAPON := "trade.weapon"
 const BUY := "trade.buy"
@@ -39,9 +39,6 @@ func run(t: Node):
 	input.devices = saved_devices
 	_sync._host_shop = null
 	_sync.set_process(true)
-
-
-# --- host: player 0 is local, player 1 remote (a virtual device) ---
 
 
 func _host(input: Node):
@@ -132,7 +129,6 @@ func _host(input: Node):
 	input.devices.erase(FAKE_PEER)
 
 
-# The remote player buys an offered item for the host's player.
 func _host_buy() -> void:
 	var nodes: Array = _shop._get_shop_items_container(REMOTE)._shop_items
 	var node = _buyable(nodes, 0)
@@ -158,9 +154,6 @@ func _host_buy() -> void:
 	_t.check(_held(0, node.item_data) == count + 1, "no second copy")
 
 
-# --- client: the same shop as the host sent it, the own player is the giver ---
-
-
 func _client():
 	var local = _sync.local
 	_sync._client_shop_id = 0
@@ -178,7 +171,6 @@ func _client():
 	var before: String = _t.ledger()
 	_t.check(not _shop.trade_give(own, REMOTE, 0), "the copy of the shop gives nothing itself")
 
-	# The whole way with the own buttons: element, Trade, the player.
 	emulator.focused_control = _element(REMOTE, own)
 	yield(_t.tap("ui_accept", REMOTE), "completed")
 	_t.check(popup._focused and popup._trade_button.visible, "the own popup has Trade")
@@ -270,7 +262,6 @@ func _client():
 	own = _owned(REMOTE, _plain.my_id)
 	_t.check(_shop.trade_receivers(own, REMOTE) == [0], "trading is back with it")
 
-	# The host's answer: its state after both trades.
 	_receive(_states.traded)
 	yield(_t.frames(2), "completed")
 	_t.check(_t.ledger() == _host_ledger, "the host's state brings the trades to the client")
@@ -287,8 +278,7 @@ func _client():
 	)
 
 
-# The own panel's shop item: Trade with the mouse (LocalPanel), then with the buttons. A pick
-# only sends the buy to the host.
+# Trade with the mouse (LocalPanel), then with the buttons.
 func _client_buy(popup):
 	var nodes: Array = _shop._get_shop_items_container(REMOTE)._shop_items
 	var node = _buyable(nodes, 0)
@@ -327,7 +317,6 @@ func _client_buy(popup):
 	_t.check(sent.get("kind") == BUY and sent.get("arg") == 0, "so does accept, twice")
 
 
-# The first offer of that list player `to` has room for.
 func _buyable(nodes: Array, to: int):
 	for node in nodes:
 		if node.active and node.item_data != null and not node.item_data.is_meca:
@@ -351,9 +340,6 @@ func _click(control: Control):
 		event.global_position = at
 		Input.parse_input_event(event)
 		yield(_t.frames(3), "completed")
-
-
-# --- helpers ---
 
 
 func _capture(name: String) -> void:
@@ -386,7 +372,6 @@ func _apply(kind: String, slot: int, id: String, to: int, seq_offset := 0) -> bo
 	return _sync.host_apply_intent(_shop, REMOTE, _intent(kind, slot, id, to, seq_offset))
 
 
-# How many of that item or weapon the player has.
 func _held(player: int, item) -> int:
 	if item is WeaponData:
 		return _t.ids(RunData.get_player_weapons_ref(player)).count(item.my_id)

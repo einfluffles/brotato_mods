@@ -1,12 +1,7 @@
 extends Node
-# The host's sounds outside battle (shop, selection screens, end of run) for clients.
-# Host: SoundRelay hands every sound played outside a battle to record_sound(); they're batched per
-#   frame and sent as UI_SOUNDS (reliable: discrete events, a few res:// paths per batch).
-#   In battle BattleHost records instead (snapshot events) — that includes the level-up/crate
-#   panels, which live in main.tscn.
-# Client: replays them. Local sounds are muted while the puppet shop (ShopSync) or a copy of the
-#   host's menus (MenuPuppet) runs: its mirrored state and cursors would play the same sounds a
-#   second time. ClientView isn't mirrored: it stays audible.
+# The host's sounds outside battle (shop, selection screens, end of run) for clients, batched per
+# frame as UI_SOUNDS. In battle BattleHost records them as snapshot events, the level-up / crate
+# panels included (they live in main.tscn).
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const SoundRelay := preload(
@@ -18,7 +13,7 @@ const VOLUME_RANGE := Vector2(-60.0, 12.0)
 const MAX_PITCH_RAND := 0.9  # pitch_scale = 1 +- rand: must stay positive
 
 var session: Node = null
-var silent := false  # client: in its own menus (mod_main.gd), the host's sounds are not played
+var silent := false  # client: in its own menus the host's sounds are not played
 
 var _recording := false
 var _batch := []  # host: [[path, volume, pitch, position or null]] since the last send
@@ -34,9 +29,6 @@ func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
 
 
-# --- host ---
-
-
 func _process(_delta: float) -> void:
 	var recording: bool = session.is_host() and _has_ready_peer()
 	if recording != _recording:
@@ -48,7 +40,6 @@ func _process(_delta: float) -> void:
 	session.broadcast_reliable(Protocol.Msg.UI_SOUNDS, take_batch())
 
 
-# Called by SoundRelay for every sound the host plays outside a battle.
 func record_sound(
 	sound: Resource, position, volume_mod: float, pitch_rand: float, _always := false, _cooldown := 0.0
 ) -> void:
@@ -60,7 +51,6 @@ func record_sound(
 	_batch.append([sound.resource_path, volume_mod, pitch_rand, position])
 
 
-# Message body for the sounds recorded since the last call ({} if none).
 func take_batch() -> Dictionary:
 	if _batch.empty():
 		return {}
@@ -74,9 +64,6 @@ func _has_ready_peer() -> bool:
 		if session.peers[steam_id].ready:
 			return true
 	return false
-
-
-# --- client ---
 
 
 func _on_message(steam_id: int, msg_type: int, body) -> void:

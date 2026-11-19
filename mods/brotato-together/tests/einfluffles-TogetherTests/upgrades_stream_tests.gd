@@ -1,12 +1,7 @@
 extends Reference
-# The level-up / crate panels on the state stream (section UPGRADES): UpgradesSync as the
-# provider of a host stream and as the handler of a client stream, both on fake sessions
-# (state_stream_tests.gd), with what goes over the wire in between. Part of the battle
-# loopback: host_part while the host's panels show, client_part on the puppet.
-#  - host: first check sends the panels, unchanged panels send nothing and encode no run, a
-#    change goes out, peer_ready re-delivers the same revision, closed panels send null once
-#  - client: the host's messages applied, a resync applied again without a rebuild, null
-#    ends the panels' state
+# The level-up / crate panels on the state stream (section UPGRADES): UpgradesSync as the provider
+# of a host stream and as the handler of a client stream, both on fake sessions
+# (state_stream_tests.gd). Part of the battle loopback: host_part, then client_part on the puppet.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"

@@ -1,20 +1,9 @@
 extends Node
 # Mirrors every player's cursor (FocusEmulator.focused_control) from host to clients in scenes
-# that both sides build from the same run state (shop, level-up/crate panels, end of run).
-# Setting focused_control on the client goes through the game's own setter, so highlights, info
-# panels and item popups follow.
-# A cursor is [player, menu, control]: the emulator by its player_index among the FocusEmulators
-# of its menu (the node they are children of: the scene root in the shop, UpgradesUI, PauseMenu,
-# RetryWave, ...; a menu with a single emulator needs no match), menu and control as
-# ui/focus_targets.gd targets (by meaning, so another mod's extra node on one side moves nothing).
-#
-# Section CURSORS of sync/state_stream.gd, last in section order: the sections that build the
-# controls (shop, level-up panels, retry prompt) are applied before the cursors that point at
-# them. Body: {scene: the host's scene path, cursors: [[player, menu, control]]}. Inactive (null)
-# while the host's scene has no emulators; nothing is undone then (no clear_state): the cursors
-# live on the client's scene nodes and go with its scene. The stream keeps one pending body: a
-# body for the next scene replaces one still waiting for the previous scene, which only drops
-# cursors on a screen the host has already left.
+# that both sides build from the same run state. Section CURSORS of the state stream, after the
+# sections that build the controls.
+# Body: {scene: the host's scene path, cursors: [[player, menu, control]]}, menu and control as
+# ui/focus_targets.gd targets. No clear_state: the cursors go with the client's scene nodes.
 
 const ScenePaths := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/scene_paths.gd")
 const FocusTargets := preload(
@@ -25,8 +14,8 @@ const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const CHECK_INTERVAL := 0.05
-# The key's safety net (see state_key): one full description per second while the key stays the
-# same, about 0.4 ms in a two-player shop.
+# The key's safety net (see state_key): one full description per interval while the key stays
+# the same.
 const SAFETY_NET_MSEC := 1000
 const LOG_NAME := "einfluffles-BrotatoTogether:FocusSync"
 # A body stays pending this long until every cursor resolves to a visible control (scene still
@@ -36,16 +25,15 @@ const MAX_CURSORS := 16
 const MAX_PLAYERS := 4
 
 var session: Node = null
-var state_stream: Node = null  # sync/state_stream.gd (set by mod_main.gd)
-# client: FocusEmulators this client drives itself (its own level-up panel, see
-# sync/upgrades_sync.gd, and shop panel, sync/shop_local.gd). The host's cursor for them is never
-# applied here. Read only: set_local_emulator keeps it.
+var state_stream: Node = null
+# client: FocusEmulators this client drives itself; the host's cursor for them is never applied.
+# Read only: set_local_emulator keeps it.
 var local_emulators := []
-var missed := 0  # host: changes only the key's safety net found (tests)
+var missed := 0  # host: changes only the key's safety net found
 
 var _local_by := {}  # client: screen ("shop", "upgrades") -> the FocusEmulator it drives
 
-# host: the scene the emulators were collected from (once per scene, like before the stream)
+# host: the scene the emulators were collected from (once per scene)
 var _scene: Node = null
 var _scene_id := 0
 var _emulators := []
@@ -62,8 +50,6 @@ func setup(netplay_session: Node) -> void:
 	state_stream.register_handler(StateStream.CURSORS, self, PENDING_TIMEOUT_SEC)
 
 
-# Client: the screen owner drives this emulator itself now (null: no more). Each screen sets only
-# its own entry, so a late stop of one never hands another one's cursor back to the host.
 func set_local_emulator(owner: String, emulator) -> void:
 	if emulator == null:
 		_local_by.erase(owner)
@@ -72,28 +58,8 @@ func set_local_emulator(owner: String, emulator) -> void:
 	local_emulators = _local_by.values()
 
 
-# --- host (provider) ---
-
-
-# Who points where by identity and tree position, not described: describing (cursor_of) builds
-# FocusTargets' anchor table for every player twice per cursor, about 0.4 ms per check in a
-# two-player shop, 20 checks a second. Per cursor: the emulator's player_index, the control's
-# instance id, the child indices of emulator and control up to the scene; plus the player count
-# (which anchors exist) and the scene instance (a scene reloaded under the same path, retry wave,
-# sends its cursors again). Covered (cursor_key_tests.gd): every change the game makes on these
-# screens. A cursor moving or dropped, a sibling added or removed before the control or one of
-# its parents, the control leaving the scene, an emulator freed: the key changes in the same
-# check. A sibling queued for deletion: the description stops counting it at once, the key's
-# child index when it is freed at the end of that frame, so that change goes out one check late
-# (BaseShop._combine_weapon queues the combined weapons). The anchors are the game's fixed nodes
-# (onready vars; the shop's slots from ShopItemsContainer._shop_items_node_paths at _ready).
-# Not seen by the key, caught by the safety net within SAFETY_NET_MSEC (never done by the game
-# here, possible for another mod): a node on the path renamed, an owner or script changed on it
-# or on a sibling before it, a sibling replaced by a node of another kind at the same index (also
-# a queued one whose index another kind takes once it is freed), the control moved under another
-# node at the same child indices, an accessor or list handing out other anchor nodes. The net
-# describes the cursors once per SAFETY_NET_MSEC while the key stays the same and bumps _drift
-# (part of the key) when they differ from the last body.
+# Identity and tree position: describing costs too much for every check. What the key cannot
+# see is caught by the safety net, which describes once per SAFETY_NET_MSEC and bumps _drift.
 func state_key(_section: int) -> String:
 	if not _scan_scene():
 		_key = ""
@@ -143,7 +109,6 @@ func _missed() -> void:
 	ModLoaderLog.warning("cursors changed without a change of their key; sent", LOG_NAME)
 
 
-# False when there is nothing to send: no scene, or a scene without emulators.
 # By instance id: a new scene can reuse the freed one's address.
 func _scan_scene() -> bool:
 	var scene := get_tree().current_scene
@@ -166,7 +131,6 @@ func _forget_scene(scene_id: int) -> void:
 		_emulators = []
 
 
-# Child indices from node up to the scene ("-" when it is not below the scene: no cursor).
 func _tree_position(node: Node) -> String:
 	var indices := PoolIntArray()
 	while node != _scene:
@@ -191,7 +155,6 @@ func _cursors() -> Array:
 	return cursors
 
 
-# [player, menu, control], or [] when either is not below scene.
 static func cursor_of(emulator: Node, control: Node, scene: Node) -> Array:
 	var menu: Array = FocusTargets.describe(emulator.get_parent(), scene)
 	var target: Array = FocusTargets.describe(control, scene)
@@ -200,7 +163,6 @@ static func cursor_of(emulator: Node, control: Node, scene: Node) -> Array:
 	return [emulator.player_index, menu, target]
 
 
-# The FocusEmulator a cursor names, or null (network data).
 static func find_emulator(scene: Node, player, menu) -> Node:
 	if typeof(player) != TYPE_INT or player < -1 or player >= MAX_PLAYERS:
 		return null
@@ -219,14 +181,8 @@ static func find_emulator(scene: Node, player, menu) -> Node:
 	return null
 
 
-# --- client (handler) ---
-
-
-# Only while mirroring and only on the scene the body names. True once every cursor is where the
-# host has it (or the body is malformed: nothing to wait for); until then the stream keeps it
-# pending and calls again every frame (a cursor on a control that isn't built / visible yet is
-# retried, one on a control only the host has until the body times out). Idempotent: setting an
-# emulator to the control it already has does nothing.
+# False keeps the body pending: the stream calls again every frame until every cursor is where
+# the host has it, or the body times out (a cursor on a control only the host has).
 func apply_state(_section: int, body, _revision: int) -> bool:
 	if typeof(body) != TYPE_DICTIONARY:
 		return true
