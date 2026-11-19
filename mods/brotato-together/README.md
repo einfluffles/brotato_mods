@@ -8,7 +8,7 @@ machine, and their own character and menus react at once.
 the sessions measured in the implementation notes were played on 2026-11-16. Expect rough edges
 and please report them (see [Reporting problems](#reporting-problems)).
 
-Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogether`](src/einfluffles-BrotatoTogether) · license: [MIT](../../LICENSE)
+Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogether`](src/einfluffles-BrotatoTogether) · license: [MIT](../../LICENSE) · changes: [CHANGELOG.md](CHANGELOG.md)
 
 ## Requirements
 

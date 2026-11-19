@@ -66,6 +66,9 @@ game-script error or a `get_meta` / `get_child` / `get_node` engine error while 
 (in the Brotato install folder): select the zip, the preview image (first upload), tags, and the Workshop id
 when updating.
 
+As the change note, paste the mod's `CHANGELOG.md` section *Unreleased*, then rename that section
+to the upload's date and time and start a new empty *Unreleased* above it.
+
 The Steam build of Brotato only loads **subscribed Workshop items** (`<game>/mods` is ignored). To
 try a build in the real game, subscribe to a private Workshop item and overwrite its local copy
 with `tools/deploy.sh`. Steam may put the uploaded version back when it updates or verifies the
