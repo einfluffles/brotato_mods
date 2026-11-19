@@ -1,10 +1,7 @@
 extends Reference
-# The shop on the state stream (sections RUN_SHOP and PAUSE_SHOP). Host: ShopSync and
-# PauseControl as the providers of a stream of its own on a fake session (stepped by hand): the
-# shop goes out only when it changed (compressed once per change), again to a peer that becomes
-# ready, in the frame after an applied intent and as null once the host left the shop; the
-# pause goes out when it changes. Client: what that stream sent goes to the mod's own stream,
-# whose handler is ShopSync. Used by the shop loopback suite (its host shop, then its client).
+# The shop on the state stream (sections RUN_SHOP and PAUSE_SHOP): ShopSync and PauseControl as
+# the providers of a host stream of its own on a fake session, then what that stream sent goes to
+# the mod's own stream as a client. Used by the shop loopback suite.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -18,9 +15,9 @@ const PauseControl := preload(
 const PEER := 4343
 const REMOTE := 1  # the player whose Go the intent check sets
 
-var t: Node  # the test mod: _check, scene tree
+var t: Node
 var together: Node
-var host: Node = null  # the host's stream
+var host: Node = null
 var paused_message := []  # PAUSE_SHOP as the host sent it while paused
 var unpaused_message := []
 
@@ -142,8 +139,7 @@ func end_host() -> void:
 	host = null
 
 
-# Client part, in the client's shop: the host's pause from the stream turns the own panel off
-# and shows the banner; the resume undoes both.
+# Client part, in the client's shop.
 func run_client(shop: Node) -> void:
 	var stream: Node = together.state_stream
 	var local = together.shop_sync.local

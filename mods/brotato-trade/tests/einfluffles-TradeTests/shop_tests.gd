@@ -1,7 +1,6 @@
 extends Reference
-# The co-op shop in plain local co-op (no brotato:together): the item popup's Trade button
-# and its list of players, driven with each player's own buttons, and what both panels show
-# after a hand-over. Three players: 0 gives, 1 already has the unique item, 2 has nothing.
+# The co-op shop in plain local co-op. Three players: 0 gives, 1 already has the unique item, 2
+# has nothing.
 
 const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules.gd")
 
@@ -90,7 +89,6 @@ func _item_popup():
 	_t.check(emulator.focused_control == popup._cancel_button, "then Cancel")
 
 
-# Cancel, as button and as key, leads from the players back to the popup's buttons.
 func _back():
 	var popup = _popup(0)
 	var emulator = _emulator(0)
@@ -145,8 +143,7 @@ func _give_item():
 
 
 # Player 1 has the unique item: only player 2 is offered. Once everybody has one, nobody is.
-# A player whose shop offers it gets none either: the game counts offers towards the limit
-# when it rolls, and a buy checks nothing but the gold.
+# A player whose shop offers it gets none either (Rules.can_receive).
 func _unique_item():
 	var popup = _popup(0)
 	var offers: Array = _shop._get_shop_items_container(2)._shop_items
@@ -307,10 +304,6 @@ func _four_players():
 	_cursors_valid("in a four-player shop")
 
 
-# --- helpers ---
-
-
-# Accept on the item's element, then on Trade: the cursor ends on the first player.
 func _open_list(player: int, item):
 	var popup = _popup(player)
 	_emulator(player).focused_control = _element(player, item)
@@ -324,7 +317,6 @@ func _press_delay():
 	yield(_t.get_tree().create_timer(0.1), "timeout")
 
 
-# No cursor may rest on a control that is gone or hidden.
 func _cursors_valid(label: String) -> void:
 	var bad := []
 	for p in RunData.get_player_count():

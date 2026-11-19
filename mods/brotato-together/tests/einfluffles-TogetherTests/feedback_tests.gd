@@ -1,11 +1,6 @@
 extends Reference
-# Feedback the client shows without game logic (sync/feedback_mirror.gd, protocol 11): the wire
-# format of its events and their size, then a host battle that explodes (once a pooled
-# explosion reused between two snapshots), pays out bonus gold, heals, levels up, changes a
-# player's stats, picks up crates, uses up tardigrade charges and ends its wave, replayed on a
-# client: also the stat icons over the player (protocol 18), the HUD's picked-up crates
-# (sync/pickup_list.gd) and the charges' counter and life bar tint (protocol 28).
-# Driven from mod_main.gd (late suites); checks go through its _check.
+# Suite feedback: one-shot feedback events (sync/feedback_mirror.gd): the wire format, then a host
+# battle replayed on a client.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
@@ -24,8 +19,8 @@ const HEAL := 3
 const BONUS := 12
 const PROTECTION := 2
 
-var t: Node  # the test mod: _check, scene tree
-var _weapon_anims = null  # WeaponAnimTests, kept alive across its yields
+var t: Node
+var _weapon_anims = null  # kept alive across its yields
 
 
 func run(test_mod: Node, mod: Node):
@@ -39,9 +34,6 @@ func run(test_mod: Node, mod: Node):
 	yield(_weapon_anims.run(mod), "completed")
 	ProgressData.settings = saved
 	RunData.bonus_gold = 0
-
-
-# --- wire ---
 
 
 func _feedback_events() -> Array:
@@ -175,9 +167,6 @@ func _test_sizes(tests) -> void:
 	t._check(sizes[Snapshot.EVENT_STAT] == 7, "a stat text 7 B (%d)" % sizes[Snapshot.EVENT_STAT])
 
 
-# --- battle ---
-
-
 func _test_battle(mod: Node):
 	var host: Node = mod.battle_host
 	var client: Node = mod.battle_client
@@ -229,8 +218,7 @@ func _test_battle(mod: Node):
 
 
 # 1 s of host battle: three explosions (the third reuses the first's pooled node before the next
-# snapshot), a bonus-boosted gold picked up, a heal, a level-up, then the wave's end and its
-# label hidden again (main._on_EndWaveTimer_timeout). Players don't shoot.
+# snapshot), bonus gold, a heal, a level-up, then the wave's end. Players don't shoot.
 func _record_host(host: Node, main: Node, host_side: Dictionary):
 	var players: Array = main.get("_players")
 	for player in players:
@@ -308,7 +296,6 @@ func _pick_up_crates(main: Node, host_side: Dictionary) -> void:
 	host_side["one_less"] = bytes2var(var2bytes(pickup_list.state_body(StateStream.PICKUPS)), false)
 
 
-# The HUD's picked-up crates on the client, from the host's lists (section pickups).
 func _check_pickups(pickup_list: Node, client: Node, puppet_main: Node, host_side: Dictionary):
 	var section := StateStream.PICKUPS
 	var lists := []
@@ -423,7 +410,6 @@ func _check_host_events(recorded: Array, host_side: Dictionary) -> void:
 	)
 
 
-# Replays the recording and notes what the client showed meanwhile.
 func _replay(client: Node, puppet_main: Node, recorded: Array):
 	var seen := {
 		"explosions": 0, "texts": {}, "icons": {}, "label": 0, "sparkles": 0, "protection": {}

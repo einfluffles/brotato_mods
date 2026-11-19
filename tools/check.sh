@@ -78,9 +78,8 @@ if [ "$use_cache" = 1 ]; then
   fi
 fi
 
-# run_game <log> <suites> <mount args...>: one game process, output into <log>. mods-unpacked/ is
-# the process's own (a tmpfs): only the mods mounted for it exist there. The Mod Loader stops at a
-# mod folder without a manifest, which another mod's check would otherwise leave behind.
+# run_game <log> <suites> <mount args...>. mods-unpacked/ is a tmpfs per process: the Mod Loader
+# stops at a mod folder without a manifest, which another mod's check would leave behind.
 mkdir -p "$GAME/mods-unpacked"
 run_game() {
   local log="$1" suites="$2"
@@ -90,7 +89,6 @@ run_game() {
     brotato-modtools timeout 240 godot3 --path /proj --no-window > "$log" 2>&1
 }
 
-# report <log>: print the test lines and errors of one process; status 1 if it failed.
 report() {
   local log="$1" own_errors runtime_errors engine_errors
   own_errors=$(grep -A2 "SCRIPT ERROR" "$log" | grep -v -F "$KNOWN_ARTIFACTS" | grep -B1 "mods-unpacked" \

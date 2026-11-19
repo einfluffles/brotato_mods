@@ -1,13 +1,7 @@
 extends Reference
 # The host's menus on a client as the game's own scenes (sync/menu_puppet.gd, the selection
-# scenes' script extensions, session/puppet_menu.gd). Host part: this process walks through
-# character selection -> weapon selection -> difficulty selection -> end of run like a host
-# and keeps what MenuSync and FocusSync would send for each. Client part: the same process
-# shows them: the real scene loads, its grids are the host's (not this machine's unlocks), the
-# cursors, selections, run options, join progress and pages follow the host, and nothing can
-# be decided here (no selection, no way back, no run started, no settings written).
-# Last in the selection suite: needs its character selection with two virtual co-op players,
-# and leaves no run behind.
+# scenes' script extensions, session/puppet_menu.gd). One process walks through the screens like a
+# host, then shows them like a client. Needs the character selection with two virtual co-op players.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -32,8 +26,8 @@ const DIFFICULTY := "difficulty_selection"
 const END_RUN := "coop_end_run"
 const END_RUN_SCENE := "res://ui/menus/run/coop_end_run.tscn"
 
-var t: Node = null  # the test mod: _check()
-var _menus: Node = null  # MenuPuppet
+var t: Node = null
+var _menus: Node = null
 var _menu_sync: Node = null
 var _focus_sync: Node = null
 var _coop_selection: Node = null
@@ -85,9 +79,6 @@ static func _settings() -> Array:
 	return [settings.zone_selected, settings.zone_is_random, settings.endless_mode_toggled]
 
 
-# --- host ---
-
-
 func _host_part():
 	var scene := _tree().current_scene
 	var elements := MenuSync._elements_of(scene._get_inventories()[0])
@@ -124,7 +115,6 @@ func _host_part():
 	CoopService.connection_progress = []
 	CoopService.listening_for_inputs = false
 
-	# Both pick the first character; the game's own way on from here.
 	var character = free[0].item
 	for p in 2:
 		RunData.add_character(character, p)
@@ -194,9 +184,6 @@ func _capture(kind: String) -> void:
 		cursors = _focus_sync.state_body(StateStream.CURSORS)
 	_sent[kind] = bytes2var(var2bytes({"state": state, "cursors": cursors}), false)
 	_host[kind] = scene.get_instance_id()
-
-
-# --- client ---
 
 
 # Shows what the host sent for a screen and waits for the copy. Returns it (null: none).
@@ -347,12 +334,11 @@ func _client_characters():
 	)
 	t._check(join[3].instructions_visible, "characters: the last slot offers to join")
 	yield(_check_join_fill(state, join[2]._coop_join_progress), "completed")
-	var hint := CoopSelectionTests.new()  # kept by this function while it waits
+	var hint := CoopSelectionTests.new()
 	yield(hint.check_hint_layout(t, _coop_selection, scene, "client"), "completed")
-	var layout := OnlineLayoutTests.new()  # kept by this function while it waits
+	var layout := OnlineLayoutTests.new()
 	yield(layout.run(t, scene, "client"), "completed")
 
-	# Nothing is decided here.
 	FocusEmulatorSignal.emit(first, "pressed", 0)
 	t._check(
 		not scene._has_player_selected[0] and scene._player_characters[0] == null,
@@ -386,7 +372,6 @@ func _client_characters():
 	t._check(scene.get_focus_owner() == null, "characters: no control keeps the keyboard focus")
 	t._check(not CoopService.listening_for_inputs, "characters: still nobody joins here")
 
-	# A third player joins on the host, and leaves again.
 	var three: Dictionary = state.duplicate(true)
 	three["count"] = 3
 	three["selected"] = [false, true, false]
@@ -528,7 +513,6 @@ func _client_end_run():
 	yield(_frames(2), "completed")
 	t._check(_tree().current_scene == scene, "end of run: its buttons are the host's")
 
-	# A screen without a copy (the title screen), junk, and a run screen without its run.
 	t._check(
 		not _menus.show({"kind": "title_screen", "screen": 1, "count": 0, "grids": {}})
 		and _menus.current() == null,

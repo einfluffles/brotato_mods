@@ -1,14 +1,7 @@
 extends Reference
-# Suite cursor_key: FocusSync.state_key does not describe the cursors (that costs about 0.4 ms
-# in a two-player shop, 20 checks a second); it stands for them by identities and child indices.
-# Pinned here as a property on the real screens: after a change, what a peer has (the body the
-# stream sent when the key last changed) is what the host describes now, at the latest one
-# check later (a sibling queued for deletion counts in the key until it is freed). A change of
-# the description that the key cannot see is caught by FocusSync's safety net (a full
-# description compared every SAFETY_NET_MSEC), checked here by backdating it.
-# The shop runs in this suite (on mod_main's two-player run); run_upgrades and run_retry are
-# called by the battle loopback (level-up / crate panels) and the menu suite (retry prompt) on
-# the screens they build. Checks go through t._check.
+# Suite cursor_key: FocusSync.state_key stands for the cursors by identities and child indices
+# instead of describing them. After a change, what a peer has is what the host describes now, at
+# the latest one check later; a change the key cannot see is caught by FocusSync's safety net.
 
 const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
 const ShopIntents := preload(
@@ -19,7 +12,7 @@ const StateStream := preload(
 )
 const PISTOL := "weapon_pistol_1"
 
-var t: Node  # the test mod: _check, helpers, scene tree
+var t: Node
 var _focus_sync: Node = null
 # What a peer has: the key of the last send and the cursors described then (var2str).
 var _sent_key := ""
@@ -31,9 +24,6 @@ var _extra := []  # labels of harmless extra sends (key changed, description did
 func _init(test_mod: Node, together: Node) -> void:
 	t = test_mod
 	_focus_sync = together.focus_sync
-
-
-# --- the property ---
 
 
 # One check of the stream: the key every time, the body only when the key changed. True when
@@ -63,11 +53,8 @@ func _baseline() -> void:
 	_focus_sync._net_msec = OS.get_ticks_msec()
 
 
-# What a peer sees through the mutation just made: checks right away (same frame) and after each
-# of frames idle frames. "same": nothing changed, nothing sent; "sent": the change went out at
-# the first check; "extra": sent though the description is the same (harmless); "late": stale at
-# the first check, sent by a later one; "stale": still stale at the last check.
-# With frames > 0 it yields (call it through yield(..., "completed")).
+# Verdict after the mutation just made, checked now and after each of `frames` idle frames (it
+# yields when frames > 0): "same", "sent", "extra" (sent, description unchanged), "late", "stale".
 func _settle(frames: int):
 	var before := _sent
 	var sends := _sends
@@ -103,9 +90,6 @@ func _expect_net(label: String, verdict: String) -> void:
 		verdict == "stale" and caught and _focus_sync.missed == missed + 1,
 		"cursor key: %s -> %s under the key, sent by the safety net: %s" % [label, verdict, caught]
 	)
-
-
-# --- suite cursor_key: the co-op shop ---
 
 
 func run_shop():
@@ -204,9 +188,8 @@ func _shop_player_count(shop: Node, e1: Node) -> void:
 	_expect("player count 1 -> 2", _settle(0), ["sent"])
 
 
-# [type, k] steps in a list built by code (player 0's weapons, InventoryElement): siblings added
-# by code before the cursor's element, removed, queued for deletion, of another kind, re-scripted,
-# given an owner.
+# [type, k] steps in a list built by code (player 0's weapons, InventoryElement): siblings before
+# the cursor's element added, removed, queued for deletion, of another kind, re-scripted, owned.
 func _shop_inventory(shop: Node, e0: Node):
 	var elements = shop._get_gear_container(0).weapons_container._elements
 	var element: Node = elements.get_child(elements.get_child_count() - 1)
@@ -294,8 +277,7 @@ func _add_element(elements: Node) -> Node:
 
 
 # Named steps: another mod's panel ("ModPanel" with "ModButton", both owned by the scene) with
-# the cursor on its button: renamed, owner cleared, reparented at the same child indices,
-# detached from the scene.
+# the cursor on its button is renamed, disowned, reparented at the same indices and detached.
 func _shop_named_steps(shop: Node, e0: Node) -> void:
 	var panel := _named(Control.new(), "ModPanel", shop, shop)
 	var button := _named(Button.new(), "ModButton", panel, shop)
@@ -426,12 +408,8 @@ func _shop_last(shop: Node, e1: Node):
 	_expect("the scene replaced by another instance of it", _settle(0), ["sent", "extra"])
 
 
-# --- level-up / crate panels (battle loopback, after its host part) ---
-
-
 # ui: main's UpgradesUI. Player 0 gets a new level-up (the game reuses the option nodes); the
-# cursor rests on option 3 while the options are rolled and option 1 is taken, then moves into
-# player 1's panel; the options list reordered by another mod is the safety net's.
+# options list reordered by another mod is the safety net's.
 func run_upgrades(ui: Node, level: int):
 	var level_up = UpgradesUI.UpgradeToProcess.new()
 	level_up.level = level
@@ -471,9 +449,6 @@ func run_upgrades(ui: Node, level: int):
 	container._upgrade_ui_4 = options[3]
 	_expect_net("level-up: options list resized under the cursor", _settle(0))
 	print("  info: cursor key (level-up): harmless extra sends: %s" % [_extra])
-
-
-# --- retry prompt (menu suite, shown on the host's battle) ---
 
 
 # The prompt's emulator moves between its buttons; the cursor goes back where it was.

@@ -1,9 +1,6 @@
 extends Reference
-# Damage meter (sync/damage_meter.gd, ui/damage_views.gd): what a player's weapons and items
-# dealt, read off the game's counters; the biggest hit and the wave's time; the short numbers;
-# the board as the state stream carries it; the row in the wave's HUD; the damage page in the
-# co-op shop's and end of run's carousels, the third stats tab in the solo shop and end of run,
-# and the switch. Driven from mod_main.gd (two-player co-op run); checks go through its _check.
+# Damage meter (sync/damage_meter.gd, ui/damage_views.gd): the measurement, the board on the state
+# stream, the HUD row, and the damage page / tab in the shop and end of run screens.
 
 const DamageMeter := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_meter.gd")
 const DamageViews := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/damage_views.gd")
@@ -51,8 +48,7 @@ func _on_changed() -> void:
 	_changes += 1
 
 
-# Two pistols of player 0 are one source; an item's damage is what its counter gained since the
-# wave started; a counter that is no damage is left out. Returns the damage item.
+# Returns the damage item.
 func _test_measure(meter: Node):
 	RunData.add_weapon(_t._find_by_id(ItemService.weapons, PISTOL), 0)
 	var pistols: Array = RunData.get_player_weapons(0)
@@ -75,7 +71,7 @@ func _test_measure(meter: Node):
 	for data in [item, other]:
 		if typeof(RunData.tracked_item_effects[1].get(data.my_id_hash)) != TYPE_INT:
 			RunData.tracked_item_effects[1][data.my_id_hash] = 0
-	RunData.add_tracked_value(1, item.my_id_hash, 500)  # earlier waves
+	RunData.add_tracked_value(1, item.my_id_hash, 500)
 	var baseline: Dictionary = RunData.tracked_item_effects[1].duplicate(true)
 	RunData.add_tracked_value(1, item.my_id_hash, 77)
 	RunData.add_tracked_value(1, other.my_id_hash, 9)
@@ -88,9 +84,7 @@ func _test_measure(meter: Node):
 	return item
 
 
-# The HUD's lines: the strongest; when they are all of one kind (weapon or not), the last goes
-# to the strongest of the other kind if it dealt `least`; the shop's board (-1) keeps its order.
-# The HUD shows 4 sources, 3 with 3 or 4 players.
+# The HUD shows 4 sources, 3 with 3 or 4 players; the shop's board (-1) keeps its order.
 func _test_strongest() -> void:
 	var weapons := {"a": true, "b": true, "c": true}
 	var a := ["a", 1, 90]
@@ -117,7 +111,6 @@ func _test_strongest() -> void:
 	_t._check(counts == [4, 4, 3, 3], "the HUD's sources by players %s" % [counts])
 
 
-# Up to 9,999 as it is, then three digits and a unit, also where rounding reaches the next one.
 func _test_short() -> void:
 	var cases := {
 		0: "0",
@@ -199,7 +192,6 @@ func _test_board(meter: Node) -> void:
 	)
 
 
-# The row under each player's life bar.
 func _test_hud(meter: Node, item):
 	_t.get_tree().change_scene("res://main.tscn")
 	yield(_t.get_tree(), "idle_frame")
@@ -267,7 +259,6 @@ func _test_hud(meter: Node, item):
 		),
 		"the other player's row shows that player's own, with its share of the team's"
 	)
-	# A hit: the biggest one stays, a smaller one after it does not replace it.
 	var args := TakeDamageArgs.new(0)
 	meter.on_hit(null, 52345, Vector2.ZERO, true, false, false, false, args, 0, false)
 	meter.on_hit(null, 900, Vector2.ZERO, false, false, false, false, args, 0, false)
@@ -291,8 +282,6 @@ func _test_hud(meter: Node, item):
 	_t._check(dps.visible and dps.text == "123/s", "and the damage per second (%s)" % dps.text)
 
 
-# The co-op shop: a fourth page "Damage" in each player's carousel, reached with the arrows (LB /
-# RB on a gamepad), with that player's board of the wave before.
 func _test_shop(item):
 	_t.get_tree().change_scene(RunData.get_shop_scene_path())
 	for _i in 4:
@@ -381,8 +370,6 @@ func _list(panel: Node) -> Node:
 	return _page(panel).get_node(DamageViews.LIST_NAME)
 
 
-# Options > Gameplay has the switch; off, the damage page cannot be reached (a player on it goes
-# back to the page before), and the setting is kept.
 func _test_switch(shop: Node, panels: Array):
 	var meter: Node = shop.get_node(MenuOptionsButton.METER)
 	var options: Node = load("res://ui/menus/pages/menu_options.tscn").instance()
@@ -424,7 +411,6 @@ func _test_switch(shop: Node, panels: Array):
 	options.free()
 
 
-# The co-op end of run: the same page in each player's carousel, the last wave's board.
 func _test_coop_end_run():
 	_t.get_tree().change_scene(RunData.get_end_run_scene_path())
 	for _i in 3:
@@ -460,8 +446,7 @@ func _on_enemy_died(enemy, args) -> void:
 		_killed += health - int(clamp(enemy.current_stats.health, 0, health))
 
 
-# A crowded wave on a machine that cannot keep up (350 enemies, twelve fast pistols, a few frames
-# a second): the meter counts on, and its total is the health the enemies lost, to the point.
+# A crowded wave on a machine that cannot keep up: the meter's total is the health the enemies lost.
 func _test_crowded_wave(meter: Node):
 	_t.coop_run(3)
 	var pistol = _t._find_by_id(ItemService.weapons, PISTOL)
@@ -585,8 +570,6 @@ func _test_cost(meter: Node) -> void:
 	)
 
 
-# The solo shop: a third tab in the stats panel next to Primary / Secondary, the board on it. LB /
-# RB (real gamepad events) cycle through the three; the mouse reaches it too; the switch hides it.
 func _test_solo_shop(meter: Node):
 	CoopService.clear_coop_players()
 	RunData.reset()
@@ -682,7 +665,6 @@ static func _solo_tab(stats: Node, page: Node) -> String:
 	return "primary" if stats._primary_stats.visible else "secondary"
 
 
-# The solo end of run: the same tab, and a stats panel elsewhere (a bare one) stays as it was.
 func _test_solo_end_run():
 	_t.get_tree().change_scene(RunData.get_end_run_scene_path())
 	for _i in 3:

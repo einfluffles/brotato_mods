@@ -1,18 +1,6 @@
 extends Reference
 # Suite shop_change: the host serializes the shop's run state only when it can have changed
-# (sync/run_cache.gd). On a stream of its own (fake session, stepped by hand) and the real
-# co-op shop: every kind of change the game makes in the shop moves the fingerprint and goes out
-# once, serialized once and only its changed run parts compressed; view-only changes (Go, page,
-# colours, meca roll) go out without serializing; an unchanged shop serializes nothing between
-# safety-net checks; a change only the safety net can see (a stat written directly) still goes
-# out and counts as missed, its warning naming the stat; a description shown (Effect.get_text
-# adding custom args to an effect two players own) changes no part, and the client's copy shows
-# the same text without doubled args; an applied intent goes out in the next frame, serialized
-# once;
-# peer_ready resends every part without compressing again. Prints the cost of a check before
-# and after in a small and in late runs. The client's side of a changed state: its per-player
-# keys follow the part ids (which panels it rebuilds), and what a whole run state costs it.
-# (What a change sends and costs in parts: run_parts_tests.gd.)
+# (sync/run_cache.gd). What a change sends and costs in parts: run_parts_tests.gd.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -38,9 +26,9 @@ const IDLE_CHECKS := 20
 
 var _t: Node = null
 var _sync: Node = null
-var _cache = null  # ShopSync.run_cache
+var _cache = null
 var _shop: Node = null
-var _stream: Node = null  # the host stream of this suite
+var _stream: Node = null
 var _run := ""  # the run part ids last sent (var2str)
 var _client = RunParts.Store.new()  # what a client has of the run, from what was sent
 var _client_ok := true  # no body named a part the client lacked
@@ -65,21 +53,18 @@ func run(t: Node, together: Node):
 	_sync.set_process(true)
 
 
-# --- small run: what is detected, and how often the run is serialized ---
-
-
 func _small_run():
 	_build_run(2, 0)
 	var pistol = _t._find_by_id(ItemService.weapons, PISTOL)
 	RunData.players_data[0].weapons.clear()
 	for _i in 3:
-		RunData.add_weapon(pistol, 0)  # to combine, recycle and upgrade
+		RunData.add_weapon(pistol, 0)
 	for p in 2:
 		RunData.add_gold(5000, p)
 	yield(_enter_shop(), "completed")
 	_measure("small run, 2 players", 30)
 	_test_client_keys()
-	_cache.clear()  # as when the host enters the shop
+	_cache.clear()
 	var session := StateStreamTests.FakeSession.new()
 	session.transport = StateStreamTests.FakeTransport.new()
 	session.peers[PEER] = {"ready": true}
@@ -87,7 +72,7 @@ func _small_run():
 	_stream.setup(session)
 	_stream.register_provider(StateStream.RUN_SHOP, _sync, _sync.CHECK_INTERVAL)
 	_sync.state_stream = _stream  # host_apply_intent flushes this one
-	_sync.run_sender.forget(PEER)  # the client has nothing yet
+	_sync.run_sender.forget(PEER)
 	var serialized: int = _cache.serialized
 	_stream.step(1.0)
 	var sent := _take()
@@ -199,7 +184,7 @@ func _test_view_changes() -> void:
 		_expect_view("colours")
 
 
-# Meca weapons only exist with the DLC: a pistol marked as one stands in (local_shop_tests.gd).
+# Meca weapons only exist with the DLC: a pistol marked as one stands in.
 func _test_dismantle():
 	var node = _offered(0)
 	var weapon = _t._find_by_id(ItemService.weapons, PISTOL).duplicate()
@@ -284,10 +269,8 @@ func _test_safety_net() -> void:
 	_cache.missed = 0
 
 
-# A description shown between two checks: Effect.get_text adds the effect's custom args the
-# first time, and the effect is shared by both owners of the item. No run part changes, nothing
-# goes out, no miss (sync/effect_args.gd). The client's copy came with the args: its own
-# description adds none (no doubled args) and reads the same.
+# Effect.get_text adds the effect's custom args the first time a description is shown, and the
+# effect is shared by both owners of the item: no run part may change (sync/effect_args.gd).
 func _test_shown_text() -> void:
 	var found := _unshown_args_item()
 	_t._check(not found.empty(), "shop change: an item whose effect adds custom args when shown")
@@ -358,8 +341,7 @@ func _unshown_args_item() -> Array:
 	return []
 
 
-# An applied intent: no check in its own frame, one in the next, which serializes once (forced,
-# whatever the fingerprint says) and sends the complete state.
+# An applied intent forces one check in the next frame, whatever the fingerprint says.
 func _test_intent():
 	var slot := _offered_slot(REMOTE)
 	var node = _shop._get_shop_items_container(REMOTE).get_shop_item_node(slot)
@@ -417,10 +399,8 @@ func _test_intent():
 	_take()
 
 
-# ShopSync's own peer_ready handler forces a check and forgets what the peer has, and the
-# stream's resync (queued for its next step, after every peer_ready handler) is that check: the
-# new peer gets the true run state, every part of it, serialized once and not compressed again
-# when nothing changed.
+# The stream's resync is queued for its next step, after every peer_ready handler: it is the check
+# ShopSync's own handler forced.
 func _test_peer_ready() -> void:
 	var serialized: int = _cache.serialized
 	var packs: int = _cache.packs
@@ -449,9 +429,6 @@ func _test_peer_ready() -> void:
 	)
 
 
-# --- late runs: the cost ---
-
-
 func _late_run(players: int):
 	_build_run(players, LATE_ITEMS)
 	yield(_enter_shop(), "completed")
@@ -460,8 +437,8 @@ func _late_run(players: int):
 	_measure_settle("late endless run, %d players" % players)
 
 
-# Prints the cost of a check: before (the run serialized to JSON on every check, as the key was),
-# now with nothing changed, the safety net's check and a change (serialize, print, pack).
+# Prints the cost of a check next to a baseline (the run serialized to JSON on every check): with
+# nothing changed, the safety net's check, and a change (serialize, print, pack).
 func _measure(label: String, slow_calls: int) -> void:
 	var section := StateStream.RUN_SHOP
 	_sync.state_key(section)
@@ -513,9 +490,8 @@ func _measure_settle(label: String) -> void:
 	)
 
 
-# What naming a miss costs on top of the check that finds it (RunCache.miss_paths: the changed
-# parts' old and new text parsed and compared): a stat ("p" part) and a weapon's field ("g"
-# part, the big one), both written directly; the warning names both down to the field.
+# What naming a miss costs on top of the check that finds it (RunCache.miss_paths): a stat ("p"
+# part) and a weapon's field ("g" part, the big one), both written directly.
 func _measure_miss(label: String) -> void:
 	var section := StateStream.RUN_SHOP
 	_cache.force()
@@ -550,9 +526,8 @@ func _measure_miss(label: String) -> void:
 	_cache.missed = missed
 
 
-# What a whole run state costs a client before its panels are rebuilt (each state before parts,
-# now the first one and a resync): the JSON parsed, the players' keys (before parts: as JSON
-# text), the game's deserializer. In one frame, for every client.
+# What a whole run state costs a client before its panels are rebuilt: the JSON parsed, the
+# players' keys, the game's deserializer. In one frame, for every client.
 func _measure_client(label: String, late: bool) -> void:
 	var payload := RunStateCodec.encode(_sync.shop_args(_shop))
 	var started := OS.get_ticks_usec()
@@ -587,9 +562,8 @@ func _measure_client(label: String, late: bool) -> void:
 		)
 
 
-# The client rebuilds a panel only when its part of the run state changed
-# (ShopSync.player_keys): the keys follow the ids of the player's run parts and the content of
-# its offered items, nested values included.
+# ShopSync.player_keys: the keys follow the ids of the player's run parts and the content of its
+# offered items, nested values included.
 func _test_client_keys() -> void:
 	var data := RunStateCodec.serialize(_sync.shop_args(_shop))
 	var parts := RunParts.split(data)
@@ -637,9 +611,6 @@ func _test_client_keys() -> void:
 		),
 		"player keys: a change inside an offered item changes that player's items key only"
 	)
-
-
-# --- helpers ---
 
 
 func _build_run(players: int, items: int) -> void:
@@ -731,8 +702,7 @@ func _age_safety_net() -> void:
 
 
 # An active slot of player p that a press buys: an item when there is one, else a weapon the
-# player can take; never a meca item (a press only asks for its effect choice). Random rolls
-# offered one of those first and the purchase then bought nothing. -1 when there is none.
+# player can take; never a meca item (a press only asks for its effect choice). -1: none.
 func _offered_slot(p: int) -> int:
 	var container = _shop._get_shop_items_container(p)
 	var fallback := -1

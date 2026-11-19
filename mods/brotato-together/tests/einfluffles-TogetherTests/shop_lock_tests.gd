@@ -1,12 +1,11 @@
 extends Reference
 # Shop locks (sync/shop_sync.gd: the lock per slot in the state; sync/shop_local.gd: the own
-# press shown at once). Part of the local shop suite (local_shop_tests.gd, s below: its shop,
-# helpers and checks), in its own file for the file length limit.
+# press shown at once). Part of the local shop suite (local_shop_tests.gd; s: that suite).
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
-const REMOTE := 1  # the remote player's slot on the host
+const REMOTE := 1
 
 
 # The remote player's lock per slot, as the host's state carries it.
@@ -71,8 +70,6 @@ func client_own(s, shop: Node, node: Node, before: String):
 	)
 
 
-# Client: the other player's lock shows on the slot the host locked, also with a slot bought
-# before it.
 func client_other(s) -> void:
 	if not s._states.has("locked_after_buy"):
 		return

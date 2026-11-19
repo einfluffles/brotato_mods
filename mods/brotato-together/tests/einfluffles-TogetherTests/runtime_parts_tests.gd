@@ -1,22 +1,20 @@
 extends Reference
-# Pose mirroring of parts the game adds, frees or shows at runtime (see sync/pose.gd). Driven from
-# mod_main.gd; checks go through its _check.
+# Pose mirroring of parts the game adds, frees or shows at runtime (see sync/pose.gd).
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Pose := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/pose.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
 
-var _t: Node  # the test mod: _check, helpers, scene tree
+var _t: Node
 
 
 func _init(tests: Node) -> void:
 	_t = tests
 
 
-# Pooled puppets: the client's die() frees the tree's Pivot (Pivot._on_Enemy_died), like the
-# game. Layouts come from the pristine scene, and a reused puppet gets its Pivot back as soon as
-# the host's entity sends one; without host values the ring is hidden.
+# The client's die() frees the tree's Pivot (Pivot._on_Enemy_died), like the game. A reused
+# puppet gets its Pivot back as soon as the host's entity sends one.
 func test_pivot_restore(client: Node, tree: Node, host_pose: PoolRealArray):
 	client._despawn(tree)
 	yield(_t.get_tree(), "idle_frame")
@@ -100,7 +98,6 @@ func test_runtime_parts(together: Node):
 	_check_runtime_snapshots(early, last, index, host_values)
 	_t._check(ring_tracked == 0, "ring bullets inside the boss aren't tracked as projectiles")
 
-	# --- client replay ---
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
 	yield(_replay(client, recorded), "completed")
@@ -284,7 +281,6 @@ func _check_runtime_puppets(client: Node, puppets: Dictionary, host_values: Dict
 	client._pose.apply(dimetrodon, PoolRealArray(), PoolRealArray(), 1.0)
 	client._pose.apply(puppets.raptor, PoolRealArray(), PoolRealArray(), 1.0)
 	_t._check(not warning.visible and not line.visible, "telegraphs hidden when the host's are")
-	# Malformed values: wrong counts are ignored, odd numbers can't break anything.
 	var rotation: float = ring.rotation if ring != null else 0.0
 	client._pose.apply(eel, PoolRealArray(), PoolRealArray(range(31)), 1.0)
 	_t._check(ring == null or ring.rotation == rotation, "pose with a wrong value count ignored")

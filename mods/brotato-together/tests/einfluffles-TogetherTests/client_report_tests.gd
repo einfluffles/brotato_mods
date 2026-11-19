@@ -1,9 +1,7 @@
 extends Reference
 # Suite client_report (sync/client_report.gd): a client's frame windows, scene-change stalls and
-# prediction corrections, fed with made-up frame times, then the host's lines for them (checked,
-# clamped, budgeted), then a battle the host records and a client replays, with the reports that
-# real frames give. Without a session the report runs as test_client: it keeps what it would
-# send instead of sending it.
+# prediction corrections, and the host's lines for them. Without a session the report runs as
+# test_client: it keeps what it would send instead of sending it.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const ClientReport := preload(
@@ -304,7 +302,6 @@ func _test_host(together: Node, report: Node) -> void:
 		and report.last_lines[0].ends_with("(3 lines of this client left out before)"),
 		"the next line says how many were left out: %s" % [report.last_lines]
 	)
-	# Through the session, as the message arrives.
 	logged = report.lines_logged
 	var data := Protocol.encode(Protocol.Msg.CLIENT_REPORT, _with(frames, "corrections", 0))
 	report._host_lines.clear()
@@ -325,8 +322,6 @@ func _with(body: Dictionary, key: String, value) -> Dictionary:
 	return copy
 
 
-# The host records a short battle, the client replays it while its report runs on real frames:
-# the scene change's stall with the mod's marks, and a window with the mirror's cost.
 func _test_battle(together: Node, report: Node):
 	var tree: SceneTree = _t.get_tree()
 	var host: Node = together.battle_host

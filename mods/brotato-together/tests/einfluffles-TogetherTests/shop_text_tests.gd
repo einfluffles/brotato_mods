@@ -1,9 +1,9 @@
 extends Reference
 # SHOP_TEXT (sync/shop_sync.gd): the icon and number the shop floats over a player's reroll button
-# when a reroll gave a stat (bone dice). Part of the local shop suite (local_shop_tests.gd, s
-# below: its shop, helpers and checks), in its own file for the file length limit.
+# when a reroll gave a stat (bone dice). Part of the local shop suite (local_shop_tests.gd; s: that
+# suite).
 
-const REMOTE := 1  # the remote player's slot on the host
+const REMOTE := 1
 
 
 # Host, before the remote player's reroll: bone dice that always gives 2 max HP. Returns the

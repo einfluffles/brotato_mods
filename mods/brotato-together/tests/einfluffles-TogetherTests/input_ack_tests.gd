@@ -1,22 +1,6 @@
 extends Reference
-# Suite input_ack: a remote player's movement on the host against the client's own-player
-# prediction (battle_client.gd _own_target / _predict_own, run here on a copy of the player). The
-# client counts one physics step per input newer than the snapshot's INPUT_ACK, so the host has to
-# move exactly one step per acked input, however the packets arrive. INPUT streams drive player 1
-# of a real battle on the host:
-#  - jittered (bunched packets, ticks without one, a late stop, a swapped pair, a duplicate, a
-#    stale packet): one moving input per tick, no correction
-#  - one lost packet, and a burst of REDUNDANCY lost ones: the next packet brings their moves, no
-#    step lost, no correction
-#  - a 450 ms gap (packets held up on the way): no release, the host catches up, no correction
-#  - a 1.2 s gap: the player lets go of everything, the backlog beyond MAX_BACKLOG is dropped and
-#    the client's own player blends back by exactly that much
-#  - the recovery line counts the dropped inputs that moved: the timeout clearing a queue of
-#    standing ones (every battle start) logs nothing
-#  - the wave ends with the stick held: the host's player stands, the client predicts nothing from
-#    then on (one blend back of the inputs in flight, no correction after it)
-# Plus malformed redundancy and send time fields and the protocol bumps (no protocol 15 or 21
-# client or body).
+# Suite input_ack: the host moves a remote player exactly one step per acked INPUT, however the
+# packets arrive, because the client's prediction counts one step per input newer than INPUT_ACK.
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -45,7 +29,7 @@ const TICKS := 50
 const HELD := "ui_accept"  # BUTTON_ACTIONS bit 0, held through the long gap
 const EPSILON := 0.05  # px
 
-var t: Node  # the test mod: _check, scene tree
+var t: Node
 var input_sync: Node
 var player: Node2D
 var direction := Vector2.RIGHT  # towards the zone's middle
@@ -68,17 +52,15 @@ class SentInputs:
 	var history := []  # what InputSync.history holds on the client: [seq, move] sent so far
 
 
-# Runs in the physics pass like battle_host.gd: after InputSync took this tick's input (the
-# tree's physics_frame signal), before the battle scene's players move. Records what a snapshot
-# of this tick would hold and what the client shows for it, then delivers the packets that arrive
-# before the next tick (on a real host they come in with the idle frame).
+# Runs in the physics pass like battle_host.gd: after InputSync took this tick's input, before the
+# players move. Packets are delivered after the tick (on a real host: with the idle frame).
 class Feeder:
 	extends Node
 
 	var input_sync: Node
 	var player: Node2D
 	var client: Node  # a BattleClient outside the tree: only its own-player prediction runs
-	var own: Node2D  # OwnCopy
+	var own: Node2D
 	var arrivals := {}  # tick -> [seq, ...] in arrival order
 	var moves := {}  # seq -> move
 	var bodies := {}  # seq -> INPUT body
@@ -178,9 +160,6 @@ func run(test_mod: Node, together: Node):
 	pause_control.set_process(true)
 
 
-# --- streams ---
-
-
 func _test_jitter():
 	var standing := JITTER.size() - MOVING_INPUTS
 	var moves := _moves([[MOVING_INPUTS, direction], [standing, Vector2.ZERO]])
@@ -188,14 +167,13 @@ func _test_jitter():
 	for seq in moves:
 		_arrive(arrivals, seq + LATENCY + JITTER[seq - 1], seq)
 	arrivals[28].invert()  # the stop (25) behind its successor (26) in one tick
-	_arrive(arrivals, 15, 10)  # duplicate
-	_arrive(arrivals, 33, 3)  # long stale
+	_arrive(arrivals, 15, 10)
+	_arrive(arrivals, 33, 3)
 	var feeder = yield(_stream(moves, arrivals, TICKS, 0, AIM_FROM), "completed")
 	_check_stream(feeder, "jittered stream", 1)
 	t._check(feeder.aim_on_arrival, "aim reaches the device on arrival, not a tick later")
 
 
-# A packet lost in a moving stream, then a burst of REDUNDANCY: the next packet brings their moves.
 func _test_lost():
 	var moves := _moves([[MOVING_INPUTS, direction], [16, Vector2.ZERO]])
 	var arrivals := _arrivals(moves, [10])
@@ -210,9 +188,8 @@ func _test_lost():
 	_check_line(": %d missing input(s) filled in" % lost.size(), label)
 
 
-# 450 ms without INPUT (longer than the old 300 ms timeout, shorter than the client's prediction
-# limit), the packets of that time held up on the way: they all arrive when it ends. The client
-# predicted every step meanwhile; the host takes them all, up to twice as fast until it is back.
+# 450 ms without INPUT, under the 600 ms timeout and the client's 0.75 s replay limit: the packets
+# of that time all arrive when it ends.
 func _test_held_up_gap():
 	var moves := _moves([[30, direction], [30, -direction], [30, Vector2.ZERO]])
 	var arrivals := _arrivals(moves, [], [11, 27])
@@ -239,10 +216,8 @@ func _test_held_up_gap():
 	)
 
 
-# 1.2 s without INPUT, far beyond both limits, with a button held: the host lets go of the
-# button and the stick, and of the packets that arrive late it keeps the newest MAX_BACKLOG. The
-# client's own player blends over to the host's path (the dropped steps, and what its replay of at
-# most MAX_REPLAY_INPUTS left out during the gap), no snap.
+# 1.2 s without INPUT, beyond both limits, with a button held: the host lets go of button and
+# stick and keeps the newest MAX_BACKLOG of the late packets; the client blends over, no snap.
 func _test_long_gap():
 	var moves := _moves([[30, direction], [30, -direction], [30, direction], [100, Vector2.ZERO]])
 	var arrivals := _arrivals(moves, [], [11, 72])
@@ -271,12 +246,8 @@ func _test_long_gap():
 	t._check(released, "1.2 s gap: the remote player lets go of its button and stick")
 
 
-# The wave ends while the stick is held: main.clean_up_room stops the players on the host
-# (Player.on_room_cleanup) and the same snapshot says the wave is over (EVENT_WAVE_END). The host
-# still acks every input but its player stands. The client stops predicting there: its target is
-# the host's position, the run-ahead of the inputs in flight blends back once (no snap) and no
-# later snapshot corrects it again. Live, every held input ran ahead and every snapshot pulled the
-# player back: 33 to 93 corrections in the window of a wave's end.
+# The wave ends with the stick held: the host's player stands (Player.on_room_cleanup) and the
+# client stops predicting at EVENT_WAVE_END.
 func _test_wave_end():
 	var wave_end := 20
 	var moves := _moves([[40, -direction], [20, Vector2.ZERO]])
@@ -328,9 +299,8 @@ func _test_wave_end():
 	)
 
 
-# Feeds the bodies of moves (built like InputSync.sample_local; HELD held from seq held_from on,
-# aiming up from seq aim_from on, 0: never) as they arrive, for the given ticks, on a fresh remote
-# player state and client copy. wave_end: the tick the host's wave ends in (0: never).
+# Feeds the bodies of moves as they arrive, on a fresh remote player state and client copy.
+# held_from, aim_from: the seq HELD is held / the aim goes up from; wave_end: a tick (0: never).
 func _stream(
 	moves: Dictionary, arrivals: Dictionary, ticks: int, held_from := 0, aim_from := 0, wave_end := 0
 ):
@@ -408,11 +378,8 @@ func _walk(start: Vector2, moves: Dictionary, upto: int, dropped: Array) -> Vect
 	return position
 
 
-# For every tick: host position = start + one step per acked input (but the dropped ones), the
-# host taking at most max_advance moving inputs a tick. The client shows start + one step per
-# input it sent, exactly, as long as the host drops nothing; else it blends over to the host's
-# path (each tick at most a step plus BLEND of the way to its new target, never a snap), and ends
-# where the host stopped, which is where the client stopped minus the dropped steps.
+# Host position = start + one step per acked input (minus the dropped ones), at most max_advance
+# moving inputs a tick; the client blends over to the host's path, never snaps.
 func _check_stream(feeder: Feeder, label: String, max_advance: int, dropped := []) -> void:
 	var records: Array = feeder.records
 	var moves: Dictionary = feeder.moves
@@ -486,9 +453,6 @@ func _check_line(part: String, label: String) -> void:
 	)
 
 
-# --- wire format ---
-
-
 func _test_redundant_moves() -> void:
 	var sent := [[3, Vector2.UP], [5, Vector2.LEFT], [6, Vector2.DOWN], [7, Vector2.RIGHT]]
 	var run := PoolVector2Array([Vector2.LEFT, Vector2.DOWN, Vector2.RIGHT])
@@ -548,9 +512,8 @@ func _test_malformed() -> void:
 	VirtualDevices.release_all(DEVICE)
 
 
-# The timeout clears what is still queued. At every battle start that was 4 or 5 standing inputs,
-# logged as "5 dropped (corrected on the client)" though nothing was: a standing input moves
-# neither side. Only moving ones cost the client a correction, and only they bring a line.
+# A standing input moves neither side: only dropped moving inputs cost the client a correction
+# and bring a log line.
 func _test_timeout_drops() -> void:
 	for moving in [0, 3]:
 		input_sync._remote.erase(FAKE_PEER)
@@ -581,9 +544,8 @@ func _test_timeout_drops() -> void:
 	VirtualDevices.release_all(DEVICE)
 
 
-# INPUT changed shape (protocol 16: redundancy, protocol 22: the send time): an older build is
-# turned away at HELLO instead of joining with inputs the host drops (see _test_malformed for
-# their bodies).
+# INPUT's shape changed with protocol 16 (redundancy) and 22 (the send time): an older build is
+# turned away at HELLO instead of joining with inputs the host drops.
 func _test_protocol() -> void:
 	var host := {
 		"version": Protocol.VERSION, "game_version": "1", "mod_version": "1", "dlcs": []

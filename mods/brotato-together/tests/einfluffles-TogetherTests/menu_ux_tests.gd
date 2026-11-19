@@ -31,7 +31,7 @@ const P1 := 11
 const P2 := 12
 
 
-var t: Node = null  # the test mod: _check()
+var t: Node = null
 
 
 # Calls BattleHost's peer_ready handler from a newer object (see _test_join_order).
@@ -43,13 +43,13 @@ class PeerReadyRelay:
 		target._on_peer_ready(steam_id)
 
 
-# In a battle-capable state (run from the battle tests); leaves no scene of its own behind.
+# In a battle-capable state; leaves no scene of its own behind.
 func run_battle_tests(test_mod: Node, together: Node):
 	t = test_mod
 	yield(_test_retry_prompt(together), "completed")
 
 
-# Needs the character selection scene with two co-op players (after the menu mirror test).
+# Needs the character selection scene with two co-op players.
 func run_menu_tests(test_mod: Node, together: Node):
 	t = test_mod
 	yield(_test_selection_grid(together), "completed")
@@ -101,10 +101,8 @@ func _frames(count: int):
 		yield(_tree(), "idle_frame")
 
 
-# Host fails a wave: the retry prompt and its cursor reach the client's puppet battle; clicking
-# the client's copy changes nothing locally. The prompt and a pause (sections retry and
-# pause_battle) arrive while the puppet battle loads, as for a peer joining then: kept pending
-# and applied once it is ready. Then the battle -> next screen transition.
+# The prompt and a pause (sections retry and pause_battle) arrive while the puppet battle loads,
+# as for a peer joining then: kept pending and applied once it is ready.
 func _test_retry_prompt(together: Node):
 	var host: Node = together.battle_host
 	var client: Node = together.battle_client
@@ -123,7 +121,6 @@ func _test_retry_prompt(together: Node):
 	)
 	host_retry.show()
 	yield(_frames(2), "completed")
-	# What the host sends (and resends on peer_ready), off the wire.
 	var message: Array = bytes2var(var2bytes(stream.message_for(StateStream.RETRY, P1)), false)
 	var body = message[2]
 	t._check(body is Dictionary and body.player == 0, "retry: host reports the prompt")
@@ -204,8 +201,6 @@ func _test_retry_prompt(together: Node):
 	yield(_frames(3), "completed")
 	t._check(_tree().current_scene == puppet, "retry: client's copy doesn't change scenes")
 
-	# Battle over: the frozen battle stays (muted) until the next screen replaces it, and the
-	# fallback view shows up neutral before saying it's waiting.
 	together._client_active = true
 	client._leave_battle()
 	yield(_frames(3), "completed")
@@ -226,11 +221,8 @@ func _test_retry_prompt(together: Node):
 	host.set_process(true)
 
 
-# A peer becomes ready while the host's battle shows the retry prompt, paused: the first message
-# it gets is BattleHost's BATTLE_START (which battle the sections are for), then retry and
-# pause_battle in section order. A stream of its own with the real providers on a fake session;
-# BattleHost answers its peer_ready through a relay connected after the stream (and newer), so
-# Godot calls the stream's handler first. Synchronous: the tree is paused only for this check.
+# BattleHost answers peer_ready through a relay connected after the stream (and newer), so Godot
+# calls the stream's handler first. Synchronous: the tree is paused only for this check.
 func _test_join_order(together: Node) -> void:
 	var host: Node = together.battle_host
 	var joins := _stream(true, [P1])
@@ -265,9 +257,7 @@ func _test_join_order(together: Node) -> void:
 	_free_stream(joins)
 
 
-# Section pause_battle on the host (a battle running): BattleHost as the provider of a stream of
-# its own. Nothing while it runs; a pause flushes the section (no waiting for the interval), a
-# peer joining while paused gets it, resuming sends null. Returns the pause as a peer gets it.
+# BattleHost as the provider of a stream of its own. Returns the pause as a peer gets it.
 func _test_pause_host(together: Node) -> Array:
 	var host: Node = together.battle_host
 	var pauses := _stream(true, [P1])
@@ -311,8 +301,6 @@ func _test_pause_host(together: Node) -> Array:
 	return message
 
 
-# The host's grids (every element in order, with flags and tier) and who selected; the client
-# pairs a state with the grids of its screen.
 func _test_selection_grid(together: Node):
 	var menu_sync: Node = together.menu_sync
 	menu_sync.set_process(false)
@@ -356,7 +344,6 @@ func _test_selection_grid(together: Node):
 		"state: zone and endless of the run options"
 	)
 	state["you"] = 1
-	# Client side (the handler of both sections): grids come once, later states reuse them.
 	var received := []
 	menu_sync.clear_state(StateStream.MENU)
 	menu_sync.clear_state(StateStream.MENU_GRIDS)
@@ -375,9 +362,6 @@ func _test_selection_grid(together: Node):
 	yield(_frames(1), "completed")
 
 
-# Sections menu and menu_grids from a host stream to client streams (MenuSync on both ends):
-# the state, then its grids; a selection sends no grids; a peer joining mid-menu gets both;
-# a state of another screen waits for that screen's grids; null forgets them.
 func _test_menu_sections(together: Node) -> void:
 	var menu_sync: Node = together.menu_sync
 	var scene := _tree().current_scene
@@ -404,7 +388,6 @@ func _test_menu_sections(together: Node) -> void:
 		and shown.get("grids", {}).get("screen") == scene.get_instance_id(),
 		"menu: the client shows the state with its grids once both arrived"
 	)
-	# A player selects: the state goes out again, the grids do not. (The cursors are FocusSync's.)
 	scene._has_player_selected[0] = true
 	host.step(0.1)
 	sent = _take(host)
@@ -416,18 +399,17 @@ func _test_menu_sections(together: Node) -> void:
 	)
 	host.session.peers[P2] = {"ready": true}
 	host.session.emit_signal("peer_ready", P2)
-	host.step(0.0)  # the resync goes out in the stream's next step
+	host.step(0.0)
 	sent = _take(host)
 	t._check(
 		_sections(sent) == [[P2, StateStream.MENU], [P2, StateStream.MENU_GRIDS]],
 		"menu: a peer joining mid-menu gets both sections (only it)"
 	)
-	# (one MenuSync stands for both clients: it shows on each section, the screens matching)
+	# One MenuSync stands for both clients: it shows on each section, the screens matching.
 	received.clear()
 	_deliver(two, sent)
 	var grids = received[-1].get("grids", {}) if not received.empty() else {}
 	t._check(grids.get("screen") == scene.get_instance_id(), "menu: the joining peer's view")
-	# Another screen's state does not show with this screen's grids; its own grids show it.
 	var next: Dictionary = bytes2var(var2bytes(received[-1]), false)
 	next.erase("grids")
 	next["screen"] = -1

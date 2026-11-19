@@ -1,8 +1,6 @@
 extends Reference
 # A weapon that attacks with its own animation (AnimatedHitboxShootingBehavior: whip, flail),
-# sync/feedback_mirror.gd EVENT_WEAPON_ANIM: the event's wire format, the host sending one per
-# attack, the client's puppet weapon playing the lash. Part of the feedback suite
-# (feedback_tests.gd); checks go through the test mod's _check.
+# sync/feedback_mirror.gd EVENT_WEAPON_ANIM. Part of the feedback suite (feedback_tests.gd).
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -38,7 +36,6 @@ func _test_wire() -> void:
 		_t._check(Snapshot.parse(Snapshot.encode(view)).empty(), "rejected: player / weapon %s" % [bad])
 
 
-# Player 0's last weapon is a whip that attacks once on the host.
 func _test_battle(together: Node):
 	var host: Node = together.battle_host
 	var client: Node = together.battle_client

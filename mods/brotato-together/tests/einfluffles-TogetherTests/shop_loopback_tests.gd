@@ -1,9 +1,7 @@
 extends Reference
 # Suite shop_loopback: the host opens the real co-op shop (rolls items) and buys slot 1; the
-# client mirrors both states (host provider -> STATE -> client handler, shop_stream_tests.gd),
-# the host's cursor and the shop's sounds. Plays on mod_main's two-player run (coop_run); checks
-# go through its _check. Then the weapons row at shop entry and after a new weapon slot
-# (shop_gear_tests.gd), in shops of its own.
+# client mirrors both states, the host's cursor and the shop's sounds. Then the weapons row at
+# shop entry and after a new weapon slot (shop_gear_tests.gd), in shops of its own.
 
 const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
@@ -28,9 +26,9 @@ const ShopStreamTests := preload(
 )
 const ShopGearTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_gear_tests.gd")
 
-var t: Node  # the test mod: _check, helpers, scene tree
+var t: Node
 var _stream_tests = null  # kept alive across its yields
-var _gear = ShopGearTests.new()  # kept alive across its yields
+var _gear = ShopGearTests.new()
 
 
 func _init(test_mod: Node) -> void:
@@ -67,7 +65,6 @@ func run(together: Node):
 	var after: Array = bytes2var(var2bytes(_stream_tests.send_shop()), false)
 	_stream_tests.end_host()
 
-	# Host cursor for player 0 on shop slot 2 (focus mirroring, another mod's nodes on the host).
 	var focus_sync: Node = together.focus_sync
 	var host_emulator = Utils.get_focus_emulator(0, host_shop)
 	host_emulator.focused_control = container.get_shop_item_node(2)._button
@@ -77,7 +74,6 @@ func run(together: Node):
 	t._check(host_gold_after < gold_before, "host bought %s" % bought_id)
 	print("  info: shop state %d B on the wire" % var2bytes(after).size())
 
-	# --- client: the host stream's messages into the mod's own stream ---
 	var stream: Node = together.state_stream
 	shop_sync._client_shop_id = 0
 	stream._revs.erase(StateStream.RUN_SHOP)  # the revisions of the host stream above
@@ -117,14 +113,11 @@ func run(together: Node):
 	Puppet.set_active(false)
 	shop_sync._host_shop = null  # set by hand above: the host shop is gone with the next scene
 	shop_sync.set_process(true)
-	# The Anvil at shop entry and a new weapon slot's label, co-op and solo (ends in a solo shop).
 	yield(_gear.entry(t), "completed")
 
 
-# The host's cursors through sync/state_stream.gd end to end: FocusSync is the CURSORS provider
-# of a host stream on a fake session (what it sends one peer: first check, then the resend on
-# peer_ready), with what another mod would add on the host only (a node first in the scene and
-# a Damage-Meter-like button before player 0's reroll). Returns the two STATE messages.
+# FocusSync as the CURSORS provider of a host stream on a fake session, with what another mod
+# would add on the host only. Returns the two STATE messages (first check, resend on peer_ready).
 func _host_cursors(focus_sync: Node, shop: Node) -> Array:
 	var stream := _fake_stream(true)
 	stream.register_provider(StateStream.CURSORS, focus_sync, FocusSync.CHECK_INTERVAL)
@@ -166,9 +159,8 @@ func _host_cursors(focus_sync: Node, shop: Node) -> Array:
 	return [first[0][1], resent[0][1]]
 
 
-# What one check of the host's key costs (it runs 20 times a second: identities and child
-# indices), next to the body it stands for (every cursor described through ui/focus_targets.gd,
-# built on change only, and by the key's safety net once per FocusSync.SAFETY_NET_MSEC).
+# What one check of the host's key costs (it runs 20 times a second), next to the body it stands
+# for.
 func _measure_key(focus_sync: Node) -> void:
 	var started := OS.get_ticks_usec()
 	for _i in KEY_CHECKS:
@@ -186,8 +178,6 @@ func _measure_key(focus_sync: Node) -> void:
 	print(line % [emulators, cursors, key_usec, key_usec * 20.0 / 1000.0, body_usec])
 
 
-# The client's stream hands the host's STATE to FocusSync: the cursor lands, a resync puts it
-# back, a cursor that never resolves times out while the rest of its body is applied.
 func _client_cursors(focus_sync: Node, shop: Node, messages: Array) -> void:
 	var stream := _fake_stream(false)
 	stream.register_handler(StateStream.CURSORS, focus_sync, FocusSync.PENDING_TIMEOUT_SEC)
@@ -254,11 +244,10 @@ func _sent(stream: Node) -> Array:
 	return messages
 
 
-# Host presses the shop item's real Buy button: its press sound plays through SoundManager, and
-# everything the host plays outside battle is recorded for clients (UiSounds).
+# Everything the host plays outside battle is recorded for clients (UiSounds).
 func _ui_sounds_host_buy(together: Node, shop_item: Node):
 	var ui_sounds: Node = together.ui_sounds
-	ui_sounds.set_process(false)  # driven by hand (no Steam session)
+	ui_sounds.set_process(false)
 	SoundRelay.set_ui_sink(ui_sounds)
 	t._hold_sounds(true)
 	shop_item._button.emit_signal("pressed")  # the buy itself is a deferred connection
@@ -276,8 +265,6 @@ func _ui_sounds_host_buy(together: Node, shop_item: Node):
 	return body
 
 
-# Client: mirroring the purchase and the cursor in the puppet shop plays nothing locally; the
-# host's batch plays exactly once.
 func _test_ui_sounds_client(together: Node, host_sounds: Dictionary, dropped_before: int) -> void:
 	var local := _queued_sound_paths()
 	var dropped: int = SoundRelay.dropped_count() - dropped_before

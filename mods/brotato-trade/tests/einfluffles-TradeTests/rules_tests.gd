@@ -96,8 +96,7 @@ func _limits() -> void:
 	)
 
 
-# The shop hands out ItemService's own item objects: the same object several times in a list,
-# and in both players' lists.
+# The same object several times in a list, and in both players' lists.
 func _shared_objects() -> void:
 	_t.coop_run(2)
 	var item = _t.item_with_limit(-1)
@@ -138,7 +137,7 @@ func _bound_items() -> void:
 		"a character is not given away"
 	)
 	var bound = null
-	var spent := []  # lootable items whose hand-over would not undo itself
+	var spent := []
 	var successor = null  # a lootable item that turns into another, nothing spent
 	for item in ItemService.items:
 		if not item.can_be_looted:

@@ -1,16 +1,7 @@
 extends Reference
-# Suite local_device: which screen drives this client's own slot device (InputSync.
-# set_local_device) when the level-up panels hand over to the shop, and the host's pause across
-# that change. One process plays the host, then the client (states handed over by hand).
-# - Host: it pauses during the level-ups with its own panel done, the remote player picks while
-#   it is paused, it resumes, the shop loads. The pick is held until the resume, so the shop does
-#   not start paused (a real session: the pick ended the panels inside the pause, main.gd loaded
-#   the shop with the tree still paused and the pause menu gone, and the shop's pause state kept
-#   the client's own panel off until the host paused and resumed again).
-# - Client: that shop's own panel drives its device. The level-up panels stopping late
-#   (stop_local, clear_state, battle left, the focus report outside a battle) leave the shop's
-#   device and cursor alone; a device lost some other way is taken back in the next frame; a
-#   shop pause that ended with its shop does not leave the next shop's panel off.
+# Suite local_device: which screen drives the client's own slot device when the level-up panels
+# hand over to the shop, and the host's pause across that change. Past bug: a pick that ended the
+# panels inside a pause loaded the shop paused with the pause menu gone.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -31,7 +22,7 @@ var _upgrades: Node = null
 var _input: Node = null
 var _run_shop := {}  # RUN_SHOP body for the client, from the host's shop
 var _pause_shop := []  # PAUSE_SHOP body for the client, from the host's shop
-var _shop: Node = null  # the client's shop
+var _shop: Node = null
 
 
 func run(t: Node, together: Node):
@@ -59,9 +50,6 @@ func run(t: Node, together: Node):
 	together.battle_host.set_process(true)
 	CoopService.connected_players = saved_players
 	_t.get_tree().paused = false
-
-
-# --- host ---
 
 
 func _host_pause_across_level_ups():
@@ -145,9 +133,6 @@ func _enter_battle():
 			player.on_room_cleanup()
 	yield(tree.create_timer(0.3), "timeout")
 	return main
-
-
-# --- client: player 1 of the host's shop ---
 
 
 func _client_shop():
@@ -247,9 +232,6 @@ func _stale_shop_pause() -> void:
 	)
 	_shop._pause_menu.hide()
 	tree.paused = false
-
-
-# --- helpers ---
 
 
 # The host's shop pause state says not paused (whatever an earlier check left).

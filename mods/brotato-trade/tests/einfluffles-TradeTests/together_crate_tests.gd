@@ -1,9 +1,6 @@
 extends Reference
-# The crate trade next to brotato:together (this process loads both), on the host's battle
-# scene with its crate panels up. Host: a remote player's crate trade arrives as an
-# UPGRADE_INTENT of kind trade.crate and is applied once, by the same code as a local one.
-# Client (its side of UpgradesSync set up by hand on the same panels, puppet mode on): its own
-# panel offers Trade when the host handles it, a press only sends the intent.
+# The crate trade next to brotato:together (this process loads both): first as the host, then as
+# a client, whose side of UpgradesSync is set up by hand on the same panels.
 
 const KIND := "trade.crate"
 const REMOTE := 1  # the remote player on the host, the client's own player later
@@ -99,9 +96,6 @@ func _client_part() -> void:
 	_sync.stop_local("test over")
 	_sync._guarded_ui = null
 	_sync._own = null
-
-
-# --- helpers ---
 
 
 func _intent(id: String, to: int, seq_offset := 0) -> Dictionary:

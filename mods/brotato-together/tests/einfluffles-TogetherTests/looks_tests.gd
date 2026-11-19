@@ -1,9 +1,7 @@
 extends Reference
-# Lasting looks of entities and puddles (sync/looks.gd, sync/puddles.gd): the looks section of
-# the wire format (round trip, strict parsing, size), the host's sparse sending, the client's
-# resolve with expiry, then a host battle with a charmed, a burning, a cursed, a boosted and a
-# plain enemy, a charmed enemy shot and acid / petrol / fire puddles, replayed on a client.
-# Driven from mod_main.gd (one of its late suites); checks go through its _check.
+# Lasting looks of entities and puddles (sync/looks.gd, sync/puddles.gd): the looks section of the
+# wire format, the host's sparse sending, the client's resolve with expiry, then a host battle
+# replayed on a client.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
@@ -22,7 +20,7 @@ const EXPLOSION := "res://projectiles/explosion.tscn"
 const ARSONIST_FIRE := "res://items/characters/arsonist/arsonist_effect_explosion_fire.tres"
 
 var _t: Node
-var _facing = null  # FacingTests, kept alive across its yields
+var _facing = null  # kept alive across its yields
 
 
 func run(test_mod: Node, together: Node):
@@ -36,9 +34,6 @@ func run(test_mod: Node, together: Node):
 	yield(_facing.run(together), "completed")
 
 
-# --- wire ---
-
-
 func _test_wire() -> void:
 	_t._check(Looks.ALL == Snapshot.LOOK_BITS, "every look bit is accepted by the parser")
 	var view: Dictionary = SnapshotTests.new(_t).scenario(2, 12, 6, 4, 2, 4, 3, 2, true)
@@ -50,7 +45,7 @@ func _test_wire() -> void:
 		5: Looks.BURNING | Looks.BURN_BLUE,
 		last: Looks.BOOSTED | Looks.MECA,
 		3: Looks.MUTANT,
-		7: 0,  # just became plain
+		7: 0,
 	}
 	var parsed := Snapshot.parse(Snapshot.encode(view))
 	_t._check(
@@ -93,7 +88,6 @@ func _test_sizes() -> void:
 	)
 
 
-# The host sends a look while it changes and in slow refreshes; a plain entity costs nothing.
 func _test_host_sparse() -> void:
 	var looks := Looks.new()
 	var sent := {"charmed": [], "plain": [], "ended": []}
@@ -171,9 +165,6 @@ static func _same(a: Dictionary, b: Dictionary) -> bool:
 	return true
 
 
-# --- battle ---
-
-
 func _test_battle(together: Node):
 	var host: Node = together.battle_host
 	var client: Node = together.battle_client
@@ -207,7 +198,6 @@ func _test_battle(together: Node):
 	host._end_battle()
 	var seen_fire := _check_host_snapshots(recorded, ids, start.types)
 
-	# --- client replay ---
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
 	var puppet_main: Node = client._main
@@ -229,7 +219,7 @@ func _test_battle(together: Node):
 	var puppets := {}
 	for name in nodes:
 		puppets[name] = client._entities.get(ids[name])
-	puppets.erase("fire")  # gone by the end
+	puppets.erase("fire")
 	_t._check(not (null in puppets.values()), "client mirrors the looks test entities")
 	if not (null in puppets.values()):
 		_check_puppets(client, puppets, host_values)
@@ -244,9 +234,8 @@ func _test_battle(together: Node):
 	RunData.current_charmed_enemies = charmed_before
 
 
-# Each look made by the game's own code where it is cheap to reach (charm, curse, boost, burn,
-# puddles); the shot gets the charm material like ShootingAttackBehavior.spawn_projectile does.
-# Far from the players, whose weapons are off.
+# Each look is made by the game's own code where it is cheap to reach; the shot gets the charm
+# material like ShootingAttackBehavior.spawn_projectile does. Far from the players, weapons off.
 func _spawn_looks(main: Node) -> Dictionary:
 	for player in main.get("_players"):
 		player._weapons_container.propagate_call("set_physics_process", [false])
@@ -301,9 +290,8 @@ func _spawn_looks(main: Node) -> Dictionary:
 	return nodes
 
 
-# PlayerExplosion.start_explosion with the arsonist's fire_explosion effect: the game's own
-# GPESpawner call puts the puddle down. The explosion itself reaches clients as EVENT_EXPLOSION
-# (sync/feedback_mirror.gd), whose puppet must not put down a puddle of its own.
+# The game's own GPESpawner call puts the puddle down (the arsonist's fire_explosion effect). The
+# explosion reaches clients as EVENT_EXPLOSION, whose puppet must not put down one of its own.
 func _explode_with_fire(main: Node, position: Vector2) -> Node:
 	var effects: Array = RunData.get_player_effect(Keys.fire_explosion_hash, 0)
 	var fire_effect: Resource = load(ARSONIST_FIRE)
@@ -521,7 +509,6 @@ func _check_blast_fire(client: Node, puppet_main: Node, puppets: Dictionary, val
 	_t._check(local == 0, "no local puddles on the client (%d)" % local)
 
 
-# A look that ends: outline, flames, particles and the shot's material go.
 func _check_reset(client: Node, puppets: Dictionary) -> void:
 	var charmed: Node = puppets.charmed
 	charmed.flash()  # a hit lands while the look changes

@@ -1,6 +1,6 @@
 extends Reference
 # Suite battle_loopback: the host records a real battle, the client replays the recording in
-# puppet mode. Plays on mod_main's two-player run (coop_run); checks go through its _check.
+# puppet mode.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -25,12 +25,12 @@ const NetworkStallTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
 )
 
-var t: Node  # the test mod: _check, helpers, scene tree
+var t: Node
 var _local_panel = LocalPanelTests.new()  # kept alive across its yields
-var _cursor_key = null  # kept alive across its yields
+var _cursor_key = null
 var _perf = null
 var _upgrades_stream = UpgradesStreamTests.new()
-var _stalls = null  # kept alive across its yields
+var _stalls = null
 
 
 func _init(test_mod: Node) -> void:
@@ -43,7 +43,6 @@ func run(together: Node):
 	var client: Node = together.battle_client
 	host.set_process(false)  # driven by hand: no Steam session, so it would end the battle
 
-	# --- host: start a 2-player co-op battle (on mod_main.coop_run) ---
 	CoopService.clear_coop_players()
 	for i in 2:
 		CoopService.connected_players.push_back([i, CoopService.PlayerType.GAMEPAD_XBOX])
@@ -113,10 +112,8 @@ func run(together: Node):
 		)
 	)
 
-	# --- client: replay ---
-	# Rejoin during the level-up phase. A rejoin gets BATTLE_START before the stream's resync
-	# (menu_ux_tests: join order); the state arriving first is kept as a robustness check, and the
-	# scene still loads after BATTLE_START. The state waits in the stream until battle_entered.
+	# A rejoin gets BATTLE_START before the stream's resync. The state arriving first is kept as a
+	# robustness check: it waits in the stream until battle_entered.
 	state_stream.receive(upgrades_state)
 	t._check(state_stream.is_pending(StateStream.UPGRADES), "panel state before its battle: pending")
 	client._on_battle_start(start)
@@ -144,7 +141,6 @@ func run(together: Node):
 	t._check(spawner.enemies.empty(), "client spawner spawned nothing itself")
 	if damage_events > 0:  # hits are random in a 6 s battle
 		t._check(max_floating_texts > 0, "damage numbers replayed on the client")
-	# Local sounds are muted while mirroring; the host's replayed sounds play.
 	var stream: AudioStream = load("res://entities/units/player/step_sounds/Step 1.mp3")
 	var queued: int = SoundManager2D.sounds_to_play.size()
 	SoundManager2D.play(stream, Vector2.ZERO)
@@ -171,7 +167,6 @@ func run(together: Node):
 		var diff := abs(wrapf(player.current_weapons[0].rotation - host_weapons[0], -PI, PI))
 		t._check(diff < 0.01, "weapon aim mirrored")
 	t._check(puppet_main.get_tree().current_scene == puppet_main, "wave did not end locally")
-	# Level-up / crate panels mirrored with the host's rolled options.
 	t._check(
 		host_panels[0][0] == "upgrades" and host_panels[1][0] == "item",
 		"host panels %s" % [[host_panels[0][0], host_panels[1][0]]]
@@ -193,7 +188,6 @@ func run(together: Node):
 	InputService.emit_signal("game_lost_focus")  # alt-tab / pad disconnect
 	t._check(not t.get_tree().paused, "client battle ignores focus loss")
 
-	# Player 1 dies on the host: the puppet plays dead without running game logic.
 	var dead_snap := Snapshot.parse(recorded[-1][1])
 	dead_snap.t = client._buffer[-1].t + 1000  # newer than anything buffered
 	dead_snap.players[1][Snapshot.PlayerField.HEALTH] = 0
@@ -232,7 +226,6 @@ func run(together: Node):
 	_stalls = NetworkStallTests.new(t)  # a 400 ms snapshot gap
 	yield(_stalls.test_client_stall(client, input_sync, player, recorded[-1]), "completed")
 
-	# Death: a vanished unit plays its death animation, then returns to main's pool.
 	client.set_process(false)
 	var victim = null
 	var victim_id := -1

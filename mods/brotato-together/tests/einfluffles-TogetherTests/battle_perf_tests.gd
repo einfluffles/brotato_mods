@@ -1,9 +1,6 @@
 extends Reference
-# Battle mirror robustness/performance (review findings): own-player prediction during pauses and
-# stalls, net ids of pooled nodes reused between snapshots, the brachiosaurus foot on clients,
-# only accepted sounds recorded (playSingle replayed as playSingle), client-side puppet pooling and
-# type warm-up, no always-on node_added hooks (shop change detection: shop_stream_tests.gd).
-# Driven from mod_main.gd; checks go through its _check.
+# Battle mirror robustness and performance: own-player prediction during pauses and stalls, reused
+# net ids of pooled nodes, the brachiosaurus foot on clients, recorded sounds, puppet pooling.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -15,14 +12,13 @@ const FOOT := BOSSES + "brachiosaurus_foot/brachiosaurus_foot.tscn"
 const BULLET := "res://projectiles/bullet/bullet_projectile.tscn"
 const STEP_SOUND := "res://entities/units/player/step_sounds/Step 1.mp3"
 
-var _t: Node  # the test mod: _check, helpers, scene tree
+var _t: Node
 
 
 func _init(tests: Node) -> void:
 	_t = tests
 
 
-# Before any session: no handler runs for every node added to the tree (solo play).
 func test_no_global_hooks(together: Node) -> void:
 	var hooked := []
 	for connection in _t.get_tree().get_signal_connection_list("node_added"):
@@ -31,8 +27,8 @@ func test_no_global_hooks(together: Node) -> void:
 	_t._check(hooked.empty(), "no node_added hooks outside a session %s" % [hooked])
 
 
-# Client in a battle (mod_main's loopback): prediction replays at most 0.75 s of un-acked input,
-# and none while paused or when snapshots stopped.
+# Prediction replays at most 0.75 s of un-acked input, and none while paused or when snapshots
+# stopped.
 func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Array) -> void:
 	var host_entry := entry.duplicate()
 	host_entry[PF.INPUT_ACK] = 0
@@ -64,10 +60,8 @@ func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Arra
 	input_sync.history = saved
 
 
-# Client in a battle, the client processing: the own player runs while its keys are held and is
-# idle on the next frame after they are let go, though a prediction correction is still blending
-# out of its displayed position (that kept it running for about a second). It faces the held keys
-# and stands while the host's world is paused.
+# The own player is idle on the frame after its keys are let go, though a prediction correction is
+# still blending out of its displayed position (that kept it running for about a second).
 func test_own_animation(client: Node, input_sync: Node, player: Node2D):
 	var saved: Array = input_sync.history
 	var anim: AnimationPlayer = player._animation_player
@@ -103,8 +97,6 @@ func test_own_animation(client: Node, input_sync: Node, player: Node2D):
 	input_sync.history = saved
 
 
-# Host: types announced up front, pooled nodes, the brachiosaurus and its foot, sounds.
-# Client: the foot's _ready without errors, pooled puppets, teleports and reused ids.
 func test_battle(together: Node):
 	var host: Node = together.battle_host
 	var client: Node = together.battle_client
@@ -144,7 +136,6 @@ func test_battle(together: Node):
 		"host lists bosses before their parts"
 	)
 
-	# --- client ---
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
 	client.set_process(false)
@@ -296,7 +287,6 @@ func _check_client_ids(client: Node, gold_type: int, bullet_type: int) -> void:
 	)
 
 
-# Projectiles/gold/consumables are pooled on the client too, and freed with the battle.
 func _check_puppet_pool(client: Node, bullet_type: int) -> void:
 	var bullet: Node = client._spawn(bullet_type)
 	client._despawn(bullet)

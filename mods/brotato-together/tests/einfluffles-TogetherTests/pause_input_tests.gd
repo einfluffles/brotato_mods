@@ -1,6 +1,6 @@
 extends Reference
 # Remote input edges (press counters, timeouts, pause), menu echo, the client's own aim
-# preference, pause-menu ownership and absent players. Called from mod_main.gd's flow.
+# preference, pause-menu ownership and absent players.
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -22,7 +22,7 @@ const PAUSE := 1 << VirtualDevices.PAUSE_INDEX
 const PAUSE_ONE := 1 << (4 * VirtualDevices.PAUSE_INDEX)  # one press on the pause counter
 const LEFT_INDEX := 6
 
-var t: Node  # the test mod (checks, tree)
+var t: Node
 var together: Node
 var input_sync: Node
 var _probe: Node = null
@@ -176,7 +176,6 @@ func _test_aim():
 	_send(0, 0, LocalAim.FLAG_MANUAL)
 	t._check(Utils.is_manual_aim(1), "remote manual-aim player is manual with host auto")
 
-	# Client side: the client's own settings and device decide.
 	var own := Node2D.new()
 	t.get_tree().root.add_child(own)
 	own.global_position = Vector2(5000, 5000)
@@ -295,7 +294,6 @@ func _test_dropped_while_host_paused() -> void:
 	input_sync.sample_local()
 
 
-# Client: focus loss / pad disconnect / pause never open the puppet scene's pause menu.
 func _test_client_pause(main: Node) -> void:
 	ProgressData.settings.pause_on_focus_lost = true
 	InputService.emit_signal("game_lost_focus")
@@ -313,7 +311,6 @@ func _test_client_pause(main: Node) -> void:
 	t._check(PauseControl.banner_text("", 0, FAKE_PEER) == "Paused by the host", "host pause text")
 
 
-# Absent players: their level-up / crate choices are made the game's way.
 func _test_absent_panels():
 	var main: Node = t.get_tree().current_scene
 	var ui = main.get("_coop_upgrades_ui")

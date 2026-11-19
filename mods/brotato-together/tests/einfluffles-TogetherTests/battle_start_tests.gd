@@ -1,24 +1,7 @@
 extends Reference
-# Suite battle_start: BATTLE_START carries the run in parts, only those the client lacks
-# (BattleHost._send_battle_start, sync/battle_run.gd; protocol 25). In late endless runs with 2
-# and 4 players (250 items each), every player hurt in the last wave: the host's co-op shop
-# sends its state to two peers on a fake session, every player presses Go, the host's battle
-# starts on that session.
-# - Each peer's BATTLE_START carries no "p" or "g" part (the run as the scene entered, before
-#   main._ready healed the players), its run under RUN_LIMIT, the message under START_LIMIT. The
-#   host watches the scene's entry (node_added) between battles only, while a peer is ready.
-# - The client (BattleClient on a fake client session, its store fed by that shop state, as its
-#   shop applied it) starts the battle from it: once its own main._ready ran, its RunData is the
-#   host's (through the game's deserializer, as the whole run gave it before).
-# - peer_ready: that peer gets every part again.
-# - A start naming a part the client lacks asks for a resync and starts nothing.
-# - A start queued while a scene loads applies its own ids, though newer versions of its parts
-#   came in meanwhile.
-# Prints the bytes of a BATTLE_START per client and what the client takes before change_scene,
-# with the run's parse, deserialize and apply (ClientReport's marks).
-# Left out of the test run (LEFT_OUT): the items Go takes (hourglass, lifeform scanner), whose
-# owner's parts change after the last shop state, and the candy bag, whose random stats at wave
-# start each main._ready rolls itself (the host's and the client's differ, before and now).
+# Suite battle_start: BATTLE_START carries only the run parts a client lacks (sync/battle_run.gd).
+# LEFT_OUT: hourglass and lifeform scanner change their owner's parts after the last shop state;
+# the candy bag rolls its stats in each main._ready, so host and client differ.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const StateStream := preload(
@@ -84,13 +67,11 @@ func _run(players: int):
 	shop_tests._build_run(players, LATE_ITEMS)
 	for p in players:
 		_leave_out(p)
-		RunData.players_data[p].current_health = 1 + p  # hurt in the last wave
+		RunData.players_data[p].current_health = 1 + p
 	yield(shop_tests._enter_shop(), "completed")
 	_sessions()
 	_shop_state(label)
 
-	# Every player presses Go: the shop saves its state, the wave moves on, the battle loads (the
-	# host's battle module on the fake session, whose peers became ready in the shop).
 	var host: Node = _together.battle_host
 	var saved_session: Node = host.session
 	host.session = _host_session
@@ -125,7 +106,7 @@ func _run(players: int):
 	var keys: Array = _parts_of(start)
 	var run_bytes := var2bytes(start.get("run")).size()
 	started = OS.get_ticks_usec()
-	RunCache.new().refresh(host)  # what the host's entry hook does (now)
+	RunCache.new().refresh(host)  # what the host's entry hook does
 	var pack_usec := OS.get_ticks_usec() - started
 	print(
 		(
@@ -147,7 +128,6 @@ func _run(players: int):
 		"%s: BATTLE_START is %d B on the wire, its run %d B" % [label, bytes, run_bytes]
 	)
 
-	# peer_ready: every part to that peer.
 	host._on_peer_ready(P2)
 	var again: Dictionary = _take(Protocol.Msg.BATTLE_START).get(P2, {})
 	var all: int = start.get("run", {}).get("ids", {}).size()
@@ -165,8 +145,7 @@ func _run(players: int):
 		"%s: nor once the battle ended without a ready peer" % label
 	)
 
-	# What the whole run gave a client before: the host's run after its main._ready, through
-	# the game's deserializer and serializer.
+	# Expected: the host's run after its main._ready, through the game's deserializer and serializer.
 	var state := RunStateCodec.decode(host_run)
 	var expected := JSON.print(ProgressDataLoaderV3.new().serialize_run_state(state))
 	yield(_client(label, start, expected, queued, newer), "completed")
@@ -174,8 +153,7 @@ func _run(players: int):
 	_client_session.free()
 
 
-# The shop's state goes to both peers (every part: their records are forgotten first); P1's
-# store takes it and builds its state, as P1's shop does.
+# The shop's state goes to both peers; P1's store takes it and builds its state, as P1's shop does.
 func _shop_state(label: String) -> void:
 	var shop_sync: Node = _together.shop_sync
 	var stream: Node = StateStream.new()
@@ -225,7 +203,6 @@ func _client(label: String, start: Dictionary, expected: String, queued: Diction
 	var saved_store = client.get("run_store")
 	client.session = _client_session
 
-	# A store that lacks the players' parts: a resync is asked, nothing starts.
 	var lacking = RunParts.Store.new()
 	var asked := StateStreamTests.FakeSession.new()
 	lacking.session = asked
@@ -242,11 +219,9 @@ func _client(label: String, start: Dictionary, expected: String, queued: Diction
 		client._leave_battle()
 	asked.free()
 
-	# P1's store: the start runs. Once its scene is ready (the client's own main._ready started
-	# the wave), the client's RunData is the host's.
 	client.set("run_store", _store)
 	for p in RunData.get_player_count():
-		RunData.players_data[p].gold = 7  # the start must bring the host's back
+		RunData.players_data[p].gold = 7
 	_entered_json = ""
 	client.connect("battle_entered", self, "_on_battle_entered", [], CONNECT_ONESHOT)
 	Puppet.set_active(true)  # its stash of the client's own save is not the run's cost
@@ -268,8 +243,6 @@ func _client(label: String, start: Dictionary, expected: String, queued: Diction
 	)
 	var running: bool = Puppet.is_active() and client._battle_id == start.get("battle_id")
 
-	# The next start arrives while this scene loads (queued), then newer parts: the queued start
-	# applies its own ids.
 	client._on_message(HOST, Protocol.Msg.BATTLE_START, queued.body.duplicate(true))
 	_store.take(newer.duplicate(true), "test")  # what a state after it delivers
 	var queued_ids = queued.body.get("run", {}).get("ids")
@@ -354,7 +327,7 @@ func _frames(count: int):
 		yield(_t.get_tree(), "idle_frame")
 
 
-# The cache of the start's run is cleared after its sends (the old code had none: fail-before).
+# The cache of the start's run is cleared after its sends.
 static func _close(host: Node) -> void:
 	if host.get("run_sender") != null:
 		host.run_sender.close(host._run_cache)
@@ -364,7 +337,6 @@ func _on_battle_entered() -> void:
 	_entered_json = RunStateCodec.encode_json()
 
 
-# LEFT_OUT (header): what Go takes, and the candy bag's rolls. The test run has every item.
 func _leave_out(p: int) -> void:
 	for item in RunData.players_data[p].items.duplicate():
 		if item.my_id in LEFT_OUT:

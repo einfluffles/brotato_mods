@@ -1,16 +1,15 @@
 extends Reference
-# Part of the headless tests (mod_main.gd): run(test, together) yields like the other battle tests.
+# Animations the game starts from physics code (a turret shooting, a catling gun going mad, a
+# spitter's wind-up): the puppets play them without their method tracks, so no shoot() and no
+# projectiles of their own on the client.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
 
-var t: Node = null  # the test mod (checks, helpers)
+var t: Node = null
 
 
-# Animations the game starts from physics code: a real turret shooting at parked enemies, a catling
-# gun going mad next to a player, a spitter's wind-up. The puppets play the host's animations
-# without their method tracks: no shoot() and no projectiles of their own on the client.
 func run(test: Node, together: Node):
 	t = test
 	var host: Node = together.battle_host
@@ -72,7 +71,6 @@ func run(test: Node, together: Node):
 		idle_events += anim_events.get(ids["target%s" % i], {}).size()
 	t._check(idle_events == 0, "entities staying in their autoplay animation send nothing")
 
-	# --- client replay: sample the puppets every frame ---
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
 	var seen := {"turret_shoot": false, "turret_y": 0.0, "spitter_shoot": false, "stray": 0}
@@ -161,7 +159,6 @@ func _sample_anim_puppets(client: Node, ids: Dictionary, seen: Dictionary) -> vo
 	if spitter != null and is_instance_valid(spitter):
 		if spitter._animation_player.current_animation == "shoot":
 			seen.spitter_shoot = true
-	# Every projectile on the client must be a mirrored one.
 	var mirrored := {}
 	for node in client._entities.values():
 		mirrored[node] = true
@@ -217,7 +214,6 @@ func _check_anim_puppets(client: Node, turret: Node, catling: Node, ids: Diction
 	)
 	catling.update_animation(Vector2.ZERO)  # the game's walk logic on puppets keeps it
 	t._check(catling._animation_player.current_animation == "idle_attack", "walk logic keeps mad mode")
-	# Malformed or unknown events are ignored; speeds are clamped.
 	var bad := {
 		"death is never mirrored": [Snapshot.EVENT_ANIM, ids.turret, "death", 0.0, 1.0],
 		"unknown animation": [Snapshot.EVENT_ANIM, ids.turret, "nope", 0.0, 1.0],

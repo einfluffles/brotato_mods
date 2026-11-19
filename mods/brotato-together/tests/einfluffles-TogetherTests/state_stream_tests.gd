@@ -2,14 +2,6 @@ extends Reference
 # sync/state_stream.gd on its own: streams of their own (outside the tree, stepped by hand) on a
 # fake session that keeps what the host sends, with probe sections that record what the client
 # applies. Then the mod's own stream: created before the sync modules, given to each of them.
-#  - host: change key and interval, per-peer bodies built once, dirty, flush, resync on
-#    peer_ready in section order (next step, after what other peer_ready handlers send), inactive
-#    -> null once, nothing while not host, the state_sent hook (after each send, not by
-#    message_for), heavy sections held while Steam's send queue to a peer is full
-#  - client: pending until the handler accepts, retry(), superseding, revisions, timeout, clear,
-#    section order, malformed STATE, senders other than the host, a broken handler, lobby_left,
-#    the accept_state hook (every body that is not stale, as it arrives, before it is pending)
-#  - host -> client in one process (message_for -> receive) and the idle cost per frame
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const StateStream := preload(
@@ -21,7 +13,7 @@ const P2 := 12
 const P3 := 13
 const IDLE_STEPS := 5000
 
-var t: Node  # the test mod: _check, scene tree
+var t: Node
 var _nodes := []  # streams and fake sessions, freed at the end
 
 
@@ -275,10 +267,8 @@ func _test_per_peer() -> void:
 	)
 
 
-# state_sent: once per peer, right after its send (sync/run_parts.gd records what the peer
-# has); not for a body message_for builds. accept_state: every body that is not stale as it
-# arrives, before it is pending (also one a newer body replaces before it is applied), never a
-# stale one or a null.
+# state_sent: once per peer, right after its send, not for a body message_for builds.
+# accept_state: every body that is not stale as it arrives, before it is pending.
 func _test_hooks() -> void:
 	var stream := _stream(true, [P1, P2])
 	var hooked := Hooked.new()
@@ -335,11 +325,7 @@ func _test_dirty() -> void:
 	t._check(sent.size() == 2 and sent[0][1][1] == 1, "dirty for all: every ready peer")
 
 
-# Heavy sections (shop, upgrades) wait while Steam's send queue to a peer is over HOLD_BYTES:
-# that peer stays dirty and later gets the then-current revision in one message, the others get
-# every change. Never held: a null body, a light section, a peer held for MAX_HOLD_MSEC, a peer
-# Steam has no numbers for. A resync target is held the same way; the holds are logged per peer
-# when the section turns inactive. state_sent only for the peers sent to.
+# Heavy sections (shop, upgrades) wait while Steam's send queue to a peer is over HOLD_BYTES.
 func _test_hold() -> void:
 	var stream := _stream(true, [P1, P2])
 	var statuses: Dictionary = stream.session.transport.statuses
@@ -515,9 +501,7 @@ func _sent_to(stream: Node, steam_id: int) -> Array:
 
 
 # The resync comes after what another peer_ready handler sends (BATTLE_START here), even one
-# connected after the stream, and before any interval check: a key change and a mark_dirty in
-# between reach the new peer in section order with the rest. A held section holds the resync
-# (one real frame: flush is frame based); lobby_left drops a queued one.
+# connected after the stream. A held section holds it one real frame: flush is frame based.
 func _test_resync_after_modules():
 	var stream := _stream(true, [P1])
 	var shop := _probe("s", {"s": 0})

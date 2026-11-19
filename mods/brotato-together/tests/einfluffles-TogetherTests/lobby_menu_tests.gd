@@ -1,16 +1,6 @@
 extends Reference
 # The lobby in the game's own menus (ui/lobby_menu.gd), driven with key / pad / action events and
-# a fake GodotSteam object (session_lifecycle_tests.gd) as the transport's Steam:
-#  - title screen: the button among the game's that hosts a lobby behind the main menu, the
-#    frame with the players, Kick, Start leading to co-op; a client in its own main menu while
-#    the host is in its own; a failed lobby in the main menu's error label;
-#  - character selection: Co-op Off / Local / Online and Invite friends in a free player slot
-#    (coop_mode_tests.gd; their layout: online_layout_tests.gd), by keyboard, pad, mouse and
-#    player 1's FocusEmulator, inert on a client;
-#  - a client on a screen without a pause menu: pause opens the page as a popup, the game and
-#    the host get nothing meanwhile;
-#  - pause menu: the page in its stack (the menu's FocusEmulator), the question before leaving
-#    mid-run, an invite accepted mid-run.
+# a fake GodotSteam object (session_lifecycle_tests.gd) as the transport's Steam.
 
 const Lifecycle := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
@@ -32,13 +22,13 @@ const PRESS_DELAY_SEC := 0.1  # a MyMenuButton is off for 0.05 s after a press
 const KEYBOARD := 7  # the game's remapped device of the keyboard
 const PAD := 0
 
-var t: Node = null  # the test mod: _check()
+var t: Node = null
 var together: Node = null
 var lobby: Node = null
 var transport: Node = null
 var session: Node = null
-var _steam = null  # FakeSteam
-var _mode_tests = null  # coop_mode_tests.gd
+var _steam = null
+var _mode_tests = null
 
 
 class Probe:
@@ -252,7 +242,6 @@ func _test_title_screen():
 	var left_rect := left.get_global_rect()
 	var right_rect: Rect2 = main_menu.right_container.get_global_rect()
 
-	# The game's own focus handling: arrows along the column.
 	start.grab_focus()
 	yield(_tap_key(KEY_DOWN), "completed")
 	t._check(
@@ -263,7 +252,6 @@ func _test_title_screen():
 	yield(_tap_key(KEY_F9), "completed")
 	t._check(lobby.open_page() == null and not frame.visible, "F9 is nobody's key")
 
-	# Without Steam: the reason, where the game reports its own errors.
 	button.grab_focus()
 	yield(_tap_key(KEY_ENTER), "completed")
 	var label: Label = main_menu.error_label
@@ -273,7 +261,6 @@ func _test_title_screen():
 	)
 	lobby.last_error = ""
 
-	# Hosting: the lobby is made behind the main menu, which stays as it is.
 	_fake_steam()
 	yield(_wait(PRESS_DELAY_SEC), "completed")
 	yield(_tap_key(KEY_ENTER), "completed")
@@ -319,7 +306,6 @@ func _test_title_screen():
 	yield(_frames(2), "completed")
 	t._check(main_menu.visible and frame.is_visible_in_tree(), "title: and back, the frame is there")
 
-	# A friend joins: a row with Kick, reached with the cursor from the button.
 	_steam.lobby_members = [LOCAL, CLIENT]
 	transport._on_lobby_chat_update(LOBBY, CLIENT, CLIENT, 1)
 	yield(_frames(2), "completed")
@@ -343,7 +329,6 @@ func _test_title_screen():
 	yield(_tap_key(KEY_LEFT), "completed")
 	t._check(scene.get_focus_owner() == button, "frame: around, and left is the button again")
 
-	# Kick: told to leave, gone here at once, and nothing of it is heard any more.
 	yield(_tap_key(KEY_RIGHT), "completed")
 	_steam.sent.clear()
 	yield(_tap_key(KEY_ENTER), "completed")
@@ -372,7 +357,6 @@ func _test_title_screen():
 		"kick: once it has left it can be invited again"
 	)
 
-	# Start with the lobby up: everybody comes along, so it is a co-op run.
 	RunData.play_mode = RunData.PlayMode.SOLO
 	start.emit_signal("pressed")
 	yield(_frames(4), "completed")
@@ -384,7 +368,6 @@ func _test_title_screen():
 		"title: Start with a lobby opens character selection in co-op"
 	)
 
-	# Back in the main menu the lobby is still there; Leave lobby ends it.
 	yield(_change_scene(MenuData.title_screen_scene), "completed")
 	scene = _tree().current_scene
 	main_menu = scene._main_menu
@@ -424,7 +407,6 @@ func _test_client_title():
 	var title_state := {"kind": "title_screen", "screen": 1, "count": 0, "selected": [], "grids": {}}
 	var resume_state := {"kind": "coop_resume", "screen": 2, "count": 0, "selected": [], "grids": {}}
 
-	# Joining from the main menu: no waiting screen, the lobby shows in the frame.
 	_join_as_client()
 	yield(_frames(2), "completed")
 	t._check(
@@ -452,7 +434,6 @@ func _test_client_title():
 		"client: accept on Start starts nothing, pause opens no popup"
 	)
 
-	# The host's state says it is in its main menu: this game is its player's own meanwhile.
 	Puppet.set_active(true)  # as left by a screen of the host
 	together._on_menu_state(title_state)
 	t._check(
@@ -478,7 +459,6 @@ func _test_client_title():
 		"client: back on the main page Start and Continue are off again"
 	)
 
-	# What the host sends from its main menu changes nothing; its first screen ends it.
 	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.MENU, 2, title_state])
 	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.MENU_GRIDS, 2, {}])
 	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.RUN_SHOP, 2, null])
@@ -498,7 +478,6 @@ func _test_client_title():
 		"client: a host screen without a copy is the waiting screen, as before"
 	)
 
-	# The host returns to its main menu (end of a run): the client's own title screen loads.
 	Puppet.set_active(true)
 	together._on_menu_state(title_state)
 	yield(_frames(3), "completed")
@@ -523,7 +502,6 @@ func _test_client_title():
 	t._check(not together._own_menus, "client: a battle of the host ends it as well")
 	together._on_menu_state(title_state)
 
-	# Kicked: out of the lobby, with the reason; the main menu is the player's again.
 	_deliver(HOST, Protocol.Msg.KICK, null)
 	yield(_frames(2), "completed")
 	var label: Label = main_menu.error_label
@@ -542,7 +520,6 @@ func _test_client_title():
 	)
 	lobby.last_error = ""
 
-	# Leave lobby on the button.
 	_join_as_client()
 	yield(_frames(2), "completed")
 	t._check(start.disabled and button.text == "Leave lobby", "(control) a client again")
@@ -555,8 +532,6 @@ func _test_client_title():
 	)
 
 
-# The error of a lobby that failed: in the main menu's error label (now, or after the return to
-# the title screen) and in the page's details.
 func _test_failed_lobby():
 	yield(_change_scene(MenuData.title_screen_scene), "completed")
 	var main_menu: Node = _tree().current_scene._main_menu
@@ -635,7 +610,6 @@ func _test_client_popup():
 	)
 	probe.events.clear()
 
-	# Held keys: the game neither gets the events nor sees the actions, the host gets nothing.
 	_key(KEY_DOWN, true)
 	yield(_frames(1), "completed")
 	t._check(probe.events.empty(), "popup: game gets no key events")
@@ -652,7 +626,6 @@ func _test_client_popup():
 	Input.action_release("ui_accept")
 	Input.action_release("analog_move_right")
 
-	# Mid-run: Leave asks on the game's confirm page; cancel goes back one step at a time.
 	yield(_tap_key(KEY_ENTER), "completed")
 	var question: String = page._confirm.get_node("Buttons/Label").text
 	t._check(
@@ -678,8 +651,7 @@ func _test_client_popup():
 	yield(_tap_key(KEY_RIGHT), "completed")
 	t._check(probe.events.size() == 2, "popup: game gets keys again (%d)" % probe.events.size())
 
-	# Mouse (a co-op screen's FocusEmulators would keep it from the GUI): pointing moves the
-	# cursor, a click presses.
+	# A co-op screen's FocusEmulators would keep the mouse from the GUI.
 	yield(_tap_key(KEY_ESCAPE), "completed")
 	_mouse_move(page._back_button)
 	yield(_frames(1), "completed")
@@ -694,7 +666,6 @@ func _test_client_popup():
 	yield(_frames(2), "completed")
 	t._check(lobby.open_page() == null, "mouse: Back closes the popup")
 
-	# Gamepad: Start opens and closes, B goes back.
 	yield(_tap_pad(JOY_START), "completed")
 	t._check(lobby.open_page() == page, "pad: Start opens the popup")
 	yield(_tap_pad(JOY_DPAD_DOWN), "completed")
@@ -706,7 +677,6 @@ func _test_client_popup():
 	t._check(lobby.open_page() == null, "pad: Start closes it")
 	probe.queue_free()
 
-	# Yes leaves: the client is back on its title screen.
 	yield(_tap_key(KEY_ESCAPE), "completed")
 	lobby.open_page().ask_leave()
 	yield(_tap_key(KEY_ENTER), "completed")
@@ -739,7 +709,6 @@ func _test_pause_menu():
 	)
 	t._check(not lobby.popup_on_pause(main), "pause menu: no popup on a screen that has one")
 
-	# Player 1 paused: the menu's FocusEmulator moves its cursor.
 	menu.pause(0)
 	yield(_frames(2), "completed")
 	var emulator = menu._focus_emulator
@@ -756,7 +725,7 @@ func _test_pause_menu():
 		emulator.focused_control == page._host_button, "pause menu: the cursor is on the page"
 	)
 
-	# Hosting mid-run (no frame passes meanwhile): Leave asks, No stays, Yes leaves the lobby only.
+	# Hosting mid-run (no frame passes meanwhile).
 	transport._on_lobby_created(transport.RESULT_OK, LOBBY)
 	page.refresh()
 	t._check(lobby.is_mid_run(), "(control) a hosted battle is mid-run")
@@ -783,7 +752,6 @@ func _test_pause_menu():
 	menu.unpause()
 	yield(_frames(1), "completed")
 
-	# A Steam invite accepted mid-run opens the pause menu on the page, with Join invite.
 	transport._on_lobby_created(transport.RESULT_OK, LOBBY)
 	transport._on_join_requested(555, 9)
 	t._check(

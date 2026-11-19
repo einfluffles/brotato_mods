@@ -1,14 +1,7 @@
 extends Reference
 # Suite own_pickups: the client's own player picks up consumables at once (sync/own_pickups.gd).
-# Host, the game's own physics: a crate is taken exactly where OwnPickups.overlaps says (box
-# against the pickup circle, just inside and just outside on three sides); a fruit inside the
-# attract circle stays put at full health and flies in and is taken when hurt.
-# Client (player 1, snapshots of that host battle): walking onto a crate takes it on the frame
-# the prediction reaches it, with its pickup sound; it stays gone while the host lags behind,
-# and the host's own pickup sound is dropped when the host takes it. A fruit the host does not
-# take (its player never got there) comes back where the host has it once the host has applied
-# the inputs. A fruit in reach of the attract circle stays at full health and flies to the hurt
-# player, which then takes it.
+# First the game's own rules on the host (OwnPickups.overlaps must match them), then a client
+# predicting pickups on snapshots of that host battle.
 
 const OwnPickups := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/own_pickups.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -54,9 +47,6 @@ func run(together: Node):
 	client._leave_battle()
 	Puppet.set_active(false)
 	host.set_process(true)
-
-
-# --- the game's rules on the host ---
 
 
 func _test_touch_rule(main: Node, player: Node):
@@ -133,9 +123,6 @@ func _spawn(main: Node, data, at: Vector2):
 	return main.get("_consumables")[-1]  # before a tick can take it
 
 
-# --- the client ---
-
-
 # The host with a crate WALK inputs to the right of player 1's reach, a fruit as far to the left
 # and a fruit in its attract circle; then the host takes the crate (its sound in that snapshot).
 func _record(host: Node, main: Node, player: Node):
@@ -204,7 +191,6 @@ func _test_client(client: Node, scene: Dictionary):
 		client._entities.has(crate_id) and not client._pickups.holds(crate_id),
 		"a crate the host moves is not taken on its way"
 	)
-	# It lies in reach again: taken at once, with its sound.
 	_t._hold_sounds(true)
 	_moved.clear()
 	yield(_feed(client, scene.all, 0, 300), "completed")
@@ -242,7 +228,6 @@ func _test_client(client: Node, scene: Dictionary):
 	input_sync.history = saved
 
 
-# The host never takes the fruit: back where the host has it once the inputs are applied.
 func _test_rejected(client: Node, scene: Dictionary):
 	var input_sync: Node = client.input_sync
 	var walk: int = scene.walk
@@ -273,8 +258,6 @@ func _test_rejected(client: Node, scene: Dictionary):
 	input_sync.history = _inputs(stand, stand, Vector2.ZERO)  # all applied: the player stands
 
 
-# Full health: the fruit in the attract circle stays (only a touch takes it, as on the host).
-# Hurt: it flies to the player and is taken there.
 func _test_flight(client: Node, scene: Dictionary, flier_id: int):
 	var ack: int = client.input_sync.history[-1][0]
 	var player: Node = client._main.get("_players")[YOU]
@@ -298,9 +281,6 @@ func _test_flight(client: Node, scene: Dictionary, flier_id: int):
 		"hurt: it flies in and is taken (%.0f px to %.0f px)" % [start_distance, closest]
 	)
 	_t._check(closest < start_distance - 20.0, "it flew towards the player on the way")
-
-
-# --- helpers ---
 
 
 func _inputs(first: int, last: int, move: Vector2) -> Array:

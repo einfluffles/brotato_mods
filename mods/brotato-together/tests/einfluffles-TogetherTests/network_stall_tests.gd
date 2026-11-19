@@ -1,17 +1,7 @@
 extends Reference
 # Suite network_stalls: network stalls of 300 to 500 ms (seen every 20 to 50 s on a client's
-# connection while Steam's own ping stayed at 25 ms).
-#  - the render delay (sync/render_delay.gd): exactly the base delay on a good connection; holds
-#    render time on the newest snapshot through a stall and gives the extra delay back slowly;
-#    stays up under recurring lateness and comes back down once it calms; a stall too long to hold
-#    leaves no extra delay behind
-#  - gap log lines for snapshots and inputs (sync/stream_gaps.gd): once per gap, rate limited,
-#    with the cause; the host's INPUT stream per client, which tells a client's own stall from
-#    inputs held up or lost on the way (the client's clock and seq)
-#  - the session's path (net/link_watch.gd): direct / relayed with the relay's POP, logged on
-#    change only; a failed session is followed by when it was up again
-# test_client_stall runs inside battle_loopback (a client in a real puppet battle): a 400 ms
-# snapshot gap keeps the own player's prediction and holds the world instead of running past it.
+# connection while Steam's own ping stayed at 25 ms): the render delay (sync/render_delay.gd), the
+# gap log lines (sync/stream_gaps.gd) and the session's path (net/link_watch.gd).
 
 const RenderDelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/render_delay.gd"
@@ -26,7 +16,7 @@ const SNAPSHOT_MSEC := 33
 const LATENCY := 12  # one way, on top of which a stall comes
 const PEER := 5
 
-var _t: Node = null  # test runner: _check()
+var _t: Node = null
 
 
 # gdlint: disable=function-name
@@ -55,9 +45,6 @@ func run(together: Node) -> void:
 	_test_input_gap_causes(together)
 	_test_link_watch()
 	_test_session_failed(together)
-
-
-# --- render delay, on a simulated clock ---
 
 
 # Host times of snapshots sent every SNAPSHOT_MSEC for to_msec, each arriving LATENCY (+ jitter)
@@ -195,9 +182,6 @@ func _test_long_stall() -> void:
 	)
 
 
-# --- gap lines ---
-
-
 func _test_gap_lines() -> void:
 	var gaps = StreamGaps.new("snapshot")
 	var lines := []
@@ -263,11 +247,8 @@ func _test_gap_wiring(together: Node) -> void:
 	input_sync._input_gaps.erase(PEER)
 
 
-# The host tells whose stall an input gap was from the client's clock and seq (sync/stream_gaps.gd).
 # A client's frame that stalls at a scene change runs no physics steps meanwhile and then sends up
-# to 8 at once with consecutive seqs: its own stall. Before protocol 22 the host took the send time
-# from the seq and logged each of those (200 to 850 ms, at every battle start and shop entry) as
-# "sent 17 ms apart: held up on the way".
+# to 8 at once with consecutive seqs: the host tells that from the client's clock and seq.
 func _test_input_gap_causes(together: Node) -> void:
 	var input_sync: Node = together.input_sync
 	var lines := {}
@@ -321,9 +302,6 @@ func _test_input_gap_causes(together: Node) -> void:
 
 static func _input(seq: int, clock: int) -> Array:
 	return [seq, Vector2.ZERO, Vector2.ZERO, 0, 0, 0, PoolVector2Array(), clock]
-
-
-# --- session path ---
 
 
 func _test_link_watch() -> void:
@@ -413,7 +391,6 @@ func _test_session_failed(together: Node) -> void:
 	)
 	var odd: String = watch.session_failed(["a", null, null, null], 0)
 	_t._check(odd.begins_with("Networking session failed: "), "other signatures still logged")
-	# The transport's handler goes through it; the session's log lines carry the path.
 	var transport: Node = together.transport
 	var saved = transport.link_watch
 	transport.link_watch = LinkWatch.new()
@@ -428,13 +405,8 @@ func _test_session_failed(together: Node) -> void:
 	)
 
 
-# --- in a puppet battle (battle_loopback) ---
-
-
-# The client in its puppet battle, playing slot 0 with 15 un-acked inputs: fresh snapshots for a
-# third of a second, then none for 400 ms (sent meanwhile, arriving after it). The own player keeps
-# its predicted lead instead of snapping back to the host's last position; the world holds on
-# the newest snapshot instead of running past it; the gap is logged.
+# The client plays slot 0 with 15 un-acked inputs: fresh snapshots for a third of a second, then
+# none for 400 ms (sent meanwhile, arriving after it).
 func test_client_stall(client: Node, input_sync: Node, player: Node2D, msg: Array):
 	var saved: Array = input_sync.history
 	var zone: Rect2 = ZoneService.get_current_zone_rect()

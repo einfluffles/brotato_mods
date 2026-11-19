@@ -1,8 +1,9 @@
-# Toolchain container: GDRE Tools (decompile Brotato.pck) + gdtoolkit 3.x (gdlint/gdformat for Godot 3 GDScript)
+# Toolchain container: GDRE Tools (decompile Brotato.pck), Godot 3 headless (runs the tests),
+# gdtoolkit 3.x (gdlint/gdformat for Godot 3 GDScript), rsvg-convert (preview images).
 FROM docker.io/library/debian:bookworm-slim
 
 ARG GDRE_VERSION=v2.7.4
-# Brotato runs a custom Godot 3.7 build; 3.6.x headless is the closest official build (used for parse checks).
+# Brotato runs a custom Godot 3.7 build; 3.6.x is the closest official one.
 ARG GODOT_VERSION=3.6.2
 
 RUN apt-get update \

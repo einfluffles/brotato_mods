@@ -1,8 +1,7 @@
 extends Reference
 # Suite pose_mirror: parts the game turns in physics code (frozen on puppets): a bullet ring on a
 # Pivot, a catling gun's aim, a stampede dino's heading. Turrets don't rotate in this game: a real
-# turret and ordinary enemies must add no pose data. Also the facing/hidden flags. Checks go
-# through mod_main's _check.
+# turret and ordinary enemies must add no pose data. Also the facing/hidden flags.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -11,7 +10,7 @@ const RuntimePartsTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/runtime_parts_tests.gd"
 )
 
-var t: Node  # the test mod: _check, helpers, scene tree
+var t: Node
 var _runtime_parts = null
 
 
@@ -122,7 +121,6 @@ func run(together: Node):
 		"hidden dino flagged hidden"
 	)
 
-	# --- client replay ---
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
 	var replay_start := OS.get_ticks_msec()

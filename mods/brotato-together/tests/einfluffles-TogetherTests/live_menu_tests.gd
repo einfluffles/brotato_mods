@@ -169,7 +169,6 @@ func _test_client(main: Node):
 		"restart and end run are the host's"
 	)
 
-	# A pause press the lobby popup took opens nothing.
 	input_sync.local_input_blocked = true
 	Input.action_press("ui_pause")
 	pause_control.client_update(main, you)
@@ -186,7 +185,6 @@ func _test_client(main: Node):
 	)
 	t._check(input_sync.menu_device() == DEVICE, "its buttons drive its own slot")
 
-	# The host sees a player who lets go of everything.
 	input_sync.sample_local()
 	var counts: int = input_sync._presses.counts
 	menu._focus_emulator.focused_control = main_menu._resume_button
@@ -218,7 +216,6 @@ func _test_client(main: Node):
 	yield(_client_pause_tap(main, you), "completed")
 	t._check(not menu.live_open, "pause again closes it")
 
-	# The panels close it, and there is none for a spectator.
 	menu.back_guard_msec = 0
 	pause_control.toggle_client_menu(menu, you)
 	main._coop_upgrades_ui.show()

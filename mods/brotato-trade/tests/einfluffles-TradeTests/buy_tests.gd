@@ -1,9 +1,7 @@
 extends Reference
-# Buying an offered item for another player in the co-op shop, plain local co-op: the shop
-# item's Trade button, its popup with every other player driven with the giver's buttons, and
-# what the buy does. Three players: 0 buys and has no free weapon slot, 1 has the unique item and
-# no room for a pistol either, 2 has room and looks at its own gear meanwhile. Run by the shop
-# suite (shop_tests.gd), after its own tests.
+# Buying an offered item for another player in plain local co-op, run by the shop suite
+# (shop_tests.gd). Three players: 0 buys and has no free weapon slot, 1 has the unique item and
+# no room for a pistol either, 2 has room and looks at its own gear meanwhile.
 
 const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules.gd")
 const GOLD := 500
@@ -115,7 +113,7 @@ func _buy_weapon():
 	_t.check(_popup(2)._focused, "(player 3 looks at its own weapon)")
 	yield(_press_delay(), "completed")
 	yield(_t.tap("ui_accept", 0), "completed")
-	yield(_t.tap("ui_accept", 0), "completed")  # player 3
+	yield(_t.tap("ui_accept", 0), "completed")  # the cursor is on the only player with room
 	yield(_t.frames(2), "completed")
 	_t.check(
 		_t.ids(RunData.get_player_weapons_ref(2)).has(_t.PISTOL),
@@ -145,7 +143,7 @@ func _buy_weapon():
 	_cursors_valid("after a buy for another player")
 
 
-# Player 2 has the unique item: only player 3 can get it. Then nobody can.
+# Player 1 has the unique item: only player 2 can get it. Then nobody can.
 func _buy_unique():
 	var node = _node(0, 1)
 	var entries: Array = _shop.trade_buy_receivers(node, 0)
@@ -167,7 +165,6 @@ func _buy_unique():
 	_t.check(button.visible and button.disabled, "nobody to buy it for: Trade cannot be pressed")
 
 
-# Not enough gold: nothing bought, as with Buy.
 func _gold() -> void:
 	var node = _node(0, 2)
 	RunData.remove_gold(RunData.get_player_gold(0), 0)
@@ -176,10 +173,6 @@ func _gold() -> void:
 	_t.check(node.active and _t.ledger() == before, "the slot stays, nobody got anything")
 
 
-# --- helpers ---
-
-
-# Weapons that neither fit nor combine with `weapon` until player p has no free slot for it.
 func _fill_weapons(p: int, weapon) -> void:
 	for other in ItemService.weapons:
 		if not RunData.has_weapon_slot_available(weapon, p):

@@ -1,10 +1,7 @@
 extends Reference
-# Suite dead_player: a player's death travels as Player.dead (Snapshot.PLAYER_DEAD, protocol 28),
-# not as health 0. A Veteran (no_cure_between_wave) who died in the last wave starts the next one
-# alive at 0 health (Player._get_health_kept_between_waves; main._ready lifts every other
-# character to at least 1). Clients took that for dead and hid his model all wave. Wire round
-# trip, then a real host battle with such a Veteran as player 1, replayed on a client: the puppet
-# stays alive and shown until the host's player dies.
+# Suite dead_player: a player's death travels as Player.dead (Snapshot.PLAYER_DEAD), not as health
+# 0. A Veteran (no_cure_between_wave) who died in the last wave starts the next one alive at 0
+# health; clients took that for dead and hid his model all wave.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")

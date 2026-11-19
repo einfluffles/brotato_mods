@@ -1,8 +1,5 @@
 extends Node
-# Headless tests of brotato:trade, run by tools/check.sh inside the decompiled game.
-# Suites (SUITES): MOD_TEST_SUITES picks some (comma-separated, empty: all that can run here),
-# shards.txt groups them into processes. Each suite sets up its own run.
-# Prints "MOD-TESTS: PASS" or "MOD-TESTS: FAIL" and quits.
+# Headless tests of brotato:trade, run by tools/check.sh (suites and shards: see there).
 
 const DIR := "res://mods-unpacked/einfluffles-TradeTests/"
 const TOGETHER := "/root/ModLoader/einfluffles-BrotatoTogether"
@@ -51,8 +48,7 @@ func _selected_suites() -> Array:
 	return selected
 
 
-# A co-op run in its shop state: `count` players on pads, each with its character, nothing
-# else. Players' devices are FIRST_DEVICE + index.
+# A co-op run in its shop state: `count` players on pads, devices FIRST_DEVICE + index.
 func coop_run(count: int) -> void:
 	get_tree().paused = false
 	CoopService.clear_coop_players()

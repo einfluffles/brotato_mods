@@ -1,12 +1,7 @@
 extends Reference
-# Battle state that changes the scene itself (sync/battle_scene.gd, protocol 13): the wire fields
-# (weapon slots, sparse speed: round trip, strict parsing, sizes, resolve), then one real host
-# battle with the hole layout forced on (the jungle waves' flag, on a base-game wave: the
-# headless game owns no jungle zone) in which a weapon breaks, a player is slowed, a single hole
-# appears (BrachiosaurusFoot._stomp's call) and a player walks into a layout hole and into that one,
-# replayed on a client that loads with the wave and on one that joins after the break. The client's
-# own-player prediction walks into both holes from the same spot with the same inputs and must end
-# where the host's physics stopped the player.
+# Battle state that changes the scene itself (sync/battle_scene.gd): the wire fields, then one real
+# host battle with the hole layout forced on, replayed on a client. The headless game owns no
+# jungle zone, so the jungle waves' flag is set on a base-game wave.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
@@ -176,9 +171,6 @@ func _test_speed_sparse() -> void:
 	)
 
 
-# --- a real battle ---
-
-
 func _test_battle(together: Node):
 	var host: Node = together.battle_host
 	var client: Node = together.battle_client
@@ -193,8 +185,7 @@ func _test_battle(together: Node):
 	var saved_holes: bool = wave_data.spawn_holes
 	wave_data.spawn_holes = true
 	var added := _add_distinct_weapons(0, 2)
-	# Player 1 has the Cybernetic Arm (mod_main.coop_run): a weapon in each of its 7 slots, as
-	# after buying the 7th in the shop before this wave.
+	# Player 1 has the Cybernetic Arm (mod_main.coop_run): a weapon in each of its 7 slots.
 	var slots: int = RunData.get_player_effect(Keys.weapon_slot_hash, 1)
 	var full := _add_distinct_weapons(1, slots - RunData.get_player_weapons(1).size())
 	tree.change_scene("res://main.tscn")
@@ -433,8 +424,6 @@ func _client_from_start(
 	Puppet.set_active(false)
 
 
-# The single hole is the host's (the game's scene with its body), and the own player's prediction
-# of each host walk ends where the host's player did, also halfway.
 func _test_hole_walks(
 	client: Node, main: Node, stomp_at: Vector2, walks: Array, entry: Array
 ) -> void:
@@ -471,8 +460,6 @@ func _test_hole_walks(
 	input_sync.history = saved
 
 
-# Player 1, a weapon in each of its 7 slots (the Arm's 7th bought in the shop before): BATTLE_START
-# and the snapshots carry all of them, and the client's puppet has and aims every one.
 func _check_full_slots(player: Node, start: Dictionary, entry: Array) -> void:
 	var slots: int = RunData.get_player_effect(Keys.weapon_slot_hash, 1)
 	var host_weapons: PoolRealArray = entry[PF.WEAPONS]
@@ -488,8 +475,6 @@ func _check_full_slots(player: Node, start: Dictionary, entry: Array) -> void:
 	_t._check(aim_ok, "and each of the 7 aims like its host weapon")
 
 
-# Another layout and back: the old one goes, its circles with it; paths outside the spawner's
-# lists are refused.
 func _test_layout_swap(main: Node, host_path: String) -> void:
 	var scenes: Dictionary = BattleScene._layout_scenes(main)
 	var other := ""
@@ -510,9 +495,8 @@ func _test_layout_swap(main: Node, host_path: String) -> void:
 	_t._check(back and holes == 1, "one hole layout in the scene after swaps")
 
 
-# The host's speed reaches the puppet, and the replay of an un-acked input moves by it, from a spot
-# clear of the holes (a step along a hole's edge goes as far as the host's: test_motion and a
-# slide, up to twice as far).
+# From a spot clear of the holes: along a hole's edge a step is test_motion and a slide, up to
+# twice as far.
 func _test_prediction_speed(client: Node, player: Node, entry: Array, clear: Vector2) -> void:
 	var host_speed = entry[PF.SPEED]
 	_t._check(
