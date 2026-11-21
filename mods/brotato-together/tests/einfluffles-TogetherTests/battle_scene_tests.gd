@@ -9,6 +9,9 @@ const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sy
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
 const OwnViewTests := preload("res://mods-unpacked/einfluffles-TogetherTests/own_view_tests.gd")
+const WallSlideTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/wall_slide_tests.gd"
+)
 const PF := Snapshot.PlayerField
 const SLOW := -100  # bonus_speed of the slowed host player
 const SNAPSHOTS_EACH := 10  # recorded before and after the break
@@ -210,6 +213,7 @@ func _test_battle(together: Node):
 	var standing := _clear_spot(main)  # player 0 stands there, WALKER runs into it
 	host_player.global_position = standing
 	walks.append(yield(_host_walk(main, standing, BUMP_ANGLE, "other player"), "completed"))
+	walks.append(yield(WallSlideTests.new(_t).host(main, WALKER), "completed"))
 	OwnViewTests.check_host_camera(_t, main)
 	var weapon_count: int = host_player.current_weapons.size()
 	var broken_slot: int = weapon_count - 2  # the first one added: a neighbour on each side
@@ -428,6 +432,7 @@ func _client_from_start(
 	_test_prediction_speed(client, player, last.players[0], walks[0][0])
 	_test_hole_walks(client, main, stomp_at, walks.slice(0, 1), last.players[WALKER])
 	_test_bump(client, main, walks[2], last.players[WALKER])
+	WallSlideTests.new(_t).client(client, main, WALKER, walks[3], last.players[WALKER])
 	yield(_own_view.test_client(_t, client, WALKER), "completed")
 	client._leave_battle()
 	Puppet.set_active(false)

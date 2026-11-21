@@ -20,6 +20,8 @@ upload; three of them are marked where the upload may have differed.
   details, click the arrows to turn a panel's page, scroll your own panel with the wheel. Restart,
   new run and exit stay with the host. On the host, the wheel now scrolls the keyboard player's
   panel there too.
+- On a client, walking along the edge of the map is as fast as on the host. Before, your character
+  rushed ahead along it and was pulled back when you stopped or left it.
 
 ## 2026-11-21 13:43 UTC
 

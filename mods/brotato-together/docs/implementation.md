@@ -715,7 +715,12 @@ The client's explosion puppet never runs `start_explosion`, so the fire puddle a
 - **Holes block the prediction.** The client's players get `collision_mask` = obstacles (layer 8:
   holes and the map's limits) plus the blockers' layer (below) and have no layer of their own. Every
   replayed input is one `Unit._physics_process` tick (`BattleScene.step`: `body_test_motion` from
-  the predicted position, then the slide).
+  the predicted position, then the slide). The slide only follows a hit as `RigidBody2D.test_motion`
+  reports it: the server also reports a body that touches a wall (within the 0.08 px margin) and
+  gets its whole way, and the node leaves that out (`collision_safe_fraction < 1`). Sliding after
+  such a touch moved a player walking along the map's edge twice as far a tick, and snapshot
+  positions (0.5 px steps) put the replay's start at the edge whenever the host was within 0.25 px
+  of it: at a 200 ms round trip the client ran 100 px ahead along the edge (issue #109).
 - **Weapons during a wave.** The only way the game changes a player's weapon nodes mid-wave is
   `Player.on_weapon_wanted_to_break` (the brick's `break_on_hit`). The host remembers the instance
   ids of each player's weapons at wave start. Once a player has fewer, every snapshot carries its
@@ -876,7 +881,8 @@ plus 1 (`LocalAim.type_flags`, 0: none). It only changes key hints (see
 
 `BattleClient._predict_own`. The client shows its own player at the host's last position plus one
 step per input the host has not acked, at most 45 inputs (`MAX_REPLAY_INPUTS`, 0.75 s). Steps go
-through `BattleScene.step`, so holes, the map's limits and other players block them. When the host
+through `BattleScene.step`, so holes, the map's limits and other players block them, and a step
+along a wall is the host's ([Scene state](#scene-state-holes-weapons-speed)). When the host
 disagrees, the difference is blended out at 12/s (`PREDICTION_ERROR_DECAY`). The steps of inputs
 sent since the last frame are motion, not a correction.
 
