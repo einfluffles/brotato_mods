@@ -4,7 +4,7 @@
 #   <target>/<name>/preview.png      mods/<folder>/preview.png, or rendered from mods/<folder>/preview.svg
 # <name> is the manifest's "name" (e.g. BrotatoTogether). Only the folder inside the zip identifies
 # the mod (<mod_id> = namespace-name); the zip's file name is free.
-# Releases go to the Workshop with tools/release.sh, which uploads the zip only (README: Publishing).
+# Releases go to the Workshop with tools/release.sh, which uploads the zip only (docs/releasing.md).
 # Usage: tools/package.sh [target_dir]   (default: dist)
 # CONTAINER picks the runtime (default: podman, else docker).
 set -euo pipefail

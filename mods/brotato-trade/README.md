@@ -211,8 +211,8 @@ As of 2026-11-21:
 ## Tests
 
 `tests/einfluffles-TradeTests` is a dev-only test mod. Run it with
-`tools/check.sh mods/brotato-trade`, or one suite with `tools/check.sh -s <suite>`. The
-[root README](../../README.md#tests) explains how a check runs.
+`tools/check.sh mods/brotato-trade`, or one suite with `tools/check.sh -s <suite>`.
+[Testing](../../docs/testing.md) explains how a check runs.
 
 | Suite | What it covers |
 |---|---|

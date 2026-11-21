@@ -42,7 +42,7 @@ $KnownErrors = @(
 )
 
 if (-not (Test-Path (Join-Path $Root "reference\project.godot"))) {
-    Write-Error "reference/ missing: decompile the game first (README)"
+    Write-Error "reference/ missing: decompile the game first (docs/game-code.md)"
 }
 $ModDir = Resolve-Path (Join-Path $Root $Mod)
 if (-not (Test-Path (Join-Path $ModDir "tests"))) {

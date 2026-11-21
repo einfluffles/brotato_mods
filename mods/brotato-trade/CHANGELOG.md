@@ -2,7 +2,7 @@
 
 What each update of the [Workshop item](https://steamcommunity.com/sharedfiles/filedetails/?id=3841589038)
 changed, newest first. Headings are the time of the release PR in UTC
-([Publishing](../../README.md#publishing)).
+([Releasing](../../docs/releasing.md)).
 
 ## Unreleased
 
