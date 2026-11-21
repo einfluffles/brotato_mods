@@ -7,7 +7,7 @@ starts with the mod's name and names the file.
 ## Reading this map
 
 - Paths are `res://` paths into the decompiled game (`reference/`, which is not in the
-  repository; see the [root README](../README.md#game-code)). Search by function name, because
+  repository; see [Game code](game-code.md)). Search by function name, because
   the sources shift between game versions.
 - `file.gd :: function` is a function in that file. `Class.member` is a member of a class or
   autoload.
@@ -182,8 +182,8 @@ starts with the mod's name and names the file.
 - `addons/mod_loader/mod_loader.gd :: _load_mod_zips()` loads **only subscribed Workshop items**
   when the workshop is enabled (`internal/third_party/steam.gd :: load_steam_workshop_zips`,
   filtered by `Platform.get_subscribed_mods()`). `<game>/mods` and `--mods-path` are ignored on
-  Steam. The [root README](../README.md#publishing) describes the development loop that follows
-  from this.
+  Steam. [Releasing](releasing.md#trying-a-build-in-the-game) describes the development loop that
+  follows from this.
 - `mod_main.gd` is instantiated without `_init` arguments and added as a child of the
   `ModLoader` autoload, so it survives scene changes. Script extensions are applied after the
   `_init` of all mods.

@@ -559,7 +559,7 @@ Mirrored nodes are the entity spawner's lists (`bosses`, `enemies`, `neutrals`, 
     during the load) and scenes an earlier battle used, whose TYPE_DEF comes later. Not a boss part
     whose boss is missing, and nothing while another BATTLE_START waits to replace the scene.
   - **Measuring:** the GPU wait does not exist headless. The suite `wave_start` measures it with
-    `tools\check-window.ps1 -Suites wave_start` (README, "With real graphics").
+    `tools\check-window.ps1 -Suites wave_start` ([docs/testing.md](../../../docs/testing.md#with-real-graphics)).
 
 ### Puppets
 

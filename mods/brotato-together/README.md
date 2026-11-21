@@ -216,7 +216,7 @@ The mechanisms, the wire format and the measurements are in
 
 `tests/einfluffles-TogetherTests` is a dev-only test mod that is never packaged. Run it with
 `tools/check.sh mods/brotato-together`, or one suite with `tools/check.sh -s <suite>`. Every suite
-passes on its own. The [root README](../../README.md#tests) explains how a check runs.
+passes on its own. [Testing](../../docs/testing.md) explains how a check runs.
 
 The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 

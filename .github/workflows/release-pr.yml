@@ -45,7 +45,7 @@ jobs:
             echo
             python3 tools/changelog.py notes "$changelog"
             echo
-            echo "After merging, on the merge commit (README, Publishing):"
+            echo "After merging, on the merge commit (docs/releasing.md):"
             echo
             echo '```sh'
             echo "git switch $BASE && git pull"
