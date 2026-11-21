@@ -79,9 +79,11 @@ real game window instead (`powershell -ExecutionPolicy Bypass -File ...` if scri
   `+<mod folder>` names (`tools\check-window.ps1 -Mod mods\brotato-trade` runs brotato:trade's
   tests, the together ones next to brotato:together). `-Suites <suite>[,<suite>]` runs those in one
   process, `-With mods\<folder>` loads another mod next to them. `-All` prints the ok lines too.
-- The full log of the last run is `%LOCALAPPDATA%\brotato-modtools\check-window.log`. Like
-  `tools/check.sh`, a run fails on script errors in mod code and on game-script errors while the
-  tests run.
+- The full log of the last run is `%LOCALAPPDATA%\brotato-modtools\check-window.log`, its errors
+  (Godot prints them to stderr) `check-window.err.log` next to it. A run fails on every script
+  error except the missing Steam's, and on every engine error not listed in `$KnownErrors` at the
+  top of the script (Steam, the deleted logs, the engine's reports at exit). That is stricter than
+  `tools/check.sh`: an error at boot that names no mod (issue #91) fails it too.
 - The test copy's logs are deleted before each run: the game reads the last one at boot and, when
   an error in it names `mods-unpacked`, turns all mods off ("Recovering from unexpected error in
   mod ...").

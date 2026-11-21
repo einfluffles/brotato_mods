@@ -28,6 +28,18 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Cache = Join-Path $env:LOCALAPPDATA "brotato-modtools"
 $Game = Join-Path $Cache "reference"
 $UserDir = "BrotatoModTests"
+# Engine errors of every run that are not the mods': no Steam here, the logs deleted on purpose
+# (Invoke-Run), the engine's own reports at exit.
+$KnownErrors = @(
+    "Can't open steam_data file",
+    "Can't open workshop folder",
+    'Steam singleton not available',
+    'Steam transport unavailable',
+    'CrashReporter: Failed to find engine logs',
+    'Condition "_first != nullptr" is true',
+    'Resources still in use at exit',
+    'MemoryPool allocs in use at exit'
+)
 
 if (-not (Test-Path (Join-Path $Root "reference\project.godot"))) {
     Write-Error "reference/ missing: decompile the game first (README)"
@@ -117,20 +129,26 @@ function Invoke-Run([string]$RunSuites, [string[]]$Others) {
     $output = @(Get-Content $log)
     $pattern = if ($All) { '^  (ok  |FAIL|info:) |MOD-TESTS: (PASS|FAIL)' } else { '^  (FAIL|info:) |MOD-TESTS: (PASS|FAIL)' }
     $output | Where-Object { $_ -match $pattern } | Write-Host
-    # As tools/check.sh: script errors in mod code, and game-script errors while the tests run
-    # (except those of the missing Steam).
     $start = [Array]::FindIndex([string[]]$output, [Predicate[string]] { param($l) $l -match 'MOD-TESTS: START' })
+    # Godot prints errors to stderr: every SCRIPT ERROR but the missing Steam's, and every engine
+    # ERROR not in $KnownErrors (one like the Mod Loader's failing script backup of issue #91
+    # names no mod, so all of them count).
+    $stderr = @(Get-Content $errLog)
     $errors = @()
-    for ($i = 0; $i -lt $output.Count; $i++) {
-        if ($output[$i] -notmatch 'SCRIPT ERROR') { continue }
-        $at = ($output[($i + 1)..($i + 2)] -join " ")
-        $known = ($output[$i] -match "in base 'Nil'|set_locale") -or ($at -match 'SteamPlatform')
-        if ($at -match 'mods-unpacked' -or ($start -ge 0 -and $i -gt $start -and -not $known)) {
-            $errors += $output[$i..($i + 1)]
+    for ($i = 0; $i -lt $stderr.Count; $i++) {
+        $line = $stderr[$i]
+        if ($line -match '^SCRIPT ERROR') {
+            $at = ($stderr[($i + 1)..($i + 2)] -join " ")
+            if ($line -match "in base 'Nil'|set_locale" -or $at -match 'SteamPlatform') { continue }
+        } elseif ($line -match '^ERROR: ') {
+            if ($KnownErrors | Where-Object { $line -match $_ }) { continue }
+        } else {
+            continue
         }
+        $errors += $stderr[$i..($i + 1)]
     }
     if ($errors.Count -gt 0) {
-        Write-Host "Script errors:"
+        Write-Host "Errors:"
         $errors | Write-Host
     }
     if ($start -lt 0) { Write-Host "no test output: the mods did not load (see the log)" }
