@@ -10,6 +10,8 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- A cursed Molotov no longer fills the game's log with `Node not found` errors on every throw.
+
 ## 2026-11-21 13:43 UTC
 
 - Shop, level-up and end-of-run panels show each player's key hints for the device that player

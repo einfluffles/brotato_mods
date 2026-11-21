@@ -46,7 +46,7 @@ which lists every message with its fields).
 | `session/` | handshake, compatibility, puppet mode, DLC borrowing, sound relay, progress sharing, settings |
 | `sync/` | everything that mirrors game state: battle (`battle_host.gd`, `battle_client.gd`, `snapshot.gd` and helpers), input, state stream, shop, level-up panels, menus, cursors, pause |
 | `ui/` | controls the mod adds to the game's screens (lobby, Co-op row, damage meter views) and helpers for cursors and scrolling |
-| `extensions/` | script extensions of game scripts (singletons, UI scenes, one effect), and `script_backup.gd` for the Mod Loader's backups of them |
+| `extensions/` | script extensions of game scripts (singletons, UI scenes, one effect, one weapon), and `script_backup.gd` for the Mod Loader's backups of them |
 
 ### Engine and game behaviour several modules rely on
 
@@ -1781,6 +1781,18 @@ calls `Keys.hash_to_string[stats_swapped[1]].to_upper()` on null.
   its `saved_scripts` dictionary, or with an entry already there, nothing is stored and the loader
   behaves as before. The suite `axolotl` checks that every extended script has a backup and that
   `OWN_DUPLICATE` names exactly the extended scripts whose class has its own `duplicate()`.
+
+### Cursed Molotov
+
+A cursed Molotov logged `Node not found: "Sprite/Muzzle/BurningParticles"` twice per throw (first
+seen on a host, 2026-11-21: 100 to 200 per wave). `Weapon._ready` frees everything in
+`Sprite/Muzzle` of a cursed weapon to put its curse particles there, and
+`RangedWeapon.on_projectile_shot` hides and shows the paths in `throwned_projectile_hide` by
+`get_node`, which for Molotov is the freed `BurningParticles`. In the game's release build the call
+on null is skipped (no script error), so only the log suffers; in a debug build the throw's
+coroutine stops and the bottle stays thrown. Only Molotov lists a path there.
+`extensions/weapons/fireball.gd` (Fireball's script serves Molotov) keeps only the paths that
+survive `_ready` on a cursed weapon. The suite `cursed_weapon` throws a plain and a cursed Molotov.
 
 ### Smaller quirks
 

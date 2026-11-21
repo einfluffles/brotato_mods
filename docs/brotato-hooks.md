@@ -278,6 +278,11 @@ same shop or the same upgrades. **brotato:together** applies all of these on the
   `Player.on_weapon_wanted_to_break` (signal `Weapon.wanted_to_break`, the `break_on_hit`
   effect, the brick of `abyssal_terrors`) erases the node from `current_weapons` and calls
   `RunData.remove_weapon_by_index`. Crates add to `RunData` after the wave.
+- **Cursed weapons:** `Weapon._ready` frees every child of `Sprite/Muzzle` when `is_cursed` and puts
+  the curse particles there. Molotov lists `Sprite/Muzzle/BurningParticles` in
+  `throwned_projectile_hide`, which `RangedWeapon.on_projectile_shot` hides and shows by path on
+  every throw: a cursed Molotov logs two `get_node` errors per throw, in solo too.
+  **brotato:together** drops such paths after `_ready` (`extensions/weapons/fireball.gd`).
 - **Move speed:** `Player.get_move_speed()` is (`current_stats.speed` + `bonus_speed` +
   `decaying_bonus_speed`) / (1 + `petrol_malus`). Petrol is set per physics frame
   (`update_petrol_effect`), and the slow decays in `Unit._physics_process`.
