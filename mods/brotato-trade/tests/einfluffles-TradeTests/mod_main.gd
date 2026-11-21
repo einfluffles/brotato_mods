@@ -7,9 +7,13 @@ const SUITES := ["rules", "shop", "hotkey", "crate", "together", "together_crate
 const WATCHDOG_SEC := 120.0
 const FIRST_DEVICE := 1  # device 0 is the keyboard to CoopService
 const PISTOL := "weapon_pistol_1"
+# A button of the game ignores presses for 0.05 s after one. A few frames are longer than that
+# headless, not in a real window (tools/check-window.ps1).
+const TAP_GAP_MSEC := 60
 
 var _failures := []
 var _suite = null  # the running suite's object, kept alive across its yields
+var _last_tap := {}  # player -> msec of its last tap
 
 
 func _ready() -> void:
@@ -162,6 +166,10 @@ func ids(owned: Array) -> Array:
 
 
 func tap(action: String, player: int):
+	var wait: int = TAP_GAP_MSEC - (OS.get_ticks_msec() - _last_tap.get(player, -TAP_GAP_MSEC))
+	if wait > 0:
+		yield(get_tree().create_timer(wait / 1000.0), "timeout")
+	_last_tap[player] = OS.get_ticks_msec()
 	var device: int = CoopService.get_remapped_player_device(player)
 	for pressed in [true, false]:
 		var event := InputEventAction.new()

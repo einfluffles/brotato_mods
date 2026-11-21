@@ -37,7 +37,7 @@ podman build -t brotato-modtools -f tools/Containerfile tools
 |---|---|
 | `tools/lint.sh` | Runs gdlint over `mods/`. |
 | `tools/check.sh [mods/<folder> ...]` | Boots the game headless with each mod and its test mod (see [Tests](#tests)). |
-| `tools\check-window.ps1 -Suites <suite>[,...]` | Windows: runs suites in a real game window, with graphics and audio (see [With real graphics](#with-real-graphics)). |
+| `tools\check-window.ps1 [-Mod mods\<folder>] [-Suites <suite>[,...]]` | Windows: runs a mod's tests in a real game window, with graphics and audio (see [With real graphics](#with-real-graphics)). |
 | `tools/package.sh [target]` | Writes `<target>/<name>/<name>.zip` and `preview.png` for every mod (default target: `dist/`). |
 | `tools/deploy.sh <name> <workshop_item_id>` | Replaces the subscribed Workshop item's zip with the package (see [Publishing](#publishing)). |
 
@@ -65,9 +65,8 @@ game-script error or a `get_meta` / `get_child` / `get_node` engine error while 
 
 The container's Godot is headless: its graphics and audio drivers are dummies. Costs that only
 exist with a real driver do not show there, such as uploads to the GPU, the driver waiting for the
-GPU, shaders, particles and sounds. On Windows, `tools\check-window.ps1 -Suites <suite>[,<suite>]`
-runs suites in a real game window instead (`powershell -ExecutionPolicy Bypass -File ...` if
-scripts are blocked).
+GPU, shaders, particles and sounds. On Windows, `tools\check-window.ps1` runs a mod's tests in a
+real game window instead (`powershell -ExecutionPolicy Bypass -File ...` if scripts are blocked).
 
 - It uses the official Godot build of `-GodotVersion` (default 3.6.2, as in `tools/Containerfile`),
   downloaded once to `%LOCALAPPDATA%\brotato-modtools`, or the exe given with `-Godot`. The game
@@ -75,8 +74,20 @@ scripts are blocked).
 - The game runs from a copy of `reference/` there, refreshed when `reference/project.godot`
   changes. The copy's `project.godot` gets its own user folder, `%APPDATA%\BrotatoModTests`: the
   game's own one holds the real saves and logs.
-- `-Mod mods\<folder>` picks the mod (default brotato-together), `-All` prints the ok lines too.
-  The full log is `%LOCALAPPDATA%\brotato-modtools\check-window.log`.
+- `-Mod mods\<folder>` picks the mod (default brotato-together). Without `-Suites`, every line of
+  its test mod's `shards.txt` runs in its own game process, one after the other, with the mods its
+  `+<mod folder>` names (`tools\check-window.ps1 -Mod mods\brotato-trade` runs brotato:trade's
+  tests, the together ones next to brotato:together). `-Suites <suite>[,<suite>]` runs those in one
+  process, `-With mods\<folder>` loads another mod next to them. `-All` prints the ok lines too.
+- The full log of the last run is `%LOCALAPPDATA%\brotato-modtools\check-window.log`. Like
+  `tools/check.sh`, a run fails on script errors in mod code and on game-script errors while the
+  tests run.
+- The test copy's logs are deleted before each run: the game reads the last one at boot and, when
+  an error in it names `mods-unpacked`, turns all mods off ("Recovering from unexpected error in
+  mod ...").
+- Frames are much shorter than headless. A test that waits a few frames for something that takes
+  real time (the game's buttons ignore a second press within 0.05 s) can pass headless and fail
+  here.
 - Times are this machine's. Compare them with each other (one scene against another, a frame
   against the next), not with what a player's log shows.
 
