@@ -27,6 +27,12 @@ func run(test_mod: Node, menus: Node, scene: Node):
 	if mouse == null:
 		yield(_frames(1), "completed")
 		return
+	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)  # a key press before the run ended
+	yield(_mouse_at(Vector2(2, 2), "move"), "completed")
+	_t._check(
+		Input.get_mouse_mode() == Input.MOUSE_MODE_VISIBLE,
+		"end of run: moving the mouse shows the pointer again"
+	)
 	yield(_hover(), "completed")
 	yield(_pages(), "completed")
 	var containers: Array = scene.player_containers

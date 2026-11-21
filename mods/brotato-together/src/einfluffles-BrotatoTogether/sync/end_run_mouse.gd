@@ -26,6 +26,9 @@ func _input(event: InputEvent) -> void:
 			# The keys move the own cursor on the host, on the host's page.
 			_show_host_page(SharedScroll.own_player())
 		return
+	# What InputService does with a mouse event; the events handled here never reach it, and a key
+	# press before the run ended may have hidden the pointer.
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	if WheelScroll.direction(event) != 0:
 		return
 	get_tree().set_input_as_handled()
