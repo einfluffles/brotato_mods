@@ -90,9 +90,23 @@ func _on_types_changed(player_index: int) -> void:
 		var emulator = panel.get("focus_emulator")
 		if emulator == null:
 			emulator = Utils.get_focus_emulator(player_index, scene)
+		var had_cursor: bool = emulator != null and emulator.focused_control != null
 		LocalPanel.refresh_player_type(panel, player_index, emulator)
 		if panel.has_method("_set_focus_neighbours"):
 			panel._set_focus_neighbours()  # the page arrows can take the cursor now, or not
+		if had_cursor and emulator.focused_control == null:
+			_refocus(panel, player_index, scene, emulator)
+
+
+# The cursor sat on a page arrow that is a trigger glyph now, and the game's FocusEmulator takes
+# no input without one: the panel's own default, in the shop its Go button (as ShopLocal does).
+static func _refocus(panel: Node, player_index: int, scene: Node, emulator: Node) -> void:
+	if panel.has_method("focus"):
+		panel.focus()
+	elif scene.has_method("_get_go_button"):
+		var go = scene._get_go_button(player_index)
+		if go is Control and go.is_visible_in_tree():
+			emulator.focused_control = go
 
 
 # Not into the world (Node2D): entities hold no panels.

@@ -99,6 +99,18 @@ func _host_part():
 	)
 	_report(KEYBOARD)
 	_check_panel("host shop, back on the keyboard", shop, REMOTE, KEYBOARD)
+	var emulator: Node = Utils.get_focus_emulator(REMOTE, shop)
+	var panel: Node = shop._get_coop_player_container(REMOTE)
+	emulator.focused_control = panel.carousel.arrow_right
+	_report(XBOX)
+	var focused = emulator.focused_control
+	_t._check(
+		focused != null and focused.is_visible_in_tree() and not focused in [
+			panel.carousel.arrow_left, panel.carousel.arrow_right
+		],
+		"host: a cursor on a page arrow lands on a live control when the arrows become glyphs"
+	)
+	_report(KEYBOARD)
 
 	var section := StateStream.INPUT_TYPES
 	var state: Dictionary = _types.state_body(section)
