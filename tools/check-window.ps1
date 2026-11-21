@@ -29,8 +29,9 @@ $Cache = Join-Path $env:LOCALAPPDATA "brotato-modtools"
 $Game = Join-Path $Cache "reference"
 $UserDir = "BrotatoModTests"
 # Engine errors of every run that are not the mods': no Steam here, the logs deleted on purpose
-# (Invoke-Run), the engine's own reports at exit.
+# (Invoke-Run), the engine's own reports at exit. Then errors the tests cause on purpose.
 $KnownErrors = @(
+    "No run state for the host's",  # menu_puppet_tests: a run screen without its run
     "Can't open steam_data file",
     "Can't open workshop folder",
     'Steam singleton not available',
