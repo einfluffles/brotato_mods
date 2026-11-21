@@ -13,6 +13,11 @@ upload; three of them are marked where the upload may have differed.
 - Archaeologist dig sites on a client are where the host has them, and you see them dug: the
   dirt fills as the host's progress, with the particles, the squash when someone steps in and the
   digging sound. Before, a client had its own dig sites in other places that never moved.
+- Co-op shop on a client: a menu you have open on your own item or weapon (its buttons, or the
+  player list of brotato:trade) stays open when your gear changes meanwhile, for example when
+  another player trades you something. Before, it closed and threw your cursor out. It only closes
+  when the item it is about is gone. A purchase of yours that the host confirms late no longer
+  pulls your cursor out of an open menu either.
 
 ## 2026-11-21 21:08 UTC
 

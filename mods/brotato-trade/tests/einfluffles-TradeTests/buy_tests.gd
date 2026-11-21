@@ -112,6 +112,7 @@ func _buy_weapon():
 	var element = _row(2, true).get_child(0)
 	other.focused_control = element
 	yield(_t.tap("ui_accept", 2), "completed")
+	var in_popup = other.focused_control
 	_t.check(_popup(2)._focused, "(player 3 looks at its own weapon)")
 	yield(_press_delay(), "completed")
 	yield(_t.tap(TRADE, 0), "completed")
@@ -135,12 +136,13 @@ func _buy_weapon():
 		_has_element(2, true, _t.PISTOL) and "(2/" in _weapons_label(2),
 		"the receiver's row shows it"
 	)
-	_t.check(not _popup(2)._focused, "the receiver's popup on its old row closed")
-	var cursor = other.focused_control
 	_t.check(
-		cursor != null and is_instance_valid(cursor) and cursor.get_parent() == _row(2, true),
-		"and its cursor is on its weapons again"
+		_popup(2)._focused and other.focused_control == in_popup,
+		"the receiver's popup stays open, its cursor where it was"
 	)
+	_t.check(_shop._popup_manager._elements_pressed[2] == element, "on the same weapon")
+	yield(_t.tap("ui_cancel", 2), "completed")
+	_t.check(not _popup(2)._focused and other.focused_control == element, "(closed)")
 	_t.check(not _shop.trade_buy(node, 0, 2), "a bought slot cannot be bought again")
 	_cursors_valid("after a buy for another player")
 

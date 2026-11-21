@@ -1118,8 +1118,19 @@ id) and its offered items (a hash).
 
 - A player whose data did not change keeps its `PlayerRunData` object across `resume_from_state`,
   because the panel's gear elements and popup hold those objects.
-- Gear elements are replaced only when the gear changed. Shop item nodes are replaced only when the
-  player's data, offered items or slot layout changed.
+- Gear rows are rebuilt only when the gear changed, and then in place
+  (`UpgradesGear.sync_inventory`, as on the [level-up panels](#level-up-and-crate-panels)): an
+  element that shows the same item is kept and pointed at the new object, so a cursor on it stays.
+  So does an item popup opened from it (its buttons, the meca choice, brotato:trade's player list),
+  for example when another player trades this one something. The popup then holds the new object
+  (Cancel finds its element by it, and a meca roll it waits for follows it). Only when its element
+  is gone does the popup close, and the cursor goes to the element at the same place. An empty row
+  or a locked item takes the game's `set_*_data`, with the cursor taken off first.
+- Shop item nodes are re-set only when the player's data, offered items or slot layout changed. A
+  slot the host's state deactivates moves the cursor only when it was on that slot (or on nothing):
+  `BaseShop.on_shop_item_deactivated` is cut and called only then (`ShopSync._deactivate`). The game
+  also moves a cursor that rests on no shop item, which for a buy confirmed late would pull it out
+  of an open popup.
 - The same part ids again (only a Go flag, a page or a revision differs) skip `resume_from_state`.
 
 **Locks.** The state carries the lock of every slot node (`locks`), and the client sets each node
@@ -1783,11 +1794,12 @@ A `FocusEmulator` that keeps a freed control crashes a release build on its next
 objects in the [Overview](#1-overview)). A real session crashed this way on the level-up gear page
 (see [Measurements](#12-measurements-and-session-findings)). Three measures:
 
-- **Take the cursor off first.** Before a gear rebuild (`ShopSync._refresh_gear`, the game's way
-  in `UpgradesGear.rebuild_gear`) or `_refresh_weapons_inventory`, the cursor is taken off the
-  element, also the element a focused popup was opened from. The level-up gear updated in place
-  frees only the elements nothing shows any more: the cursor stays on a kept one and is taken off
-  a freed one. Afterwards it goes to the same item (the element nearest its old index), else the
+- **Take the cursor off first.** Before a gear rebuild (the game's way in
+  `ShopSync._refresh_gear` and `UpgradesGear.rebuild_gear`) or `_refresh_weapons_inventory`, the
+  cursor is taken off the element, also the element a focused popup was opened from. The gear
+  updated in place (shop and level-up panels) frees only the elements nothing shows any more: the
+  cursor stays on a kept one and is taken off a freed one; in the shop a popup opened from a kept
+  one stays open. Afterwards it goes to the same item (the element nearest its old index), else the
   element at the same index, else for the own panel the page's default (`focus()`). The game's way
   back to the gear page (`_resume_inventory_control_focus`) is redirected the same way.
 - **Relink neighbours.** `CoopUpgradesUIPlayerContainer._set_focus_neighbours` links weapons and

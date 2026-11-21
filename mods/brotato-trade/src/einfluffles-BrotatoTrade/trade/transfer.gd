@@ -6,7 +6,8 @@ const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules
 const LOG_NAME := "einfluffles-BrotatoTrade:Transfer"
 
 
-# {} when nothing was given, else {weapon, received (the receiver's object), combined}.
+# {} when nothing was given, else {weapon, received (the receiver's object), combined, partner
+# (the receiver's weapon that was combined with it, else null)}.
 static func give(item, from: int, to: int, shop: Node = null) -> Dictionary:
 	if not Rules.can_trade(item, from, to, shop):
 		return {}
@@ -37,7 +38,7 @@ static func _give_item(item, from: int, to: int) -> Dictionary:
 		ModLoaderLog.error("%s did not reach player %d: given back" % [item.my_id, to], LOG_NAME)
 		RunData.add_item(item, from)
 		return {}
-	return {"weapon": false, "received": item, "combined": false}
+	return {"weapon": false, "received": item, "combined": false, "partner": null}
 
 
 static func _give_weapon(weapon, from: int, to: int) -> Dictionary:
@@ -65,4 +66,4 @@ static func _give_weapon(weapon, from: int, to: int) -> Dictionary:
 		received = RunData.combine_weapon(received, partner, to)
 		if receiver.size() != sizes[1]:
 			ModLoaderLog.error("weapon count is off after combining %s" % weapon.my_id, LOG_NAME)
-	return {"weapon": true, "received": received, "combined": partner != null}
+	return {"weapon": true, "received": received, "combined": partner != null, "partner": partner}

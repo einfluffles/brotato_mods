@@ -232,7 +232,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `bullet_hell_left`, `bullet_hell_top`, `bullet_hell_bottom` | Every visible enemy bullet of a bullet-hell wave is in the snapshot and mirrored (one suite per variant). |
 | `menu_ux` | The wave-failed prompt and its cursor on clients, the change from the battle to the next screen. |
 | `shop_loopback` | The host's real co-op shop and a purchase mirrored on a client with cursor and sounds, the weapons row (Anvil at shop entry, a new weapon slot). |
-| `local_shop` | The own shop panel on a client, decisions applied or refused by the host, locks, the meca upgrade, the reroll's stat text, another mod's decision, the mouse on the item popup, the wheel. |
+| `local_shop` | The own shop panel on a client, decisions applied or refused by the host, locks, the meca upgrade, the reroll's stat text, another mod's decision, the mouse on the item popup, the own popup kept open through a gear change, the wheel. |
 | `local_device` | Which screen drives a client's own input from the level-up panels to the shop, with a host pause across the change. |
 | `pause_input` | Remote button presses, timeouts and pause, menu echo, the own aim setting, who owns the pause menu, absent players. |
 | `live_menu` | The Esc menu over a running online wave, on the host and on a client. |

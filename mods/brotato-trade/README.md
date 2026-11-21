@@ -191,6 +191,15 @@ As of 2026-11-21:
   (price, coupons, the offer); only `buy_item` / `buy_weapon` are redirected to the receiver.
   The slot then behaves as after a buy, and the receiver's stats, prices, rerolls and cursor are
   refreshed.
+- **The receiver's own menu stays open.** A given item or weapon enters the receiver's rows as
+  a buy adds one (`Inventory.add_element`); the other elements stay, and with them the receiver's
+  cursor and an item popup it has open (its buttons or its own player list). A weapon combined
+  into the one received leaves the row without the game's `remove_element`, which would move the
+  receiver's cursor; when the cursor or the popup is on that weapon, the rows are built again and
+  the popup closes. During a buy for another player the popup stays too, and its cursor comes
+  back after the game's own moves; it closes only when the buy freed its element. The giver's
+  rows are built again as before. On a brotato:together client the host's state brings the
+  change, and brotato:together keeps the menu the same way.
 - **Online, only the host changes the run** (`trade/together.gd`). A client's press leaves as a
   decision ("intent") of one of four kinds, and the host checks the sender and the rules again
   and applies it with the same code as a local trade. The result reaches every client with the
@@ -217,8 +226,8 @@ As of 2026-11-21:
 | Suite | What it covers |
 |---|---|
 | `rules` | The rules and the hand-over on `RunData`: limits, the same object in several lists, effects moving with the item, combining with the cursed weapon, nothing appearing or vanishing. |
-| `shop` | The real co-op shop driven with each player's buttons: popup, list, cancel, both panels and every cursor after a trade. Buying for another player (`buy_tests.gd`), started with the trade key: the hint, a giver with 6/6 weapons, a receiver without room, price, lock, slot and offers as for a buy, not enough gold. |
+| `shop` | The real co-op shop driven with each player's buttons: popup, list, cancel, both panels and every cursor after a trade, the receiver's open popup kept through a trade and a buy (closed when its weapon is combined away). Buying for another player (`buy_tests.gd`), started with the trade key: the hint, a giver with 6/6 weapons, a receiver without room, price, lock, slot and offers as for a buy, not enough gold. |
 | `hotkey` | The trade key in local co-op: the give list on the own gear, nothing without a target, in an open popup or paused, the hint's glyph for keyboard, PlayStation, Switch and Xbox, real key and pad events, the InputMap rebuilt by the game, a key rebound in the config, an invalid config. |
 | `crate` | The crate panels on the real battle scene: the button, the list with a player who has no room, cancel, an item and a weapon passed on by a giver without a free slot, the receiver's cursor. |
-| `together` | With brotato:together loaded: a remote player's request applied once on the host, a client's press only sending it, the host's state bringing the result, the host's own trade key, a client's buy for another player with the mouse and T and with the pad's Back, a client's give with the trade key, T in a text field. |
+| `together` | With brotato:together loaded: a remote player's request applied once on the host, a client's press only sending it, the host's state bringing the result, the host's own trade key, a client's buy for another player with the mouse and T and with the pad's Back, a client's give with the trade key, T in a text field, an open give list or popup kept when the host's player or the host's state brings the player something. |
 | `together_crate` | The same for a crate trade. |

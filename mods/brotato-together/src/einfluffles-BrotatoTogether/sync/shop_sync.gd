@@ -30,6 +30,9 @@ const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const UpgradesGear := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_gear.gd"
+)
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
@@ -658,13 +661,25 @@ func _refresh_player(
 					node.activate()
 				next += 1
 			elif node.active:
-				node.deactivate()
+				_deactivate(shop, p, node)
 	shop._refresh_currency_dependent_buttons(p)
 	shop._refresh_bonus_free_reroll(p)
 
 	var go: bool = body.go[p] if p < body.go.size() else false
 	shop._player_pressed_go_button[p] = go
 	shop._get_checkmark(p).visible = go
+
+
+# BaseShop.on_shop_item_deactivated sends a cursor that rests on no shop item to the default
+# control. From the host's state (a buy that arrives late) that would pull it out of an open popup:
+# only a cursor on that item, or on nothing, moves.
+static func _deactivate(shop: Node, p: int, node: Node) -> void:
+	var emulator = Utils.get_focus_emulator(p, shop)
+	var control = emulator.focused_control if emulator != null else null
+	var moves: bool = not is_instance_valid(control) or node.is_a_parent_of(control)
+	node.deactivate()
+	if moves:
+		shop.on_shop_item_deactivated(node, p)
 
 
 # By slot: BaseShop._update_visual_locks matches by index in the offered list, which is wrong
@@ -687,46 +702,72 @@ func _apply_locks(shop: Node, locks) -> void:
 				popup.show_shop_hints(node)  # "lock" <-> "unlock"
 
 
-# set_weapons_data / set_items_data replace every inventory element: a cursor resting on one (or
-# in the popup opened from one) is taken off first and put back on the element at the same place.
+# The rows keep every element that shows the same (UpgradesGear.sync_inventory), so a cursor on
+# one stays, and so does the popup opened from one (its buttons, another mod's menu in it). Only
+# when that element is gone does the popup close; the cursor then goes to the element at its place.
 func _refresh_gear(shop: Node, p: int) -> void:
 	var gear = shop._get_gear_container(p)
 	var inventories := [gear.weapons_container._elements, gear.items_container._elements]
 	var emulator = Utils.get_focus_emulator(p, shop)
-	var cursor := _take_gear_cursor(shop, p, emulator, inventories)
-	gear.set_weapons_data(RunData.get_player_weapons(p))
-	gear.set_items_data(RunData.get_player_items(p))
-	if cursor.empty():
+	var popup = shop._get_item_popup(p)
+	var manager = shop._popup_manager
+	var pressed = manager._elements_pressed[p]
+	var in_popup: bool = popup._focused and not _gear_place(pressed, inventories).empty()
+	var element = pressed if in_popup else (emulator.focused_control if emulator != null else null)
+	var place := _gear_place(element, inventories)
+	var old_item = element.item if not place.empty() else null
+	var weapons: Array = RunData.get_player_weapons(p)
+	if not UpgradesGear.sync_inventory(inventories[0], weapons, false, false):
+		_release_cursor(emulator, inventories[0])
+		gear.weapons_container.set_data("", Category.WEAPON, weapons)
+	gear._on_weapons_changed()  # what set_weapons_data does after it
+	var items: Array = RunData.get_player_items(p)
+	if not UpgradesGear.sync_inventory(inventories[1], items, true, true):
+		_release_cursor(emulator, inventories[1])
+		gear.set_items_data(items)
+	if place.empty():
 		return
-	var inventory: Node = inventories[cursor[0]]
+	var now := _gear_place(element, inventories)
+	if not now.empty() and now[0] == place[0] and now[2] == place[2]:
+		if in_popup:
+			# Cancel puts the cursor back on the element holding this object.
+			popup._item_data = element.item
+			local.meca.retarget(old_item, element.item)
+		elif manager._elements_focused[p] == element:
+			popup.display_element(element)  # what focusing it shows
+		return
+	if in_popup:
+		# The view half of the game's "close the popup" handler: its item is gone.
+		manager.reset_focus(p)
+		shop._get_coop_player_container(p).on_hide_focused_inventory_popup()
+	var inventory: Node = inventories[place[0]]
+	var live := []
+	for child in inventory.get_children():
+		if not child.is_queued_for_deletion():
+			live.append(child)
 	var target: Control = null
-	if inventory.get_child_count() > 0:
-		target = inventory.get_child(int(min(cursor[1], inventory.get_child_count() - 1)))
+	if not live.empty():
+		target = live[int(min(place[1], live.size() - 1))]
 	elif local.active and p == local.you:
 		target = shop._get_default_focus_control(p)
-	if target != null and target.is_visible_in_tree():
+	if emulator != null and target != null and target.is_visible_in_tree():
 		emulator.focused_control = target
 
 
-# [inventory, element index] when player p's cursor is in the gear, else [].
-func _take_gear_cursor(shop: Node, p: int, emulator: Node, inventories: Array) -> Array:
-	if emulator == null:
-		return []
-	var element = emulator.focused_control
-	var popup = shop._get_item_popup(p)
-	var in_popup: bool = popup._focused
-	if in_popup:
-		# The view half of the game's "close the popup" handler; its weapon may be gone.
-		element = shop._popup_manager._elements_pressed[p]
-		shop._popup_manager.reset_focus(p)
-		shop._get_coop_player_container(p).on_hide_focused_inventory_popup()
-	if element == null or not is_instance_valid(element):
+# [inventory, element index, what it shows] of a gear element, else [].
+static func _gear_place(control, inventories: Array) -> Array:
+	if not is_instance_valid(control) or control.is_queued_for_deletion():
 		return []
 	for i in inventories.size():
-		if element.get_parent() == inventories[i]:
-			emulator.focused_control = null
-			return [i, element.get_index()]
+		if control.get_parent() == inventories[i] and control.item != null:
+			return [i, control.get_index(), UpgradesGear.shows(control.item)]
 	return []
+
+
+# Before the game frees every element of inventory.
+static func _release_cursor(emulator: Node, inventory: Node) -> void:
+	if emulator != null and UpgradesGear.is_child_of(emulator.focused_control, inventory):
+		emulator.focused_control = null
 
 
 # View state that is not this client's own: the other players' pages, and the "endless" toggle.

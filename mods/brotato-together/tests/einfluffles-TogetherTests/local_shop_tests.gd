@@ -610,6 +610,8 @@ func _client_states(emulator: Node, node: Node):
 		"the other player's panel shows the host's state %s" % [_weapon_ids(REMOTE)]
 	)
 	_t._check(local.seq == _states.remote_changed.seqs[0], "own revision follows the host")
+	yield(_client_popup_gear_change(emulator, element), "completed")
+	element = weapons.get_child(0)
 
 	emulator.focused_control = element
 	_receive(_states.own_gear_changed)
@@ -643,6 +645,39 @@ func _client_states(emulator: Node, node: Node):
 		not shop._player_pressed_go_button[0] and local.last_intent.get("arg") == 0,
 		"leaving Go tells the host"
 	)
+
+
+# The own gear changes from outside (another player trades it a weapon) while its popup is open:
+# the popup stays, with its cursor. Leaves the own gear as in "remote_changed".
+func _client_popup_gear_change(emulator: Node, element: Node):
+	var shop: Node = _shop
+	var popup = shop._get_item_popup(0)
+	emulator.focused_control = element
+	yield(_tap("ui_accept"), "completed")
+	var button = emulator.focused_control
+	_t._check(
+		popup._focused and is_instance_valid(button) and popup.is_a_parent_of(button),
+		"(the own popup is open on a weapon)"
+	)
+	_receive(_states.own_gear_changed)
+	yield(_frames(2), "completed")
+	_t._check(
+		_weapon_ids(0).size() == 3 and popup._focused and emulator.focused_control == button,
+		"a new weapon from outside keeps the own popup open, its cursor where it was"
+	)
+	_t._check(
+		is_instance_valid(element) and shop._popup_manager._elements_pressed[0] == element,
+		"on the same element"
+	)
+	_t._check(
+		RunData.get_player_weapons(0).has(popup._item_data), "the popup holds the run's new object"
+	)
+	yield(_tap("ui_cancel"), "completed")
+	_t._check(
+		not popup._focused and emulator.focused_control == element, "Cancel closes it onto its weapon"
+	)
+	_receive(_states.remote_changed)
+	yield(_frames(2), "completed")
 
 
 # The own panel's device and mouse (sync/local_panel.gd, added by ShopLocal.guard).

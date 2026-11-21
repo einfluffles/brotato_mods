@@ -1,6 +1,7 @@
 extends Reference
 # The gear page and the crate weapons list of a puppet's level-up / crate panels, rebuilt when
-# the host's run state changes (static helpers of sync/upgrades_sync.gd).
+# the host's run state changes (static helpers of sync/upgrades_sync.gd). The shop's gear rows
+# use sync_inventory too (sync/shop_sync.gd).
 
 
 # p -> whether its gear ("g<p>" part) changed, for each player whose parts changed. store: the
@@ -133,13 +134,13 @@ static func sync_inventory(inventory: Node, elements: Array, reverse: bool, firs
 			entries.append([element, 1])
 	var spare := {}  # what a node shows -> the nodes showing it, in child order
 	for node in inventory.get_children():
-		var key := _shows(node.item)
+		var key := shows(node.item)
 		if not spare.has(key):
 			spare[key] = []
 		spare[key].append(node)
 	var nodes := []
 	for entry in entries:
-		var same: Array = spare.get(_shows(entry[0]), [])
+		var same: Array = spare.get(shows(entry[0]), [])
 		nodes.append(same.pop_front() if not same.empty() else null)
 	var left := []
 	for same in spare.values():
@@ -173,7 +174,7 @@ static func sync_inventory(inventory: Node, elements: Array, reverse: bool, firs
 
 
 # What an InventoryElement shows of item (InventoryElement.set_element).
-static func _shows(item) -> String:
+static func shows(item) -> String:
 	var icon = item.get_icon()
 	return "%s %s %s %s %s %s" % [
 		item.my_id,

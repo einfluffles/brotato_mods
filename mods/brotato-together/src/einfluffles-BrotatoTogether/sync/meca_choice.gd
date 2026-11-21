@@ -235,3 +235,9 @@ func _send_pick() -> void:
 	if not entry.empty():
 		rolls.erase(entry)
 	emit_signal("picked", weapon, index)
+
+
+# The popup's weapon is now the run's new object of it (a gear change kept the popup open).
+func retarget(old, new) -> void:
+	if _waiting != null and _waiting == old:
+		_waiting = new

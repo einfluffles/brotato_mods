@@ -69,6 +69,8 @@ func guard(shop: Node, shop_id: int) -> void:
 		for node in items._shop_items:
 			for signal_name in ITEM_HANDLERS:
 				_disconnect(node, signal_name, items, ITEM_HANDLERS[signal_name])
+		# Called by ShopSync only for a cursor on that item: see ShopSync._deactivate.
+		_disconnect(items, "shop_item_deactivated", shop, "on_shop_item_deactivated")
 		_disconnect(shop._get_reroll_button(p), "pressed", shop, "_on_RerollButton_pressed")
 		_disconnect(shop._get_go_button(p), "pressed", shop, "_on_GoButton_pressed")
 		var popup = shop._get_item_popup(p)
