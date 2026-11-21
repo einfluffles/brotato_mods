@@ -543,12 +543,20 @@ Mirrored nodes are the entity spawner's lists (`bosses`, `enemies`, `neutrals`, 
   instances after it in the same frame are cheap. On a fast PC that is about 3 ms. On a slower one
   with frames queued it reads as a frame of 57 to 100 ms. A new main scene starts with empty pools,
   so at a wave's start nearly every frame with a new enemy paid it. In the frame that loads the
-  battle scene, the client now makes the units and explosions the battle will likely need and puts
-  them into main's pool, the way `Entity.free_entity` pools a unit (into the tree once, puppetized,
-  then out of it). How many of a scene: what the last battle with it needed (made plus instanced in
-  it), at most 40 of a scene and 200 in all. A scene no battle needed yet: 6 of an enemy type that
-  is not a boss, 4 of an explosion, none of anything else. Only types that came with BATTLE_START
-  are made, and not a boss part whose boss is missing.
+  battle scene, the client now makes the units, explosions and hit effects the battle will likely
+  need and puts them into main's pool, the way the game pools them (into the tree once,
+  puppetized, then out of it; effects as `EffectsManager.play` makes them). It also derives the
+  pose layout of every type there, which instances the scene once.
+  - **How many of a scene:** what the last battle with it used (made here and taken, plus
+    instanced during it). Made but unused ones halve each battle. A scene no battle used yet: 6 of
+    an enemy type that is not a boss, 4 of an explosion, none of anything else. Effects: a fixed
+    number per `EffectsManager` export.
+  - **Limits:** at most 40 of a scene and 200 in all, smaller counts first, so a horde cannot take
+    the explosions' share. A scene under several type indices (a cursed and a normal structure)
+    counts once.
+  - **Which scenes:** the battle's types at that moment (BATTLE_START's, and TYPE_DEFs that came
+    during the load) and scenes an earlier battle used, whose TYPE_DEF comes later. Not a boss part
+    whose boss is missing, and nothing while another BATTLE_START waits to replace the scene.
 
 ### Puppets
 

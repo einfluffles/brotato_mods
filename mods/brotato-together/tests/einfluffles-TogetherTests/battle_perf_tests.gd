@@ -171,12 +171,13 @@ func test_battle(together: Node):
 			boss_puppet.global_position.distance_to(host_position) < 1.0,
 			"the foot's _ready did not send the boss puppet away"
 		)
-	var needed: int = client._warm.battle.get(unit_path, 0)
+	var warm = client._warm
+	var used: int = warm._taken.get(unit_path, 0) + warm._fresh.get(unit_path, 0)
+	var needed := int(max(used, warm._prepared.get(unit_path, 0) / 2))
 	_check_puppet_pool(client, bullet_type)  # ends with the battle's state reset
 	_t._check(
-		client._warm.needed.get(unit_path) == needed and needed >= client._warm.ENEMIES
-		and client._warm.battle.empty(),
-		"what the battle needed (%d %s) is what the next one makes" % [needed, unit_path.get_file()]
+		warm.needed.get(unit_path) == needed and needed >= 1 and warm._prepared.empty(),
+		"what the battle used (%d %s) is what the next one makes" % [needed, unit_path.get_file()]
 	)
 	client.set_process(true)
 	client._leave_battle()
@@ -220,22 +221,46 @@ func _check_warm_pools(client: Node, unit_path: String) -> void:
 	var taken: Node = client._spawn(idx)
 	_t._check(
 		taken != null and taken == expected and taken.is_inside_tree() and taken.visible
-		and not taken.dead and client._warm.battle.get(unit_path) == client._warm.ENEMIES,
-		"a spawn takes a prepared puppet, no new one"
+		and not taken.dead and client._warm._taken.get(unit_path) == 1
+		and not taken.has_meta(client._warm.PREPARED_META),
+		"a spawn takes a prepared puppet, no new one, and counts it as used"
 	)
 	client._despawn(taken)
-	var saved: Dictionary = client._warm.needed.duplicate()
-	for path in saved:
-		client._warm.needed[path] = 0
-	client._warm.needed[unit_path] = 1000
-	var before := pool.size()
-	client._warm.fill(client, main, client._types)
+	_t._check(client._pose._layouts.has(unit_path), "its pose layout was derived while loading")
+	var manager: Node = main._effects_manager
+	var hits: Array = main._pool.get(manager.hit_particles.get_instance_id(), [])
 	_t._check(
-		pool.size() - before == client._warm.MAX_PER_TYPE,
-		"at most %d of a kind (%d)" % [client._warm.MAX_PER_TYPE, pool.size() - before]
+		hits.size() == client._warm.EFFECTS.hit_particles and not hits[0].is_inside_tree()
+		and hits[0].is_connected("finished", manager, "on_graphical_effect_finished"),
+		"hit effects are made the way EffectsManager.play makes them (%d)" % hits.size()
 	)
-	client._warm.needed = saved
-	client._warm.battle[unit_path] -= client._warm.MAX_PER_TYPE
+	# A scene under two type indices (a cursed and a normal structure) is made once.
+	var warm = client.WarmPools.new()
+	for path in client._warm.needed:
+		warm.needed[path] = 0
+	warm.needed[unit_path] = 1000
+	var before := pool.size()
+	warm.fill(client, main, {0: unit, 1: unit})
+	_t._check(
+		pool.size() - before == warm.MAX_PER_TYPE and warm._prepared[unit_path] == warm.MAX_PER_TYPE,
+		(
+			"a scene with two type indices is made once, at most %d (%d)"
+			% [warm.MAX_PER_TYPE, pool.size() - before]
+		)
+	)
+	var counts := {"big.tscn": 30, "small.tscn": 4, "mid.tscn": 12}
+	var order: Array = counts.keys()
+	order.sort_custom(warm.ByCount.new(counts), "first")
+	_t._check(order == ["small.tscn", "mid.tscn", "big.tscn"], "small kinds first: %s" % [order])
+	warm._prepared = {"a": 6, "b": 6, "c": 1}
+	warm._taken = {"a": 1, "b": 6}
+	warm._fresh = {"b": 5, "d": 3}
+	warm.remember()
+	_t._check(
+		warm.needed.a == 3 and warm.needed.b == 11 and warm.needed.c == 0 and warm.needed.d == 3
+		and warm.last_fresh.hash() == {"b": 5, "d": 3}.hash() and warm._prepared.empty(),
+		"next battle: what was used, unused ones halved: %s" % [warm.needed]
+	)
 
 
 func _check_preregistered(host: Node, main: Node) -> void:

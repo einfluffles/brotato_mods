@@ -8,6 +8,7 @@ const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
+const WarmPools := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/warm_pools.gd")
 const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
 )
@@ -20,6 +21,7 @@ const STATE_REFRESH := 15  # snapshots between resends, so a lost snapshot does 
 const MAX_STAT_TEXTS := 16  # per snapshot (a build can add a stat with every kill)
 
 var fresh := {}  # scene path -> explosions instanced (not taken from main's pool)
+var taken := {}  # scene path -> explosions made while the scene loaded and used (WarmPools)
 var _explosions := {}  # instance id -> animation position at the last capture
 var _picked := []  # [position, boost] of boosted gold picked up since the last capture
 var _stat_texts := []  # [player, stat, value] added (removed: negative) since the last capture
@@ -201,6 +203,9 @@ func explode(main: Node, scene, position: Vector2, scale: float, smoke: int) -> 
 			explosion.free()
 			return null
 		main.add_explosion(explosion)
+	var prepared := WarmPools.take(explosion)
+	if prepared != "":
+		taken[prepared] = taken.get(prepared, 0) + 1
 	explosion.pool_id = pool_id  # end_explosion pools it when "explode" ends, like the game's
 	explosion.global_position = position
 	explosion.scale = Vector2(scale, scale)

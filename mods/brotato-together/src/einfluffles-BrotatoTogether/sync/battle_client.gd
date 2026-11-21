@@ -291,6 +291,8 @@ func _reset_battle_state() -> void:
 	_events.clear()
 	for path in _feedback.fresh:
 		_warm.note_fresh(path, _feedback.fresh[path])
+	for path in _feedback.taken:
+		_warm.note_taken(path, _feedback.taken[path])
 	_warm.remember()
 	_feedback = FeedbackMirror.new()
 	SoundRelay.set_muted(false)
@@ -324,11 +326,12 @@ func _on_battle_scene_ready(main: Node) -> void:
 		_battle_scene.client_scene_ready(main)
 		_main = main
 		_main_id = main.get_instance_id()
-		started = OS.get_ticks_usec()
-		var made: int = _warm.fill(self, main, _types)
-		if made > 0:
-			ModLoaderLog.info("Prepared %d puppets for the battle" % made, LOG_NAME)
-		ClientReport.mark(ClientReport.Mark.PUPPET_SETUP, OS.get_ticks_usec() - started)
+		if _queued_start.empty():  # else the next battle's scene replaces this one at once
+			started = OS.get_ticks_usec()
+			var made: int = _warm.fill(self, main, _types)
+			if made > 0:
+				ModLoaderLog.info("Prepared %d puppets and effects for the battle" % made, LOG_NAME)
+			ClientReport.mark(ClientReport.Mark.PUPPET_SETUP, OS.get_ticks_usec() - started)
 		# The next screen can replace the scene without a BATTLE_END (the shop was faster).
 		main.connect("tree_exited", self, "_on_battle_scene_exited", [_main_id], CONNECT_ONESHOT)
 		_set_paused(_paused)
@@ -807,6 +810,9 @@ func _spawn(type_idx: int) -> Node:
 		node.pool_id = pool_id
 		if node == pooled:
 			PuppetEntity.revive(node)
+			var prepared := WarmPools.take(node)
+			if prepared != "":
+				_warm.note_taken(prepared)
 	if node is Projectile:
 		_anim_mirror.strip_projectile(node)  # its own pool logic must not run here
 		PuppetEntity.start_projectile_animation(node)

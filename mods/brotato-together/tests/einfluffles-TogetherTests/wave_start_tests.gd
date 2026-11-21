@@ -12,6 +12,9 @@ const ClientReport := preload(
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
+const FeedbackMirror := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
+)
 const WAVE := 25
 const RECORD_MSEC := 8000
 const SETTLE_MSEC := 500
@@ -52,6 +55,7 @@ func run(together: Node):
 	yield(tree, "idle_frame")
 	yield(tree, "idle_frame")
 	host._start_battle(tree.current_scene)
+	# As a client gets it: the preregistered types, the others with TYPE_DEFs once it is in.
 	var start: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
 	var recorded := []
 	var t0 := OS.get_ticks_msec()
@@ -60,9 +64,9 @@ func run(together: Node):
 		recorded.append(bytes2var(var2bytes(host._build_snapshot()), false))
 	var host_types: Dictionary = host._types.duplicate()
 	host._end_battle()
-	start.types = {}
+	var all_types := {}
 	for path in host_types:
-		start.types[host_types[path]] = path
+		all_types[host_types[path]] = path
 	var most := 0
 	for msg in recorded:
 		most = max(most, Snapshot.parse(msg[1]).ids.size())
@@ -76,24 +80,42 @@ func run(together: Node):
 	client._warm = client.WarmPools.new()  # what earlier suites' battles needed does not count
 	var fresh_counts := []
 	var structures := false
+	var enemies := []  # per battle: enemies and explosions instanced during it
 	for round_index in ROUNDS:
-		var fresh: Array = yield(_replay(client, report, start, recorded, round_index), "completed")
+		var fresh: Array = yield(
+			_replay(client, report, start, all_types, recorded, round_index), "completed"
+		)
 		fresh_counts.append(fresh.size())
 		for entry in fresh:
 			structures = structures or (round_index == 0 and "turret" in entry[0])
+		var count := 0
+		for path in client._warm.last_fresh:
+			if "/enemies/" in path or path == FeedbackMirror.EXPLOSION_SCENE:
+				count += client._warm.last_fresh[path]
+		enemies.append(count)
 	Puppet.set_active(false)
 	host.set_process(true)
 	RunData.invulnerable = false
 	_t._check(most > 0, "the late wave is recorded")
 	_t._check(structures, "the first battle instances the build's structures")
 	_t._check(
-		fresh_counts[-1] < fresh_counts[0],
-		"the second battle instances fewer puppets: %s" % [fresh_counts]
+		fresh_counts[-1] < fresh_counts[0] and enemies[-1] == 0,
+		(
+			"the second battle instances no enemies or explosions (%s), fewer puppets in all (%s)"
+			% [enemies, fresh_counts]
+		)
 	)
 
 
 # One battle of the recording on the client; returns its fresh puppets ([file, usec] each).
-func _replay(client: Node, report: Node, start: Dictionary, recorded: Array, round_index: int):
+func _replay(
+	client: Node,
+	report: Node,
+	start: Dictionary,
+	types: Dictionary,
+	recorded: Array,
+	round_index: int
+):
 	var tree: SceneTree = _t.get_tree()
 	var snaps := []
 	for msg in recorded:
@@ -106,10 +128,11 @@ func _replay(client: Node, report: Node, start: Dictionary, recorded: Array, rou
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
 	entering = OS.get_ticks_usec() - entering
+	client._adopt_start({"types": types})  # the TYPE_DEFs of the rest
 	client.set_process(false)  # run below, timed per frame
 	var prepared := 0
-	for path in client._warm.battle:
-		prepared += client._warm.battle[path]
+	for path in client._warm._prepared:
+		prepared += client._warm._prepared[path]
 	var frames := []
 	var replay_start := OS.get_ticks_msec()
 	var next := 0
