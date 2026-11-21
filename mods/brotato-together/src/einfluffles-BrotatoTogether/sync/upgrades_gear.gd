@@ -89,6 +89,8 @@ static func rebuild_gear(ui: Node, container: Node, p: int, items := true) -> Ar
 		_release(emulator, gear.weapons_container._elements)
 		gear.weapons_container.set_data("", Category.WEAPON, weapons)
 	gear._on_weapons_changed()  # what set_weapons_data does after it
+	# The items' sort inherits their row's neighbours: one may name a weapon element freed above.
+	_drop_dead_rows(gear)
 	var all_items: Array = RunData.get_player_items(p)
 	if items and not sync_inventory(gear.items_container._elements, all_items, true, true):
 		_release(emulator, gear.items_container._elements)
@@ -248,11 +250,15 @@ static func _gear_element(container: Node, place: Array):
 # page a path to a freed element is dropped.
 static func relink_gear(container: Node) -> void:
 	var gear = container.player_gear_container
+	_drop_dead_rows(gear)
+	if container.carousel.index == 1 and gear.items_container.get_element_count() > 0:
+		container._set_focus_neighbours()
+
+
+static func _drop_dead_rows(gear: Node) -> void:
 	for inventory in [gear.weapons_container, gear.items_container]:
 		_drop_dead_neighbours(inventory)
 		_drop_dead_neighbours(inventory._elements)
-	if container.carousel.index == 1 and gear.items_container.get_element_count() > 0:
-		container._set_focus_neighbours()
 
 
 static func _drop_dead_neighbours(control: Control) -> void:
