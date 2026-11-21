@@ -7,6 +7,14 @@ const VirtualDevices := preload(
 )
 
 
+# By the slot's own type: a remote player aims with the stick its client sends, whatever its key
+# hints show (CoopService.get_player_input_type).
+func is_player_using_gamepad(player_index: int) -> bool:
+	if RunData.is_coop_run and not on_console:
+		return CoopService.bt_slot_uses_gamepad(player_index)
+	return .is_player_using_gamepad(player_index)
+
+
 func is_manual_aim(player_index: int) -> bool:
 	if RunData.is_coop_run:
 		var device: int = CoopService.get_remapped_player_device(player_index)

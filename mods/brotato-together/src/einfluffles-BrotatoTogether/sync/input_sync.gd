@@ -245,7 +245,8 @@ func sample_local() -> Array:
 	history.append([_seq, move])
 	if history.size() > HISTORY_SIZE:
 		history.pop_front()
-	return [_seq, move, aim[1], buttons, counts, aim[0], previous, OS.get_ticks_msec()]
+	var flags: int = aim[0] | LocalAim.type_flags(VirtualDevices.local_player_type())
+	return [_seq, move, aim[1], buttons, counts, flags, previous, OS.get_ticks_msec()]
 
 
 # The moves of the up to REDUNDANCY inputs right before seq (oldest first), from [seq, move]
@@ -365,6 +366,7 @@ func _on_peer_removed(steam_id: int) -> void:
 	var device: int = devices[steam_id]
 	VirtualDevices.release_all(device)
 	VirtualDevices.set_manual_aim(device, false)
+	CoopService.bt_device_types.erase(device)
 	_remote.erase(steam_id)
 	_input_gaps.erase(steam_id)
 	# Free the co-op slot only while players can still join; mid-run the slot waits for a rejoin.
@@ -460,6 +462,9 @@ func _apply_input(steam_id: int, body) -> void:
 		VirtualDevices.action("rjoy_up", device), VirtualDevices.action("rjoy_down", device), aim.y
 	)
 	VirtualDevices.set_manual_aim(device, bool(body[5] & LocalAim.FLAG_MANUAL))
+	var player_type := LocalAim.flags_type(body[5])
+	if player_type >= 0:
+		CoopService.bt_set_device_type(device, player_type)
 	state.buttons.blocked = blocked_mask()
 	state.buttons.apply(body[3], body[4])
 	state.seq = body[0]

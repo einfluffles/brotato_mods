@@ -8,6 +8,10 @@ const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
+const WarmPools := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/warm_pools.gd")
+const ClientReport := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
+)
 const PF := Snapshot.PlayerField
 # Announced with BATTLE_START (rockets, grenades, landmines, ... all use it).
 const EXPLOSION_SCENE := "res://projectiles/explosion.tscn"
@@ -16,6 +20,8 @@ const STATE_REPEAT := 4  # snapshots a state event is sent for after it changes
 const STATE_REFRESH := 15  # snapshots between resends, so a lost snapshot does not lose it
 const MAX_STAT_TEXTS := 16  # per snapshot (a build can add a stat with every kill)
 
+var fresh := {}  # scene path -> explosions instanced (not taken from main's pool)
+var taken := {}  # scene path -> explosions made while the scene loaded and used (WarmPools)
 var _explosions := {}  # instance id -> animation position at the last capture
 var _picked := []  # [position, boost] of boosted gold picked up since the last capture
 var _stat_texts := []  # [player, stat, value] added (removed: negative) since the last capture
@@ -189,12 +195,17 @@ func explode(main: Node, scene, position: Vector2, scale: float, smoke: int) -> 
 	var container = main.get("_explosions")
 	var pool_id: int = scene.get_instance_id()
 	var explosion = main.get_node_from_pool(pool_id, container)
+	var started := -1  # instanced: when, else -1
 	if explosion == null:
+		started = OS.get_ticks_usec()
 		explosion = scene.instance()
 		if not explosion is PlayerExplosion:  # the path comes from the network
 			explosion.free()
 			return null
 		main.add_explosion(explosion)
+	var prepared := WarmPools.take(explosion)
+	if prepared != "":
+		taken[prepared] = taken.get(prepared, 0) + 1
 	explosion.pool_id = pool_id  # end_explosion pools it when "explode" ends, like the game's
 	explosion.global_position = position
 	explosion.scale = Vector2(scale, scale)
@@ -208,6 +219,9 @@ func explode(main: Node, scene, position: Vector2, scale: float, smoke: int) -> 
 	var animation_player: AnimationPlayer = explosion._animation_player
 	animation_player.stop(true)
 	animation_player.play(EXPLODE_ANIMATION)
+	if started >= 0:
+		ClientReport.fresh(scene.resource_path.get_file(), OS.get_ticks_usec() - started)
+		fresh[scene.resource_path] = fresh.get(scene.resource_path, 0) + 1
 	return explosion
 
 

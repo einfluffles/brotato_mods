@@ -10,6 +10,10 @@ signal trade_buy_closed(shop_item)
 const TRADE_TEXT := "Trade"
 const TRADE_TO_META := "trade_to"
 const TRADE_OK_META := "trade_ok"
+const HINT_SCENE := "res://ui/menus/shop/coop_shop_hint.tscn"
+# Loaded when needed: it extends a game script that names ShopItem, which other mods extend.
+const TRADE_HINT := "res://mods-unpacked/einfluffles-BrotatoTrade/ui/trade_hint.gd"
+const Hotkey := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/hotkey.gd")
 
 var trade_shop: Node = null  # answers trade_receivers / trade_combines
 
@@ -17,6 +21,10 @@ var _trade_button: Button = null
 var _trade_players := []  # a button per possible receiver, shown while choosing
 var _trade_choosing := false
 var _trade_buy: Node = null  # the ShopItem whose buy-for list is open
+var _trade_direct := false  # the give list was opened by the trade key: cancel closes the popup
+var _trade_hint: Control = null
+var _trade_hint_for = null  # the hovered ShopItem or gear (ItemParentData)
+var _trade_hint_type := -1  # the device type its glyph is for
 
 
 func _ready() -> void:
@@ -28,6 +36,13 @@ func _ready() -> void:
 		button.expand_icon = true
 		button.connect("pressed", self, "_on_trade_player_pressed", [i])
 		_trade_players.append(button)
+	_trade_hint = load(HINT_SCENE).instance()
+	var script: Script = load(TRADE_HINT)
+	_trade_hint.set_script(script)
+	_trade_hint.name = "TradeHint"
+	_trade_hint.text = script.TRADE_TEXT
+	_trade_hint.visible = false
+	_coop_lock_hint.get_parent().add_child(_trade_hint)
 
 
 # Cancel while the players are listed leads back to the buttons. The base _input, which Godot
@@ -56,6 +71,7 @@ func cancel() -> void:
 
 func hide(index := -1) -> void:
 	_trade_buy = null
+	_trade_direct = false
 	.hide(index)
 
 
@@ -85,6 +101,52 @@ func trade_open_buy(shop_item: Node, entries: Array) -> void:
 
 func trade_buy_item() -> Node:
 	return _trade_buy
+
+
+# The trade key on the own gear, with the popup focused as after accept.
+func trade_open_give() -> bool:
+	if not _focused or _trade_receivers(_item_data).empty():
+		return false
+	_trade_direct = true
+	_on_trade_button_pressed()
+	return _trade_choosing
+
+
+func show_shop_hints(p_shop_item: ShopItem) -> void:
+	.show_shop_hints(p_shop_item)
+	_trade_hint_for = p_shop_item
+	trade_hint_refresh()
+
+
+func show_inventory_hint(item_data: ItemParentData) -> void:
+	.show_inventory_hint(item_data)
+	_trade_hint_for = item_data
+	trade_hint_refresh()
+
+
+func hide_hints() -> void:
+	.hide_hints()
+	_trade_hint_for = null
+	trade_hint_refresh()
+
+
+# Shown while someone can take the hovered item.
+func trade_hint_refresh() -> void:
+	if _trade_hint == null:
+		return
+	var shown := false
+	var target = _trade_hint_for
+	if visible and not _focused and is_instance_valid(trade_shop) and is_instance_valid(target):
+		if target is Node:
+			shown = trade_shop.trade_buy_anyone(target, player_index)
+		else:
+			shown = not _trade_receivers(target).empty()
+	var device_type := Hotkey.player_type(player_index)
+	if shown and (not _trade_hint.visible or device_type != _trade_hint_type):
+		_trade_hint_type = device_type
+		_trade_hint.player_index = player_index  # the setter: the glyph of the device used now
+	if _trade_hint.visible != shown:
+		_trade_hint.visible = shown
 
 
 func _update_button_visibilities() -> void:
@@ -162,9 +224,11 @@ func _on_trade_player_pressed(index: int) -> void:
 			return
 		item = _trade_buy
 		_trade_collapse()
+		_trade_direct = false
 		_focused = false
 		emit_signal("trade_buy_requested", item, to)
 		return
+	_trade_direct = false
 	_trade_collapse()
 	_focused = false
 	emit_signal("trade_requested", item, to)
@@ -224,6 +288,12 @@ func _trade_back(refocus: bool) -> void:
 		_trade_collapse()
 		_focused = false
 		emit_signal("trade_buy_closed", shop_item)
+		return
+	if _trade_direct:
+		_trade_direct = false
+		_trade_collapse()
+		_focused = false
+		emit_signal("item_cancel_button_pressed", _item_data)
 		return
 	if refocus:
 		if not is_visible_in_tree() or _item_data == null:

@@ -1,14 +1,33 @@
 # brotato:together changelog
 
 What each update of the [Workshop item](https://steamcommunity.com/sharedfiles/filedetails/?id=3839693385)
-changed, newest first. Times are the Workshop's upload times in US Pacific time (UTC-8).
+changed, newest first. Headings from the release pipeline on are the time of the release PR in
+UTC ("UTC" after the time, [Publishing](../../README.md#publishing)); older ones are the Workshop's
+upload times in US Pacific time (UTC-8).
 
 Entries up to 2026-11-18 were reconstructed on 2026-11-19 from the merges into `main` before each
 upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Shop, level-up and end-of-run panels show each player's key hints for the device that player
+  really uses, for everyone: online players on keyboard and mouse no longer get controller buttons,
+  and the hints follow a switch between pad and keyboard. The lock and ban keys on shop items now
+  show the panel's own player's keys.
 - Small wording changes in the lobby page and the client's status line.
+- The host's log says what a client's slowest frame was spent on, to track down hitches at the
+  start of later waves.
+- Gold flies to you and is collected the moment you reach it on a client, also when running fast.
+  Before, it waited for the host, then flew after you and vanished behind you.
+- Running fast on a client with a low frame rate no longer skips fruit and crates beside your path.
+- Clients prepare the wave's enemies while the battle loads, instead of stuttering when they first
+  appear in later waves.
+- No more `Can't call non-static function 'duplicate'` error in the game's log at startup.
+- Shop and level-up panels on a client: an item's details close when the mouse moves out of them.
+- On a client, other players block you right away instead of letting you walk through them and
+  pulling you back.
+- On a client with a screen faster than 60 Hz, your character and the camera move smoothly
+  together; at the edge of the map your character no longer shakes.
 
 ## 2026-11-18 14:51
 

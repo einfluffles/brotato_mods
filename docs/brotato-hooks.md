@@ -187,6 +187,15 @@ starts with the mod's name and names the file.
 - `mod_main.gd` is instantiated without `_init` arguments and added as a child of the
   `ModLoader` autoload, so it survives scene changes. Script extensions are applied after the
   `_init` of all mods.
+- Before the first extension of a game script, the loader stores a backup of it with
+  `script.duplicate()` in `ModLoaderStore.saved_scripts[path][0]`
+  (`internal/script_extension.gd :: apply_extension`), unless `path` already has an entry. On a
+  script whose class defines its own `duplicate()` (`Effect`, `ItemParentData`, `EnemyData` and other resources)
+  Godot runs that method on the script instead: the boot log shows `ERROR: Can't call non-static
+  function 'duplicate' in script.` and the backup is null. It is only read when a mod is disabled
+  while the game runs. During the mods' `_init` the autoloads are not in the tree yet, but their
+  names resolve. **brotato:together** stores the backup itself before installing such an extension
+  (`extensions/script_backup.gd`).
 - The log is `user://logs/modloader.log`.
 - The built-in mods menu (`ui/menus/pages/mods/menu_mods.gd`) is read-only.
 

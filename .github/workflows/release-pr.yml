@@ -1,0 +1,61 @@
+# Release PR: the mod's "## Unreleased" becomes "## <now> UTC" (tools/changelog.py cut), committed
+# on bot/release-<mod>-<YYYYMMDD-HHMM> and opened as a PR to the default branch. Needs the repo
+# setting "Allow GitHub Actions to create and approve pull requests".
+name: Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      mod:
+        description: Mod to release
+        type: choice
+        required: true
+        options:
+          - brotato-together
+          - brotato-trade
+
+permissions: {}
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Cut the changelog and open the PR
+        env:
+          MOD: ${{ inputs.mod }}
+          BASE: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          changelog="mods/$MOD/CHANGELOG.md"
+          now="$(python3 tools/changelog.py cut "$changelog")"
+          day="${now% *}" hhmm="${now#* }"
+          hhmm="${hhmm/:/}"
+          branch="bot/release-$MOD-${day//-/}-$hhmm"
+          tag="$MOD/$day-$hhmm"
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo "Release of \`$MOD\`: \`$changelog\` gets the section **$now UTC**."
+            echo
+            python3 tools/changelog.py notes "$changelog"
+            echo
+            echo "After merging, on the merge commit (README, Publishing):"
+            echo
+            echo '```sh'
+            echo "git switch $BASE && git pull"
+            echo "tools/local-check.sh mods/$MOD"
+            echo "git tag $tag && git push origin $tag"
+            echo '```'
+          } > "$body"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -m "Release $MOD $now UTC: changelog" -- "$changelog"
+          git push origin "$branch"
+          gh pr create --base "$BASE" --head "$branch" --title "Release $MOD $now UTC" --body-file "$body"

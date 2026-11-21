@@ -1,6 +1,7 @@
 extends Reference
 # Battle mirror robustness and performance: own-player prediction during pauses and stalls, reused
-# net ids of pooled nodes, the brachiosaurus foot on clients, recorded sounds, puppet pooling.
+# net ids of pooled nodes, the brachiosaurus foot on clients, recorded sounds, puppet pooling and
+# the puppets made while the battle scene loads.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -11,6 +12,7 @@ const BRACHIOSAURUS := BOSSES + "brachiosaurus.tscn"
 const FOOT := BOSSES + "brachiosaurus_foot/brachiosaurus_foot.tscn"
 const BULLET := "res://projectiles/bullet/bullet_projectile.tscn"
 const STEP_SOUND := "res://entities/units/player/step_sounds/Step 1.mp3"
+const EXPLOSION := "res://projectiles/explosion.tscn"
 
 var _t: Node
 
@@ -42,6 +44,7 @@ func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Arra
 	var saved: Array = input_sync.history
 	input_sync.history = history
 	client._newest_rx_msec = OS.get_ticks_msec()
+	client._view.place([], {"players": []}, client._you)  # no other player in the way
 	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
 	var lead: float = client._own_target(player, host_entry).distance_to(entry[PF.POSITION])
 	_t._check(
@@ -110,6 +113,8 @@ func test_battle(together: Node):
 	var main: Node = _t.get_tree().current_scene
 	host._start_battle(main)
 	_check_preregistered(host, main)
+	var wave_data = main._wave_manager.current_wave_data
+	var unit_path: String = wave_data.groups_data[0].wave_units_data[0].unit_scene.resource_path
 	_check_pool_reuse_ids(host, main)
 	_check_recorded_sounds(host)
 	var spawner = main.get("_entity_spawner")
@@ -136,9 +141,11 @@ func test_battle(together: Node):
 		"host lists bosses before their parts"
 	)
 
+	client._warm = client.WarmPools.new()  # what earlier suites' battles needed does not count
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
 	client.set_process(false)
+	_check_warm_pools(client, unit_path)
 	var foot_only := _single(ids.foot, foot_type, last.positions[Snapshot.index_of(last, ids.foot)])
 	client._apply_entities(foot_only, foot_only, 1.0)
 	_t._check(not client._entities.has(ids.foot), "foot waits for its boss puppet")
@@ -165,11 +172,96 @@ func test_battle(together: Node):
 			boss_puppet.global_position.distance_to(host_position) < 1.0,
 			"the foot's _ready did not send the boss puppet away"
 		)
-	_check_puppet_pool(client, bullet_type)
+	var warm = client._warm
+	var used: int = warm._taken.get(unit_path, 0) + warm._fresh.get(unit_path, 0)
+	var needed := int(max(used, warm._prepared.get(unit_path, 0) / 2))
+	_check_puppet_pool(client, bullet_type)  # ends with the battle's state reset
+	_t._check(
+		warm.needed.get(unit_path) == needed and needed >= 1 and warm._prepared.empty(),
+		"what the battle used (%d %s) is what the next one makes" % [needed, unit_path.get_file()]
+	)
 	client.set_process(true)
 	client._leave_battle()
 	Puppet.set_active(false)
 	host.set_process(true)
+
+
+# Enemies and explosions are made in the frame that loads the battle, not mid-wave.
+func _check_warm_pools(client: Node, unit_path: String) -> void:
+	var main: Node = client._main
+	var unit: PackedScene = load(unit_path)
+	var pool: Array = main._pool.get(unit.get_instance_id(), [])
+	var ready := 0
+	for node in pool:
+		if (
+			is_instance_valid(node) and node is Enemy and not node.is_inside_tree()
+			and node.collision_layer == 0 and node.pool_id == unit.get_instance_id()
+		):
+			ready += 1
+	_t._check(
+		ready == client._warm.ENEMIES and pool.size() == ready
+		and client._warm.needed.get(unit_path) == client._warm.ENEMIES,
+		"the wave's enemies are in main's pool, puppetized (%d %s)" % [ready, unit_path.get_file()]
+	)
+	var explosions: Array = main._pool.get(load(EXPLOSION).get_instance_id(), [])
+	_t._check(
+		explosions.size() == client._warm.EXPLOSIONS and explosions[0] is PlayerExplosion
+		and not explosions[0].is_inside_tree(),
+		"and explosions (%d)" % explosions.size()
+	)
+	_t._check(
+		client._warm.needed.get(BULLET) == 0 and client._warm.needed.get(BRACHIOSAURUS) == 0
+		and not client._warm.needed.has(FOOT),
+		"not projectiles, bosses or a boss part without its boss"
+	)
+	var idx := -1
+	for k in client._types:
+		if client._types[k] == unit:
+			idx = k
+	var expected = pool[-1] if not pool.empty() else null
+	var taken: Node = client._spawn(idx)
+	_t._check(
+		taken != null and taken == expected and taken.is_inside_tree() and taken.visible
+		and not taken.dead and client._warm._taken.get(unit_path) == 1
+		and not taken.has_meta(client._warm.PREPARED_META),
+		"a spawn takes a prepared puppet, no new one, and counts it as used"
+	)
+	client._despawn(taken)
+	_t._check(client._pose._layouts.has(unit_path), "its pose layout was derived while loading")
+	var manager: Node = main._effects_manager
+	var hits: Array = main._pool.get(manager.hit_particles.get_instance_id(), [])
+	_t._check(
+		hits.size() == client._warm.EFFECTS.hit_particles and not hits[0].is_inside_tree()
+		and hits[0].is_connected("finished", manager, "on_graphical_effect_finished"),
+		"hit effects are made the way EffectsManager.play makes them (%d)" % hits.size()
+	)
+	# A scene under two type indices (a cursed and a normal structure) is made once.
+	var warm = client.WarmPools.new()
+	for path in client._warm.needed:
+		warm.needed[path] = 0
+	warm.needed[unit_path] = 1000
+	var before := pool.size()
+	warm.fill(client, main, {0: unit, 1: unit})
+	_t._check(
+		pool.size() - before == warm.MAX_PER_TYPE and warm._prepared[unit_path] == warm.MAX_PER_TYPE,
+		(
+			"a scene with two type indices is made once, at most %d (%d)"
+			% [warm.MAX_PER_TYPE, pool.size() - before]
+		)
+	)
+	var counts := {"big.tscn": 30, "small.tscn": 4, "mid.tscn": 12}
+	var order: Array = counts.keys()
+	order.sort_custom(warm.ByCount.new(counts), "first")
+	_t._check(order == ["small.tscn", "mid.tscn", "big.tscn"], "small kinds first: %s" % [order])
+	warm._prepared = {"a": 6, "b": 6, "c": 1}
+	warm._taken = {"a": 1, "b": 6}
+	warm._fresh = {"b": 5, "d": 3}
+	warm.remember()
+	_t._check(
+		warm.needed.a == 3 and warm.needed.b == 11 and warm.needed.c == 0 and warm.needed.d == 3
+		and warm.last_fresh.hash() == {"b": 5, "d": 3}.hash() and warm._prepared.empty(),
+		"next battle: what was used, unused ones halved: %s" % [warm.needed]
+	)
 
 
 func _check_preregistered(host: Node, main: Node) -> void:

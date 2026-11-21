@@ -30,18 +30,20 @@ their own files as `res://mods-unpacked/<mod_id>/...`.
 The tools run in a container that holds GDRE Tools, Godot 3.6 headless and gdtoolkit 3.x. Build it once:
 
 ```sh
-podman build -t brotato-modtools -f tools/Containerfile tools
+podman build -t brotato-modtools -f tools/Containerfile tools   # or: docker build ...
 ```
 
 | Command | What it does |
 |---|---|
 | `tools/lint.sh` | Runs gdlint over `mods/`. |
 | `tools/check.sh [mods/<folder> ...]` | Boots the game headless with each mod and its test mod (see [Tests](#tests)). |
+| `tools\check-window.ps1 [-Mod mods\<folder>] [-Suites <suite>[,...]]` | Windows: runs a mod's tests in a real game window, with graphics and audio (see [With real graphics](#with-real-graphics)). |
 | `tools/package.sh [target]` | Writes `<target>/<name>/<name>.zip` and `preview.png` for every mod (default target: `dist/`). |
-| `tools/deploy.sh <name> <workshop_item_id>` | Replaces the subscribed Workshop item's zip with the package (see [Publishing](#publishing)). |
+| `tools/deploy.sh <name> <workshop_item_id>` | Replaces the subscribed Workshop item's zip with the package (see [Trying a build in the game](#trying-a-build-in-the-game)). |
+| `tools/local-check.sh [mods/<folder> ...]` | Lint and tests on a clean, pushed HEAD, then marks the commit on GitHub (see [Publishing](#publishing)). |
+| `tools/release.sh <mod> <tag> local\|live` | Installs a GitHub Release locally to try it, or uploads it to the mod's Workshop item with steamcmd (see [Publishing](#publishing)). |
 
-`tools/check.sh` uses podman, or docker when podman is missing (`CONTAINER=...` picks one).
-`tools/lint.sh` and `tools/package.sh` need podman.
+The scripts use podman, or docker when podman is missing (`CONTAINER=...` picks one).
 
 ### Tests
 
@@ -60,19 +62,105 @@ game-script error or a `get_meta` / `get_child` / `get_node` engine error while 
   mount makes that slow. The copy is refreshed when `reference/project.godot` changes.
   `MOD_CHECK_CACHE=1` or `0` forces the copy on or off, and `MOD_CHECK_RESYNC=1` refreshes it.
 
+#### With real graphics
+
+The container's Godot is headless: its graphics and audio drivers are dummies. Costs that only
+exist with a real driver do not show there, such as uploads to the GPU, the driver waiting for the
+GPU, shaders, particles and sounds. On Windows, `tools\check-window.ps1` runs a mod's tests in a
+real game window instead (`powershell -ExecutionPolicy Bypass -File ...` if scripts are blocked).
+
+- It uses the official Godot build of `-GodotVersion` (default 3.6.2, as in `tools/Containerfile`),
+  downloaded once to `%LOCALAPPDATA%\brotato-modtools`, or the exe given with `-Godot`. The game
+  itself runs a custom 3.7 build.
+- The game runs from a copy of `reference/` there, refreshed when `reference/project.godot`
+  changes. The copy's `project.godot` gets its own user folder, `%APPDATA%\BrotatoModTests`: the
+  game's own one holds the real saves and logs.
+- `-Mod mods\<folder>` picks the mod (default brotato-together). Without `-Suites`, every line of
+  its test mod's `shards.txt` runs in its own game process, one after the other, with the mods its
+  `+<mod folder>` names (`tools\check-window.ps1 -Mod mods\brotato-trade` runs brotato:trade's
+  tests, the together ones next to brotato:together). `-Suites <suite>[,<suite>]` runs those in one
+  process, `-With mods\<folder>` loads another mod next to them. `-All` prints the ok lines too.
+- The full log of the last run is `%LOCALAPPDATA%\brotato-modtools\check-window.log`, its errors
+  (Godot prints them to stderr) `check-window.err.log` next to it. A run fails on every script
+  error except the missing Steam's, and on every engine error not listed in `$KnownErrors` at the
+  top of the script (Steam, the deleted logs, the engine's reports at exit). That is stricter than
+  `tools/check.sh`: an error at boot that names no mod (issue #91) fails it too.
+- The test copy's logs are deleted before each run: the game reads the last one at boot and, when
+  an error in it names `mods-unpacked`, turns all mods off ("Recovering from unexpected error in
+  mod ...").
+- Frames are much shorter than headless. A test that waits a few frames for something that takes
+  real time (the game's buttons ignore a second press within 0.05 s) can pass headless and fail
+  here.
+- Times are this machine's. Compare them with each other (one scene against another, a frame
+  against the next), not with what a player's log shows.
+
+Example: brotato:together's `wave_start` suite showed this way that instancing an enemy waits for the
+GPU once per frame (its burning particles), which the headless run could not show.
+
 ### Publishing
 
-`tools/package.sh` produces one folder per mod. Upload it with the game's own `GodotWorkshopUtility.x86_64`
-(in the Brotato install folder): select the zip, the preview image (first upload), tags, and the Workshop id
-when updating.
+A release goes from a reviewed changelog to a tagged GitHub Release, and from there to the
+Workshop with steamcmd on the maintainer's PC. GitHub holds no Steam credentials, and the tests
+(which need `reference/`) run only on the maintainer's PC.
 
-As the change note, paste the mod's `CHANGELOG.md` section *Unreleased*, then rename that section
-to the upload's date and time and start a new empty *Unreleased* above it.
+1. **CI** (`.github/workflows/build.yml`) runs on every push and pull request: the changelog
+   tool's tests, shellcheck, gdlint and `tools/package.sh`. The packaged `dist/` is the run's
+   artifact `dist`.
+2. **Release PR**: run the workflow *Release PR* (Actions tab) for the mod. It turns the mod's
+   `## Unreleased` in `CHANGELOG.md` into `## <YYYY-MM-DD HH:MM> UTC` under a new empty
+   *Unreleased* (`tools/changelog.py cut`, which fails when *Unreleased* is empty) and opens a PR
+   from `bot/release-<mod>-<YYYYMMDD-HHMM>`. A PR opened by Actions starts no CI run of its own;
+   it changes the changelog only. Review and merge it.
+3. **Local check** on the merge commit: `git switch main && git pull`, then
+   `tools/local-check.sh mods/<mod>`. It refuses a dirty tree and a HEAD that is not pushed, runs
+   gdlint and `tools/check.sh`, and on success sets the commit status `local-check` on that
+   commit. From Git Bash on Windows, without podman or docker there, lint and tests run in WSL.
+   `-n` runs everything but setting the status.
+4. **Tag** the merge commit `<mod>/<YYYY-MM-DD-HHMM>` with the time of the changelog heading and
+   push it: `git tag brotato-together/2026-11-21-1305 && git push origin brotato-together/2026-11-21-1305`
+   (the release PR's description has the exact commands). The workflow *Release*
+   (`.github/workflows/release.yml`) checks that the commit is on `main`, has `local-check` =
+   success for that mod, and that the changelog's newest section is the tag's time with
+   *Unreleased* empty. It packages the mod and creates the GitHub Release with `<Name>.zip`,
+   `<Name>.zip.sha256` and `changenote.txt` (the section as Steam BBCode). A failed check can be
+   fixed and the workflow re-run.
+5. **Try it**: `tools/release.sh <mod> <tag> local` downloads the release, checks the hash and
+   puts exactly that zip into this PC's copy of the subscribed item, as `tools/deploy.sh` does
+   (`BROTATO_WORKSHOP_DIR`, see below). Start the game and check the mod. Nobody else gets it yet.
+6. **Workshop**: `tools/release.sh <mod> <tag> live` downloads and checks the release again, shows
+   what it will upload and asks, then runs
+   `steamcmd +login "$STEAM_USER" +workshop_build_item <vdf> +quit` for the item of
+   `mods/<mod>/workshop.json`. The upload's content is a folder that holds only the zip (the Mod
+   Loader loads every `.zip` in an item's folder), and the change note is `changenote.txt`. Title,
+   description, preview and visibility stay as on the item's page. `-y` skips the question,
+   `--dry-run` does everything but steamcmd, `--from-dir DIR` takes the three files from DIR.
+7. **Rollback**: `tools/release.sh <mod> <previous tag> live` uploads the previous release again.
+
+One-time setup:
+
+- steamcmd: install it ([Valve's page](https://developer.valvesoftware.com/wiki/SteamCMD); on
+  Windows release.sh finds it in `%LOCALAPPDATA%\steamcmd\steamcmd.exe` without further setup),
+  log in once by hand with the Steam account that **owns the Workshop items**
+  (`steamcmd +login <account> +quit`, with Steam Guard) so the login is cached, and set
+  `STEAM_USER` to that account. `STEAMCMD` is the path of steamcmd when it is somewhere else.
+  release.sh never takes a password.
+- `BROTATO_WORKSHOP_DIR` for `local` (and `tools/deploy.sh`): the Workshop content folder of app
+  1942280, e.g. `/f/SteamLibrary/steamapps/workshop/content/1942280` in Git Bash. Subscribe to the
+  mod's item so its folder exists.
+- GitHub `gh` logged in on the maintainer's PC (local-check.sh and release.sh use it).
+- Repository settings, set by an admin: *Actions, General: Allow GitHub Actions to create and
+  approve pull requests* (for the release PR); a tag ruleset that lets only maintainers create,
+  update or delete `brotato-*/*` tags; *Actions, General: Require approval for all outside
+  collaborators* for workflows from forks.
+
+#### Trying a build in the game
 
 The Steam build of Brotato only loads **subscribed Workshop items** (`<game>/mods` is ignored). To
-try a build in the real game, subscribe to a private Workshop item and overwrite its local copy
-with `tools/deploy.sh`. Steam may put the uploaded version back when it updates or verifies the
-item, so run the script again after that.
+try a local build in the real game, run `tools/package.sh`, subscribe to the mod's Workshop item
+and overwrite its local copy with `tools/deploy.sh <name> <item id>` (a released build:
+`tools/release.sh <mod> <tag> local`). Steam
+may put the uploaded version back when it updates or verifies the item, so run the script again
+after that.
 
 ### Game code
 

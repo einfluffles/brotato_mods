@@ -1,0 +1,9 @@
+[list]
+[*]Gold flies to you, see [url=https://example.com/issues/1]the issue[/url], when running fast on a client.
+[*]No more Can't call non-static function 'duplicate' error, [b]really[/b] (details).
+[list]
+[*]A nested point with a [i]word[/i] in italics.
+[/list]
+[*]Back at the top level, with a **not bold** span and 2 * 3 * 4 stars.
+[/list]
+A paragraph after the list, wrapped over two lines.

@@ -35,6 +35,8 @@ const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sy
 const RenderDelay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/render_delay.gd")
 const OwnPickups := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/own_pickups.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
+const WarmPools := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/warm_pools.gd")
+const OwnView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/own_view.gd")
 const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
 )
@@ -118,7 +120,9 @@ var _looks = Looks.new()
 var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppets
 var _render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
 var _snapshot_gaps = StreamGaps.new("snapshot")  # stalls of the host's snapshots, for the log
-var _pickups = OwnPickups.new()  # consumables the own player picks up
+var _pickups = OwnPickups.new()  # consumables and gold the own player picks up
+var _view = OwnView.new()  # other players' blockers, the own player's drawn position, the camera
+var _warm = WarmPools.new()  # puppets made while the battle scene loads; kept across battles
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -252,6 +256,7 @@ func _leave_battle() -> void:
 
 func _on_lobby_left() -> void:
 	_reset_battle_state()
+	_warm = WarmPools.new()
 	if session.transport.was_host:
 		return  # the host's own run (and its co-op slots) goes on: see InputSync._on_lobby_left
 	Puppet.set_active(false)  # restores the client's own saved run (session/puppet.gd)
@@ -286,6 +291,11 @@ func _reset_battle_state() -> void:
 	if input_sync != null:
 		input_sync.set_host_paused("battle", false)
 	_events.clear()
+	for path in _feedback.fresh:
+		_warm.note_fresh(path, _feedback.fresh[path])
+	for path in _feedback.taken:
+		_warm.note_taken(path, _feedback.taken[path])
+	_warm.remember()
 	_feedback = FeedbackMirror.new()
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
@@ -294,6 +304,7 @@ func _reset_battle_state() -> void:
 	_render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
 	_snapshot_gaps.reset()
 	_pickups = OwnPickups.new()
+	_view = OwnView.new()
 
 
 func _on_node_added(node: Node) -> void:
@@ -318,6 +329,11 @@ func _on_battle_scene_ready(main: Node) -> void:
 		_battle_scene.client_scene_ready(main)
 		_main = main
 		_main_id = main.get_instance_id()
+		_pickups.set_gold_sounds(main)
+		if _queued_start.empty():  # else the next battle's scene replaces this one at once
+			started = OS.get_ticks_usec()
+			_warm.fill(self, main, _types)
+			ClientReport.mark(ClientReport.Mark.PUPPET_SETUP, OS.get_ticks_usec() - started)
 		# The next screen can replace the scene without a BATTLE_END (the shop was faster).
 		main.connect("tree_exited", self, "_on_battle_scene_exited", [_main_id], CONNECT_ONESHOT)
 		_set_paused(_paused)
@@ -355,8 +371,8 @@ func _freeze(main: Node) -> void:
 			if timer is Timer:
 				timer.stop()
 	for player in main.get("_players"):
-		PuppetEntity.puppetize(player)
-		player.collision_mask = BattleScene.OBSTACLES  # no layer: nothing runs into a puppet
+		PuppetEntity.puppetize(player)  # no layer: nothing runs into a puppet
+	_view.setup(main)  # the prediction's mask, the other players' blockers, the camera
 	# On a bullet-hell wave main._ready adds its own generator (a random pattern); the host's
 	# bullets arrive as puppets.
 	var enemy_projectiles = main.get("_enemy_projectiles")
@@ -454,19 +470,30 @@ func _process(delta: float) -> void:
 		alpha = clamp((render_t - from.t) / float(to.t - from.t), 0.0, 1.0)
 	interp_lag_msec = int(_buffer[-1].t - render_t)
 	_apply_players(from, to, alpha, _buffer[-1], delta)
+	_view.draw(_main.get("_players"), _you if _own_base_t >= 0 else -1, _own_display, delta)
+	var players_done := OS.get_ticks_usec()
 	_apply_entities(from, to, alpha)
+	var entities_done := OS.get_ticks_usec()
 	var at := _own_display - _own_error  # without the blend: where the host will have it
 	for id in _pickups.update(_entities, _picker(), at, _own_seq, _buffer[-1], to, delta):
+		FeedbackMirror.gold_gone(_main, _entities[id])  # its sparkle, at the player
 		_drop_entity(id)
+	var pickups_done := OS.get_ticks_usec()
 	_apply_wave_timer(to.wave_time_left)
 	_fire_events(render_t)
-	ClientReport.mirror_cost(OS.get_ticks_usec() - started, _entities.size())
+	var done := OS.get_ticks_usec()
+	var phases := [
+		players_done - started, entities_done - players_done, pickups_done - entities_done,
+		done - pickups_done,
+	]
+	ClientReport.mirror_cost(done - started, _entities.size(), phases)
 
 
 func _apply_players(
 	from: Dictionary, to: Dictionary, alpha: float, newest: Dictionary, delta: float
 ) -> void:
 	var players: Array = _main.get("_players")
+	_view.place(players, newest, _you)  # before the prediction runs into them
 	for i in min(players.size(), to.players.size()):
 		var player = players[i]
 		BattleScene.apply_speed(player, newest.players[i])  # before the prediction reads it
@@ -511,9 +538,11 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 			_own_error.length(), late, ClientReport.unacked(history, ack), player.get_move_speed()
 		)
 	_own_base_t = newest.t
-	_own_seq = history[-1][0] if not history.empty() else 0
 	_own_error *= exp(-delta * PREDICTION_ERROR_DECAY)
+	var seq: int = history[-1][0] if not history.empty() else 0
+	_view.note_display(_own_display, predicted + _own_error, seq - _own_seq, _predicting())
 	_own_display = predicted + _own_error
+	_own_seq = seq
 	_move(player, "p%s" % i, _own_display)
 
 
@@ -730,7 +759,7 @@ func _drop_entity(id: int) -> void:
 	_last_positions.erase(id)
 
 
-# The own player while its prediction runs and it lives: it picks up consumables at once.
+# The own player while its prediction runs and it lives: it picks up items at once.
 func _picker():
 	var players: Array = _main.get("_players")
 	var live: bool = _you >= 0 and _you < players.size() and _own_base_t >= 0 and _predicting()
@@ -774,6 +803,7 @@ func _spawn(type_idx: int) -> Node:
 	var pooled = _pop_valid(_main._pool[pool_id])
 	if pooled == null:
 		pooled = _pop_valid(_puppet_pool.get(type_idx, []))
+	var started := OS.get_ticks_usec()
 	var node: Node = pooled if pooled != null else scene.instance()
 	var container = _container_for(node)
 	if container == null:
@@ -787,6 +817,9 @@ func _spawn(type_idx: int) -> Node:
 		node.pool_id = pool_id
 		if node == pooled:
 			PuppetEntity.revive(node)
+			var prepared := WarmPools.take(node)
+			if prepared != "":
+				_warm.note_taken(prepared)
 	if node is Projectile:
 		_anim_mirror.strip_projectile(node)  # its own pool logic must not run here
 		PuppetEntity.start_projectile_animation(node)
@@ -808,6 +841,10 @@ func _spawn(type_idx: int) -> Node:
 	if not node is Hole:  # its body is what the own player's prediction runs into
 		PuppetEntity.puppetize(node)
 	AnimMirror.detach_game_handlers(node)
+	if node != pooled:
+		ClientReport.fresh(scene.resource_path.get_file(), OS.get_ticks_usec() - started)
+		if node is Entity:
+			_warm.note_fresh(scene.resource_path)
 	return node
 
 
