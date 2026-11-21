@@ -82,6 +82,60 @@ func host(s):
 		"a malformed report counts as nothing open: the copy closes"
 	)
 	yield(_host_meca(s, element, cancel), "completed")
+	_host_stray(s, element, cancel)
+	_host_left(s, cancel)
+	_capture_gear(s)
+
+
+# A copy left dimmed with no popup open (the game hid the popup but not the dim screen) is
+# cleared by a report that has nothing open.
+func _host_stray(s, element: Control, cancel: Array) -> void:
+	var shop: Node = s._shop
+	var shop_sync: Node = s._sync
+	var popup = shop._get_item_popup(REMOTE)
+	var panel = shop._get_coop_player_container(REMOTE)
+	shop_sync.host_apply_focus(shop, REMOTE, 0, cancel, _wire(_view))
+	popup.hide()
+	var target := FocusTargets.describe(element, shop, REMOTE)
+	shop_sync.host_apply_focus(shop, REMOTE, 0, target, [])
+	s._t._check(
+		not popup._focused and not panel._popup_dim_screen.visible,
+		"host: a copy left dimmed without its popup is cleared by the next report"
+	)
+
+
+# A client that leaves with its popup open keeps nothing open on the host's copy.
+func _host_left(s, cancel: Array) -> void:
+	var shop: Node = s._shop
+	var shop_sync: Node = s._sync
+	var popup = shop._get_item_popup(REMOTE)
+	var panel = shop._get_coop_player_container(REMOTE)
+	shop_sync.host_apply_focus(shop, REMOTE, 0, cancel, _wire(_view), s._t.FAKE_PEER)
+	s._t._check(popup._focused, "(the remote popup is open on the host's copy)")
+	shop_sync._on_peer_removed(s._t.FAKE_PEER)
+	shop_sync._keep_reported_popups()
+	s._t._check(
+		(
+			not popup._focused
+			and not panel._popup_dim_screen.visible
+			and not shop_sync._reported_popups.has(REMOTE)
+		),
+		"host: a client that leaves takes its open popup off the host's copy"
+	)
+
+
+# The remote player with its weapon, with another one, and with none (client gear checks).
+func _capture_gear(s) -> void:
+	var weapons: Array = RunData.players_data[REMOTE].weapons
+	var kept: Array = weapons.duplicate()
+	s._capture("remote_armed")
+	weapons.clear()
+	RunData.add_weapon(s._t._find_by_id(ItemService.weapons, "weapon_smg_1"), REMOTE)
+	s._capture("remote_rearmed")
+	weapons.clear()
+	s._capture("remote_unarmed")
+	weapons.clear()
+	weapons.append_array(kept)
 
 
 # The meca choice shows the roll the host's copy keeps, and never makes one.
@@ -201,8 +255,51 @@ func client(s, shop: Node, focus_sync: Node):
 		"the own open popup goes to the host with the cursor (%s)" % [reported]
 	)
 	own.emit_signal("item_cancel_button_pressed", own._item_data)
+	var reroll = shop._get_reroll_button(REMOTE)
+	cursors.cursors = [FocusSync.cursor_of(emulator, reroll, shop)]
+	focus_sync.apply_state(StateStream.CURSORS, cursors, 0)
 	s._receive(s._states.own_gear_changed)
 	t._check(not popup._focused, "client: the copy closes with the host's state")
+	yield(s._frames(2), "completed")
+	t._check(
+		emulator.focused_control == reroll,
+		"and that player's cursor stays where the host has it (%s)" % [emulator.focused_control]
+	)
+	yield(_client_gear(s, shop), "completed")
+
+
+# Another player's gear changes under its cursor on this client's copy.
+func _client_gear(s, shop: Node):
+	yield(s._frames(1), "completed")
+	if not s._states.has("remote_armed"):
+		return
+	var t: Node = s._t
+	var popup = shop._get_item_popup(REMOTE)
+	var emulator = Utils.get_focus_emulator(REMOTE, shop)
+	var row: Node = shop._get_gear_container(REMOTE).weapons_container._elements
+	s._receive(s._states.remote_armed)
+	emulator.focused_control = row.get_child(0)
+	t._check(popup.visible and popup._item_data == row.get_child(0).item, "(its weapon's details)")
+	s._receive(s._states.remote_rearmed)
+	var cursor = emulator.focused_control
+	t._check(
+		(
+			is_instance_valid(cursor)
+			and not cursor.is_queued_for_deletion()
+			and popup.visible
+			and popup._item_data == cursor.item
+			and cursor.item.my_id == "weapon_smg_1"
+		),
+		"client: another weapon at the cursor's place shows its own details"
+	)
+	s._receive(s._states.remote_unarmed)
+	cursor = emulator.focused_control
+	t._check(
+		cursor == null or (is_instance_valid(cursor) and not cursor.is_queued_for_deletion()),
+		"client: with the gear empty the cursor leaves the freed weapon (%s)" % [cursor]
+	)
+	s._receive(s._states.remote_armed)
+	yield(s._frames(1), "completed")
 
 
 func _client_meca(s, shop: Node):

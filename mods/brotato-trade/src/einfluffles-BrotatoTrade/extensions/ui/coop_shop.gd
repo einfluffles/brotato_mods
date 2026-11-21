@@ -136,6 +136,10 @@ func trade_buy(shop_item: Node, from: int, to: int) -> bool:
 func trade_buy_apply_request(from: int, slot: int, id: String, to: int) -> bool:
 	if not Rules.is_player(from):
 		return false
+	# The client closed its list on the press; brotato:together's copy of it closes here, as a
+	# local press does (_on_trade_buy_requested).
+	if _get_item_popup(from).trade_buy_item() != null:
+		_trade_buy_close(from)
 	var nodes: Array = _get_shop_items_container(from)._shop_items
 	var found = null
 	if slot >= 0 and slot < nodes.size() and _trade_offers(nodes[slot], id):

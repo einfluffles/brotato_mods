@@ -131,7 +131,7 @@ func _host(input: Node):
 	_host_ledger = _t.ledger()
 	yield(_host_hotkey(), "completed")
 	yield(_host_buy(), "completed")
-	_host_mirror()
+	yield(_host_mirror(), "completed")
 	# Player 1 hands the client's player an item: the state for _client_receive.
 	_t.check(_shop.trade_give(_owned(0, _plain.my_id), 0, REMOTE), "(player 1 gives an item)")
 	_capture("received")
@@ -185,7 +185,8 @@ func _host_hotkey():
 
 # The remote player's open trade lists (its client reports them with its cursor) show on the
 # host's copy of its panel, and go on to the other clients from there.
-func _host_mirror() -> void:
+func _host_mirror():
+	yield(_t.frames(1), "completed")
 	var popup = _shop._get_item_popup(REMOTE)
 	var element = _element(REMOTE, _plain)
 	_t.check(element != null, "(the remote player has an item to give)")
@@ -223,6 +224,20 @@ func _host_mirror() -> void:
 	)
 	_sync.host_apply_focus(_shop, REMOTE, 0, [], [])
 	_t.check(not popup._focused and popup.trade_buy_item() == null, "and closes with the client's")
+	# The buy itself, with the list open on the copy: the client closed its list on the press.
+	var dim: Control = _shop._get_coop_player_container(REMOTE)._popup_dim_screen
+	_sync.host_apply_focus(_shop, REMOTE, 0, first, _wire(buy))
+	RunData.add_gold(node.value, REMOTE)
+	var request := _intent(BUY, nodes.find(node), node.item_data.my_id, 0)
+	_t.check(_sync.host_apply_intent(_shop, REMOTE, request), "(the remote player buys for player 1)")
+	_t.check(
+		not popup._focused and popup.trade_buy_item() == null and not dim.visible,
+		"host: the copy's buy-for list closes with the remote buy, the panel no longer dimmed"
+	)
+	yield(_t.frames(2), "completed")  # the game's deferred cursor moves after the buy
+	var reroll: Array = FocusTargets.describe(_shop._get_reroll_button(REMOTE), _shop, REMOTE)
+	_sync.host_apply_focus(_shop, REMOTE, 0, reroll, [])
+	_t.check(not popup._focused and not dim.visible, "and stays so with the client's next report")
 
 
 # Player 1 has its popup open on a weapon while the remote player buys for it.

@@ -95,6 +95,7 @@ func _small_run():
 	_test_safety_net()
 	_test_peer_ready()
 	_test_lobby_left()
+	yield(_test_client_popup(), "completed")
 
 
 func _test_idle() -> void:
@@ -370,6 +371,61 @@ func _test_lobby_left() -> void:
 		sent.size() == 1 and _run_of(sent) == _run,
 		"upgrades change: after lobby_left the next check serializes the same run again"
 	)
+
+
+# A client's copy of the panels (a new battle scene, used as _client_replay uses it) gets player
+# 1's open crate weapon popup from the state: on new panels the rebuilt crate weapons close it
+# first, then it opens on the element at its place; later states open and close it alone.
+func _test_client_popup():
+	yield(_blank_scene(), "completed")
+	_build_run(2, 0)
+	RunData.get_player_effects(1)[Keys.effect_crate_give_weapon_hash] = 1
+	RunData.add_weapon(_t._find_by_id(ItemService.weapons, PISTOL), 1)
+	yield(_enter_battle(), "completed")
+	_show([[_crate(0)], [_crate(1)]], [[], []])
+	yield(_t.get_tree(), "idle_frame")
+	var other = _ui._get_player_container(1)
+	var row: Node = other.crate_weapons_container._elements
+	var element = null
+	for child in row.get_children():
+		if element == null and not child.is_queued_for_deletion():
+			element = child
+	if element == null:
+		_t._check(false, "upgrades change: (player 1 has crate weapons)")
+		return
+	var id: String = element.item.my_id
+	var popup = other.item_popup
+	var view := [FocusTargets.describe(element, _ui, 1), id, 0, [null, null]]
+	_sync.host_apply_focus(_ui, 1, 0, FocusTargets.describe(popup._cancel_button, _ui, 1), view)
+	_t._check(popup._focused, "upgrades change: (player 1's crate weapon popup open on the host)")
+	var opened = bytes2var(var2bytes(_sync.state_body(StateStream.UPGRADES)))
+	_sync.host_apply_focus(_ui, 1, 0, view[0], [])
+	var closed = bytes2var(var2bytes(_sync.state_body(StateStream.UPGRADES)))
+	var client: Node = _together.battle_client
+	var saved_you: int = client._you
+	var saved_store = _sync.run_store
+	client._you = -1
+	_sync.run_store = RunParts.Store.new()
+	_sync._guarded_ui = null
+	_sync._reported_popups = {}  # the host's, which would close the copy every frame here
+	for body in [opened, closed, opened, closed]:
+		yield(_client_apply(body, 2), "completed")
+		var open: bool = body == opened
+		var pressed = _ui._popup_manager._elements_pressed[1]
+		var shown: bool = (
+			popup._focused
+			and is_instance_valid(pressed)
+			and pressed.get_parent() == row
+			and pressed.item.my_id == id
+			and popup._item_data.my_id == id
+		)
+		_t._check(
+			shown == open and (open or not popup._focused),
+			"upgrades change, client: the copy %s with the host's state" % ["opens" if open else "closes"]
+		)
+	_sync._on_battle_left()
+	_sync.run_store = saved_store
+	client._you = saved_you
 
 
 func _late_run(players: int):

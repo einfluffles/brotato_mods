@@ -70,8 +70,9 @@ var _seq_keys := []
 var _held := []
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method]
-# player -> [UpgradesUI instance id, its client's open menu (PopupView), its cursor target], kept
-# on the host's copy until an intent of that player changes the panel
+# player -> [UpgradesUI instance id, its client's open menu (PopupView), its cursor target, its
+# client's steam id], kept on the host's copy until an intent of that player changes the panel or
+# the client leaves
 var _reported_popups := {}
 var _popup_memo := {}  # PopupView.apply's, for the copy of each player's panel here
 
@@ -94,6 +95,7 @@ func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> voi
 	battle_client = client_battle
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
+	session.connect("peer_removed", self, "_on_peer_removed")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
 	state_stream.register_provider(StateStream.UPGRADES, self, CHECK_INTERVAL, true)
 	state_stream.register_handler(StateStream.UPGRADES, self, PENDING_TIMEOUT_SEC)
@@ -136,7 +138,8 @@ func _on_message(steam_id: int, msg_type: int, msg) -> void:
 			var ui = _host_ui(msg)
 			if ui != null:
 				var p: int = battle_host._player_index_of(steam_id)
-				host_apply_focus(ui, p, msg.get("page"), msg.get("target"), msg.get("popup"))
+				var popup = msg.get("popup")
+				host_apply_focus(ui, p, msg.get("page"), msg.get("target"), popup, steam_id)
 
 
 # For other mods: ShopSync.register_intent's contract, with method(ui, player, id, arg) -> bool.
@@ -433,7 +436,7 @@ static func _weapons_key(p: int) -> Array:
 
 # target: a ui/focus_targets.gd target naming one of p's own panel parts. popup: the client's
 # open menu (PopupView), shown before the cursor goes into it.
-func host_apply_focus(ui: Node, p: int, page, target, popup = []) -> void:
+func host_apply_focus(ui: Node, p: int, page, target, popup = [], steam_id := 0) -> void:
 	if p < 0 or p >= RunData.get_player_count():
 		return
 	var container = ui._get_player_container(p)
@@ -443,7 +446,7 @@ func host_apply_focus(ui: Node, p: int, page, target, popup = []) -> void:
 	var carousel = container.carousel
 	if typeof(page) == TYPE_INT and page >= 0 and page != carousel.index:
 		carousel.index = page  # the setter clamps and shows that page
-	_reported_popups[p] = [ui.get_instance_id(), popup, target]
+	_reported_popups[p] = [ui.get_instance_id(), popup, target, steam_id]
 	_apply_popup(ui, p, popup, null)
 	_put_cursor(emulator, ui, p, target)
 
@@ -466,6 +469,18 @@ func _keep_reported_popups(ui: Node) -> void:
 			continue
 		if _apply_popup(ui, p, reported[1], null):
 			_put_cursor(emulator, ui, p, reported[2])
+
+
+# A client that left keeps no popup open on the host's copy.
+func _on_peer_removed(steam_id: int) -> void:
+	var ui = _showing_ui() if session.is_host() else null
+	for p in _reported_popups.keys():
+		var reported: Array = _reported_popups[p]
+		if reported[3] != steam_id:
+			continue
+		_reported_popups.erase(p)
+		if ui != null and ui.get_instance_id() == reported[0] and p < RunData.get_player_count():
+			_apply_popup(ui, p, [], null)
 
 
 func _apply_popup(ui: Node, p: int, view, rolls) -> bool:

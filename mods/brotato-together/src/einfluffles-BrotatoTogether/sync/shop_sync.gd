@@ -61,8 +61,8 @@ var _seq_keys := []
 var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method, revision]
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 var _reported := {}  # player -> [shop instance id, the last SHOP_FOCUS target of its client]
-# player -> [shop instance id, its client's open menu (PopupView)], kept on the host's copy until
-# an intent of that player changes the panel
+# player -> [shop instance id, its client's open menu (PopupView), its client's steam id], kept
+# on the host's copy until an intent of that player changes the panel or the client leaves
 var _reported_popups := {}
 var _popup_memo := {}  # PopupView.apply's, for the copy of each player's panel here
 
@@ -82,6 +82,7 @@ func setup(netplay_session: Node) -> void:
 	local.session = session
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
+	session.connect("peer_removed", self, "_on_peer_removed")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
 	RunData.connect("stat_added", self, "_on_stat_added")
 	var timeout_sec := LOADING_TIMEOUT_MSEC / 1000.0
@@ -177,14 +178,15 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 			var shop = _host_shop_for(body)
 			var p := _player_index_of(steam_id)
 			if shop != null and p >= 0 and p < RunData.get_player_count():
-				host_apply_focus(shop, p, body.get("page"), body.get("target"), body.get("popup"))
+				var popup = body.get("popup")
+				host_apply_focus(shop, p, body.get("page"), body.get("target"), popup, steam_id)
 
 
 # popup: the client's open menu (PopupView), shown on the host's copy before the cursor goes
 # into it.
-func host_apply_focus(shop: Node, p: int, page, target, popup = []) -> void:
+func host_apply_focus(shop: Node, p: int, page, target, popup = [], steam_id := 0) -> void:
 	_reported[p] = [shop.get_instance_id(), target]
-	_reported_popups[p] = [shop.get_instance_id(), popup]
+	_reported_popups[p] = [shop.get_instance_id(), popup, steam_id]
 	_apply_popup(shop, p, popup, null)
 	ShopIntents.apply_focus(shop, p, page, target)
 
@@ -201,6 +203,19 @@ func _keep_reported_popups() -> void:
 			var emulator = Utils.get_focus_emulator(p, _host_shop)
 			if control != null and emulator != null and emulator.focused_control != control:
 				emulator.focused_control = control
+
+
+# A client that left keeps no popup open on the host's copy.
+func _on_peer_removed(steam_id: int) -> void:
+	for p in _reported_popups.keys():
+		var reported: Array = _reported_popups[p]
+		if reported[2] != steam_id:
+			continue
+		_reported_popups.erase(p)
+		var shop := _host_shop
+		if is_instance_valid(shop) and shop.get_instance_id() == reported[0]:
+			if p < RunData.get_player_count():
+				_apply_popup(shop, p, [], null)
 
 
 func _apply_popup(shop: Node, p: int, view, rolls) -> bool:
@@ -795,7 +810,12 @@ func _refresh_gear(shop: Node, p: int) -> void:
 	elif local.active and p == local.you:
 		target = shop._get_default_focus_control(p)
 	if emulator != null and target != null and target.is_visible_in_tree():
+		if emulator.focused_control == target:
+			# The same node shows another item now: its focus shows that item's details.
+			emulator.focused_control = null
 		emulator.focused_control = target
+	elif emulator != null and (in_popup or emulator.focused_control == element):
+		emulator.focused_control = null  # never left on a freed element or a hidden popup
 
 
 # [inventory, element index, what it shows] of a gear element, else [].

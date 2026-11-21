@@ -1129,8 +1129,10 @@ id) and its offered items (a hash).
   So does an item popup opened from it (its buttons, the meca choice, brotato:trade's player list),
   for example when another player trades this one something. The popup then holds the new object
   (Cancel finds its element by it, and a meca roll it waits for follows it). Only when its element
-  is gone does the popup close, and the cursor goes to the element at the same place. An empty row
-  or a locked item takes the game's `set_*_data`, with the cursor taken off first.
+  is gone does the popup close, and the cursor goes to the element at the same place; with no
+  element left there (and no default for another player's panel) it is taken off. A node kept at
+  the cursor's place that shows another item now gets the cursor anew, so its details follow. An
+  empty row or a locked item takes the game's `set_*_data`, with the cursor taken off first.
 - Shop item nodes are re-set only when the player's data, offered items or slot layout changed. A
   slot the host's state deactivates moves the cursor only when it was on that slot (or on nothing):
   `BaseShop.on_shop_item_deactivated` is cut and called only then (`ShopSync._deactivate`). The game
@@ -1317,8 +1319,12 @@ other mods open in that popup or on the panel.
   then the element's press through `FocusEmulatorSignal` (`PopupManager` focuses the popup, the
   shop dims the panel), then the meca choice (see [Meca upgrade](#meca-upgrade)), then
   `together_show_menu(menu)` on the popup or panel. A view that names something else closes what
-  is open first: `together_show_menu(null)`, then the popup's `item_cancel_button_pressed`, the
-  view half of the game's Cancel. An element whose item has another id opens nothing. A view this
+  is open first: `together_show_menu(null)`, then the view half of the game's Cancel
+  (`PopupManager.reset_focus`, the dim screen off, a cursor left on a hidden button back on the
+  element). It does not emit `item_cancel_button_pressed`: the game's handler moves the cursor with
+  a deferred `grab_focus`, which would land after the mirrored cursor. A popup left focused or a
+  panel left dimmed with nothing open (the game hid the popup under a cursor move) counts as open
+  and is closed by an empty view. An element whose item has another id opens nothing. A view this
   machine cannot show (no roll yet, a weapon that differs) is not tried again until the view, the
   rolls or what the panel shows change (`memo`).
 - **Cursors.** Opening a popup takes that player's cursor to its Cancel button. A client then
@@ -1326,8 +1332,10 @@ other mods open in that popup or on the panel.
   stream anyway. The host puts the reported cursor back itself.
 - **The host keeps a reported view** (`_reported_popups`) and shows it again each frame when its
   copy changed under it (a gear rebuild closes the popup), until an intent of that player is
-  applied: the game's handler closes the popup then, and the client's next report says what is
-  open.
+  applied (the game's handler closes the popup then, and the client's next report says what is
+  open) or that client leaves (`peer_removed`: the copy closes).
+- brotato:trade's remote buy for another player closes the giver's buy-for list on the host's copy
+  first (`trade_buy_apply_request`), as the local press does.
 - brotato:trade defines the menu methods on its `CoopItemPopup` extension (`["give"]`, `["buy",
   shop item slot]`) and on its crate panel (`["trade"]`). On a client its lists and buttons show on
   another player's copy while the host trades (`Together.can_show*`), and only the own panel's
@@ -1335,9 +1343,10 @@ other mods open in that popup or on the panel.
 
 `shop_popup_view_tests.gd` (suite `local_shop`) checks a remote player's popup and meca choice on
 the host's copy, the host's state, a client's copy of another player's popup and its meca choice
-with the host's roll, the cursor going back into the copy, and the own popup's report.
-`upgrades_change_tests.gd` checks a crate weapon popup on the host's copy and in the panels'
-state. brotato:trade's `together` and `together_crate` suites check its lists on both kinds of
+with the host's roll, the cursor going back into the copy, and the own popup's report; also a
+copy left dimmed, a client that leaves, the cursor after a closing state, and gear changing under
+another player's cursor. `upgrades_change_tests.gd` checks a crate weapon popup on the host's copy,
+in the panels' state, and on a client's copy through `UpgradesSync.apply`. brotato:trade's `together` and `together_crate` suites check its lists on both kinds of
 copies.
 
 ### Keyboard and mouse on the own panel

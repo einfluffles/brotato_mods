@@ -48,7 +48,12 @@ static func apply(
 	var wanted := parse(view)
 	var current := describe(root, manager, popup, panel, p)
 	if var2str(current) == var2str(wanted):
-		return false
+		# A popup left focused or a panel left dimmed with nothing open (the game hid the popup
+		# under a cursor move) counts as open.
+		if not current.empty() or not (popup._focused or _dimmed(panel)):
+			return false
+		_close(root, manager, popup, panel, p)
+		return true
 	# A roll that arrives later makes the meca choice showable.
 	var key := var2str([wanted, rolls if rolls != null else MecaChoice.entries(popup, p)])
 	var last = memo.get(p)
@@ -68,7 +73,7 @@ static func apply(
 			holders[i].together_show_menu(null)
 	var open_on = manager._elements_pressed[p] if popup._focused else null
 	if popup._focused and (element == null or open_on != element):
-		_close(manager, popup, p)
+		_close(root, manager, popup, panel, p)
 	elif popup.is_choosing_meca_upgrade() and (wanted.empty() or wanted[2] == 0):
 		popup._update_button_visibilities()  # back to the buttons, as on a pick
 	if element != null and not popup._focused:
@@ -115,12 +120,28 @@ static func parse(view) -> Array:
 	return view
 
 
-# The view half of the game's Cancel: the popup closes and the cursor goes back to the weapon.
-static func _close(manager: Node, popup: Node, p: int) -> void:
-	popup.emit_signal("item_cancel_button_pressed", popup._item_data)
-	if popup._focused:
-		manager.reset_focus(p)
-	popup._focused = false
+# The view half of the game's Cancel without its deferred grab_focus, which would land after the
+# mirrored cursor: the popup closes, the panel is no longer dimmed, and a cursor left on a hidden
+# button goes back to the element.
+static func _close(root: Node, manager: Node, popup: Node, panel: Node, p: int) -> void:
+	var pressed = manager._elements_pressed[p]
+	manager.reset_focus(p)
+	if popup.visible or popup._focused:
+		popup.hide()
+	if panel.has_method("on_hide_focused_inventory_popup"):
+		panel.on_hide_focused_inventory_popup()
+	var emulator = Utils.get_focus_emulator(p, root)
+	if emulator == null or not is_instance_valid(pressed) or pressed.is_queued_for_deletion():
+		return
+	var cursor = emulator.focused_control
+	var lost: bool = cursor == null or not is_instance_valid(cursor) or not cursor.is_visible_in_tree()
+	if lost and pressed.is_visible_in_tree():
+		emulator.focused_control = pressed
+
+
+static func _dimmed(panel: Node) -> bool:
+	var dim = panel.get("_popup_dim_screen")
+	return dim is Control and dim.visible
 
 
 static func _menu(holder: Node):
