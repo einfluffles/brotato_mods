@@ -46,7 +46,7 @@ which lists every message with its fields).
 | `session/` | handshake, compatibility, puppet mode, DLC borrowing, sound relay, progress sharing, settings |
 | `sync/` | everything that mirrors game state: battle (`battle_host.gd`, `battle_client.gd`, `snapshot.gd` and helpers), input, state stream, shop, level-up panels, menus, cursors, pause |
 | `ui/` | controls the mod adds to the game's screens (lobby, Co-op row, damage meter views) and helpers for cursors and scrolling |
-| `extensions/` | script extensions of game scripts (singletons, UI scenes, one effect) |
+| `extensions/` | script extensions of game scripts (singletons, UI scenes, one effect), and `script_backup.gd` for the Mod Loader's backups of them |
 
 ### Engine and game behaviour several modules rely on
 
@@ -1684,6 +1684,15 @@ calls `Keys.hash_to_string[stats_swapped[1]].to_upper()` on null.
   original. The first 5 are logged, later ones at most once a minute.
 - Only this `get_args` in the game indexes `Keys.hash_to_string`. The suite `axolotl_tests.gd`
   reproduces the state with the game's own roll.
+- **Boot error.** `Effect` defines its own `duplicate()`, so the Mod Loader's backup of the game's
+  script before the extension (`script.duplicate()`) logged `Can't call non-static function
+  'duplicate' in script.` at every boot and stored null. `mod_main.gd` lists such game scripts in
+  `OWN_DUPLICATE`, and `extensions/script_backup.gd` stores a fresh copy of each
+  (`ResourceLoader.load(path, "", true)`) in `ModLoaderStore.saved_scripts` first, so the loader
+  skips its own. That is Mod Loader 6.3.0 internal state: without the `ModLoaderStore` autoload or
+  its `saved_scripts` dictionary, or with an entry already there, nothing is stored and the loader
+  behaves as before. The suite `axolotl` checks that every extended script has a backup and that
+  `OWN_DUPLICATE` names exactly the extended scripts whose class has its own `duplicate()`.
 
 ### Smaller quirks
 

@@ -256,5 +256,5 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `traffic` | The reliable traffic that the log names. |
 | `progress` | What the host's run earns for a client's own save. |
 | `client_report` | A client's frame, stall and correction reports and the host's log lines for them. |
-| `axolotl` | The Axolotl's text in the state the game's own roll leaves in co-op. |
+| `axolotl` | The Axolotl's text in the state the game's own roll leaves in co-op, and the Mod Loader's backup of every extended game script. |
 | `own_pickups` | The own player's pickups shown at once on a client. |

@@ -34,6 +34,10 @@ const EXTENSIONS := [
 	"extensions/ui/coop_shop_player_container.gd",
 	"extensions/ui/coop_end_run_player_container.gd",
 ]
+# Game scripts extended above whose class has its own duplicate() (Effect). The Mod Loader backs a
+# script up with script.duplicate() before extending it, which on these runs that method on the
+# script: an error at every boot and no backup. extensions/script_backup.gd stores it first.
+const OWN_DUPLICATE := ["res://effects/items/swap_max_min_stat_effect.gd"]
 
 var transport: Node = null
 var session: Node = null
@@ -67,6 +71,10 @@ var _client_view: Script = null
 
 
 func _init() -> void:
+	if ProjectSettings.has_setting("autoload/ModLoaderStore"):
+		var backup = load(MOD_DIR + "extensions/script_backup.gd")
+		for path in OWN_DUPLICATE:
+			backup.store(path)
 	for extension in EXTENSIONS:
 		ModLoaderMod.install_script_extension(MOD_DIR + extension)
 	ModLoaderLog.info("Init", LOG_NAME)

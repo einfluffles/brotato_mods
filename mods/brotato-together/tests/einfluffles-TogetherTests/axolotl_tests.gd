@@ -19,7 +19,8 @@ func _init(t: Node) -> void:
 	_t = t
 
 
-func run(_together: Node):
+func run(together: Node):
+	_backups(together)
 	var original = null
 	if ResourceLoader.exists(AXOLOTL_PATH):
 		original = load(AXOLOTL_PATH)  # the resource ItemService's item list holds
@@ -39,6 +40,44 @@ func run(_together: Node):
 	yield(_coop_shop(original), "completed")
 	shared.has_been_applied = false  # as the game loaded it, for the suites after this one
 	shared.stats_swapped = []
+
+
+# The Mod Loader's backup of every extended game script is a script: where its script.duplicate()
+# hit a class's own duplicate() (Effect), it logged an error at boot and stored null.
+func _backups(together: Node) -> void:
+	var saved: Dictionary = _t.get_node("/root/ModLoaderStore").saved_scripts
+	var extended := []  # the mod's extensions found in the store
+	for path in saved:
+		var scripts: Array = saved[path]
+		var first = null  # the mod's first extension of path
+		for i in range(1, scripts.size()):
+			var extension: String = scripts[i].get_meta("extension_script_path")
+			if extension.begins_with(together.MOD_DIR):
+				extended.append(extension.trim_prefix(together.MOD_DIR))
+				first = scripts[i] if first == null else first
+		if first == null:
+			continue
+		_t._check(scripts[0] is Script, "the loader has a backup of %s" % path)
+		var own := false
+		var level: Script = first.get_base_script()
+		while level != null and not own:
+			for method in level.get_script_method_list():
+				own = own or method.name == "duplicate"
+			level = level.get_base_script()
+		_t._check(
+			own == (path in together.OWN_DUPLICATE),
+			"OWN_DUPLICATE lists %s exactly when its class has its own duplicate()" % path
+		)
+	extended.sort()
+	var expected: Array = together.EXTENSIONS.duplicate()
+	expected.sort()
+	_t._check(extended == expected, "every extension of the mod is in the loader's store")
+	var effect_path: String = together.OWN_DUPLICATE[0]
+	var effect = saved[effect_path][0].new()
+	_t._check(
+		effect.has_method("get_args") and not effect.has_method("bt_renderable"),
+		"the backup of %s is the game's script, without the extension" % effect_path
+	)
 
 
 func _broken_states() -> void:

@@ -13,6 +13,7 @@ upload; three of them are marked where the upload may have differed.
   start of later waves.
 - Clients prepare the wave's enemies while the battle loads, instead of stuttering when they first
   appear in later waves.
+- No more `Can't call non-static function 'duplicate'` error in the game's log at startup.
 
 ## 2026-11-18 14:51
 
