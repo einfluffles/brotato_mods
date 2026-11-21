@@ -100,9 +100,10 @@ def inline(text):
 
 
 def bbcode(markdown):
-    """Lists (nested by indentation), paragraphs, ### headings, **bold**, *italic*, `code`, links
-    (a relative one becomes its text).
-    Wrapped lines are joined: Steam shows every newline."""
+    """Lists as "- " lines (nested by indentation, two spaces a level), paragraphs, ### headings as
+    bold lines, **bold**, *italic*, `code`, links (a relative one becomes its text).
+    Wrapped lines are joined: Steam shows every newline. No [list] or [h3]: Steam draws those
+    outside a change note's box and leaves the box empty."""
     blocks = []  # (kind, indent, text): kind "item", "para" or "head"
     for line in markdown.split("\n"):
         stripped = line.strip()
@@ -126,19 +127,14 @@ def bbcode(markdown):
         if kind == "blank":
             continue
         if kind != "item":
-            while depth:
-                depth.pop()
-                out.append("[/list]")
-            out.append("[h3]%s[/h3]" % inline(text) if kind == "head" else inline(text))
+            depth = []
+            out.append("[b]%s[/b]" % inline(text) if kind == "head" else inline(text))
             continue
         while depth and indent < depth[-1]:
             depth.pop()
-            out.append("[/list]")
         if not depth or indent > depth[-1]:
             depth.append(indent)
-            out.append("[list]")
-        out.append("[*]" + inline(text))
-    out.extend("[/list]" for _ in depth)
+        out.append("  " * (len(depth) - 1) + "- " + inline(text))
     return "\n".join(out)
 
 
