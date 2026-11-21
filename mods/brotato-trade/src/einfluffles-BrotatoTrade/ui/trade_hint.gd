@@ -8,7 +8,9 @@ const TRADE_TEXT := "Press {0} to trade"
 
 
 func _update_key_icon() -> void:
-	if not is_inside_tree():
+	# brotato:together also hands the hints of an empty slot's panel to that slot; set_text reads
+	# the player's run data.
+	if not is_inside_tree() or player_index >= RunData.players_data.size():
 		return
 	var glyph = Hotkey.glyph(player_index)
 	_key_icon.visible = glyph is Texture
