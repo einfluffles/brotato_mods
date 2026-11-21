@@ -1721,10 +1721,14 @@ objects in the [Overview](#1-overview)). A real session crashed this way on the 
   page's default (`focus()`). The game's way back to the gear page
   (`_resume_inventory_control_focus`) is redirected the same way.
 - **Relink neighbours.** `CoopUpgradesUIPlayerContainer._set_focus_neighbours` links weapons and
-  items by node path, and only on a page change. After a rebuild, focus neighbours that name a
-  freed node are dropped and, on the gear page, `_set_focus_neighbours` links the new elements. The
-  game logs "Node not found" and `Parameter "p_node" is null` when this is missing, and
-  `tools/check.sh` fails on both messages.
+  items by node path, and only on a page change (or, by `InputTypes`, on an input type switch).
+  With trigger glyphs the rows name each other's elements. After every `update_inventory` (the
+  extension's override: the game's crate weapons list, a client's rebuild, brotato:trade's crate
+  trade), focus neighbours that name a freed node are dropped and, on the gear page,
+  `_set_focus_neighbours` links the new elements. The game logs "Node not found" and
+  `Parameter "p_node" is null` when this is missing, and `tools/check.sh` fails on both messages.
+  A host logged both (suite `gear_links` repeats it: the client switches to its pad on the gear
+  page, then recycles or combines a crate weapon).
 - **Safety net** (`extensions/ui/focus_emulator.gd`, online or not). A control freed while it holds
   the cursor is dropped before the game's code touches it (`_input`, `_process`, the
   `focused_control` and `player_index` setters, `_clear_focused_control`). Existence is looked up by

@@ -70,8 +70,8 @@ static func weapon_slot(ui: Node, container: Node, p: int) -> int:
 
 
 # update_inventory frees every gear element. Nothing may keep an old one (a FocusEmulator with a
-# freed control crashes, a focus neighbour naming one logs "Node not found"), so the cursor is
-# taken off first. Returns where it was ([] when not in the gear) for put_gear_cursor.
+# freed control crashes), so the cursor is taken off first; the panel's update_inventory relinks
+# the rows (relink_gear). Returns where it was ([] when not in the gear) for put_gear_cursor.
 static func rebuild_gear(ui: Node, container: Node, p: int) -> Array:
 	var emulator = container.focus_emulator
 	var cursor := _gear_place(container, emulator.focused_control)
@@ -84,7 +84,6 @@ static func rebuild_gear(ui: Node, container: Node, p: int) -> Array:
 	container.update_inventory()
 	if not resume.empty():
 		container._resume_inventory_control_focus = _gear_element(container, resume)
-	_relink_gear(container)
 	return cursor
 
 
@@ -134,9 +133,11 @@ static func _gear_element(container: Node, place: Array):
 	return best
 
 
-# On the gear page the game's own links are redone (_set_focus_neighbours, which the game runs on
-# a page change only). On another page a path to a freed element is dropped.
-static func _relink_gear(container: Node) -> void:
+# After a gear rebuild. A focus neighbour naming a freed element logs "Node not found" and
+# "p_node is null" when the rows set their elements' neighbours. On the gear page the game's own
+# links are redone (_set_focus_neighbours, which the game runs on a page change only). On another
+# page a path to a freed element is dropped.
+static func relink_gear(container: Node) -> void:
 	var gear = container.player_gear_container
 	for inventory in [gear.weapons_container, gear.items_container]:
 		_drop_dead_neighbours(inventory)

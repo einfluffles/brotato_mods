@@ -11,6 +11,8 @@ upload; three of them are marked where the upload may have differed.
 ## Unreleased
 
 - A cursed Molotov no longer fills the game's log with `Node not found` errors on every throw.
+- No more "Node not found" errors in the host's log when an online player's gear changes on the
+  level-up panel (a crate weapon combined or recycled, a crate item traded to them).
 
 ## 2026-11-21 13:43 UTC
 

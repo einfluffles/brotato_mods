@@ -113,6 +113,7 @@ const DeadPlayerTests := preload(
 const CursedWeaponTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursed_weapon_tests.gd"
 )
+const GearLinksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/gear_links_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -158,6 +159,7 @@ const SUITES := [
 	"late_load",
 	"input_hints",
 	"cursed_weapon",
+	"gear_links",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -494,6 +496,11 @@ func _suite_input_hints(together: Node):
 func _suite_cursed_weapon(together: Node):
 	coop_run(8)
 	_suite = CursedWeaponTests.new(self)
+	yield(_suite.run(together), "completed")
+
+
+func _suite_gear_links(together: Node):
+	_suite = GearLinksTests.new(self)
 	yield(_suite.run(together), "completed")
 
 
