@@ -13,6 +13,9 @@ upload; three of them are marked where the upload may have differed.
 - A cursed Molotov no longer fills the game's log with `Node not found` errors on every throw.
 - No more "Node not found" errors in the host's log when an online player's gear changes on the
   level-up panel (a crate weapon combined or recycled, a crate item traded to them).
+- Co-op shop, level-up and end-of-run panels: an item's details open right against the item, with
+  no gap over the next item, so a client's mouse can move straight from a shop item into its
+  details.
 
 ## 2026-11-21 13:43 UTC
 

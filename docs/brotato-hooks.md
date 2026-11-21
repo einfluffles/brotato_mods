@@ -304,6 +304,13 @@ same shop or the same upgrades. **brotato:together** applies all of these on the
     level-up screen). Its buttons are in `ItemPanelUI/MarginContainer/VBoxContainer` (Combine,
     Recycle, Cancel, Upgrade), and `_update_button_focus_neighbours` rebuilds their up and down
     neighbours. With two players, `_ready` replaces the popup's outer box.
+- **Placement:** `BasePopup._process` calls `_reposition` every frame, which takes
+  `_get_new_position(_attachment, _anchor_panel)`: below the item (above it from the parent
+  rect's lower half) with `DIST` (10 px) between them, clamped to the parent rect, then shifted
+  sideways by the item's width plus `DIST` (100 px for a `ButtonWithIcon`) if it still covers
+  the item. An override of
+  `_get_new_position` therefore holds every frame. **brotato:together** drops the vertical gap
+  (`extensions/ui/coop_item_popup.gd`).
 - **Closing:** the popup's `item_cancel_button_pressed` reaches
   `BaseShop._on_item_cancel_button_pressed` (`_popup_manager.reset_focus(p)`, cursor back on the
   element; `CoopShop` hides the dim screen). `ItemPopup._input` emits the signal on the player's

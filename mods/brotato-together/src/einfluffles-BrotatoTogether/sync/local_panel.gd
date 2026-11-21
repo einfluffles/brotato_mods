@@ -164,7 +164,8 @@ static func _open_popup(node: Node, control: Control) -> ItemPopup:
 	return null
 
 
-# On the popup, on its item or in the gap the game leaves between them (BasePopup.DIST).
+# On the popup, on its item or within BasePopup.DIST of the item: the popup touches its item
+# (extensions/ui/coop_item_popup.gd), but the game's sideways shift still leaves that gap.
 static func _near_popup(popup: Control, item: Control, pos: Vector2) -> bool:
 	return _rect(popup).has_point(pos) or _rect(item, BasePopup.DIST).has_point(pos)
 

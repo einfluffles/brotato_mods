@@ -1307,8 +1307,18 @@ scripts fail to parse when the shop loads.
   under the pointer, the last in tree order, with clipping parents cutting their children. An open
   `ItemPopup` covers the controls below it, so hovering its description does not move the cursor or
   click the item underneath.
-- Motion from the cursor's item or its open popup (or the `BasePopup.DIST` gap between them) to
-  where no control is hit closes that popup, also off the panels. Only the popup is hidden: the
+- The popup touches its item (`extensions/ui/coop_item_popup.gd`). `BasePopup._get_new_position`
+  leaves `BasePopup.DIST` (10 px) above or below the item. In the stacked shop the next item lay in
+  that gap, so the mouse on its way down into the popup hovered it and the popup switched to that
+  item. The extension moves a popup that sits within `DIST` above or below its item onto the
+  item's edge and keeps the game's flip above, clamping and sideways shift. It applies to every
+  `CoopItemPopup` (shop, level-up, end of run) on every machine, online or not: on the host the
+  game's own `mouse_exited` closes the popup when the mouse leaves the item, so nothing changes
+  there but the drawing, and all machines draw the panels alike. The popup never covers its own
+  item, so the keys' cursor stays visible.
+- Motion from the cursor's item or its open popup (or within `BasePopup.DIST` of the item, the gap
+  the game's sideways shift still leaves) to where no control is hit closes that popup, also off
+  the panels. Only the popup is hidden: the
   cursor and the shop's focused item (lock, steal and ban keys) stay, where the game's
   `mouse_exited` unfocuses the item. Hovering the item again re-emits its `focus_entered`. A popup
   the cursor keys opened stays while the mouse moves in empty space.

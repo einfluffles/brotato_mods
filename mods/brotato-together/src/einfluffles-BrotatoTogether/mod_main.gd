@@ -35,6 +35,7 @@ const EXTENSIONS := [
 	"extensions/ui/coop_shop_player_container.gd",
 	"extensions/ui/coop_end_run_player_container.gd",
 	"extensions/ui/coop_upgrades_ui_player_container.gd",
+	"extensions/ui/coop_item_popup.gd",
 ]
 # Game scripts extended above whose class has its own duplicate() (Effect). The Mod Loader backs a
 # script up with script.duplicate() before extending it, which on these runs that method on the
