@@ -2,6 +2,7 @@
 # mod_main.gd's SUITES. "+<mod folder>" also loads that mod: the together suites need
 # brotato:together, the others run without it (trading in plain local co-op).
 rules,shop
+hotkey
 crate
 together +brotato-together
 together_crate +brotato-together

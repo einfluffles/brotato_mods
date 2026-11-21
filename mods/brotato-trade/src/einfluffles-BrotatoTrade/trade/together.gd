@@ -100,6 +100,14 @@ static func is_puppet(shop: Node) -> bool:
 	return shop_sync.is_puppet_shop(shop)
 
 
+# A client's own player in its copy of the shop, else -1.
+static func own_player(shop: Node) -> int:
+	var shop_sync = _shop_sync()
+	if shop_sync == null or not shop_sync.is_puppet_shop(shop):
+		return -1
+	return shop_sync.own_player()
+
+
 static func send(shop: Node, from: int, item, to: int) -> bool:
 	var shop_sync = _shop_sync()
 	if shop_sync == null or not can_request(shop, from):

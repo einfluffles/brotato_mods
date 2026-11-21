@@ -3,6 +3,8 @@ extends Reference
 # client in the same shop as the host sent it.
 
 const TOGETHER_DIR := "res://mods-unpacked/einfluffles-BrotatoTogether/"
+const Hotkey := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/hotkey.gd")
+const TRADE := "brotato_trade"
 const FAKE_PEER := 4242
 # On the host player 0 is local and player 1 remote (a virtual device). Later player 1 is the
 # client's own player.
@@ -125,8 +127,30 @@ func _host(input: Node):
 	_t.check(_t.ledger() == before, "still the same things")
 	_capture("traded")
 	_host_ledger = _t.ledger()
+	yield(_host_hotkey(), "completed")
 	_host_buy()
 	input.devices.erase(FAKE_PEER)
+
+
+# The host's own player has the trade key as in local co-op.
+func _host_hotkey():
+	var popup = _shop._get_item_popup(0)
+	var element = _weapon_element(0, 0)
+	_t.check(element != null, "(player 1 has a weapon to give)")
+	if element == null:
+		return
+	Utils.get_focus_emulator(0, _shop).focused_control = element
+	yield(_t.frames(1), "completed")
+	_t.check(popup._trade_hint.visible, "the host's own weapon shows the trade hint")
+	yield(_t.tap(TRADE, 0), "completed")
+	var first: Button = popup._trade_players[0]
+	_t.check(
+		popup._focused and popup._trade_choosing and first.get_meta("trade_to", -1) == REMOTE,
+		"the trade key opens its give list, with the remote player"
+	)
+	yield(_t.tap("ui_cancel", 0), "completed")
+	yield(_t.frames(1), "completed")
+	_t.check(not popup._focused, "cancel closes it")
 
 
 func _host_buy() -> void:
@@ -278,21 +302,25 @@ func _client():
 	)
 
 
-# Trade with the mouse (LocalPanel), then with the buttons.
+# Trade with the mouse and the keyboard's T, then with the pad (LocalPanel: the own cursor).
 func _client_buy(popup):
 	var nodes: Array = _shop._get_shop_items_container(REMOTE)._shop_items
 	var node = _buyable(nodes, 0)
 	var theirs: Array = _shop._get_shop_items_container(0)._shop_items
+	var emulator = Utils.get_focus_emulator(REMOTE, _shop)
 	yield(_t.frames(2), "completed")
-	var button: Button = _shop._trade_buy_buttons[node][0]
-	_t.check(button.visible and not button.disabled, "the own offers have a Trade button")
+	emulator.focused_control = _shop._get_go_button(REMOTE)  # no gear popup over the offers
+	yield(_hover(node._button), "completed")
 	_t.check(
-		not _shop._trade_buy_buttons[theirs[0]][0].visible, "another player's offers have none"
+		emulator.focused_control == node._button and popup._trade_hint.visible,
+		"the mouse on an own offer: its popup shows the trade hint"
 	)
+	_t.check(_glyph(popup) == Hotkey._icon("key_t.png"), "with the T glyph")
+	_t.check(not _shop.trade_buy_anyone(theirs[0], 0), "another player's offers are not for here")
 	var before: String = _t.ledger()
 	_sync.local.last_intent = {}
-	yield(_click(button), "completed")
-	_t.check(popup._focused and popup.trade_buy_item() == node, "a click on Trade opens the popup")
+	yield(_key(KEY_T), "completed")
+	_t.check(popup._focused and popup.trade_buy_item() == node, "T opens the buy-for list")
 	yield(_click(popup._trade_players[0]), "completed")
 	var sent: Dictionary = _sync.local.last_intent
 	_t.check(
@@ -305,16 +333,48 @@ func _client_buy(popup):
 	)
 	_t.check(_t.ledger() == before and node.active, "nothing bought here")
 	_t.check(not popup._focused, "the popup closed")
+	_t.check(emulator.focused_control == node._button, "the cursor is back on the item")
+	_t.check(popup._trade_hint.visible, "its hint shows again")
+	yield(_pad(JOY_L3), "completed")
 	_t.check(
-		Utils.get_focus_emulator(REMOTE, _shop).focused_control == button,
-		"the cursor is back on Trade"
+		_glyph(popup) == Hotkey._icon("pad_xbox_view.png"), "a pad in the hand: the View glyph"
 	)
 	_sync.local.last_intent = {}
 	yield(_t.get_tree().create_timer(0.15), "timeout")
-	yield(_t.tap("ui_accept", REMOTE), "completed")
+	yield(_pad(JOY_SELECT), "completed")
+	_t.check(popup._focused and popup.trade_buy_item() == node, "so does the pad's Back")
 	yield(_t.tap("ui_accept", REMOTE), "completed")
 	sent = _sync.local.last_intent
-	_t.check(sent.get("kind") == BUY and sent.get("arg") == 0, "so does accept, twice")
+	_t.check(sent.get("kind") == BUY and sent.get("arg") == 0, "and accept sends the buy")
+	yield(_client_give(popup), "completed")
+
+
+# The trade key on the own gear: the give list at once.
+func _client_give(popup):
+	var own = _owned(REMOTE, _plain.my_id)
+	var emulator = Utils.get_focus_emulator(REMOTE, _shop)
+	emulator.focused_control = _element(REMOTE, own)
+	yield(_t.frames(1), "completed")
+	_t.check(popup._trade_hint.visible, "the own item's popup shows the trade hint")
+	_sync.local.last_intent = {}
+	yield(_t.get_tree().create_timer(0.15), "timeout")
+	yield(_pad(JOY_SELECT), "completed")
+	_t.check(popup._focused and popup._trade_choosing, "Back on it opens the give list")
+	yield(_t.tap("ui_accept", REMOTE), "completed")
+	var sent: Dictionary = _sync.local.last_intent
+	_t.check(
+		sent.get("kind") == ITEM and sent.get("id") == own.my_id and sent.get("arg") == 0,
+		"and accept sends the trade (%s)" % [sent]
+	)
+	emulator.focused_control = _element(REMOTE, own)
+	var field := LineEdit.new()
+	_shop.add_child(field)
+	field.grab_focus()
+	yield(_t.get_tree().create_timer(0.15), "timeout")
+	yield(_key(KEY_T), "completed")
+	_t.check(not popup._focused, "T while a text field has the focus: typing, no trade")
+	field.queue_free()
+	yield(_t.frames(1), "completed")
 
 
 func _buyable(nodes: Array, to: int):
@@ -407,3 +467,42 @@ func _weapon_element(player: int, index: int):
 
 func _row_has(player: int, item) -> bool:
 	return _element(player, item) != null
+
+
+func _glyph(popup):
+	var hint = popup._trade_hint
+	return hint._key_icon.texture if hint.visible and hint._key_icon.visible else null
+
+
+# The mouse onto the control, as a real one moves (LocalPanel puts the own cursor there).
+func _hover(control: Control):
+	var at: Vector2 = control.get_global_transform_with_canvas().xform(control.rect_size / 2.0)
+	at = control.get_viewport().get_final_transform().xform(at)
+	var event := InputEventMouseMotion.new()
+	event.position = at
+	event.global_position = at
+	Input.parse_input_event(event)
+	yield(_t.frames(3), "completed")
+
+
+func _key(scancode: int):
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.scancode = scancode
+		event.physical_scancode = scancode
+		event.pressed = pressed
+		Input.parse_input_event(event)
+		yield(_t.get_tree(), "idle_frame")
+	yield(_t.get_tree(), "idle_frame")
+
+
+# A pad of this computer: device 0, whatever slot the client's own player has.
+func _pad(button: int):
+	for pressed in [true, false]:
+		var event := InputEventJoypadButton.new()
+		event.device = 0
+		event.button_index = button
+		event.pressed = pressed
+		Input.parse_input_event(event)
+		yield(_t.get_tree(), "idle_frame")
+	yield(_t.get_tree(), "idle_frame")

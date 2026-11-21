@@ -1,16 +1,14 @@
 extends "res://ui/menus/shop/coop_shop.gd"
 # Trading in the co-op shop: giving owned gear (trade_give) and buying an offered item for another
-# player (trade_buy). In a brotato:together client's copy of the shop nothing changes: the request
-# goes to the host (trade/together.gd).
+# player (trade_buy). The trade key (trade/hotkey.gd) opens either list. In a brotato:together
+# client's copy of the shop nothing changes: the request goes to the host (trade/together.gd).
 
 const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules.gd")
 const Transfer := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/transfer.gd")
 const Together := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/together.gd")
-const TRADE_BUY_TEXT := "Trade"
-const TRADE_OK_META := "trade_ok"
+const Hotkey := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/hotkey.gd")
 
 var _trade_buy_to := -1  # while a buy goes to another player: that player
-var _trade_buy_buttons := {}  # ShopItem -> [its Trade button, its player]
 
 
 func _ready() -> void:
@@ -21,22 +19,57 @@ func _ready() -> void:
 			popup.connect("trade_requested", self, "_on_trade_requested", [player_index])
 			popup.connect("trade_buy_requested", self, "_on_trade_buy_requested", [player_index])
 			popup.connect("trade_buy_closed", self, "_on_trade_buy_closed", [player_index])
-			for node in _get_shop_items_container(player_index)._shop_items:
-				_trade_buy_add_button(node, player_index)
+	var listener: Node = Hotkey.new()
+	listener.name = "TradeHotkey"
+	listener.shop = self
+	add_child(listener)  # after the FocusEmulators
 
 
+# Who can take the item changes under a popup (another player buys, gold, a free slot).
 func _process(_delta: float) -> void:
-	for node in _trade_buy_buttons:
-		var entry: Array = _trade_buy_buttons[node]
-		var shown := trade_buy_offered(node, entry[1])
-		var ok := false
-		if shown:
-			for receiver in trade_buy_receivers(node, entry[1]):
-				ok = ok or receiver[1]
-		_trade_buy_set(entry[0], shown, ok)
-		var right: NodePath = node._button.get_path_to(entry[0]) if ok else NodePath(".")
-		if node._button.focus_neighbour_right != right:
-			node._button.focus_neighbour_right = right
+	for player_index in RunData.get_player_count():
+		var popup = _get_item_popup(player_index)
+		if popup.has_method("trade_hint_refresh"):
+			popup.trade_hint_refresh()
+
+
+# The trade key. A brotato:together client's own player has a virtual device, which gets only
+# the buttons brotato:together sends: here any local device's press is the own player's.
+func trade_hotkey_input(event: InputEvent) -> void:
+	if get_tree().paused or get_focus_owner() is LineEdit or get_focus_owner() is TextEdit:
+		return
+	var puppet := Together.is_puppet(self)
+	var own := Together.own_player(self)
+	for player_index in RunData.get_player_count():
+		var pressed: bool = (
+			player_index == own and Utils.is_maybe_action_pressed(event, Hotkey.ACTION)
+			if puppet
+			else Utils.is_player_action_pressed(event, player_index, Hotkey.ACTION)
+		)
+		if pressed and trade_hotkey(player_index):
+			get_viewport().set_input_as_handled()
+			return
+
+
+# The player's cursor on an offered item: the buy-for list. On its own gear: the popup as after
+# accept, straight on its give list. Not while a popup has the cursor.
+func trade_hotkey(player_index: int) -> bool:
+	var emulator = Utils.get_focus_emulator(player_index, self)
+	var popup = _get_item_popup(player_index)
+	if emulator == null or popup._focused or _popup_manager._elements_pressed[player_index] != null:
+		return false
+	var control = emulator.focused_control
+	if control == null or not is_instance_valid(control) or not control.is_visible_in_tree():
+		return false
+	for node in _get_shop_items_container(player_index)._shop_items:
+		if node._button == control:
+			return _trade_buy_open(node, player_index)
+	var gear = _get_gear_container(player_index)
+	var rows := [gear.weapons_container._elements, gear.items_container._elements]
+	if not control.get_parent() in rows or trade_receivers(control.item, player_index).empty():
+		return false
+	FocusEmulatorSignal.emit(control, "pressed", player_index)
+	return popup._focused and popup.trade_open_give()
 
 
 func trade_buy_offered(shop_item: Node, from: int) -> bool:
@@ -157,17 +190,26 @@ func trade_apply_request(weapon: bool, from: int, slot: int, id: String, to: int
 	return item != null and trade_give(item, from, to)
 
 
-func _on_trade_buy_pressed(shop_item: Node, from: int) -> void:
+# Offered to the player, and someone has room for it.
+func trade_buy_anyone(shop_item: Node, from: int) -> bool:
 	if not trade_buy_offered(shop_item, from):
-		return
-	var entries := trade_buy_receivers(shop_item, from)
-	var anyone := false
-	for entry in entries:
-		anyone = anyone or entry[1]
-	if not anyone:
-		return
+		return false
+	for entry in trade_buy_receivers(shop_item, from):
+		if entry[1]:
+			return true
+	return false
+
+
+func _trade_buy_open(shop_item: Node, from: int) -> bool:
+	if not trade_buy_anyone(shop_item, from):
+		return false
+	# Off the item first: its unfocus would close the popup opened below.
+	var emulator = Utils.get_focus_emulator(from, self)
+	if emulator != null:
+		emulator.focused_control = null
 	_get_coop_player_container(from).on_show_focused_inventory_popup()  # the dim screen
-	_get_item_popup(from).trade_open_buy(shop_item, entries)
+	_get_item_popup(from).trade_open_buy(shop_item, trade_buy_receivers(shop_item, from))
+	return true
 
 
 func _on_trade_buy_requested(shop_item: Node, to: int, from: int) -> void:
@@ -196,9 +238,6 @@ func _trade_buy_refocus(shop_item: Node, player_index: int) -> void:
 	var target: Control = _get_default_focus_control(player_index)
 	if is_instance_valid(shop_item) and shop_item.active:
 		target = shop_item._button
-		var button: Button = _trade_buy_buttons[shop_item][0]
-		if button.visible and button.get_meta(TRADE_OK_META):
-			target = button
 	if target != null and target.is_visible_in_tree():
 		emulator.focused_control = target
 
@@ -269,39 +308,6 @@ func _trade_buy_unpark(player_index: int, cursor: Array) -> void:
 
 static func _trade_offers(node: Node, id: String) -> bool:
 	return node.active and node.item_data != null and node.item_data.my_id == id
-
-
-# Right of the price, where the single-player shop has its Lock / Steal buttons.
-func _trade_buy_add_button(node: Node, player_index: int) -> void:
-	var template: Button = node._steal_button
-	var button := Button.new()
-	button.name = "TradeBuyButton"
-	button.set_script(template.get_script())
-	button.add_font_override("font", template.get_font("font"))
-	button.text = TRADE_BUY_TEXT
-	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	button.focus_mode = FOCUS_NONE
-	button.visible = false
-	template.get_parent().add_child(button)
-	button.focus_neighbour_left = button.get_path_to(node._button)
-	button.focus_neighbour_right = NodePath(".")
-	button.connect("pressed", self, "_on_trade_buy_pressed", [node, player_index])
-	_trade_buy_buttons[node] = [button, player_index]
-
-
-# ok: can be pressed. The game's own disable / activate: a disabled button takes no focus and no
-# mouse.
-static func _trade_buy_set(button: Button, shown: bool, ok: bool) -> void:
-	if button.visible != shown:
-		button.visible = shown
-	ok = ok and shown
-	if button.has_meta(TRADE_OK_META) and button.get_meta(TRADE_OK_META) == ok:
-		return
-	button.set_meta(TRADE_OK_META, ok)
-	if ok:
-		button.activate()
-	else:
-		button.disable()
 
 
 func _on_trade_requested(item, to: int, from: int) -> void:

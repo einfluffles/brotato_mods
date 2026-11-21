@@ -5,6 +5,7 @@ extends Reference
 
 const Rules := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/rules.gd")
 const GOLD := 500
+const TRADE := "brotato_trade"
 
 var _t: Node = null
 var _shop: Node = null
@@ -29,34 +30,33 @@ func run(t: Node):
 	_offer(0, 1, _unique)
 	_offer(0, 2, _plain)
 	yield(t.frames(2), "completed")
-	yield(_button(), "completed")
+	yield(_hotkey(), "completed")
 	yield(_cancel(), "completed")
 	yield(_buy_weapon(), "completed")
 	yield(_buy_unique(), "completed")
 	_gold()
 
 
-func _button():
+func _hotkey():
 	var node = _node(0, 0)
-	var button: Button = _trade_button(node)
-	_t.check(button.visible and not button.disabled, "an offered item has a Trade button")
-	_t.check(
-		button.get_parent() == node._steal_button.get_parent(),
-		"on the shop item, next to its own buttons"
-	)
-	_emulator(0).focused_control = node._button
-	yield(_t.tap("ui_right", 0), "completed")
-	_t.check(_emulator(0).focused_control == button, "right from the item: Trade")
-	yield(_t.tap("ui_left", 0), "completed")
-	_t.check(_emulator(0).focused_control == node._button, "left: the item again")
-	yield(_t.tap("ui_right", 0), "completed")
-	yield(_t.tap("ui_accept", 0), "completed")
 	var popup = _popup(0)
+	_emulator(0).focused_control = node._button
+	yield(_t.frames(1), "completed")
+	_t.check(
+		popup.visible and popup._trade_hint.visible and not popup._focused,
+		"the hovered item's popup shows the trade hint"
+	)
+	_t.check(
+		node._steal_button.get_parent().get_node_or_null("TradeBuyButton") == null,
+		"and the item has no Trade button of its own"
+	)
+	yield(_t.tap(TRADE, 0), "completed")
 	var players: Array = popup._trade_players
 	_t.check(
 		popup._focused and popup.visible and popup.trade_buy_item() == node,
-		"Trade opens the item's popup"
+		"the trade key opens the item's popup"
 	)
+	_t.check(not popup._trade_hint.visible, "without the hint")
 	_t.check(_panel(0)._popup_dim_screen.visible, "over the dimmed panel, as for the inventory")
 	_t.check(
 		players[0].visible and players[1].visible and not players[2].visible,
@@ -73,6 +73,8 @@ func _button():
 	_t.check(_emulator(0).focused_control == players[1], "the cursor is on player 3")
 	yield(_t.tap("ui_up", 0), "completed")
 	_t.check(_emulator(0).focused_control == players[1], "up does not reach player 2")
+	yield(_t.tap(TRADE, 0), "completed")
+	_t.check(popup._focused and players[1].visible, "the trade key does nothing in the open list")
 	yield(_t.tap("ui_down", 0), "completed")
 	_t.check(_emulator(0).focused_control == popup._cancel_button, "down: Cancel")
 
@@ -83,17 +85,17 @@ func _cancel():
 	yield(_t.tap("ui_accept", 0), "completed")
 	yield(_t.frames(1), "completed")
 	_t.check(
-		not popup._focused and not popup.visible and not _panel(0)._popup_dim_screen.visible,
+		not popup._focused and not _panel(0)._popup_dim_screen.visible,
 		"Cancel closes the popup"
 	)
-	_t.check(_emulator(0).focused_control == _trade_button(node), "the cursor is on Trade again")
+	_t.check(_emulator(0).focused_control == node._button, "the cursor is on the item again")
 	yield(_press_delay(), "completed")
-	yield(_t.tap("ui_accept", 0), "completed")
-	_t.check(popup._focused and popup.trade_buy_item() == node, "Trade opens it again")
+	yield(_t.tap(TRADE, 0), "completed")
+	_t.check(popup._focused and popup.trade_buy_item() == node, "the trade key opens it again")
 	yield(_t.tap("ui_cancel", 0), "completed")
 	yield(_t.frames(1), "completed")
 	_t.check(
-		not popup._focused and _emulator(0).focused_control == _trade_button(node),
+		not popup._focused and _emulator(0).focused_control == node._button,
 		"so does the cancel key"
 	)
 	_t.check(node.active and _t.ids(RunData.get_player_weapons_ref(2)).size() == 1, "nothing bought")
@@ -112,7 +114,7 @@ func _buy_weapon():
 	yield(_t.tap("ui_accept", 2), "completed")
 	_t.check(_popup(2)._focused, "(player 3 looks at its own weapon)")
 	yield(_press_delay(), "completed")
-	yield(_t.tap("ui_accept", 0), "completed")
+	yield(_t.tap(TRADE, 0), "completed")
 	yield(_t.tap("ui_accept", 0), "completed")  # the cursor is on the only player with room
 	yield(_t.frames(2), "completed")
 	_t.check(
@@ -161,8 +163,12 @@ func _buy_unique():
 	)
 	_offer(0, 3, _unique)
 	yield(_t.frames(2), "completed")
-	var button := _trade_button(_node(0, 3))
-	_t.check(button.visible and button.disabled, "nobody to buy it for: Trade cannot be pressed")
+	yield(_press_delay(), "completed")
+	_emulator(0).focused_control = _node(0, 3)._button
+	yield(_t.frames(1), "completed")
+	_t.check(not _popup(0)._trade_hint.visible, "nobody to buy it for: no trade hint")
+	yield(_t.tap(TRADE, 0), "completed")
+	_t.check(not _popup(0)._focused, "and the trade key opens nothing")
 
 
 func _gold() -> void:
@@ -225,10 +231,6 @@ func _cursors_valid(label: String) -> void:
 
 func _count(player: int, item) -> int:
 	return RunData.get_nb_item(item.my_id_hash, player, false)
-
-
-func _trade_button(node) -> Button:
-	return _shop._trade_buy_buttons[node][0]
 
 
 func _node(p: int, i: int):

@@ -1,6 +1,6 @@
 extends Node
 # brotato:trade: give items and weapons to other players in the co-op shop, and crate items on
-# the end-of-wave crate panels.
+# the end-of-wave crate panels. The trade key (trade/hotkey.gd) is rebindable in the mod config.
 
 const MOD_ID := "einfluffles-BrotatoTrade"
 const MOD_DIR := "res://mods-unpacked/einfluffles-BrotatoTrade/"
@@ -10,6 +10,7 @@ const EXTENSIONS := [
 	"extensions/ui/coop_shop.gd",
 	"extensions/ui/coop_upgrades_ui_player_container.gd",
 	"extensions/ui/upgrades_ui.gd",
+	"extensions/singletons/input_service.gd",
 ]
 
 
@@ -20,6 +21,9 @@ func _init() -> void:
 
 
 func _ready() -> void:
+	# Also here: InputService may have copied its actions before the extension was in place.
+	load(MOD_DIR + "trade/hotkey.gd").register_all()
+	ModLoader.connect("current_config_changed", self, "_on_config_changed")
 	# Once every mod is ready: brotato:together builds its shop sync in its own _ready.
 	call_deferred("_link_together")
 
@@ -28,6 +32,12 @@ func _ready() -> void:
 # before every mod's script extensions are installed.
 func _link_together() -> void:
 	load(MOD_DIR + "trade/together.gd").register(self)
+
+
+# A config chosen while the game runs (a mod that edits Mod Loader configs).
+func _on_config_changed(config) -> void:
+	if config != null and config.mod_id == MOD_ID:
+		load(MOD_DIR + "trade/hotkey.gd").register_all()
 
 
 # The handlers trade/together.gd registers: brotato:together calls them on the host for a remote
