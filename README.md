@@ -37,6 +37,7 @@ podman build -t brotato-modtools -f tools/Containerfile tools
 |---|---|
 | `tools/lint.sh` | Runs gdlint over `mods/`. |
 | `tools/check.sh [mods/<folder> ...]` | Boots the game headless with each mod and its test mod (see [Tests](#tests)). |
+| `tools\check-window.ps1 -Suites <suite>[,...]` | Windows: runs suites in a real game window, with graphics and audio (see [With real graphics](#with-real-graphics)). |
 | `tools/package.sh [target]` | Writes `<target>/<name>/<name>.zip` and `preview.png` for every mod (default target: `dist/`). |
 | `tools/deploy.sh <name> <workshop_item_id>` | Replaces the subscribed Workshop item's zip with the package (see [Publishing](#publishing)). |
 
@@ -59,6 +60,28 @@ game-script error or a `get_meta` / `get_child` / `get_node` engine error while 
   `~/.cache/brotato-modtools`, because the game reads about 17000 files while booting and such a
   mount makes that slow. The copy is refreshed when `reference/project.godot` changes.
   `MOD_CHECK_CACHE=1` or `0` forces the copy on or off, and `MOD_CHECK_RESYNC=1` refreshes it.
+
+#### With real graphics
+
+The container's Godot is headless: its graphics and audio drivers are dummies. Costs that only
+exist with a real driver do not show there, such as uploads to the GPU, the driver waiting for the
+GPU, shaders, particles and sounds. On Windows, `tools\check-window.ps1 -Suites <suite>[,<suite>]`
+runs suites in a real game window instead (`powershell -ExecutionPolicy Bypass -File ...` if
+scripts are blocked).
+
+- It uses the official Godot build of `-GodotVersion` (default 3.6.2, as in `tools/Containerfile`),
+  downloaded once to `%LOCALAPPDATA%\brotato-modtools`, or the exe given with `-Godot`. The game
+  itself runs a custom 3.7 build.
+- The game runs from a copy of `reference/` there, refreshed when `reference/project.godot`
+  changes. The copy's `project.godot` gets its own user folder, `%APPDATA%\BrotatoModTests`: the
+  game's own one holds the real saves and logs.
+- `-Mod mods\<folder>` picks the mod (default brotato-together), `-All` prints the ok lines too.
+  The full log is `%LOCALAPPDATA%\brotato-modtools\check-window.log`.
+- Times are this machine's. Compare them with each other (one scene against another, a frame
+  against the next), not with what a player's log shows.
+
+Example: brotato:together's `wave_start` suite showed this way that instancing an enemy waits for the
+GPU once per frame (its burning particles), which the headless run could not show.
 
 ### Publishing
 
