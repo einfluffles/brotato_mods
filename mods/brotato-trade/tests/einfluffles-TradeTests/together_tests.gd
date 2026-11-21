@@ -234,16 +234,16 @@ func _client():
 	_t.check(local.last_intent.empty(), "another player's popup sends nothing")
 	_t.check(_t.ledger() == before, "and still nothing changed here")
 
-	# A reroll changes the own player's data (gold) but not its gear: the client's run gets
-	# fresh objects, the gear rows keep their elements and the objects those show.
+	# A reroll changes the own player's data (gold) but not its gear: the client's run keeps its
+	# item objects but gets fresh weapons, the gear rows keep their elements and what those show.
 	_receive(_states.rerolled)
 	yield(_t.frames(2), "completed")
 	var shown = _element(REMOTE, own).item
 	var shown_weapon = _weapon_element(REMOTE, 1).item
 	_t.check(
-		not RunData.get_player_items_ref(REMOTE).has(shown)
+		RunData.get_player_items_ref(REMOTE).has(shown)
 		and not RunData.get_player_weapons_ref(REMOTE).has(shown_weapon),
-		"(after a reroll the gear rows show objects the run has no more)"
+		"(after a reroll the weapon row shows an object the run has no more, the items not)"
 	)
 	_t.check(_shop.trade_receivers(shown, REMOTE) == [0], "the old element still offers Trade")
 	_t.check(_shop.trade_receivers(shown_weapon, REMOTE) == [0], "an old weapon element too")

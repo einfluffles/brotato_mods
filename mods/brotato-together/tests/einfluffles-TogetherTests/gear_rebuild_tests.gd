@@ -55,7 +55,10 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 	RunData.add_item(coupon, 1)
 	panels.apply(main, _with_run(msg))
 	t._check(
-		other_start.is_queued_for_deletion(), "gear: (control) the other's pick rebuilt its gear"
+		_element_of(other_items, "item_coupon") != null
+		and not other_start.is_queued_for_deletion()
+		and mirrored.focused_control == other_start,
+		"gear: the other's pick adds its element, the others and the mirrored cursor stay"
 	)
 	t._check(
 		not start.is_queued_for_deletion() and emulator.focused_control == start,
@@ -83,7 +86,8 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 	RunData.add_item(coupon, 0)
 	panels.apply(main, _with_run(msg))
 	t._check(
-		own_before.is_queued_for_deletion(), "gear: (control) the own pick rebuilt the own gear"
+		_element_of(items, "item_coupon") != null and emulator.focused_control == own_before,
+		"gear: the own pick adds its element, the cursor's element stays"
 	)
 	t._check(
 		(
@@ -97,6 +101,27 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 	_check_cursor(emulator, items, start_id, start_index + 1, "own cursor after its own pick")
 	_check_neighbours(own, "own panel after its own pick")
 	_check_neighbours(other, "other panel after the own pick")
+
+	# The element under the cursor goes with its item: the cursor takes the one at its place.
+	var gone = _element_of(items, "item_coupon")
+	emulator.focused_control = gone
+	var gone_index: int = gone.get_index()
+	RunData.remove_item(coupon, 0, true)
+	panels.apply(main, _with_run(msg))
+	t._check(gone.is_queued_for_deletion(), "gear: (control) the cursor's element is freed")
+	yield(_frames(2), "completed")
+	var landed = emulator.focused_control
+	t._check(
+		is_instance_valid(landed)
+		and landed.get_parent() == items
+		and landed.get_index() == min(gone_index, items.get_child_count() - 1),
+		"gear: the cursor whose element went is on the element at its place"
+	)
+	_check_neighbours(own, "own panel after an element under the cursor went")
+	RunData.add_item(coupon, 0)
+	panels.apply(main, _with_run(msg))
+	yield(_frames(2), "completed")
+	emulator.focused_control = _element_of(items, start_id)
 
 	# Off the gear page: the game remembers the gear cursor for the way back
 	# (_resume_inventory_control_focus); it must survive a rebuild too.
@@ -177,6 +202,13 @@ func _with_run(msg: Dictionary, other_page := 1) -> Dictionary:
 	changed.run = bytes2var(var2bytes(run), false)
 	changed.pages = [msg.pages[0], other_page]
 	return changed
+
+
+static func _element_of(inventory: Node, id: String):
+	for element in inventory.get_children():
+		if element.item != null and element.item.my_id == id:
+			return element
+	return null
 
 
 # The cursor is on a live element of inventory: the one of item id (at index when >= 0).

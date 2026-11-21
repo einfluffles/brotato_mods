@@ -69,28 +69,137 @@ static func weapon_slot(ui: Node, container: Node, p: int) -> int:
 	return -1
 
 
-# update_inventory frees every gear element. Nothing may keep an old one (a FocusEmulator with a
-# freed control crashes), so the cursor is taken off first; the panel's update_inventory relinks
-# the rows (relink_gear). Returns where it was ([] when not in the gear) for put_gear_cursor.
-static func rebuild_gear(ui: Node, container: Node, p: int) -> Array:
+# The gear page after a run change (update_inventory), its elements kept where they show the same
+# thing (sync_inventory). Nothing may keep a freed one (a FocusEmulator with a freed control
+# crashes, a focus neighbour naming one logs "Node not found"), so a cursor on one is taken off
+# and the rows are relinked (relink_gear: this does not go through the panel's update_inventory).
+# Returns where the cursor was ([] when not in the gear) for put_gear_cursor. items false: only
+# the player's other parts changed (its weapons are new objects of the same weapons).
+static func rebuild_gear(ui: Node, container: Node, p: int, items := true) -> Array:
 	var emulator = container.focus_emulator
 	var cursor := _gear_place(container, emulator.focused_control)
-	if not cursor.empty():
-		emulator.focused_control = null
-	else:
+	var on_gear := not cursor.empty()
+	if not on_gear:
 		# In the popup opened from a gear element: the crate list's refresh closes it.
 		cursor = _gear_place(container, ui._popup_manager._elements_pressed[p])
 	var resume := _gear_place(container, container._resume_inventory_control_focus)
-	container.update_inventory()
-	if not resume.empty():
+	var gear = container.player_gear_container
+	var weapons: Array = RunData.get_player_weapons(p)
+	if not sync_inventory(gear.weapons_container._elements, weapons, false, false):
+		_release(emulator, gear.weapons_container._elements)
+		gear.weapons_container.set_data("", Category.WEAPON, weapons)
+	gear._on_weapons_changed()  # what set_weapons_data does after it
+	var all_items: Array = RunData.get_player_items(p)
+	if items and not sync_inventory(gear.items_container._elements, all_items, true, true):
+		_release(emulator, gear.items_container._elements)
+		gear.set_items_data(all_items)
+	if on_gear and _gear_place(container, emulator.focused_control).empty():
+		emulator.focused_control = null  # its element was freed
+	var resume_control = container._resume_inventory_control_focus
+	if not resume.empty() and _gear_place(container, resume_control).empty():
 		container._resume_inventory_control_focus = _gear_element(container, resume)
+	relink_gear(container)
 	return cursor
+
+
+# Takes the cursor off inventory before the game frees all of its elements.
+static func _release(emulator: Node, inventory: Node) -> void:
+	if is_child_of(emulator.focused_control, inventory):
+		emulator.focused_control = null
+
+
+# Inventory.set_elements(elements, reverse, true, first) without instancing an element that
+# shows the same as one already there (a run change brings new item objects, mostly of the same
+# items): the elements are matched by what they show, pointed at the new objects, only the
+# difference is instanced or freed, and the game's sorter orders them as after set_elements.
+# false where it does not apply (an empty inventory, a locked item): the caller sets the data.
+static func sync_inventory(inventory: Node, elements: Array, reverse: bool, first: bool) -> bool:
+	if inventory.get_child_count() == 0:
+		return false
+	for element in elements:
+		if not element is Resource or element.is_locked:
+			return false
+	for node in inventory.get_children():
+		if node.is_special or node.item == null:
+			return false
+	var check: bool = elements.size() >= 2 and elements[1].get_category() == Category.ITEM
+	var entries := []  # [element, count], in the order set_elements adds them
+	if check:
+		entries = inventory.get_elements_with_count(elements)
+	else:
+		for element in elements:
+			entries.append([element, 1])
+	var spare := {}  # what a node shows -> the nodes showing it, in child order
+	for node in inventory.get_children():
+		var key := _shows(node.item)
+		if not spare.has(key):
+			spare[key] = []
+		spare[key].append(node)
+	var nodes := []
+	for entry in entries:
+		var same: Array = spare.get(_shows(entry[0]), [])
+		nodes.append(same.pop_front() if not same.empty() else null)
+	var left := []
+	for same in spare.values():
+		left.append_array(same)
+	for i in entries.size():
+		var item = entries[i][0]
+		if nodes[i] == null and not left.empty():
+			nodes[i] = left.pop_back()
+			nodes[i].set_element(item)
+		elif nodes[i] == null:
+			nodes[i] = inventory._spawn_element(item, inventory.display_banned)
+		nodes[i].item = item
+		_set_count(nodes[i], entries[i][1])
+	for node in left:
+		inventory.remove_child(node)
+		node.queue_free()
+	inventory.order_of_addition = nodes.duplicate()
+	var order := nodes.duplicate()
+	if reverse:
+		order.invert()
+	for i in order.size():
+		inventory.move_child(order[i], i)
+	if first:  # set_elements' prioritize_gameplay_elements
+		for node in inventory.get_children():
+			if node.item is CharacterData or "item_builder_turret" in node.item.my_id:
+				inventory.move_child(node, 0)
+	inventory.emit_signal("elements_changed")
+	inventory.queue_set_focus_neighbours()
+	inventory.emit_signal("need_to_sort_inventory")
+	return true
+
+
+# What an InventoryElement shows of item (InventoryElement.set_element).
+static func _shows(item) -> String:
+	var icon = item.get_icon()
+	return "%s %s %s %s %s %s" % [
+		item.my_id,
+		item.get("tier"),
+		item.get("is_cursed"),
+		item.get("is_meca"),
+		item.get("is_mutant"),
+		icon.get_instance_id() if icon != null else 0,
+	]
+
+
+# As add_element_with_count leaves it.
+static func _set_count(node: Node, count: int) -> void:
+	node.current_number = count
+	node._number_label.text = "x" + str(count)
+	node._number_label.visible = count > 1
 
 
 # Returns whether the cursor is back on the rebuilt gear.
 static func put_gear_cursor(container: Node, place: Array) -> bool:
-	var element = _gear_element(container, place)
-	if element == null or not element.is_visible_in_tree() or container.item_popup._focused:
+	if place.empty() or container.item_popup._focused:
+		return false
+	var current = container.focus_emulator.focused_control
+	var at := _gear_place(container, current)
+	var element = current if not at.empty() and at[2] == place[2] else null
+	if element == null:
+		element = _gear_element(container, place)
+	if element == null or not element.is_visible_in_tree():
 		return false
 	if container.focus_emulator.focused_control != element:
 		container.focus_emulator.focused_control = element

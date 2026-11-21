@@ -14,6 +14,9 @@ extends Reference
 # {} when the run is the one the client was last sent: the client's store fills in its last ids,
 # in place (ingest), so that every later reader of the body sees them.
 
+const ClientReport := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
+)
 const EffectArgs := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/effect_args.gd")
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
@@ -262,6 +265,7 @@ class Store:
 	const KEEP := 2  # versions per key: a body still pending in one section while another moved on
 	var misses := 0  # bodies that named a part neither stored nor delivered
 	var parsed := 0  # parts decompressed and parsed
+	var items_made := 0  # gear items deserialized (not kept from the last state)
 	var session: Object = null  # ask_resync on a missing part (session/session.gd)
 	var _parts := {}  # key -> [{id, size, data, raw (parsed, or null)}], newest first
 	var _ids := {}  # the ids of the last state_for
@@ -359,6 +363,7 @@ class Store:
 			return {}
 		var changed := []
 		var gear := {}
+		var kept := []  # per changed player: _kept_items, or null
 		var input: Dictionary = common.duplicate(true)  # the game writes into its input
 		input["players_data"] = []
 		for p in int(count):
@@ -373,12 +378,23 @@ class Store:
 				return {}
 			changed.append(p)
 			gear[p] = not same_gear
-			input.players_data.append(merge(rest, player_gear).duplicate(true))
+			var player = merge(rest, player_gear)
+			var items = _kept_items(p, player_gear, same_gear)
+			kept.append(items)
+			if items != null:
+				player = player.duplicate()
+				player["items"] = items.raws  # only these are deserialized
+			var made = player.get("items") if typeof(player) == TYPE_DICTIONARY else null
+			items_made += made.size() if typeof(made) == TYPE_ARRAY else 0
+			input.players_data.append(player.duplicate(true))
 		var state: Dictionary = ProgressDataLoaderV3.new().deserialize_run_state(input)
 		EffectArgs.settle(state, false)  # its effects came with their custom args
 		var fresh = state.get("players_data")
 		if typeof(fresh) != TYPE_ARRAY or fresh.size() != changed.size():
 			return {}  # no run state (a player that is not one)
+		for i in kept.size():
+			if kept[i] != null:
+				fresh[i].items = _join_items(kept[i], fresh[i].items)
 		var players := []
 		for p in int(count):
 			var index := changed.find(p)
@@ -389,6 +405,79 @@ class Store:
 		_changed = changed
 		_gear = gear
 		return state
+
+	# state_for with the client report's marks (run parse, deserialize).
+	func timed_state(ids) -> Dictionary:
+		var started := OS.get_ticks_usec()
+		if typeof(ids) == TYPE_DICTIONARY:
+			raws(ids)  # decompresses and parses the parts not parsed yet
+		ClientReport.mark(ClientReport.Mark.PARSE, OS.get_ticks_usec() - started)
+		started = OS.get_ticks_usec()
+		var state := state_for(ids)
+		ClientReport.mark(ClientReport.Mark.DESERIALIZE, OS.get_ticks_usec() - started)
+		return state
+
+	# The item objects of p's last PlayerRunData its new items can keep: only the others are
+	# deserialized (late in a run most of a state's cost is ~250 items, most of them unchanged).
+	# An item is kept when its dictionary in the part hashes the same. {slots: per new item the
+	# kept object or null, raws: the dictionaries to deserialize}, null when nothing can be kept.
+	func _kept_items(p: int, player_gear, same_gear: bool):
+		if p >= _players.size() or typeof(player_gear) != TYPE_DICTIONARY:
+			return null
+		var old_gear = player_gear if same_gear else _raw("g%d" % p, _ids.get("g%d" % p))
+		var new_raws = player_gear.get("items")
+		var old_raws = old_gear.get("items") if typeof(old_gear) == TYPE_DICTIONARY else null
+		if typeof(new_raws) != TYPE_ARRAY or typeof(old_raws) != TYPE_ARRAY:
+			return null
+		var old_items: Array = _players[p].items
+		var old_list := []
+		for raw in old_raws:
+			if typeof(raw) == TYPE_DICTIONARY:  # the game skips the others
+				old_list.append(raw)
+		if old_list.size() != old_items.size():
+			return null  # an item the game left out: no longer index for index
+		var pool := {}  # hash of an old item's dictionary -> its indices
+		for i in old_list.size():
+			if not old_items[i] is Object or old_list[i].get("my_id") != old_items[i].my_id:
+				return null
+			if not same_gear:
+				var key := hash(old_list[i])
+				if not pool.has(key):
+					pool[key] = []
+				pool[key].append(i)
+		if same_gear:
+			return {"slots": old_items.duplicate(), "raws": []}
+		var slots := []
+		var raws := []
+		for raw in new_raws:
+			if typeof(raw) != TYPE_DICTIONARY:
+				continue
+			var indices: Array = pool.get(hash(raw), [])
+			var index: int = indices[0] if not indices.empty() else -1
+			if index >= 0 and old_items[index].my_id == raw.get("my_id"):
+				indices.pop_front()
+				slots.append(old_items[index])
+			else:
+				slots.append(null)
+				raws.append(raw)
+		return {"slots": slots, "raws": raws}
+
+	# kept's slots filled with made, the items deserialized from its raws (one the game left out
+	# stays out).
+	static func _join_items(kept: Dictionary, made: Array) -> Array:
+		var items := []
+		var next := 0
+		var k := 0
+		for slot in kept.slots:
+			if slot != null:
+				items.append(slot)
+				continue
+			var raw = kept.raws[k]
+			k += 1
+			if next < made.size() and made[next].my_id == raw.get("my_id"):
+				items.append(made[next])
+				next += 1
+		return items
 
 	func changed_players() -> Array:
 		return _changed.duplicate()

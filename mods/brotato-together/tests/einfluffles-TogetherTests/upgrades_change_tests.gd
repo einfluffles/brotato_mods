@@ -367,11 +367,13 @@ func _sequence(label: String, players: int, encode: float):
 	var packs: int = _cache.packs
 	var sends := 0
 	var usec := 0
+	var take := [0, 0, 0]  # a client's crate item on the host: usec applying it, checking, takes
 	_bodies = []
 	_record(NEW_PANELS, -1)
 	for step in 6:
 		for p in players:
 			var container = _ui._get_player_container(p)
+			var decided := OS.get_ticks_usec()
 			match step:
 				0, 1:
 					container.carousel.index = 1 - step
@@ -384,6 +386,10 @@ func _sequence(label: String, players: int, encode: float):
 			var started := OS.get_ticks_usec()
 			_stream.step(1.0)
 			usec += OS.get_ticks_usec() - started
+			if step == 2 and p > 0:
+				take[0] += started - decided
+				take[1] += OS.get_ticks_usec() - started
+				take[2] += 1
 			sends += _take().size()
 			if step >= 2:
 				_record(CLIENT_KINDS[min(step - 2, 2)], p)
@@ -414,6 +420,13 @@ func _sequence(label: String, players: int, encode: float):
 			_cache.packs - packs,
 			usec / 1000.0,
 		]
+	)
+	print(
+		(
+			"  info: upgrades host, %s: a client's crate item to its answer sent %d usec"
+			+ " (the intent %d, the stream's check %d); the client waits that plus a round trip"
+		)
+		% [label, (take[0] + take[1]) / take[2], take[0] / take[2], take[1] / take[2]]
 	)
 
 
@@ -478,75 +491,178 @@ func _client_replay(label: String, players: int):
 	_sync._guarded_ui = null
 	var all := range(players)
 	var times := {}  # kind -> [usec, states]
+	var crate := []  # the first crate item's [player, body]
 	for recorded in _bodies:
 		var kind: String = recorded[0]
 		var p: int = recorded[1]
-		var done: Array = yield(_client_apply(recorded[2], players), "completed")
+		var done: Dictionary = yield(_client_apply(recorded[2], players), "completed")
 		if not times.has(kind):
-			times[kind] = [0, 0]
-		times[kind][0] += done[2]
+			times[kind] = [0, 0, [0, 0, 0, 0, 0]]
+		times[kind][0] += done.usec
 		times[kind][1] += 1
-		var gear := [p] if kind == CLIENT_KINDS[0] else []
-		if kind == NEW_PANELS:
-			gear = all
-		var stats: Array = all if kind == NEW_PANELS else [p]
+		for i in times[kind][2].size():
+			times[kind][2][i] += done.marks[i]
+		# Every change of a player brings new weapon objects (its gear page points at them).
+		var gear: Array = all if kind == NEW_PANELS else [p]
+		var stats: Array = gear
+		var what := "%s, client: %s (player %d)" % [label, kind, p]
 		_t._check(
-			done[0] == gear and done[1] == stats,
+			done.gear == gear and done.stats == stats and done.shows_run,
 			(
-				"%s, client: %s (player %d) rebuilds gear %s, updates stats %s (did %s, %s)"
-				% [label, kind, p, gear, stats, done[0], done[1]]
+				"%s updates gear %s, stats %s, every gear page shows the run (did %s, %s, %s)"
+				% [what, gear, stats, done.gear, done.stats, done.shows_run]
 			)
 		)
+		if kind == NEW_PANELS:
+			continue
+		# Issue #110: a crate item's state rebuilt that player's whole gear page and deserialized
+		# all of its ~250 items again. Now only what changed: the new item.
+		var most := 1 if kind == CLIENT_KINDS[0] else 0
+		_t._check(
+			done.instanced <= most and done.made <= most,
+			(
+				"%s instances %d gear elements, deserializes %d items (at most %d)"
+				% [what, done.instanced, done.made, most]
+			)
+		)
+		if kind == CLIENT_KINDS[0] and crate.empty():
+			crate = [p, recorded[2]]
 	_sync._guarded_ui = null
-	var again: Array = yield(_client_apply(_bodies[-1][2], players), "completed")
+	var again: Dictionary = yield(_client_apply(_bodies[-1][2], players), "completed")
 	_t._check(
-		again[0] == all and again[1] == all,
-		"%s, client: new panels rebuild every player's gear and stats (did %s, %s)"
-		% [label, again[0], again[1]]
+		again.gear.empty() and again.stats == all and again.shows_run and again.instanced == 0,
+		(
+			"%s, client: new panels on the same run update every player's stats and keep the gear"
+			+ " (did %s, %s, %s, %d instanced)"
+		)
+		% [label, again.gear, again.stats, again.shows_run, again.instanced]
 	)
 	var line := ""
 	for kind in [NEW_PANELS] + CLIENT_KINDS:
 		if times.has(kind):
 			line += ", %s %d" % [kind, times[kind][0] / times[kind][1]]
 	print("  info: upgrades client, %s: usec per applied state%s" % [label, line])
+	if not crate.empty():
+		var count: int = times[CLIENT_KINDS[0]][1]
+		var now: int = times[CLIENT_KINDS[0]][0] / count
+		var split := []
+		for value in times[CLIENT_KINDS[0]][2]:
+			split.append(value / count)
+		var before: int = yield(_old_crate_apply(crate[0], crate[1], players), "completed")
+		print(
+			(
+				"  info: upgrades client, %s: a crate item's state %d usec (run parse %d,"
+				+ " deserialize %d, apply %d, panels %d); before issue #110 %d"
+			)
+			% [label, now, split[0], split[1], split[2], split[4], before]
+		)
+		_t._check(
+			now * 2 < before,
+			(
+				"%s, client: a crate item's state applies in under half the time it took before"
+				+ " issue #110 (%d usec, then %d)"
+			)
+			% [label, now, before]
+		)
 	_sync._on_battle_left()  # the client's state of these panels goes
 	_sync.run_store = saved_store
 	client._you = saved_you
 
 
-# Applies body as a client and returns [players whose gear was rebuilt, players whose stats
-# were updated, usec]; one frame later, so that the freed elements are gone.
+# What applying a crate item's state cost before issue #110, in usec: that player deserialized
+# with all of its items, its gear page rebuilt (the game's update_inventory).
+func _old_crate_apply(p: int, body: Dictionary, players: int):
+	var store = RunParts.Store.new()
+	var run: Dictionary = body.run.duplicate(true)
+	store.ingest(run)
+	var started := OS.get_ticks_usec()
+	store.state_for(run.ids)
+	var whole := OS.get_ticks_usec() - started  # every player: a client had the others already
+	started = OS.get_ticks_usec()
+	_ui._get_player_container(p).update_inventory()
+	var rebuild := OS.get_ticks_usec() - started
+	yield(_t.get_tree(), "idle_frame")
+	return whole / players + rebuild
+
+
+# Applies body as a client, one frame later (the freed elements are gone): {gear, stats: the
+# players whose gear page shows other item objects / whose stats were updated, shows_run: every
+# gear page shows its player's run objects, instanced: gear elements new, made: items
+# deserialized, usec}.
 func _client_apply(body: Dictionary, players: int):
-	var gear_ids := []
+	var views := []
 	for p in players:
 		var container = _ui._get_player_container(p)
-		gear_ids.append(_gear_ids(container))
+		views.append(_gear_view(container))
 		container.primary_stats_container.general_stats[0]._value.text = STATS_MARK
+	var made: int = _sync.run_store.items_made
+	var report: Node = _together.client_report
+	var was_active: bool = report.active
+	report.active = true  # its marks: run parse, deserialize, apply, level-up panels
+	report._marks = report._no_marks()
 	var started := OS.get_ticks_usec()
 	_sync.accept_state(StateStream.UPGRADES, body, 0)
 	_sync.apply(_main, body)
 	var usec := OS.get_ticks_usec() - started
-	var gear := []
-	var stats := []
+	var marks: Array = report._marks.duplicate()
+	report._marks = report._no_marks()
+	report.active = was_active
+	var done := {
+		"usec": usec,
+		"marks": marks,
+		"made": _sync.run_store.items_made - made,
+		"gear": [],
+		"stats": [],
+		"shows_run": true,
+		"instanced": 0,
+	}
 	for p in players:
 		var container = _ui._get_player_container(p)
-		if _gear_ids(container) != gear_ids[p]:
-			gear.append(p)
+		var view := _gear_view(container)
+		if view[1] != views[p][1]:
+			done.gear.append(p)
+		for node in view[0]:
+			if not node in views[p][0]:
+				done.instanced += 1
 		if container.primary_stats_container.general_stats[0]._value.text != STATS_MARK:
-			stats.append(p)
+			done.stats.append(p)
+		done.shows_run = done.shows_run and _shows_run(container, p)
 	yield(_t.get_tree(), "idle_frame")
-	return [gear, stats, usec]
+	return done
 
 
-# The instance ids of the live elements of a panel's gear page (weapons, then items).
-static func _gear_ids(container: Node) -> Array:
-	var ids := []
+# [instance ids of the live elements of a panel's gear page, of their items] (weapons, then
+# items).
+static func _gear_view(container: Node) -> Array:
+	var nodes := []
+	var items := []
 	var gear = container.player_gear_container
 	for inventory in [gear.weapons_container._elements, gear.items_container._elements]:
 		for element in inventory.get_children():
 			if not element.is_queued_for_deletion():
-				ids.append(element.get_instance_id())
-	return ids
+				nodes.append(element.get_instance_id())
+				items.append(element.item.get_instance_id())
+	return [nodes, items]
+
+
+# The gear page shows p's own weapon and item objects, each item counted once.
+static func _shows_run(container: Node, p: int) -> bool:
+	var gear = container.player_gear_container
+	var weapons: Array = RunData.get_player_weapons(p)
+	var items: Array = RunData.get_player_items(p)
+	var shown := 0
+	for element in gear.weapons_container._elements.get_children():
+		if not element.item in weapons:
+			return false
+		shown += 1
+	if shown != weapons.size():
+		return false
+	shown = 0
+	for element in gear.items_container._elements.get_children():
+		if not element.item in items:
+			return false
+		shown += element.current_number
+	return shown == items.size()
 
 
 # The panels' state now, as a client gets it (every part, a copy), for the replay; only when

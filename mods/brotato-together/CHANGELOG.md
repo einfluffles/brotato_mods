@@ -22,6 +22,8 @@ upload; three of them are marked where the upload may have differed.
   panel there too.
 - On a client, walking along the edge of the map is as fast as on the host. Before, your character
   rushed ahead along it and was pulled back when you stopped or left it.
+- Level-up screen on a client: taking or recycling a crate item, choosing and rerolling no longer
+  hitch late in a run. The next page shows about three times sooner after the host answers.
 
 ## 2026-11-21 13:43 UTC
 

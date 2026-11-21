@@ -80,7 +80,7 @@ func _test_not_a_client(report: Node) -> void:
 	ClientReport.note_correction(100.0, 10.0, 2, 400.0)
 	_t._check(
 		not report.active and report._window.empty() and report.sent.empty()
-		and report._marks == [0, 0, 0, 0] and report._phases == [0, 0, 0, 0]
+		and report._marks == [0, 0, 0, 0, 0] and report._phases == [0, 0, 0, 0]
 		and report._fresh == 0,
 		"not a ready client: nothing is measured"
 	)
@@ -177,7 +177,7 @@ func _test_stall(report: Node) -> void:
 		sum += value
 	_t._check(
 		body.kind == ClientReport.KIND_SCENE and body.scene == 1 and body.stall == 600.0
-		and body.marks == [22.0, 78.0, 9.0, 31.0] and sum <= body.stall,
+		and body.marks == [22.0, 78.0, 9.0, 31.0, 0.0] and sum <= body.stall,
 		"a 600 ms frame at a scene change: its marks %s (sum %s) within the stall" % [body.marks, sum]
 	)
 	var lines: Array = ClientReport.report_lines(PEER_NAME, bytes2var(var2bytes(body), false))
@@ -261,7 +261,7 @@ func _test_worst_frame(report: Node) -> void:
 	var body: Dictionary = windows[0]
 	_t._check(
 		body.worst == 80.0 and body.worst_phases == [2.0, 3.0, 1.0, 64.0]
-		and body.worst_marks == [0.0, 0.0, 5.0, 0.0] and body.worst_fresh == 1,
+		and body.worst_marks == [0.0, 0.0, 5.0, 0.0, 0.0] and body.worst_fresh == 1,
 		"the worst frame's phases, marks and fresh puppets, not a later or summed frame's: %s %s %s"
 		% [body.worst_phases, body.worst_marks, body.worst_fresh]
 	)
@@ -322,7 +322,7 @@ func _test_host(together: Node, report: Node) -> void:
 	var detailed := frames.duplicate()
 	detailed.worst = 96.0
 	detailed.corrections = 0
-	detailed.worst_marks = [0, 0, 74.4, 0]
+	detailed.worst_marks = [0, 0, 74.4, 0, 12.6]
 	detailed.worst_phases = [0, 0, 0, 0]
 	detailed.worst_fresh = 0
 	detailed.fresh = 0
@@ -332,7 +332,7 @@ func _test_host(together: Node, report: Node) -> void:
 	var shop_line: Array = ClientReport.report_lines(PEER_NAME, detailed)
 	var shop_end := (
 		"worst 96, 0 over 50 ms; mirror avg 1.9, worst 6.2 ms; up to 412 entities;"
-		+ " worst frame: apply 74"
+		+ " worst frame: apply 74, level-up panels 13"
 	)
 	_t._check(
 		shop_line.size() == 1 and shop_line[0].ends_with(shop_end),
@@ -343,7 +343,7 @@ func _test_host(together: Node, report: Node) -> void:
 		smooth.size() == 1 and not "worst frame" in smooth[0],
 		"a worst frame under 50 ms is not broken down"
 	)
-	var unknown := _with(_with(detailed, "worst_marks", [0, 0, 0, 0]), "fresh", 2)
+	var unknown := _with(_with(detailed, "worst_marks", [0, 0, 0, 0, 0]), "fresh", 2)
 	unknown.fresh_worst = 9.0
 	var unknown_end := "worst frame: none of it measured; 2 fresh in 0 ms, costliest ? 9.0 ms"
 	for file in ["", "a b.tscn", "x".repeat(41), "evil\nline.tscn"]:
@@ -359,7 +359,7 @@ func _test_host(together: Node, report: Node) -> void:
 		_with(frames, "avg", "17"), _with(frames, "worst", null), _with(frames, "scene", "main"),
 		_with(frames, "speed", NAN), {"kind": ClientReport.KIND_SCENE, "scene": 1, "stall": 600},
 		{"kind": ClientReport.KIND_SCENE, "scene": 1, "stall": 600, "marks": [1, 2, 3]},
-		{"kind": ClientReport.KIND_SCENE, "scene": 1, "stall": 600, "marks": [1, 2, "x", 4]},
+		{"kind": ClientReport.KIND_SCENE, "scene": 1, "stall": 600, "marks": [1, 2, "x", 4, 5]},
 		_with(detailed, "worst_phases", [1, 2, 3]), _with(detailed, "worst_marks", null),
 		_with(detailed, "fresh", "3"), _with(detailed, "fresh_worst_file", 7),
 	]
@@ -460,9 +460,10 @@ func _test_battle(together: Node, report: Node):
 		var stall: Dictionary = stalls[0]
 		var sum := 0.0
 		var all_marked := true
-		for value in stall.marks:
-			sum += value
-			all_marked = all_marked and value > 0.0
+		for i in stall.marks.size():
+			sum += stall.marks[i]
+			if i != ClientReport.Mark.PANELS:  # no level-up panels in a battle start
+				all_marked = all_marked and stall.marks[i] > 0.0
 		print("  info: battle scene change: stall %.0f ms, marks %s" % [stall.stall, stall.marks])
 		_t._check(
 			stall.scene == 1 and all_marked and sum <= stall.stall,

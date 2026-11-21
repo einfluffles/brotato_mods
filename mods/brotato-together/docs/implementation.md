@@ -427,6 +427,13 @@ that lack them.
   `deserialize_run_state` on a deep copy of `c` (the game writes into its input) whose
   `players_data` holds only the players whose parts changed, and puts the previous `PlayerRunData`
   objects back for the others. `changed_players()` and `gear_changed(p)` name what moved.
+- **Kept items** (`Store._kept_items`, issue #110). A changed player keeps the item objects of its
+  previous `PlayerRunData` whose dictionary in the `g` part hashes the same (all of them when only
+  `p<p>` moved); only the others go through `deserialize_run_state`. A crate item then deserializes
+  one item instead of ~250. Weapons are always deserialized (few, and the player's effects are
+  resolved against them). No item is kept when the old part is no longer stored or the old objects
+  no longer line up with it index for index. `timed_state(ids)` is `state_for` with the client
+  report's marks (run parse, deserialize); every section uses it.
 
 Ids are content hashes, so parts carry over between screens: the shop's first state after the panels
 sends little more than `c`. A purchase sends `c`, `p<p>` and `g<p>`, a paid reroll `c` and `p<p>`, a
@@ -1187,7 +1194,16 @@ shown until its scene goes.
   `main._on_EndWaveTimer_timeout` does on the host and which never runs on a puppet.
 - **Per-player rebuild** (`UpgradesGear.changed_players`). A new run state rebuilds only the players
   whose parts changed: stats, gold label and crate weapons list when `p<p>` or `g<p>` moved, the
-  gear page only when `g<p>` moved. The first state for new panels rebuilds every player.
+  gear page's items only when `g<p>` moved, its weapons (new objects of the same weapons) when
+  either moved. The first state for new panels rebuilds every player.
+- **Gear in place** (`UpgradesGear.sync_inventory`, issue #110). The game's `update_inventory` frees
+  and instances every element (~250 late in a run, about 47 ms headless for one player). The gear
+  page instead keeps every element that shows the same (item id, tier, cursed / meca / mutant,
+  icon), points it at the new object and sets its count, repaints a spare one or instances only
+  for the rest, and frees what is left. The order is the one `set_elements` leaves (entries
+  reversed, the character and builder turret first, `order_of_addition`), then
+  `need_to_sort_inventory` lets the game's sorter order them as it would after a rebuild. An empty
+  inventory (new panels) or a locked item takes the game's way.
 
 **Guard.** On every container the four decision signals lose `UpgradesUI`'s handlers
 (`choose_button_pressed`, `item_take / discard / ban_button_pressed`), the reroll button loses
@@ -1756,12 +1772,13 @@ A `FocusEmulator` that keeps a freed control crashes a release build on its next
 objects in the [Overview](#1-overview)). A real session crashed this way on the level-up gear page
 (see [Measurements](#12-measurements-and-session-findings)). Three measures:
 
-- **Take the cursor off first.** Before a gear rebuild (`UpgradesGear.rebuild_gear`,
-  `ShopSync._refresh_gear`) or `_refresh_weapons_inventory`, the cursor is taken off the element,
-  also the element a focused popup was opened from. Afterwards it goes to the same item (the
-  element nearest its old index), else the element at the same index, else for the own panel the
-  page's default (`focus()`). The game's way back to the gear page
-  (`_resume_inventory_control_focus`) is redirected the same way.
+- **Take the cursor off first.** Before a gear rebuild (`ShopSync._refresh_gear`, the game's way
+  in `UpgradesGear.rebuild_gear`) or `_refresh_weapons_inventory`, the cursor is taken off the
+  element, also the element a focused popup was opened from. The level-up gear updated in place
+  frees only the elements nothing shows any more: the cursor stays on a kept one and is taken off
+  a freed one. Afterwards it goes to the same item (the element nearest its old index), else the
+  element at the same index, else for the own panel the page's default (`focus()`). The game's way
+  back to the gear page (`_resume_inventory_control_focus`) is redirected the same way.
 - **Relink neighbours.** `CoopUpgradesUIPlayerContainer._set_focus_neighbours` links weapons and
   items by node path, and only on a page change (or, by `InputTypes`, on an input type switch).
   With trigger glyphs the rows name each other's elements. After every `update_inventory` (the
@@ -1902,7 +1919,9 @@ calls holds a whole frame.
   took 50 ms or more, and shows a file name that is not plain as "?".
 - **Scene change.** The longest frame within 3 s of a change of `current_scene`, with the mod's
   share from timing marks (`ClientReport.mark(label, usec)`: run parse, deserialize, apply, puppet
-  setup). The host's line ends with the rest, the game's part. The node registers itself with
+  setup, level-up panels). The host's line ends with the rest, the game's part. "level-up panels"
+  is `UpgradesSync.apply` after the run (gear, stats, the panel shown); run parse and deserialize
+  cover every section's run (`Store.timed_state`). The node registers itself with
   `Engine.set_meta`, because Godot 3 has no static variables.
 - **Corrections.** In `_predict_own`, a new error longer than one step at the player's speed is
   counted per window, the largest with the snapshot's age, the inputs not acked and the speed. A

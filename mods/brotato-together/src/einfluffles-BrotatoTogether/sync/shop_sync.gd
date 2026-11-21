@@ -455,7 +455,7 @@ func apply_state(section: int, body, _revision: int) -> bool:
 	# nothing to rebuild.
 	var run_changed: bool = entering or _state.empty() or not RunParts.same_ids(ids, _run_ids)
 	if run_changed:
-		var state: Dictionary = run_store.state_for(ids)
+		var state: Dictionary = run_store.timed_state(ids)
 		if state.empty() or not state.get("has_run_state", false):
 			ModLoaderLog.warning("Shop state without a complete run state; dropped", LOG_NAME)
 			return true
