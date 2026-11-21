@@ -1956,6 +1956,9 @@ later changes may have moved it.
 | Client, `_on_battle_start` up to `change_scene` (late 2 / 4) | 87 / 95 ms | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
 | Host, run packed in parts as the battle scene enters (late 2 / 4) | 31 to 36 / 60 to 86 ms | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
 | Client time per applied level-up state: choice, reroll, crate item, new panels (late 2 players) | 40 to 45, 40 to 52, 94 to 149, 171 to 264 ms | 2026-11-17, 055222f | `upgrades_change_tests.gd` |
+| The same with kept items and the gear in place, late 2 / 4 players: choice, reroll, crate item | 10 / 11, 11 / 12, 30 / 31 ms | 2026-11-21, 471a0d9 | `upgrades_change_tests.gd` |
+| A crate item's state on a client, late 2 / 4: run parse, deserialize, apply, level-up panels (of which the gear about 11); the old way in the same run | 6.4 / 6.3, 6.8 / 6.4, 2.2 / 2.8, 14.9 / 15.0 ms; 98 / 92 ms | 2026-11-21, 471a0d9 | `upgrades_change_tests.gd` |
+| Host, a client's crate item to its answer sent (late 2 / 4): applying the intent, the stream's check (serializing the run) | 29 / 37 ms: 5.7 / 5.4, 23 / 31 ms | 2026-11-21, 471a0d9 | `upgrades_change_tests.gd` |
 | Effect custom args per serialization (late 2 / 4) | 2.4 / 3.0 ms | 2026-11-17, cc3f561 | recorded with the commit |
 | Battle scene change on a client, small two-player run | 284 ms stall, of which the mod 4.8 ms | 2026-11-17, f12aab4 | `client_report_tests.gd` |
 | Damage meter, one measurement (late run, 4 players, 6 weapons each) | 0.45 ms | 2026-11-16, 677a2bf | `damage_meter_tests.gd` |
@@ -1983,6 +1986,7 @@ enemies it is the host's game itself that slows down.
 | 2026-11-16 | three players, 43 waves, Steam send rate 262144 B/s | in the shop at wave 42, 251211 B of reliable run state pending for each of two clients, send queue 954 ms, pings of about 1 s; backlogs of 20 to 250 KB in the shop and 55 to 76 s into battles | send rate 512 KB/s, run state in parts, backpressure, the traffic log |
 | 2026-11-16 | the same session | 213 input gap lines of 200 to 847 ms, most at a battle start or shop entry; scene-change stalls of 150 to 700 ms per client | gap lines tell a client's own stall from the network; client reports |
 | 2026-11-16 | the same session | 7 fingerprint misses in the shop between waves 18 and 40 | effects' custom args are settled before serializing |
+| 2026-11-21 | two players, 47 waves | a client lags from the crate item to the level-up page (issue #110); one frame of 50 to 64 ms per wave end and shop, its only mark "apply 2" (the store's parse and deserialize and the panels had none) | kept items, gear in place, marks for every section's run and the level-up panels (471a0d9) |
 | 2026-11-17 or earlier (fix 055222f) | a real session, late endless waves | client frames of 100 to 205 ms during the level-up panels | per-player rebuild |
 | 2026-11-16 or earlier (fix 1ceb422) | online session | a client crashed natively on the level-up gear page after a run change | [Freed controls under a cursor](#freed-controls-under-a-cursor) |
 | 2026-11-17 or earlier (fix ec3c80b) | online endless run, wave 36 | the host crashed natively when the co-op shop opened | [Axolotl crash](#axolotl-crash) |
@@ -2020,6 +2024,11 @@ As of 2026-11-19, protocol 30.
 - A click outside an open popup does not close it.
 - After a combine on the level-up panels the client's cursor keeps its slot where the host's copy
   jumps to the new weapon, until the next `UPGRADE_FOCUS`.
+- A client's next level-up page waits for the host's answer: a round trip plus the host's check
+  (about 30 ms late in a run, mostly serializing the run). It cannot be shown ahead: the host rolls
+  the options (`ItemService.get_upgrades`) from the player's stats after the decision.
+- New panels on a client still instance every gear element (the inventory is empty, the game's
+  way): one longer frame at the wave's end.
 - A key tap shorter than a physics frame is lost while a panel is up (held state is polled).
 
 **Selection screens and end of run**
