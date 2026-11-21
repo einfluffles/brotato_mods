@@ -6,6 +6,8 @@ changed, newest first. Headings are the time of the release PR in UTC
 
 ## Unreleased
 
+## 2026-11-21 13:49 UTC
+
 - A trade key instead of the Trade button right of every shop item's price (the button made the
   co-op item cards too narrow): **T** on the keyboard or **Back** on the gamepad (View on Xbox,
   Share on PlayStation, Minus on Switch) on an offered item buys it for another player, on your
