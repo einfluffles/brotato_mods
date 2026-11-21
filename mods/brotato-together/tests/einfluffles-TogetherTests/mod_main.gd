@@ -70,6 +70,7 @@ const CoopSelectionTests := preload(
 )
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
 const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks_tests.gd")
+const DigSiteTests := preload("res://mods-unpacked/einfluffles-TogetherTests/dig_site_tests.gd")
 const ProgressShareTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/progress_share_tests.gd"
 )
@@ -140,6 +141,7 @@ const SUITES := [
 	"looks",
 	"damage",
 	"battle_scene",
+	"dig_site",
 	"dead_player",
 	"selection",
 	"state_stream",
@@ -408,6 +410,12 @@ func _suite_battle_scene(together: Node):
 	coop_run(3)
 	_suite = BattleSceneTests.new()
 	yield(_suite.run(self, together), "completed")
+
+
+func _suite_dig_site(together: Node):
+	coop_run(3)
+	_suite = DigSiteTests.new(self)
+	yield(_suite.run(together), "completed")
 
 
 func _suite_dead_player(together: Node):

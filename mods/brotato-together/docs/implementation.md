@@ -527,7 +527,7 @@ missing part asks for a resync and the start is dropped. A queued start keeps it
 ### Entities and net ids
 
 Mirrored nodes are the entity spawner's lists (`bosses`, `enemies`, `neutrals`, `structures`,
-`pets`), projectiles, gold, consumables, spawn markers, puddles and single holes.
+`pets`), projectiles, gold, consumables, spawn markers, puddles, single holes and dig sites.
 
 - **Net ids** are u16, wrap, and skip ids alive in the last snapshot. An id is assigned on the
   `EntitySpawner.*_respawned` signals (fired on every spawn, pool reuse included) and kept by the
@@ -605,6 +605,12 @@ from a live node, because a puppet's `die()` frees its `Pivot`.
 | `EnemyLaser(Follow)` never moves | its `rotation` (aim) and the `visible` of the beam and aura sprites as one bitmask |
 | `BrachiosaurusFoot` | `visible` of the shadow, foot and release sprites, and the foot's `flip_h` |
 | every `Boss` scene | `Pose.Kind.HEALTH`, the health fraction, last of the base parts |
+| `DigSite` (archaeologist) digs while a player stands in it | `DIG_PROGRESS`, the progress fraction (1: dug up), and `DIG_STATE`: its particles emitting, and being dug |
+
+The client sets a dig site's progress and `dug_up` and redraws it (`DigSite._draw` picks the
+sprite), turns its particles on with the scene's `body_enter` squash as `_on_body_entered` does,
+and loops the dig sound while it is being dug, as `_physics_process` does. The dug-up sound is a
+`SoundManager2D` sound and the crate a consumable, both mirrored already.
 
 Turrets do not rotate in this game (`Turret.shoot` only aims projectiles). The client hands the
 health value to the puppet's own `on_health_updated`, which follows this client's "life bars on
@@ -716,6 +722,11 @@ The client's explosion puppet never runs `start_explosion`, so the fire puddle a
   `ZoneService.forbidden_circles` is cleared before that (`Hole._ready` is the only thing that adds
   circles). The swap only takes a child whose scene is one of the spawner's layouts, and it runs
   before any puddle puppet exists. A mid-wave resync keeps the layout.
+- **Dig sites.** `DigSiteSceneEffectBehavior._ready` (archaeologist, the dig site item) places them
+  at random in `_gpe_container`, on every machine. The client frees its own in
+  `client_scene_ready`. The host's are static snapshot entities (`BattleScene.dig_sites`) whose dig
+  travels as pose values (see [Flags, poses and animations](#flags-poses-and-animations)). The
+  puppet goes into `_gpe_container`.
 - **Single holes** (`BrachiosaurusFoot._stomp` calls `GPESpawner.spawn_single_hole_at_position`) are
   static snapshot entities (`BattleScene.spawned_holes`). The client's puppet goes into
   `_gpe_container` and keeps its body.

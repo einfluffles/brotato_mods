@@ -9,12 +9,15 @@ extends Reference
 # - enemy lasers: aim and beam / aura visibility
 # - brachiosaurus foot: visibility of its shadow / foot / release sprites, foot flip_h
 # - bosses and elites (Boss): their health as a fraction, for the life bar over them
+# - dig sites (DigSite): progress as a fraction, and whether one is dug (particles, sound)
 # Optional group, sent after the base values only while active (the value count tells the client):
 # - PIVOTS: boss pivots added at runtime (eel, tyrannosaurus, brachiosaurus `pivots_scene`)
 # - JUMP: JumpAttackBehavior's landing warning (position) and ground shadow (height, size)
 # - WARNING_LINE: WarningChargingAttackBehavior's red charge line (direction)
 
-enum Kind { ROTATION, POSITION_X, SCALE_Y, POSITION_Y, SCALE, BITS, LINE_ANGLE, HEALTH }
+enum Kind {
+	ROTATION, POSITION_X, SCALE_Y, POSITION_Y, SCALE, BITS, LINE_ANGLE, HEALTH, DIG_PROGRESS, DIG_STATE
+}
 enum Group { NONE, PIVOTS, JUMP, WARNING_LINE }
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -28,6 +31,8 @@ const STAMPEDE_SHAKE_SEC := 1.2  # GoTowardsBorderOppositeMovementBehavior.get_m
 const HEALTH_STEPS := 1000  # a puppet's life bar is told "value of HEALTH_STEPS"
 const HEALTH_META := "brotato_together_health"
 const LASER_SPRITES := ["Sprite", "aura_0", "aura_1", "aura_2"]
+const DIG_EMITTING := 1  # DigSite._dig_particles.emitting: body_enter played as it turned on
+const DIG_DIGGING := 2  # DigSite.is_being_dug(): the dig sound loops
 const FOOT_BITS := [
 	["Animation/Sprite", "visible"],
 	["Sprite2", "visible"],
@@ -159,6 +164,9 @@ static func _derive(scene_path: String) -> Dictionary:
 		parts.append([NodePath("."), Kind.BITS, bits])
 	if pristine is Boss:
 		parts.append([NodePath("."), Kind.HEALTH])
+	if pristine is DigSite:
+		parts.append([NodePath("."), Kind.DIG_PROGRESS])
+		parts.append([NodePath("."), Kind.DIG_STATE])
 	_derive_group(pristine, lay)
 	pristine.free()
 	if parts.size() > MAX_VALUES:
@@ -280,6 +288,15 @@ static func _read(entity: Node, parts: Array, values: Array) -> bool:
 			Kind.HEALTH:
 				var most: float = max(1.0, node.max_stats.health)
 				values.append(clamp(node.current_stats.health / most, 0.0, 1.0))
+			Kind.DIG_PROGRESS:
+				values.append(node.get_progress_ratio())
+			Kind.DIG_STATE:
+				var state := 0
+				if node._dig_particles.emitting:
+					state |= DIG_EMITTING
+				if not node.dug_up and node.is_being_dug():
+					state |= DIG_DIGGING
+				values.append(state)
 			Kind.LINE_ANGLE:
 				var line = node.get("_warning_line")
 				if not is_instance_valid(line) or line.points.size() < 1:
@@ -321,6 +338,35 @@ static func _write(
 						target.set(part[2][k][1], on)
 			Kind.LINE_ANGLE:
 				_draw_warning_line(node, lerp_angle(from, to, t))
+			Kind.DIG_PROGRESS:
+				_show_dig_progress(node, to)
+			Kind.DIG_STATE:
+				_show_dig_state(node, int(to))
+
+
+# The sprite DigSite._draw picks for the host's progress; dug up at 1, as _complete leaves it.
+static func _show_dig_progress(site: Node, ratio: float) -> void:
+	ratio = clamp(ratio, 0.0, 1.0)
+	var dug_up := ratio >= 1.0
+	if is_equal_approx(site.get_progress_ratio(), ratio) and site.dug_up == dug_up:
+		return
+	site.progress = ratio * site.dig_time
+	site.dug_up = dug_up
+	site.update()
+
+
+# What DigSite does as players enter and leave it, and the sound _physics_process loops.
+static func _show_dig_state(site: Node, state: int) -> void:
+	var emitting := bool(state & DIG_EMITTING)
+	if site._dig_particles.emitting != emitting:
+		site._dig_particles.emitting = emitting
+		if emitting:
+			site.get_node("%AnimationPlayer").play("body_enter")
+	var audio: AudioStreamPlayer2D = site._dig_audio
+	if state & DIG_DIGGING and not site.dug_up and not audio.playing and not site.dig_sounds.empty():
+		audio.stream = site.dig_sounds.pick_random()
+		audio.pitch_scale = rand_range(0.9, 1.1)
+		audio.play(0)
 
 
 # Same points as WarningChargingAttackBehavior.show_warning, from the direction's angle.

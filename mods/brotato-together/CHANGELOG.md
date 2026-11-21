@@ -10,6 +10,10 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Archaeologist dig sites on a client are where the host has them, and you see them dug: the
+  dirt fills as the host's progress, with the particles, the squash when someone steps in and the
+  digging sound. Before, a client had its own dig sites in other places that never moved.
+
 ## 2026-11-21 21:08 UTC
 
 - A cursed Molotov no longer fills the game's log with `Node not found` errors on every throw.
