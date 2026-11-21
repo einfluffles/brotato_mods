@@ -120,7 +120,7 @@ var _looks = Looks.new()
 var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppets
 var _render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
 var _snapshot_gaps = StreamGaps.new("snapshot")  # stalls of the host's snapshots, for the log
-var _pickups = OwnPickups.new()  # consumables the own player picks up
+var _pickups = OwnPickups.new()  # consumables and gold the own player picks up
 var _view = OwnView.new()  # other players' blockers, the own player's drawn position, the camera
 var _warm = WarmPools.new()  # puppets made while the battle scene loads; kept across battles
 
@@ -329,6 +329,7 @@ func _on_battle_scene_ready(main: Node) -> void:
 		_battle_scene.client_scene_ready(main)
 		_main = main
 		_main_id = main.get_instance_id()
+		_pickups.set_gold_sounds(main)
 		if _queued_start.empty():  # else the next battle's scene replaces this one at once
 			started = OS.get_ticks_usec()
 			var made: int = _warm.fill(self, main, _types)
@@ -477,6 +478,7 @@ func _process(delta: float) -> void:
 	var entities_done := OS.get_ticks_usec()
 	var at := _own_display - _own_error  # without the blend: where the host will have it
 	for id in _pickups.update(_entities, _picker(), at, _own_seq, _buffer[-1], to, delta):
+		FeedbackMirror.gold_gone(_main, _entities[id])  # its sparkle, at the player
 		_drop_entity(id)
 	var pickups_done := OS.get_ticks_usec()
 	_apply_wave_timer(to.wave_time_left)
@@ -759,7 +761,7 @@ func _drop_entity(id: int) -> void:
 	_last_positions.erase(id)
 
 
-# The own player while its prediction runs and it lives: it picks up consumables at once.
+# The own player while its prediction runs and it lives: it picks up items at once.
 func _picker():
 	var players: Array = _main.get("_players")
 	var live: bool = _you >= 0 and _you < players.size() and _own_base_t >= 0 and _predicting()

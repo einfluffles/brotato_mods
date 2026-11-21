@@ -1,7 +1,7 @@
 extends Reference
-# Suite own_pickups: the client's own player picks up consumables at once (sync/own_pickups.gd).
-# First the game's own rules on the host (OwnPickups.overlaps must match them), then a client
-# predicting pickups on snapshots of that host battle.
+# Suite own_pickups: the client's own player picks up consumables and gold at once
+# (sync/own_pickups.gd). First the game's own rules on the host (OwnPickups.overlaps must match
+# them), then a client predicting pickups on snapshots of that host battle, also running fast.
 
 const OwnPickups := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/own_pickups.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -11,10 +11,15 @@ const YOU := 1
 const RULE_TICKS := 8  # physics ticks for a touch to land on the host
 const ATTRACT_TICKS := 40
 const EDGE := 2.0  # px inside / outside the reach
+const FAST := 1200  # px/s, the own player's speed in the gold test: 20 px per input
+const INPUTS_PER_FRAME := 3  # a slow client: 50 ms frames
+const GOLD_GAP := 150.0  # px from the attract circle to the gold
+const SWEEP_ROW := 3  # the crate between two frames is passed after this many frames
 
 var _t: Node
 var _host_t := 0
 var _moved := {}  # net id -> offset from the recorded position in the snapshots sent
+var _speed = null  # the own player's speed in the snapshots sent
 
 
 func _init(test_mod: Node) -> void:
@@ -41,6 +46,8 @@ func run(together: Node):
 	yield(tree, "physics_frame")
 	yield(_test_touch_rule(main, player), "completed")
 	yield(_test_attract_rule(main, player), "completed")
+	yield(_test_gold_rule(main, player), "completed")
+	_test_way()
 	var scene: Dictionary = yield(_record(host, main, player), "completed")
 	host._end_battle()
 	yield(_test_client(client, scene), "completed")
@@ -123,6 +130,60 @@ func _spawn(main: Node, data, at: Vector2):
 	return main.get("_consumables")[-1]  # before a tick can take it
 
 
+# Gold lying at `at` (no push out), unturned: drop() turns it at random, which clients do not
+# get (OwnPickups.overlaps takes its box unturned, up to 7 px short at a corner).
+func _spawn_gold(main: Node, at: Vector2):
+	var state = main.spawn_gold(1.0, at, 0)
+	if state is GDScriptFunctionState:
+		yield(state, "completed")
+	else:
+		yield(_t.get_tree(), "idle_frame")
+	var gold: Node = main.get("_active_golds")[-1]
+	gold.global_position = at
+	gold.push_back_destination = at
+	gold.rotation = 0.0
+	return gold
+
+
+# Gold at full health too: in the attract circle it flies in and is taken, just outside it stays.
+func _test_gold_rule(main: Node, player: Node):
+	player.current_stats.health = player.max_stats.health
+	var attract: Array = OwnPickups.area_circle(player, player._item_attract_area)
+	var center: Vector2 = player.global_position + attract[0]
+	var taken := []
+	for edge in [-EDGE, EDGE]:
+		var gold: Node = yield(
+			_spawn_gold(main, center + Vector2(0, attract[1] + 400)), "completed"
+		)
+		var at: Vector2 = center + Vector2(0, attract[1] + OwnPickups.item_extents(gold).y + edge)
+		gold.global_position = at
+		gold.push_back_destination = at
+		for _i in ATTRACT_TICKS:
+			yield(_t.get_tree(), "physics_frame")
+		var gone: bool = not gold in main.get("_active_golds")
+		if not gone:
+			gold.pickup(-1)  # nobody's: main pools it
+		taken.append(gone)
+	_t._check(
+		taken == [true, false],
+		"host: gold in the attract circle flies in at full health, outside it stays (%s)" % [taken]
+	)
+
+
+# A frame's way in short steps; a jump (a correction) is just its end.
+func _test_way() -> void:
+	var walked := OwnPickups.way(Vector2.ZERO, Vector2(0, -60), 90.0)
+	var even := walked.size() == 8 and walked[-1] == Vector2(0, -60)
+	for k in range(1, walked.size()):
+		even = even and walked[k - 1].distance_to(walked[k]) <= OwnPickups.SWEEP_STEP_PX
+	var jumped := OwnPickups.way(Vector2.ZERO, Vector2(0, -200), 90.0)
+	var first := OwnPickups.way(null, Vector2(0, -60), 90.0)
+	_t._check(
+		even and Array(jumped) == [Vector2(0, -200)] and Array(first) == [Vector2(0, -60)],
+		"a frame's way is checked every 8 px, a jump only where it ends (%s)" % [walked]
+	)
+
+
 # The host with a crate WALK inputs to the right of player 1's reach, a fruit as far to the left
 # and a fruit in its attract circle; then the host takes the crate (its sound in that snapshot).
 func _record(host: Node, main: Node, player: Node):
@@ -143,17 +204,27 @@ func _record(host: Node, main: Node, player: Node):
 	var fruit_data = _t._find_by_id(ItemService.consumables, "consumable_fruit")
 	var fruit: Node = yield(_spawn(main, fruit_data, scene.fruit_at), "completed")
 	var flier: Node = yield(_spawn(main, fruit_data, scene.flier_at), "completed")
+	var gold: Node = yield(_spawn_gold(main, _gold_spot(player, start)), "completed")
+	scene.gold_at = gold.global_position
+	scene.sweep_at = _sweep_spot(player, start, OwnPickups.item_extents(crate))
+	var crate_data = _t._find_by_id(ItemService.consumables, "consumable_item_box")
+	var swept: Node = yield(_spawn(main, crate_data, scene.sweep_at), "completed")
 	player.current_stats.health = player.max_stats.health
 	yield(_t.get_tree(), "physics_frame")
 	scene.all = bytes2var(var2bytes(host._build_snapshot()), false)
 	scene.ids = []
-	for node in [crate, fruit, flier]:
+	for node in [crate, fruit, flier, gold, swept]:
 		scene.ids.append(node.get_meta(host.NET_ID_META))
 	crate.pickup(YOU)
 	scene.taken = bytes2var(var2bytes(host._build_snapshot()), false)
 	scene.crate_sounds = []
 	for sound in crate.consumable_data.pickup_sounds:
 		scene.crate_sounds.append(host._types.get(sound.resource_path, -1))
+	gold.pickup(YOU)
+	scene.gold_taken = bytes2var(var2bytes(host._build_snapshot()), false)
+	scene.gold_sounds = []
+	for sound in main.gold_pickup_sounds + main.gold_alt_pickup_sounds:
+		scene.gold_sounds.append(host._types.get(sound.resource_path, -1))
 	var start_body: Dictionary = bytes2var(var2bytes(host._battle_start_body()), false)
 	start_body.types = {}
 	for path in host._types:
@@ -164,7 +235,26 @@ func _record(host: Node, main: Node, player: Node):
 		walk <= 45 and _sounds_in(Snapshot.parse(scene.taken[1]).events, scene.crate_sounds) == 1,
 		"host: %d inputs to the crate, its pickup sound in the snapshot that drops it" % walk
 	)
+	_t._check(
+		_sounds_in(Snapshot.parse(scene.gold_taken[1]).events, scene.gold_sounds) == 1,
+		"host: the gold's pickup sound in the snapshot that drops it"
+	)
 	return scene
+
+
+# Above the player, GOLD_GAP beyond its attract circle.
+static func _gold_spot(player: Node, start: Vector2) -> Vector2:
+	var attract: Array = OwnPickups.area_circle(player, player._item_attract_area)
+	return start + attract[0] - Vector2(0, attract[1] + GOLD_GAP)
+
+
+# Beside the way up at FAST, between the reach's positions of two frames of INPUTS_PER_FRAME
+# inputs: just in reach of the steps in between, not of the frames' ends.
+static func _sweep_spot(player: Node, start: Vector2, extents: Vector2) -> Vector2:
+	var reach: Array = OwnPickups.area_circle(player, player._item_pickup_area)
+	var frame := float(FAST * INPUTS_PER_FRAME) / Engine.iterations_per_second
+	var side: float = reach[1] + extents.x - EDGE
+	return start + reach[0] + Vector2(side, -frame * (SWEEP_ROW + 0.5))
 
 
 func _test_client(client: Node, scene: Dictionary):
@@ -225,6 +315,7 @@ func _test_client(client: Node, scene: Dictionary):
 	)
 	yield(_test_rejected(client, scene), "completed")
 	yield(_test_flight(client, scene, flier_id), "completed")
+	yield(_test_gold(client, scene), "completed")
 	input_sync.history = saved
 
 
@@ -283,6 +374,86 @@ func _test_flight(client: Node, scene: Dictionary, flier_id: int):
 	_t._check(closest < start_distance - 20.0, "it flew towards the player on the way")
 
 
+# The own player runs up at FAST on a slow client (INPUTS_PER_FRAME inputs a frame) while the
+# host's snapshots still have it standing, as they do for a round trip and the render delay:
+# the gold flies to the player at once, and the crate beside the way is taken though no frame
+# ends in its reach.
+func _test_gold(client: Node, scene: Dictionary):
+	var input_sync: Node = client.input_sync
+	var ack: int = input_sync.history[-1][0]
+	var gold_id: int = scene.ids[3]
+	var swept_id: int = scene.ids[4]
+	_speed = FAST
+	yield(_feed(client, scene.taken, ack, 150), "completed")
+	_t._check(
+		_shown_at(client, gold_id, scene.gold_at) and _shown_at(client, swept_id, scene.sweep_at),
+		"client shows the gold and the crate above the player where the host has them"
+	)
+	_t._hold_sounds(true)
+	var seq := ack
+	var frames := 0
+	var ends_reach := false
+	var gold_taken_at = null  # the own player's position
+	while frames < 14 and (gold_taken_at == null or not client._pickups.holds(swept_id)):
+		for _i in INPUTS_PER_FRAME:
+			seq += 1
+			input_sync.history.append([seq, Vector2.UP])
+		if frames % 2 == 0:
+			_send(client, scene.taken, ack)
+		yield(_t.get_tree().create_timer(INPUTS_PER_FRAME / 60.0), "timeout")
+		frames += 1
+		ends_reach = ends_reach or _reaches(client, scene.sweep_at)
+		if gold_taken_at == null and client._pickups.holds(gold_id):
+			gold_taken_at = client._own_display
+	var gold_paths := []  # any of them: the client picks one at random
+	for sound in client._main.gold_pickup_sounds + client._main.gold_alt_pickup_sounds:
+		gold_paths.append(sound.resource_path)
+	var queued := 0
+	for entry in SoundManager.sounds_to_play:
+		queued += 1 if entry[0].resource_path in gold_paths else 0
+	_t._hold_sounds(false)
+	var away := -1.0  # the player from where the gold lay
+	if gold_taken_at != null:
+		away = scene.gold_at.distance_to(gold_taken_at)
+	_t._check(
+		gold_taken_at != null and not client._entities.has(gold_id) and queued == 1,
+		(
+			"running at %d px/s, the gold flies in and is taken at once (frame %d, %.0f px from"
+			+ " where it lay, %d sound)"
+		)
+		% [FAST, frames, away, queued]
+	)
+	_t._check(
+		client._pickups.holds(swept_id) and not ends_reach,
+		"the crate between two frames' positions is taken on the way between them"
+	)
+	# The host's gold flies (to this player, likely) past the acks: wait for it.
+	_moved[gold_id] = Vector2(0, 40)
+	yield(_feed(client, scene.taken, seq, 300), "completed")
+	_moved.clear()
+	_t._check(
+		client._pickups.holds(gold_id) and not client._entities.has(gold_id),
+		"still gone while the host's gold moves after the acks"
+	)
+	var confirming: Dictionary = _send(client, scene.gold_taken, seq)
+	var queued_sounds := []
+	for entry in client._events:
+		queued_sounds.append(entry[1])
+	_t._check(
+		(
+			_sounds_in(confirming.events, scene.gold_sounds) == 0
+			and _sounds_in(queued_sounds, scene.gold_sounds) == 0
+		),
+		"the host took the gold: its pickup sound is not played a second time"
+	)
+	yield(_feed(client, scene.gold_taken, seq, 300), "completed")
+	_t._check(
+		not client._entities.has(gold_id) and not client._pickups.holds(gold_id),
+		"the gold is gone for good once the render reached the host's pickup"
+	)
+	_speed = null
+
+
 func _inputs(first: int, last: int, move: Vector2) -> Array:
 	var inputs := []
 	for seq in range(first, last + 1):
@@ -298,6 +469,8 @@ func _send(client: Node, msg: Array, ack: int, health = null) -> Dictionary:
 	snap.players[YOU][PF.INPUT_ACK] = ack
 	if health != null:
 		snap.players[YOU][PF.HEALTH] = health
+	if _speed != null:
+		snap.players[YOU][PF.SPEED] = _speed
 	var positions: PoolVector2Array = snap.positions
 	for id in _moved:
 		var k: int = Snapshot.index_of(snap, id)
