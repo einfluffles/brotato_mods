@@ -15,6 +15,9 @@ const RunStateCodec := preload(
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
 const PEER := 4545
 const PISTOL := "weapon_pistol_1"
 const CRATE := "consumable_item_box"
@@ -119,11 +122,38 @@ func _test_views() -> void:
 	_expect_view("page")
 	_sync.host_apply_focus(_ui, 1, 0, [])
 	_expect_view("page back (UPGRADE_FOCUS)")
+	_test_popup(other)
 	_sync._seq_keys[0] = ""  # the next check bumps player 0's revision, nothing else changes
 	var seq: int = _sync._seqs[0]
 	_expect_view("panel revision")
 	_t._check(_sync._seqs[0] == seq + 1, "upgrades change: the revision did move")
 	_expect_run("gold (RunData.add_gold)", funcref(self, "_add_gold"))
+
+
+# Player 1's client has its crate weapon popup open (UPGRADE_FOCUS popup): the host's copy shows
+# it, and the panels' state carries it for the other clients.
+func _test_popup(other) -> void:
+	var element = other.crate_weapons_container._elements.get_child(0)
+	var popup = other.item_popup
+	var view := [FocusTargets.describe(element, _ui, 1), element.item.my_id, 0, [null, null]]
+	var cancel := FocusTargets.describe(popup._cancel_button, _ui, 1)
+	_sync.host_apply_focus(_ui, 1, 0, cancel, view)
+	_t._check(
+		(
+			popup._focused
+			and _ui._popup_manager._elements_pressed[1] == element
+			and other.focus_emulator.focused_control == popup._cancel_button
+		),
+		"upgrades change: a remote player's crate weapon popup opens on the host's copy"
+	)
+	_t._check(
+		var2str(_sync._popups(_ui)[1]) == var2str(view) and _sync._popups(_ui)[0].empty(),
+		"upgrades change: the panels' state names it"
+	)
+	_expect_view("open popup (UPGRADE_FOCUS)")
+	_sync.host_apply_focus(_ui, 1, 0, FocusTargets.describe(element, _ui, 1), [])
+	_t._check(not popup._focused, "upgrades change: and closes with the client's")
+	_expect_view("closed popup (UPGRADE_FOCUS)")
 
 
 # Player 1's crate weapon popup, by intent: combine, recycle, meca upgrade (DLC data only).

@@ -2,7 +2,7 @@
 
 How the mod works, for a developer who is new to it. The game hooks it builds on are listed in
 [`docs/brotato-hooks.md`](../../../docs/brotato-hooks.md). This document describes the code as of
-2026-11-19 (protocol 30, mod version 0.2.1). File paths are relative to
+2026-11-21 (protocol 31, mod version 0.2.1). File paths are relative to
 `src/einfluffles-BrotatoTogether/`, test suites live in `tests/einfluffles-TogetherTests/`.
 
 Contents: [Overview](#1-overview), [Glossary](#2-glossary), [Session](#3-session),
@@ -1065,10 +1065,11 @@ end of run, retry prompt) are plain copies whose cursors make the round trip thr
 - **The host keeps remote buttons off its copy.** While the screen is up and the tree is not paused,
   `InputSync.blocked_by` / `blocked_buttons` keep every remote button but pause off the virtual
   devices, so a remote accept cannot also press the host's copy.
-- **Presence is cosmetic.** The client reports its page and cursor (`SHOP_FOCUS`, `UPGRADE_FOCUS`:
-  a cursor target restricted to the sender's own anchors). The host puts them on its copy, from
-  where `FocusSync` and the state's `pages` carry them to the other clients. Decisions never depend
-  on it. A target that does not resolve or is not visible is ignored.
+- **Presence is cosmetic.** The client reports its page, cursor and open popup (`SHOP_FOCUS`,
+  `UPGRADE_FOCUS`: a cursor target restricted to the sender's own anchors, and a popup view, see
+  [Open popups](#open-popups)). The host puts them on its copy, from where `FocusSync` and the
+  state's `pages` and `popups` carry them to the other clients. Decisions never depend on it. A
+  target that does not resolve or is not visible is ignored.
 - **A control the mod does not know** (another mod's button) keeps its own handler and can show
   things. Other mods register their decisions (see below).
 - **The client rebuilds as little as possible.** A panel is rebuilt only when its revision or data
@@ -1088,6 +1089,9 @@ end of run, retry prompt) are plain copies whose cursors make the round trip thr
   its target and whose handler checks everything again. A second press sent before the host's
   answer then runs too (two quick trades of the same item).
 - The state names the host's kinds (`kinds`, part of the key).
+- A menu the mod opens in the item popup or on the panel (brotato:trade's player lists) is shown
+  on the other machines when the popup or panel defines `together_menu()` and
+  `together_show_menu(menu)` (see [Open popups](#open-popups)).
 - Client: `is_puppet_shop(shop)` / `is_puppet_ui(ui)` tell the mod that it must not change the run,
   `host_handles(kind)` whether the host has the mod, `own_player()` whose panel is local (-1: none),
   and `send_intent(...)` sends a press of the own panel (false: not sent).
@@ -1102,7 +1106,8 @@ end of run, retry prompt) are plain copies whose cursors make the round trip thr
 paid_reroll_count, initial_free_rerolls, free_rerolls, item_steals)` (the shop's own save
 arguments). The key is the run cache's `rev` plus what is sent without serializing: per-slot
 `active` layout, locks, Go flags (`_player_pressed_go_button`), panel revisions (`seqs`), carousel
-pages (`pages`), meca rolls (`mecas`), `shop_id`, colours, `kinds` and every peer's player index.
+pages (`pages`), meca rolls (`mecas`), open popups (`popups`), `shop_id`, colours, `kinds` and every
+peer's player index.
 `you` and the run parts the peer lacks are the per-peer patch.
 
 **Entering.** The client enters through the game's resume path (`ProgressData.saved_run_state`,
@@ -1203,7 +1208,7 @@ on its way, and the cursor rests on Go, mouse hover leaves the cursor there
 **State** (section `upgrades`). The provider is inactive unless the host's battle shows the panels.
 The key is the run cache's `rev` plus the text of the panels (`capture` from `_old_upgrades`,
 `_level`, `_reroll_price`, `_item_data`, `_checkmark_group`; `seqs`, `pages`, golds, meca rolls,
-`kinds`, battle id). The run travels in parts as in the shop. A run change alone (gold or a fruit
+open popups, `kinds`, battle id). The run travels in parts as in the shop. A run change alone (gold or a fruit
 still flying in) is sent too.
 
 **Client.** `apply_state` returns false until the state's battle is the puppet's and its scene is
@@ -1285,6 +1290,55 @@ and while choosing there is no cancel.
   index)` goes to the game's handler (`UpgradesUI._on_weapon_meca_upgrade_selected`, or the popup's
   `item_meca_upgrade_selected`), which spends the parts. A client can therefore only get one of the
   two options the host rolled.
+- **Other players' copies.** The choice is part of the popup's view (below). A copy shows it from
+  the host's roll: the host's copy with the roll its popup keeps (`MecaChoice.show_kept`, never a
+  new roll), a client's copy with the state's `mecas` entry of that weapon
+  (`MecaChoice.show_roll`). A client's gear can show the weapon objects of an older run state
+  (gear elements are only rebuilt when the gear changed), so an entry matches by slot and id when
+  the popup's object is no longer the player's.
+
+### Open popups
+
+`sync/popup_view.gd`, used by the shop and the level-up / crate panels. A player's open menu is
+shown on every machine's copy of that player's panel, as in local co-op: the item popup the game
+focuses on accept on a gear weapon (its buttons, or the meca upgrade's two options), and the menus
+other mods open in that popup or on the panel.
+
+- **View** (wire format): `[]` when nothing is open, else `[element, id, meca, mods]`: the gear
+  element the popup was opened from (`PopupManager._elements_pressed`, as a cursor target in the
+  player's panel, `[]` when a mod opened the popup on something else), its item's `my_id`, 1 while
+  the meca choice shows, and `[popup's menu, panel's menu]` from `together_menu()` (null: none;
+  only ints and strings, at most 256 bytes).
+- **Where it travels.** A client reports its own panel's view with its cursor (`popup` in
+  `SHOP_FOCUS` / `UPGRADE_FOCUS`). The host shows it on its copy before it puts the cursor there.
+  The host's state carries every player's view as its copies have it (`popups`), and a client
+  shows every view but its own.
+- **Showing a view** (`PopupView.apply`) uses the game's own steps: the cursor onto the element,
+  then the element's press through `FocusEmulatorSignal` (`PopupManager` focuses the popup, the
+  shop dims the panel), then the meca choice (see [Meca upgrade](#meca-upgrade)), then
+  `together_show_menu(menu)` on the popup or panel. A view that names something else closes what
+  is open first: `together_show_menu(null)`, then the popup's `item_cancel_button_pressed`, the
+  view half of the game's Cancel. An element whose item has another id opens nothing. A view this
+  machine cannot show (no roll yet, a weapon that differs) is not tried again until the view, the
+  rolls or what the panel shows change (`memo`).
+- **Cursors.** Opening a popup takes that player's cursor to its Cancel button. A client then
+  re-applies the last cursors body (`FocusSync.reapply`); a body still pending is retried by the
+  stream anyway. The host puts the reported cursor back itself.
+- **The host keeps a reported view** (`_reported_popups`) and shows it again each frame when its
+  copy changed under it (a gear rebuild closes the popup), until an intent of that player is
+  applied: the game's handler closes the popup then, and the client's next report says what is
+  open.
+- brotato:trade defines the menu methods on its `CoopItemPopup` extension (`["give"]`, `["buy",
+  shop item slot]`) and on its crate panel (`["trade"]`). On a client its lists and buttons show on
+  another player's copy while the host trades (`Together.can_show*`), and only the own panel's
+  presses are sent.
+
+`shop_popup_view_tests.gd` (suite `local_shop`) checks a remote player's popup and meca choice on
+the host's copy, the host's state, a client's copy of another player's popup and its meca choice
+with the host's roll, the cursor going back into the copy, and the own popup's report.
+`upgrades_change_tests.gd` checks a crate weapon popup on the host's copy and in the panels'
+state. brotato:trade's `together` and `together_crate` suites check its lists on both kinds of
+copies.
 
 ### Keyboard and mouse on the own panel
 
@@ -2023,7 +2077,7 @@ slow-answer lines' `rate` should read 524288 B/s).
 
 ## 13. Known gaps
 
-As of 2026-11-19, protocol 30.
+As of 2026-11-21, protocol 31.
 
 **Not mirrored in a battle**
 
@@ -2039,8 +2093,10 @@ As of 2026-11-19, protocol 30.
 
 **Shop and level-up panels**
 
-- The host and the other clients do not see the own panel's focused inventory popup. They still
-  show an item popup the mouse closed on the client while the cursor stays on its item.
+- The host and the other clients still show an item popup the mouse closed on the client while
+  the cursor stays on its item (only an open popup that took the cursor is mirrored).
+- The meca effect a player picked on a shop item or crate item before buying or taking it is not
+  shown on the other machines.
 - The client's hold-to-ban depends on its own `chal_banned_items` unlock. Hold-to-ban has no mouse
   path in co-op, and a mouse click on Ban counts as a full hold (`button_up` is never emitted
   through an emulator).

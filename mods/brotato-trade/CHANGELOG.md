@@ -10,6 +10,8 @@ changed, newest first. Headings are the time of the release PR in UTC
   or your own player list) stays open, with your cursor where it was, when another player gives
   you something or buys something for you. It only closes when the weapon it is about is combined
   into the one you receive. Online, a client needs the latest brotato:together for this.
+- Online with brotato:together: the list of players someone opened to give, buy for or pass on an
+  item shows on everybody's screen, as it does in local co-op.
 
 ## 2026-11-21 13:49 UTC
 

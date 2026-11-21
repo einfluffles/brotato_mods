@@ -40,6 +40,9 @@ const ShopPopupMouseTests := preload(
 const ShopCursorTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_cursor_tests.gd"
 )
+const ShopPopupViewTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/shop_popup_view_tests.gd"
+)
 const WheelScrollTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/wheel_scroll_tests.gd"
 )
@@ -57,6 +60,7 @@ var _mods = ShopModIntentTests.new()
 var _gear = ShopGearTests.new()
 var _popups = ShopPopupMouseTests.new()
 var _cursors = ShopCursorTests.new()
+var _popup_views = ShopPopupViewTests.new()
 
 
 func run(t: Node, together: Node):
@@ -118,6 +122,7 @@ func _host_part(together: Node):
 	_host_rejections()
 	yield(_host_slot_intents(), "completed")
 	yield(_host_weapon_intents(), "completed")
+	yield(_popup_views.host(self), "completed")
 	yield(_cursors.host(self), "completed")
 	_host_ready_intents()
 	_mods.host(self)
@@ -460,6 +465,7 @@ func _client_part(together: Node):
 	)
 	_mods.client(self, shop)
 	yield(_client_keyboard_mouse(emulator), "completed")
+	yield(_popup_views.client(self, shop, focus_sync), "completed")
 
 	var local_panel: Node = local.local_panel
 	local.set_paused(true)

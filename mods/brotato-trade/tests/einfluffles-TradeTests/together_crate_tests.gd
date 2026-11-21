@@ -75,7 +75,11 @@ func _client_part() -> void:
 	var puppet_mode = load("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 	puppet_mode.set_active(true)
 	_t.check(_ui.trade_crate_offered(REMOTE), "a client's own crate panel offers Trade")
-	_t.check(not _ui.trade_crate_offered(0), "another player's panel does not")
+	var together = load("res://mods-unpacked/einfluffles-BrotatoTrade/trade/together.gd")
+	_t.check(
+		not together.can_request_crate(_ui, 0), "another player's panel sends nothing from here"
+	)
+	_client_mirror()
 	var before: String = _t.ledger()
 	_t.check(not _ui.trade_crate(REMOTE, 0), "the copy of the panels gives nothing itself")
 	_sync.last_intent = {}
@@ -96,6 +100,22 @@ func _client_part() -> void:
 	_sync.stop_local("test over")
 	_sync._guarded_ui = null
 	_sync._own = null
+
+
+# Player 1's open crate list on this client's copy of its panel (brotato:together's popups).
+func _client_mirror() -> void:
+	var other = _panel(0)
+	var done: bool = other._checkmark_group.visible  # its crate traded on the host above
+	other._checkmark_group.visible = false
+	other.show_item(_plain)
+	var view := [[], "", 0, [null, ["trade"]]]
+	_t.check(_ui.trade_crate_offered(0), "a copy of another player's crate panel shows Trade")
+	_sync._apply_popup(_ui, 0, view, [])
+	_t.check(other.trade_is_choosing(), "and the list that player has open")
+	_t.check(_sync._popups(_ui)[0] == view, "described the same way")
+	_sync._apply_popup(_ui, 0, [], [])
+	_t.check(not other.trade_is_choosing(), "closed with it")
+	other._checkmark_group.visible = done
 
 
 func _intent(id: String, to: int, seq_offset := 0) -> Dictionary:

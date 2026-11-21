@@ -73,7 +73,7 @@ func trade_hotkey(player_index: int) -> bool:
 
 
 func trade_buy_offered(shop_item: Node, from: int) -> bool:
-	if RunData.get_player_count() < 2 or not Together.can_request_buy(self, from):
+	if RunData.get_player_count() < 2 or not Together.can_show_buy(self, from):
 		return false
 	var item = shop_item.item_data
 	return shop_item.active and item != null and not item.is_meca
@@ -157,7 +157,7 @@ func buy_weapon(item_data: WeaponData, player_index: int) -> void:
 
 
 func trade_receivers(item, from: int) -> Array:
-	if not Together.can_request(self, from):
+	if not Together.can_show(self, from):
 		return []
 	return Rules.receivers(_trade_own(item, from), from, self)
 
@@ -199,6 +199,13 @@ func trade_buy_anyone(shop_item: Node, from: int) -> bool:
 		if entry[1]:
 			return true
 	return false
+
+
+# brotato:together: player from's buy-for list on a copy of its panel, as that player has it.
+func trade_show_buy(from: int, slot: int) -> void:
+	var nodes: Array = _get_shop_items_container(from)._shop_items
+	if slot >= 0 and slot < nodes.size():
+		_trade_buy_open(nodes[slot], from)
 
 
 func _trade_buy_open(shop_item: Node, from: int) -> bool:

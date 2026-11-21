@@ -32,6 +32,7 @@ var local_emulators := []
 var missed := 0  # host: changes only the key's safety net found
 
 var _local_by := {}  # client: screen ("shop", "upgrades") -> the FocusEmulator it drives
+var _applied_body = null  # client: the last body applied (or waiting)
 
 # host: the scene the emulators were collected from (once per scene)
 var _scene: Node = null
@@ -181,6 +182,13 @@ static func find_emulator(scene: Node, player, menu) -> Node:
 	return null
 
 
+# Client: the cursors back where the last body has them, after something here moved them (a
+# copy of another player's popup that opened takes that cursor to its Cancel button).
+func reapply() -> void:
+	if _applied_body != null and not state_stream.is_pending(StateStream.CURSORS):
+		apply_state(StateStream.CURSORS, _applied_body, 0)
+
+
 # False keeps the body pending: the stream calls again every frame until every cursor is where
 # the host has it, or the body times out (a cursor on a control only the host has).
 func apply_state(_section: int, body, _revision: int) -> bool:
@@ -190,6 +198,7 @@ func apply_state(_section: int, body, _revision: int) -> bool:
 		return true
 	if body.cursors.size() > MAX_CURSORS:
 		return true
+	_applied_body = body
 	var scene := get_tree().current_scene
 	if not Puppet.is_active() or not is_instance_valid(scene) or scene.filename != body.scene:
 		return false

@@ -29,12 +29,14 @@ enum Msg {
 	# effect choice
 	UPGRADE_INTENT,
 	# client -> host: battle_id, page (the sender's carousel page), target (its cursor as a
-	# ui/focus_targets.gd target inside its own panel, []: none). Cosmetic: what the others see.
+	# ui/focus_targets.gd target inside its own panel, []: none), popup (its open menu,
+	# sync/popup_view.gd). Cosmetic: what the others see.
 	UPGRADE_FOCUS,
 	# client -> host: shop_id, seq (of the sender's panel), kind, slot, id, arg (the kinds are
 	# listed in sync/shop_intents.gd; other mods add their own: ShopSync.register_intent)
 	SHOP_INTENT,
-	# client -> host: shop_id, page, target (like UPGRADE_FOCUS, inside the sender's shop panel)
+	# client -> host: shop_id, page, target, popup (like UPGRADE_FOCUS, inside the sender's shop
+	# panel)
 	SHOP_FOCUS,
 	# host -> client: shop_id, player, stat (Keys hash), value: the icon and number the shop
 	# floats over a player's reroll button when a reroll gave a stat (bone dice)
@@ -53,7 +55,7 @@ enum Msg {
 	STATE,
 }
 
-const VERSION := 30
+const VERSION := 31
 # How long a client predicts without snapshots and the host keeps a remote player's last INPUT.
 # One value for both: a gap the client rides out must not release its buttons on the host.
 const STALL_LIMIT_MSEC := 600

@@ -33,6 +33,7 @@ const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const UpgradesGear := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_gear.gd"
 )
+const PopupView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/popup_view.gd")
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
@@ -60,6 +61,10 @@ var _seq_keys := []
 var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method, revision]
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 var _reported := {}  # player -> [shop instance id, the last SHOP_FOCUS target of its client]
+# player -> [shop instance id, its client's open menu (PopupView)], kept on the host's copy until
+# an intent of that player changes the panel
+var _reported_popups := {}
+var _popup_memo := {}  # PopupView.apply's, for the copy of each player's panel here
 
 var _client_shop: Node = null
 # When the puppet shop began to load. It starts far enough back to count as not loading.
@@ -113,8 +118,11 @@ func _process(_delta: float) -> void:
 	if scene != _host_shop:
 		_host_shop = scene
 		_shop_id += 1  # part of the state key: the new shop goes out at the next check
+		_reported_popups = {}
+		_popup_memo = {}
 	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
 	_block_remote_buttons(not get_tree().paused)
+	_keep_reported_popups()
 
 
 # For other mods: a decision of their own on a player's shop panel (a button they add).
@@ -169,12 +177,37 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 			var shop = _host_shop_for(body)
 			var p := _player_index_of(steam_id)
 			if shop != null and p >= 0 and p < RunData.get_player_count():
-				host_apply_focus(shop, p, body.get("page"), body.get("target"))
+				host_apply_focus(shop, p, body.get("page"), body.get("target"), body.get("popup"))
 
 
-func host_apply_focus(shop: Node, p: int, page, target) -> void:
+# popup: the client's open menu (PopupView), shown on the host's copy before the cursor goes
+# into it.
+func host_apply_focus(shop: Node, p: int, page, target, popup = []) -> void:
 	_reported[p] = [shop.get_instance_id(), target]
+	_reported_popups[p] = [shop.get_instance_id(), popup]
+	_apply_popup(shop, p, popup, null)
 	ShopIntents.apply_focus(shop, p, page, target)
+
+
+# The host's copy closes a remote player's popup on its own (a gear rebuild): open again what
+# that player's client still has open.
+func _keep_reported_popups() -> void:
+	for p in _reported_popups:
+		var reported: Array = _reported_popups[p]
+		if reported[0] != _host_shop.get_instance_id():
+			continue
+		if p < RunData.get_player_count() and _apply_popup(_host_shop, p, reported[1], null):
+			var control := _reported_control(_host_shop, p)
+			var emulator = Utils.get_focus_emulator(p, _host_shop)
+			if control != null and emulator != null and emulator.focused_control != control:
+				emulator.focused_control = control
+
+
+func _apply_popup(shop: Node, p: int, view, rolls) -> bool:
+	var manager: Node = shop._popup_manager
+	var popup: Node = shop._get_item_popup(p)
+	var panel: Node = shop._get_coop_player_container(p)
+	return PopupView.apply(shop, manager, popup, panel, p, view, rolls, _popup_memo)
 
 
 # A reroll that gives a stat (bone dice) floats its icon and number over the player's reroll
@@ -215,7 +248,7 @@ func state_key(_section: int) -> String:
 	var parts := _shop_parts()
 	var rest := [
 		_shop_id, parts.slots, parts.locks, parts.go, parts.seqs, parts.pages, parts.mecas,
-		_yous(), CoopService.bt_slot_colors, _kinds(),
+		parts.popups, _yous(), CoopService.bt_slot_colors, _kinds(),
 	]
 	return str(run_cache.rev) + var2str(rest)
 
@@ -225,6 +258,7 @@ func state_key(_section: int) -> String:
 #   slots: which slot nodes are active; locks: the lock per slot; go: the Go flag
 #   seqs: the panel revision; pages: the carousel page
 #   mecas: the meca upgrade rolls its item popup remembers (MecaChoice.entries)
+#   popups: its open menu (PopupView)
 # plus colors (palette index per slot), kinds (other mods' intent kinds the host handles) and,
 # per peer, you (which player it is, -1: none).
 func state_body(_section: int) -> Dictionary:
@@ -239,6 +273,7 @@ func state_body(_section: int) -> Dictionary:
 		"seqs": parts.seqs,
 		"pages": parts.pages,
 		"mecas": parts.mecas,
+		"popups": parts.popups,
 		"colors": CoopService.bt_slot_colors.duplicate(),
 		"kinds": _kinds(),
 	}
@@ -288,8 +323,12 @@ func _shop_parts() -> Dictionary:
 	var locks := []
 	var pages := []
 	var mecas := []
+	var popups := []
 	for p in RunData.get_player_count():
-		mecas.append(MecaChoice.entries(shop._get_item_popup(p), p))
+		var popup = shop._get_item_popup(p)
+		mecas.append(MecaChoice.entries(popup, p))
+		var panel = shop._get_coop_player_container(p)
+		popups.append(PopupView.describe(shop, shop._popup_manager, popup, panel, p))
 		var active := []
 		var locked := []
 		for node in shop._get_shop_items_container(p)._shop_items:
@@ -305,6 +344,7 @@ func _shop_parts() -> Dictionary:
 		"seqs": _seqs.duplicate(),
 		"pages": pages,
 		"mecas": mecas,
+		"popups": popups,
 	}
 
 
@@ -326,6 +366,8 @@ func host_apply_intent(shop: Node, p: int, msg: Dictionary) -> bool:
 	if result == ShopIntents.CHANGED:
 		# A second press made on the same panel is stale, whatever this one turns out to do.
 		_seqs[p] += 1
+	# The game's handler closes the popup itself; the client's next report says what is open.
+	_reported_popups.erase(p)
 	# The game connects Buy and Steal deferred: they run at the end of this frame, so the stream
 	# holds its check until the next one, which serializes the run whatever the fingerprint says.
 	run_cache.force(1)
@@ -565,6 +607,7 @@ func _on_shop_ready(shop: Node) -> void:
 	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_client_shop = shop
 	_applied = {}
+	_popup_memo = {}
 	# Leaving the shop would roll curses on locked items locally; the host decides those.
 	if shop.is_connected("tree_exited", shop, "_on_tree_exited"):
 		shop.disconnect("tree_exited", shop, "_on_tree_exited")
@@ -611,6 +654,7 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 	shop.update_go_next_button_text()
 	var you: int = body.you if typeof(body.get("you")) == TYPE_INT else -1
 	_mirror_view(shop, you, body.get("pages"))
+	_mirror_popups(shop, you, body)
 	if you >= 0 and you < RunData.get_player_count():
 		local.take_over(you)
 		local.on_state(_int_at(body.get("seqs"), you), shop._player_pressed_go_button[you])
@@ -784,6 +828,18 @@ func _mirror_view(shop: Node, you: int, pages) -> void:
 			endless.set_pressed_no_signal(RunData.is_endless_run)
 
 
+# The other players' open menus. Their cursors go back where the host has them: opening a popup
+# moves the game's cursor to Cancel.
+func _mirror_popups(shop: Node, you: int, body: Dictionary) -> void:
+	var changed := false
+	for p in RunData.get_player_count():
+		if p != you:
+			var view = _at(body.get("popups"), p)
+			changed = _apply_popup(shop, p, view, _list_at(body.get("mecas"), p)) or changed
+	if changed and focus_sync != null:
+		focus_sync.reapply()
+
+
 func _on_lobby_left() -> void:
 	_stop_watching_scenes()
 	_loading_msec = -LOADING_TIMEOUT_MSEC
@@ -798,6 +854,8 @@ func _on_lobby_left() -> void:
 	_state_keys = []
 	_applied = {}
 	_host_kinds = []
+	_reported_popups = {}
+	_popup_memo = {}
 
 
 # values[index] when values is a list that long, else null (network data).

@@ -18,6 +18,11 @@ upload; three of them are marked where the upload may have differed.
   another player trades you something. Before, it closed and threw your cursor out. It only closes
   when the item it is about is gone. A purchase of yours that the host confirms late no longer
   pulls your cursor out of an open menu either.
+- Co-op shop and level-up panels: everyone sees the menus the other players have open. A
+  weapon's popup with Combine, Recycle and Upgrade, the meca upgrade's two options and
+  brotato:trade's player lists now show on every screen, not only on the screen of the player who
+  opened them.
+- Needs everybody on this update (protocol 31).
 
 ## 2026-11-21 21:08 UTC
 

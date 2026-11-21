@@ -19,6 +19,7 @@ const VirtualDevices := preload(
 const LocalPanel := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/local_panel.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const PopupView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/popup_view.gd")
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
@@ -69,6 +70,10 @@ var _seq_keys := []
 var _held := []
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method]
+# player -> [UpgradesUI instance id, its client's open menu (PopupView), its cursor target], kept
+# on the host's copy until an intent of that player changes the panel
+var _reported_popups := {}
+var _popup_memo := {}  # PopupView.apply's, for the copy of each player's panel here
 
 var _guarded_ui: Node = null  # the puppet UpgradesUI whose decision signals are rewired
 var _applied := {}  # player index -> key of the entry last applied
@@ -115,6 +120,8 @@ func _process(_delta: float) -> void:
 		# run's text does not outlive the wave.
 		run_sender.close(run_cache)
 	_apply_held(ui)
+	if ui != null:
+		_keep_reported_popups(ui)
 	var showing: bool = session.is_host() and ui != null
 	_block_remote_buttons(showing and not get_tree().paused)
 
@@ -128,9 +135,8 @@ func _on_message(steam_id: int, msg_type: int, msg) -> void:
 		Protocol.Msg.UPGRADE_FOCUS:
 			var ui = _host_ui(msg)
 			if ui != null:
-				host_apply_focus(
-					ui, battle_host._player_index_of(steam_id), msg.get("page"), msg.get("target")
-				)
+				var p: int = battle_host._player_index_of(steam_id)
+				host_apply_focus(ui, p, msg.get("page"), msg.get("target"), msg.get("popup"))
 
 
 # For other mods: ShopSync.register_intent's contract, with method(ui, player, id, arg) -> bool.
@@ -191,7 +197,9 @@ func state_key(_section: int) -> String:
 	for p in RunData.get_player_count():
 		golds.append(RunData.get_player_gold(p))
 	var pages := _pages(ui, players.size())
-	var rest := [battle_host._battle_id, players, _seqs, pages, golds, _mecas(ui), _kinds()]
+	var rest := [
+		battle_host._battle_id, players, _seqs, pages, golds, _mecas(ui), _popups(ui), _kinds()
+	]
 	return str(run_cache.rev) + var2str(rest)
 
 
@@ -207,6 +215,7 @@ func state_body(_section: int):
 #   seqs: the panel revision (bumped when it shows something new; an intent names it)
 #   pages: the carousel page
 #   mecas: the meca upgrade rolls its crate weapon popup remembers (MecaChoice.entries)
+#   popups: its open menu (PopupView)
 # and kinds: other mods' intent kinds the host handles (register_intent).
 # The refresh is free right after state_key in the same check; called alone it still sees a
 # change of the fingerprint, so no body carries a run older than its own check.
@@ -221,6 +230,7 @@ func body(players: Array) -> Dictionary:
 		"seqs": _seqs.duplicate(),
 		"pages": _pages(ui, players.size()),
 		"mecas": _mecas(ui),
+		"popups": _popups(ui),
 		"kinds": _kinds(),
 	}
 	_view_bytes = var2bytes(body).size()
@@ -249,6 +259,16 @@ static func _mecas(ui: Node) -> Array:
 		var popup = ui._get_player_container(p).item_popup
 		mecas.append(MecaChoice.entries(popup, p) if ui._weapons_inventory_enabled[p] else [])
 	return mecas
+
+
+static func _popups(ui: Node) -> Array:
+	var popups := []
+	for p in RunData.get_player_count():
+		var container = ui._get_player_container(p)
+		popups.append(
+			PopupView.describe(ui, ui._popup_manager, container.item_popup, container, p)
+		)
+	return popups
 
 
 static func capture(ui: Node) -> Array:
@@ -342,6 +362,8 @@ func host_apply_intent(ui: Node, p: int, msg: Dictionary) -> bool:
 		_seqs[p] += 1  # stale now, even when the panel shows the same
 	elif not (kind in WEAPON_KINDS) or not _host_apply_weapon(ui, p, kind, msg):
 		return false
+	# The game's handler closes the popup itself; the client's next report says what is open.
+	_reported_popups.erase(p)
 	if kind == "weapon_meca_roll":
 		return true  # the panel shows nothing new; the roll goes out with the next state
 	# The handlers show the next options right away: a second press on the old ones is stale.
@@ -409,8 +431,9 @@ static func _weapons_key(p: int) -> Array:
 	return key
 
 
-# target: a ui/focus_targets.gd target naming one of p's own panel parts.
-func host_apply_focus(ui: Node, p: int, page, target) -> void:
+# target: a ui/focus_targets.gd target naming one of p's own panel parts. popup: the client's
+# open menu (PopupView), shown before the cursor goes into it.
+func host_apply_focus(ui: Node, p: int, page, target, popup = []) -> void:
 	if p < 0 or p >= RunData.get_player_count():
 		return
 	var container = ui._get_player_container(p)
@@ -420,9 +443,35 @@ func host_apply_focus(ui: Node, p: int, page, target) -> void:
 	var carousel = container.carousel
 	if typeof(page) == TYPE_INT and page >= 0 and page != carousel.index:
 		carousel.index = page  # the setter clamps and shows that page
+	_reported_popups[p] = [ui.get_instance_id(), popup, target]
+	_apply_popup(ui, p, popup, null)
+	_put_cursor(emulator, ui, p, target)
+
+
+static func _put_cursor(emulator: Node, ui: Node, p: int, target) -> void:
 	var control = FocusTargets.resolve(target, ui, p)
 	if control is Control and control.is_visible_in_tree() and emulator.focused_control != control:
 		emulator.focused_control = control
+
+
+# The host's copy closes a remote player's popup on its own (the crate weapons rebuilt): open
+# again what that player's client still has open.
+func _keep_reported_popups(ui: Node) -> void:
+	for p in _reported_popups:
+		var reported: Array = _reported_popups[p]
+		if reported[0] != ui.get_instance_id() or p >= RunData.get_player_count():
+			continue
+		var emulator = ui._get_player_container(p).focus_emulator
+		if emulator == null or emulator.player_index != p:
+			continue
+		if _apply_popup(ui, p, reported[1], null):
+			_put_cursor(emulator, ui, p, reported[2])
+
+
+func _apply_popup(ui: Node, p: int, view, rolls) -> bool:
+	var container = ui._get_player_container(p)
+	var popup: Node = container.item_popup
+	return PopupView.apply(ui, ui._popup_manager, popup, container, p, view, rolls, _popup_memo)
 
 
 func _host_ui(msg):
@@ -443,6 +492,8 @@ func _on_peer_ready(steam_id: int) -> void:
 func _on_lobby_left() -> void:
 	run_cache.clear()
 	_held = []
+	_reported_popups = {}
+	_popup_memo = {}
 
 
 # The revision changes with what the panel shows, even when two options in a row look the same:
@@ -552,6 +603,7 @@ func apply(main: Node, msg: Dictionary) -> void:
 	ui.show()
 	var seqs = msg.get("seqs")
 	var pages = msg.get("pages")
+	var popups_changed := false
 	for p in min(msg.players.size(), RunData.get_player_count()):
 		var entry = msg.players[p]
 		if typeof(entry) != TYPE_ARRAY or entry.empty() or typeof(entry[0]) != TYPE_STRING:
@@ -605,6 +657,13 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var page: int = _int_at(pages, p)
 		if p != you and page >= 0 and container.carousel.index != page:
 			container.carousel.index = page
+		if p != you:
+			var rolls := _list_at(msg.get("mecas"), p)
+			var popup_changed := _apply_popup(ui, p, _at(msg.get("popups"), p), rolls)
+			popups_changed = popups_changed or popup_changed
+	# Opening a copy of a popup takes that player's cursor to its Cancel button.
+	if popups_changed and focus_sync != null:
+		focus_sync.reapply()
 	ClientReport.mark(ClientReport.Mark.PANELS, OS.get_ticks_usec() - started)
 
 
@@ -670,6 +729,7 @@ func _guard(ui: Node, you: int) -> void:
 		return
 	_guarded_ui = ui
 	_applied = {}
+	_popup_memo = {}
 	_run_key = {}
 	_own = null
 	_own_seq = -1
@@ -758,8 +818,16 @@ func _report_own_focus() -> void:
 	if control != null and is_instance_valid(control) and is_instance_valid(_guarded_ui):
 		# [] outside the own panel
 		target = FocusTargets.describe(control, _guarded_ui, _own.player_index)
+	var popup := []
+	if is_instance_valid(_guarded_ui):
+		popup = PopupView.describe(
+			_guarded_ui, _guarded_ui._popup_manager, _own.item_popup, _own, _own.player_index
+		)
 	var message := {
-		"battle_id": battle_client._battle_id, "page": _own.carousel.index, "target": target
+		"battle_id": battle_client._battle_id,
+		"page": _own.carousel.index,
+		"target": target,
+		"popup": popup,
 	}
 	var key := var2str(message)
 	if key != _sent_focus:
@@ -863,6 +931,12 @@ static func _find(elements: Array, my_id: String):
 		if element.my_id == my_id:
 			return element
 	return null
+
+
+static func _at(values, index: int):
+	if typeof(values) != TYPE_ARRAY or index < 0 or index >= values.size():
+		return null
+	return values[index]
 
 
 static func _list_at(values, index: int) -> Array:
