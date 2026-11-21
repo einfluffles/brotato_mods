@@ -566,8 +566,8 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var gear_cursor := []
 		if gear_changed:
 			gear_cursor = UpgradesGear.rebuild_gear(ui, container, p)
-		elif player_changed:
-			UpgradesGear.rebuild_gear(ui, container, p, false)  # its weapons are new objects
+		elif player_changed:  # its weapons are new objects
+			gear_cursor = UpgradesGear.rebuild_gear(ui, container, p, false)
 		if player_changed:
 			container.update_stats()
 			container._update_gold_label()

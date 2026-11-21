@@ -379,7 +379,9 @@ class Store:
 			changed.append(p)
 			gear[p] = not same_gear
 			var player = merge(rest, player_gear)
-			var items = _kept_items(p, player_gear, same_gear)
+			var items = null
+			if typeof(player) == TYPE_DICTIONARY:
+				items = _kept_items(p, player_gear, same_gear)
 			kept.append(items)
 			if items != null:
 				player = player.duplicate()
