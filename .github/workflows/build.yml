@@ -1,0 +1,55 @@
+# Lint and package every mod; dist/ becomes the artifact "dist". Also called by release.yml.
+# The headless tests need the decompiled game (reference/), which never goes to CI: they run on
+# the maintainer's PC (tools/local-check.sh).
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the changelog tool
+        run: python3 tools/test_changelog.py
+
+      - name: Shellcheck
+        run: shellcheck tools/*.sh
+
+      - name: Cache the toolchain image
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/modtools-image
+          key: brotato-modtools-${{ hashFiles('tools/Containerfile') }}
+
+      - name: Load or build the toolchain image
+        run: |
+          if [ -f ~/modtools-image/brotato-modtools.tar ]; then
+            docker load -i ~/modtools-image/brotato-modtools.tar
+          else
+            docker build -t brotato-modtools -f tools/Containerfile tools
+            mkdir -p ~/modtools-image
+            docker save -o ~/modtools-image/brotato-modtools.tar brotato-modtools
+          fi
+
+      - name: Lint
+        run: CONTAINER=docker tools/lint.sh
+
+      - name: Package
+        run: CONTAINER=docker tools/package.sh dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error

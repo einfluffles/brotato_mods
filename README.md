@@ -30,7 +30,7 @@ their own files as `res://mods-unpacked/<mod_id>/...`.
 The tools run in a container that holds GDRE Tools, Godot 3.6 headless and gdtoolkit 3.x. Build it once:
 
 ```sh
-podman build -t brotato-modtools -f tools/Containerfile tools
+podman build -t brotato-modtools -f tools/Containerfile tools   # or: docker build ...
 ```
 
 | Command | What it does |
@@ -39,10 +39,11 @@ podman build -t brotato-modtools -f tools/Containerfile tools
 | `tools/check.sh [mods/<folder> ...]` | Boots the game headless with each mod and its test mod (see [Tests](#tests)). |
 | `tools\check-window.ps1 [-Mod mods\<folder>] [-Suites <suite>[,...]]` | Windows: runs a mod's tests in a real game window, with graphics and audio (see [With real graphics](#with-real-graphics)). |
 | `tools/package.sh [target]` | Writes `<target>/<name>/<name>.zip` and `preview.png` for every mod (default target: `dist/`). |
-| `tools/deploy.sh <name> <workshop_item_id>` | Replaces the subscribed Workshop item's zip with the package (see [Publishing](#publishing)). |
+| `tools/deploy.sh <name> <workshop_item_id>` | Replaces the subscribed Workshop item's zip with the package (see [Trying a build in the game](#trying-a-build-in-the-game)). |
+| `tools/local-check.sh [mods/<folder> ...]` | Lint and tests on a clean, pushed HEAD, then marks the commit on GitHub (see [Publishing](#publishing)). |
+| `tools/release.sh <mod> <tag> test\|live` | Uploads a GitHub Release to the mod's Workshop item with steamcmd (see [Publishing](#publishing)). |
 
-`tools/check.sh` uses podman, or docker when podman is missing (`CONTAINER=...` picks one).
-`tools/lint.sh` and `tools/package.sh` need podman.
+The scripts use podman, or docker when podman is missing (`CONTAINER=...` picks one).
 
 ### Tests
 
@@ -98,17 +99,63 @@ GPU once per frame (its burning particles), which the headless run could not sho
 
 ### Publishing
 
-`tools/package.sh` produces one folder per mod. Upload it with the game's own `GodotWorkshopUtility.x86_64`
-(in the Brotato install folder): select the zip, the preview image (first upload), tags, and the Workshop id
-when updating.
+A release goes from a reviewed changelog to a tagged GitHub Release, and from there to the
+Workshop with steamcmd on the maintainer's PC. GitHub holds no Steam credentials, and the tests
+(which need `reference/`) run only on the maintainer's PC.
 
-As the change note, paste the mod's `CHANGELOG.md` section *Unreleased*, then rename that section
-to the upload's date and time and start a new empty *Unreleased* above it.
+1. **CI** (`.github/workflows/build.yml`) runs on every push and pull request: the changelog
+   tool's tests, shellcheck, gdlint and `tools/package.sh`. The packaged `dist/` is the run's
+   artifact `dist`.
+2. **Release PR**: run the workflow *Release PR* (Actions tab) for the mod. It turns the mod's
+   `## Unreleased` in `CHANGELOG.md` into `## <YYYY-MM-DD HH:MM> UTC` under a new empty
+   *Unreleased* (`tools/changelog.py cut`, which fails when *Unreleased* is empty) and opens a PR
+   from `bot/release-<mod>-<YYYYMMDD-HHMM>`. A PR opened by Actions starts no CI run of its own;
+   it changes the changelog only. Review and merge it.
+3. **Local check** on the merge commit: `git switch main && git pull`, then
+   `tools/local-check.sh mods/<mod>`. It refuses a dirty tree and a HEAD that is not pushed, runs
+   gdlint and `tools/check.sh`, and on success sets the commit status `local-check` on that
+   commit. From Git Bash on Windows, without podman or docker there, lint and tests run in WSL.
+   `-n` runs everything but setting the status.
+4. **Tag** the merge commit `<mod>/<YYYY-MM-DD-HHMM>` with the time of the changelog heading and
+   push it: `git tag brotato-together/2026-11-21-1305 && git push origin brotato-together/2026-11-21-1305`
+   (the release PR's description has the exact commands). The workflow *Release*
+   (`.github/workflows/release.yml`) checks that the commit is on `main`, has `local-check` =
+   success for that mod, and that the changelog's newest section is the tag's time with
+   *Unreleased* empty. It packages the mod and creates the GitHub Release with `<Name>.zip`,
+   `<Name>.zip.sha256` and `changenote.txt` (the section as Steam BBCode). A failed check can be
+   fixed and the workflow re-run.
+5. **Workshop**: `tools/release.sh <mod> <tag> test` downloads the release, checks the hash,
+   shows what it will upload and asks, then runs
+   `steamcmd +login "$STEAM_USER" +workshop_build_item <vdf> +quit` for the test item of
+   `mods/<mod>/workshop.json`. Subscribe to the test item, start the game and check the mod.
+   Then the same with `live`. The upload's content is a folder that holds only the zip (the Mod
+   Loader loads every `.zip` in an item's folder), and the change note is `changenote.txt`. Title,
+   description, preview and visibility stay as on the item's page. `-y` skips the question,
+   `--dry-run` does everything but steamcmd, `--from-dir DIR` takes the three files from DIR.
+6. **Rollback**: `tools/release.sh <mod> <previous tag> live` uploads the previous release again.
+
+One-time setup:
+
+- steamcmd: install it ([Valve's page](https://developer.valvesoftware.com/wiki/SteamCMD)), log in
+  once by hand (`steamcmd +login <account> +quit`, with Steam Guard) so the login is cached, and
+  set `STEAM_USER` to that account. `STEAMCMD` is the path of steamcmd when it is not on `PATH`
+  (Git Bash: e.g. `C:/steamcmd/steamcmd.exe`). release.sh never takes a password.
+- Test items: create a private Workshop item per mod (the game's `GodotWorkshopUtility`, or a
+  first `workshop_build_item` with `publishedfileid` 0 and `visibility` 2) and put its id as
+  `"test"` in `mods/<mod>/workshop.json`. Until then `release.sh ... test` stops with that hint.
+- GitHub `gh` logged in on the maintainer's PC (local-check.sh and release.sh use it).
+- Repository settings, set by an admin: *Actions, General: Allow GitHub Actions to create and
+  approve pull requests* (for the release PR); a tag ruleset that lets only maintainers create,
+  update or delete `brotato-*/*` tags; *Actions, General: Require approval for all outside
+  collaborators* for workflows from forks.
+
+#### Trying a build in the game
 
 The Steam build of Brotato only loads **subscribed Workshop items** (`<game>/mods` is ignored). To
-try a build in the real game, subscribe to a private Workshop item and overwrite its local copy
-with `tools/deploy.sh`. Steam may put the uploaded version back when it updates or verifies the
-item, so run the script again after that.
+try a local build in the real game, run `tools/package.sh`, subscribe to a private Workshop item
+(the test item above) and overwrite its local copy with `tools/deploy.sh <name> <item id>`. Steam
+may put the uploaded version back when it updates or verifies the item, so run the script again
+after that.
 
 ### Game code
 

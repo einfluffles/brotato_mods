@@ -119,8 +119,8 @@ if [ $# -gt 0 ]; then folders=("$@"); else folders=("$ROOT"/mods/*/); fi
 overall=0
 for folder in "${folders[@]}"; do
   folder="$(cd "$folder" && pwd)"
-  [ -d "$folder/tests" ] || { echo "== ${folder#$ROOT/}: no tests, skipped"; continue; }
-  echo "== ${folder#$ROOT/}"
+  [ -d "$folder/tests" ] || { echo "== ${folder#"$ROOT"/}: no tests, skipped"; continue; }
+  echo "== ${folder#"$ROOT"/}"
   mounts=()
   shards=()
   extras=()  # per shard: the other mod folders its process loads, "+"-separated

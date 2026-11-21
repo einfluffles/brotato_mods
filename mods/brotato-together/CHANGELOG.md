@@ -1,7 +1,9 @@
 # brotato:together changelog
 
 What each update of the [Workshop item](https://steamcommunity.com/sharedfiles/filedetails/?id=3839693385)
-changed, newest first. Times are the Workshop's upload times in US Pacific time (UTC-8).
+changed, newest first. Headings from the release pipeline on are the time of the release PR in
+UTC ("UTC" after the time, [Publishing](../../README.md#publishing)); older ones are the Workshop's
+upload times in US Pacific time (UTC-8).
 
 Entries up to 2026-11-18 were reconstructed on 2026-11-19 from the merges into `main` before each
 upload; three of them are marked where the upload may have differed.
