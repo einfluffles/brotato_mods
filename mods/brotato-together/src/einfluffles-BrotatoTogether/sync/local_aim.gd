@@ -4,7 +4,21 @@ extends Reference
 # Utils.is_manual_aim for one local player; the mouse aims from the own player, as weapon.gd does.
 
 const FLAG_MANUAL := 1
+# Bits 1..3 of the flags: the CoopService.PlayerType the player uses + 1, for the key hints the
+# others show (0: none sent).
+const TYPE_SHIFT := 1
+const TYPE_MASK := 7
 const STICK_THRESHOLD := 0.05  # Utils.is_manual_aim: rjoy length_squared
+
+
+static func type_flags(player_type: int) -> int:
+	return (player_type + 1) << TYPE_SHIFT
+
+
+# -1 when the flags carry no valid type.
+static func flags_type(flags: int) -> int:
+	var player_type := ((flags >> TYPE_SHIFT) & TYPE_MASK) - 1
+	return player_type if player_type < CoopService.PlayerType.size() else -1
 
 
 # Returns [flags, aim vector]. own_player is null outside the fight: there the mouse must not

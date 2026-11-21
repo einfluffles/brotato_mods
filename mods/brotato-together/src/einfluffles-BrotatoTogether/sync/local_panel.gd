@@ -259,16 +259,28 @@ func _set_player_type(player_type: int) -> void:
 static func refresh_player_type(node: Node, player_index: int, emulator: Node) -> void:
 	if node is Carousel:
 		_refresh_carousel(node, emulator)
-	elif node is InputIcon:
-		# The game leaves these on player 0; inside a player's panel they are that player's.
+	else:
+		_adopt_hint(node, player_index)
+	for child in node.get_children():
+		refresh_player_type(child, player_index, emulator)
+
+
+# The key hints inside a player's panel are that player's (see _adopt_hint).
+static func adopt_hints(node: Node, player_index: int) -> void:
+	_adopt_hint(node, player_index)
+	for child in node.get_children():
+		adopt_hints(child, player_index)
+
+
+static func _adopt_hint(node: Node, player_index: int) -> void:
+	if node is InputIcon:
+		# The game leaves these on player 0 (the shop items' lock and ban keys).
 		node.player_index = player_index
 		node._change_controller()
 	elif node is CoopShopHint:
 		# The setter reloads the glyph. CoopItemPopup._set_player_index skips its steal hint,
 		# which would show player 0's device.
 		node.player_index = player_index
-	for child in node.get_children():
-		refresh_player_type(child, player_index, emulator)
 
 
 static func _refresh_carousel(carousel: Node, emulator: Node) -> void:

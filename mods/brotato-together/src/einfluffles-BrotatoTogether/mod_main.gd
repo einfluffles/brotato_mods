@@ -33,6 +33,7 @@ const EXTENSIONS := [
 	"extensions/ui/stats_container.gd",
 	"extensions/ui/coop_shop_player_container.gd",
 	"extensions/ui/coop_end_run_player_container.gd",
+	"extensions/ui/coop_upgrades_ui_player_container.gd",
 ]
 # Game scripts extended above whose class has its own duplicate() (Effect). The Mod Loader backs a
 # script up with script.duplicate() before extending it, which on these runs that method on the
@@ -43,6 +44,7 @@ var transport: Node = null
 var session: Node = null
 var state_stream: Node = null
 var input_sync: Node = null
+var input_types: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
 var focus_sync: Node = null
@@ -102,6 +104,10 @@ func _ready() -> void:
 
 	input_sync = _add("sync/input_sync.gd", "InputSync")
 	input_sync.setup(session)
+
+	input_types = _add("sync/input_types.gd", "InputTypes")
+	input_types.state_stream = state_stream
+	input_types.setup(session, input_sync)
 
 	battle_host = _add("sync/battle_host.gd", "BattleHost")
 	battle_host.state_stream = state_stream
@@ -285,7 +291,9 @@ func _is_host_screen(msg_type: int, body) -> bool:
 		return false
 	if body[0] == state_stream.MENU:
 		return typeof(state) != TYPE_DICTIONARY or state.get("kind") != TITLE_KIND
-	return not body[0] in [state_stream.MENU_GRIDS, state_stream.CURSORS, state_stream.SCROLLS]
+	return not body[0] in [
+		state_stream.MENU_GRIDS, state_stream.CURSORS, state_stream.SCROLLS, state_stream.INPUT_TYPES
+	]
 
 
 # The next screen follows BATTLE_END closely and replaces the scene itself: the frozen battle

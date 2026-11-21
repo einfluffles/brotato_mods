@@ -295,6 +295,7 @@ positions on those controls.
 | 8 | `damage` | `DamageMeter` | `DamageMeter` | 0.5 s | 10 s | the damage board |
 | 9 | `cursors` | `FocusSync` | `FocusSync` | 0.05 s | 10 s | every player's cursor |
 | 10 | `scrolls` | `ScrollSync` | `ScrollSync` | 0.1 s | 10 s | every panel's scroll positions |
+| 11 | `input_types` | `InputTypes` | `InputTypes` | 0.1 s | 10 s | the device type of every slot's key hints, `you` (see [Key hints of other players](#key-hints-of-other-players)) |
 
 **Host.** A provider answers three calls:
 
@@ -867,6 +868,10 @@ stick is sent as menu directions.
 and device decide. Mouse users send the direction from their predicted player to the mouse as the
 stick. On the host a `Utils` extension answers `is_manual_aim` for virtual devices from that flag.
 
+**Device type.** Bits 1..3 of the same flags carry the `PlayerType` the client's player used last,
+plus 1 (`LocalAim.type_flags`, 0: none). It only changes key hints (see
+[Key hints of other players](#key-hints-of-other-players)); a remote slot stays a gamepad for aim.
+
 ### Own-player prediction
 
 `BattleClient._predict_own`. The client shows its own player at the host's last position plus one
@@ -1256,8 +1261,40 @@ container's `_set_focus_neighbours` and moves a cursor that sat on an arrow that
 
 - On a puppet the type is read only by `Carousel`, the key glyphs and aim (behind
   `Utils.is_manual_aim`, never set on a client). The next `fill_puppet_slots` resets it.
-- On the host a remote player stays a gamepad (stick aim depends on it), and the type is not sent.
-  The host and the other clients therefore draw a keyboard player's page arrows as trigger glyphs.
+- The other machines learn the type from `INPUT` and section `input_types` (next section).
+
+### Key hints of other players
+
+`sync/input_types.gd`, the `CoopService` and `Utils` extensions. The game reads one type per slot,
+`connected_players[p][1]`, for two things: aim (`Utils.is_player_using_gamepad`: the right stick,
+`weapon.gd`'s rotation) and the UI (`CoopService.get_player_input_type`: `Carousel`'s triggers or
+arrows, `InputIcon`, `CoopShopHint`, `CoopShowCharacterHint`). A remote slot must stay a gamepad for
+aim (its client sends mouse aim as the stick), so the two are split:
+
+- The `Utils` extension answers `is_player_using_gamepad` in co-op from the slot's own type
+  (`CoopService.bt_slot_uses_gamepad`), which never changes for a virtual device.
+- The `CoopService` extension answers `get_player_input_type` (and through it
+  `is_player_using_gamepad`) with the type the hints should show. Host: `bt_device_types`, remote
+  device -> the type from its `INPUT` flags ([Remote input](#remote-input)). Client: `bt_slot_types`
+  from section `input_types` for the other slots, and `VirtualDevices.local_player_type()` for its
+  own slot (`bt_own_slot`). Anywhere else, and before anything arrived, the slot's own type.
+- Section `input_types` is `{types}` (per slot) with `you` patched in per peer. The key covers the
+  slots, the reported types and the peers' devices. It is active while there are slots, and a
+  client drops what it has on a null body and on `lobby_left`.
+- A changed type emits `CoopService.bt_input_types_changed(player)`. `InputTypes` then finds that
+  player's open panels (`CoopShopPlayerContainer`, `CoopUpgradesUIPlayerContainer`,
+  `EndRunPlayerContainer`, not inside `Node2D`s) and runs `LocalPanel.refresh_player_type` and the
+  panel's `_set_focus_neighbours` on them, as for the own panel above. A client's own slot never
+  emits: `LocalPanel` follows it.
+- Game bug: the `InputIcon`s inside a panel (the shop items' lock and ban keys, the level-up ban
+  key) stay on player 0, so every panel showed the first player's keys. The extensions of the three
+  panel scripts call `InputTypes.adopt` in `_ready`, which gives them (and `CoopShopHint`s) the
+  panel's player.
+
+`input_hint_tests.gd` (suite `input_hints`) checks a keyboard client's shop and level-up panels on
+the host and on another client, switches both ways, and the `INPUT` round trip. It names no game
+class: naming `CoopShopHint` in a script that is preloaded at init makes two of the game's hint
+scripts fail to parse when the shop loads.
 
 **Mouse.**
 
@@ -1486,8 +1523,8 @@ would otherwise read and save the host's DLC), `InputSync.local_input_blocked` i
 This ends before the first message from a screen of the host is read. `Session.host_message` is
 emitted right before `message`, as its own signal because of the signal order. `_is_host_screen` is
 true for `BATTLE_START` and for any non-null `STATE` except `menu` with the title kind,
-`menu_grids`, `cursors` and `scrolls` (those follow a `menu` of the same screen). Then the DLC is
-borrowed again, before any run state or grid is decoded, and input goes to the host.
+`menu_grids`, `cursors`, `scrolls` (those follow a `menu` of the same screen) and `input_types`.
+Then the DLC is borrowed again, before any run state or grid is decoded, and input goes to the host.
 
 ### Page "Online co-op"
 
@@ -1907,13 +1944,14 @@ As of 2026-11-19, protocol 30.
 - After a combine on the level-up panels the client's cursor keeps its slot where the host's copy
   jumps to the new weapon, until the next `UPGRADE_FOCUS`.
 - A key tap shorter than a physics frame is lost while a panel is up (held state is polled).
-- A keyboard player's page arrows show as trigger glyphs on the other machines.
 
 **Selection screens and end of run**
 
 - The cursor makes the round trip through the host (no local panel).
 - Item-set requirements are evaluated with this machine's sets.
 - The end of run shows the host's unlocked rewards.
+- The weapon selection's "show character" hint (`CoopShowCharacterHint`) shows the device types
+  as they were when the screen opened.
 
 **Lobby and menus**
 

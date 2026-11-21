@@ -8,6 +8,10 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Shop, level-up and end-of-run panels show each player's key hints for the device that player
+  really uses, for everyone: online players on keyboard and mouse no longer get controller buttons,
+  and the hints follow a switch between pad and keyboard. The lock and ban keys on shop items now
+  show the panel's own player's keys.
 - Small wording changes in the lobby page and the client's status line.
 - The host's log says what a client's slowest frame was spent on, to track down hitches at the
   start of later waves.

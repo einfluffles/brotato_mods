@@ -3,6 +3,7 @@ extends "res://singletons/coop_service.gd"
 # rewritten whenever the slots or the players' picks from the palette change. Nothing is saved.
 
 signal bt_player_colors_changed
+signal bt_input_types_changed(player_index)  # the type that player's key hints show
 
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
@@ -20,6 +21,12 @@ var bt_slot_colors := []  # slot -> palette index currently in player_colors
 # Client's copy of the host's character selection: the host's hold-to-join progress (null:
 # this machine's own).
 var bt_remote_progress = null
+# The type a player's key hints show (get_player_input_type) where it is not the slot's own,
+# which aim goes by (bt_slot_uses_gamepad). Host: remote device -> the type its client reports.
+# Client: player slot -> the host's word for it; bt_own_slot shows this machine's device.
+var bt_device_types := {}
+var bt_slot_types := {}
+var bt_own_slot := -1
 var _bt_picks := {}  # remapped device -> picked palette index
 var _bt_remote := []  # client of a lobby: the host's slot colours (palette indices)
 
@@ -29,11 +36,62 @@ func _ready() -> void:
 
 
 # The game would type a remote player's virtual device as keyboard (no joypad name); as a
-# gamepad, stick aim and gamepad UI hints apply.
+# gamepad, stick aim applies. Its key hints follow bt_device_types.
 func _add_player(device: int, player_type: int) -> void:
 	if VirtualDevices.is_virtual(device):
 		player_type = PlayerType.GAMEPAD_XBOX
 	._add_player(device, player_type)
+
+
+func get_player_input_type(player_index: int) -> int:
+	if player_index == bt_own_slot:
+		return VirtualDevices.local_player_type()
+	if bt_slot_types.has(player_index):
+		return bt_slot_types[player_index]
+	var player: Array = connected_players[player_index]
+	return bt_device_types.get(player[0], player[1])
+
+
+# is_player_using_gamepad by the slot's own type, for Utils: aim and the right stick.
+func bt_slot_uses_gamepad(player_index: int) -> bool:
+	if force_gamepad:
+		return true
+	if player_index < 0 or player_index >= connected_players.size():
+		return false
+	return connected_players[player_index][1] != PlayerType.KEYBOARD_AND_MOUSE
+
+
+# Host: the type a remote player's client says it uses (INPUT).
+func bt_set_device_type(device: int, player_type: int) -> void:
+	if bt_device_types.get(device, -1) == player_type:
+		return
+	bt_device_types[device] = player_type
+	for p in connected_players.size():
+		if connected_players[p][0] == device:
+			emit_signal("bt_input_types_changed", p)
+
+
+# Client: the host's types of the other slots (slot -> type) and the own slot (-1: none).
+func bt_set_slot_types(types: Dictionary, own_slot: int) -> void:
+	var before := _bt_hint_types()
+	bt_slot_types = types
+	bt_own_slot = own_slot
+	var after := _bt_hint_types()
+	for p in after.size():
+		if before[p] != after[p]:
+			emit_signal("bt_input_types_changed", p)
+
+
+func bt_clear_input_types() -> void:
+	bt_device_types.clear()
+	bt_set_slot_types({}, -1)
+
+
+func _bt_hint_types() -> Array:
+	var types := []
+	for p in connected_players.size():
+		types.append(get_player_input_type(p))
+	return types
 
 
 func _update_connection_progress() -> void:
