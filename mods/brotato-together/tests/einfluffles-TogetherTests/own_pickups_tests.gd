@@ -158,8 +158,11 @@ func _test_gold_rule(main: Node, player: Node):
 		var at: Vector2 = center + Vector2(0, attract[1] + OwnPickups.item_extents(gold).y + edge)
 		gold.global_position = at
 		gold.push_back_destination = at
-		for _i in ATTRACT_TICKS:
+		# Inside: until it is taken (its flight speeds up from 0, a busy machine's ticks vary).
+		for _i in ATTRACT_TICKS * (3 if edge < 0 else 1):
 			yield(_t.get_tree(), "physics_frame")
+			if edge < 0 and not gold in main.get("_active_golds"):
+				break
 		var gone: bool = not gold in main.get("_active_golds")
 		if not gone:
 			gold.pickup(-1)  # nobody's: main pools it
