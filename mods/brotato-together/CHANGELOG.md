@@ -10,6 +10,8 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+## 2026-11-21 13:43 UTC
+
 - Shop, level-up and end-of-run panels show each player's key hints for the device that player
   really uses, for everyone: online players on keyboard and mouse no longer get controller buttons,
   and the hints follow a switch between pad and keyboard. The lock and ban keys on shop items now
