@@ -28,6 +28,8 @@ var _player_index := -1
 var _hover_pos := Vector2.ZERO
 var _hover_pending := false
 var _held_device := -1  # the device whose accept a mouse press stands for, until released
+var _near_on = null  # the control the last hover was on, or whose open popup (or the gap to it)
+var _closed_on = null  # the cursor's control whose popup the mouse closed by leaving it
 
 
 func set_own(panel: Control, emulator: Node, player_index: int) -> void:
@@ -35,6 +37,8 @@ func set_own(panel: Control, emulator: Node, player_index: int) -> void:
 	_emulator = emulator
 	_player_index = player_index if panel != null else -1
 	_hover_pending = false
+	_near_on = null
+	_closed_on = null
 	if panel != null:
 		_set_player_type(VirtualDevices.local_player_type())
 
@@ -65,16 +69,17 @@ func _input(event: InputEvent) -> void:
 	var left: bool = event is InputEventMouseButton and event.button_index == BUTTON_LEFT
 	if left and not event.pressed:
 		_release()  # wherever the pointer is by now
+	if event is InputEventMouseMotion and has_own():
+		# Resolved once per frame: a mouse can send many motion events in one. Also off the
+		# panels, where leaving an item's popup closes it.
+		_hover_pos = event.position
+		_hover_pending = true
 	if not _over_panels(event.position):
 		return
 	get_tree().set_input_as_handled()
 	if not has_own():
 		return
-	if event is InputEventMouseMotion:
-		# Resolved once per frame: a mouse can send many motion events in one.
-		_hover_pos = event.position
-		_hover_pending = true
-	elif left and event.pressed:
+	if left and event.pressed:
 		_hover_pending = false
 		var control := control_at(_cursor_root(), event.position)
 		if control != null:
@@ -87,9 +92,27 @@ func _process(_delta: float) -> void:
 	_hover_pending = false
 	if blocked or hold_cursor or not has_own():
 		return
-	var control := control_at(_cursor_root(), _hover_pos)
-	if control != null and _emulator.focused_control != control:
+	var root := _cursor_root()
+	var control := control_at(root, _hover_pos)
+	var focused: Control = _emulator.focused_control
+	if control == null:
+		var popup = _open_popup(_own, focused) if root == _own else null
+		var near: bool = popup != null and _near_popup(popup, focused, _hover_pos)
+		if popup != null and not near and _near_on == focused:
+			# Only the popup goes (the game's mouse_exited unfocuses the item too): the cursor
+			# and the shop's focused item, which its lock, steal and ban keys act on, stay.
+			popup.hide()
+			_closed_on = focused
+		_near_on = focused if near else null
+		return
+	_near_on = control
+	if focused != control:
+		_closed_on = null
 		_emulator.focused_control = control  # the setter emits the focus signals as this player
+	elif control == _closed_on:
+		_closed_on = null
+		if _open_popup(_own, control) == null:
+			FocusEmulatorSignal.emit(control, "focus_entered", _player_index)  # shown again
 
 
 # Through the own emulator, so the press belongs to the own player: a native GUI press has no
@@ -126,6 +149,26 @@ func _cursor_root() -> Control:
 	return _own
 
 
+# The shown item popup that belongs to control (its attachment), one that did not take the cursor.
+static func _open_popup(node: Node, control: Control) -> ItemPopup:
+	if control == null or (node is CanvasItem and not node.visible):
+		return null
+	if node is ItemPopup:
+		if node._attachment == control and not node._focused:
+			return node as ItemPopup
+		return null
+	for child in node.get_children():
+		var found := _open_popup(child, control)
+		if found != null:
+			return found
+	return null
+
+
+# On the popup, on its item or in the gap the game leaves between them (BasePopup.DIST).
+static func _near_popup(popup: Control, item: Control, pos: Vector2) -> bool:
+	return _rect(popup).has_point(pos) or _rect(item, BasePopup.DIST).has_point(pos)
+
+
 # What the emulator could focus at pos (viewport coordinates), not what the GUI would hit:
 # CoopUpgradesUIPlayerContainer has a Control that stops the mouse over all of its content.
 static func control_at(panel: Control, pos: Vector2) -> Control:
@@ -160,8 +203,9 @@ static func _is_focusable(control: Control) -> bool:
 
 
 # In viewport coordinates, like the positions of the events _input gets.
-static func _rect(control: Control) -> Rect2:
-	return control.get_global_transform_with_canvas().xform(Rect2(Vector2.ZERO, control.rect_size))
+static func _rect(control: Control, margin := 0.0) -> Rect2:
+	var local := Rect2(Vector2.ZERO, control.rect_size).grow(margin)
+	return control.get_global_transform_with_canvas().xform(local)
 
 
 func _over_panels(pos: Vector2) -> bool:

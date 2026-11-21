@@ -738,6 +738,7 @@ func _client_keyboard_mouse(emulator: Node):
 	yield(_mouse(hovered, "move"), "completed")
 	_t._check(emulator.focused_control == hovered, "mouse hover moves the own shop cursor")
 	yield(_popups.cover(self, emulator, own, hovered), "completed")
+	yield(_popups.leave(self, emulator, own, hovered), "completed")
 	var other_emulator = Utils.get_focus_emulator(REMOTE, shop)
 	var other_cursor = other_emulator.focused_control
 	var other_button: Control = _node(REMOTE, _pick(REMOTE))._button

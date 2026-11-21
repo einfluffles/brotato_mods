@@ -14,6 +14,7 @@ upload; three of them are marked where the upload may have differed.
 - Clients prepare the wave's enemies while the battle loads, instead of stuttering when they first
   appear in later waves.
 - No more `Can't call non-static function 'duplicate'` error in the game's log at startup.
+- Shop and level-up panels on a client: an item's details close when the mouse moves out of them.
 
 ## 2026-11-18 14:51
 

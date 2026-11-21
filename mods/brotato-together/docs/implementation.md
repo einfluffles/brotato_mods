@@ -1224,6 +1224,11 @@ container's `_set_focus_neighbours` and moves a cursor that sat on an arrow that
   under the pointer, the last in tree order, with clipping parents cutting their children. An open
   `ItemPopup` covers the controls below it, so hovering its description does not move the cursor or
   click the item underneath.
+- Motion from the cursor's item or its open popup (or the `BasePopup.DIST` gap between them) to
+  where no control is hit closes that popup, also off the panels. Only the popup is hidden: the
+  cursor and the shop's focused item (lock, steal and ban keys) stay, where the game's
+  `mouse_exited` unfocuses the item. Hovering the item again re-emits its `focus_entered`. A popup
+  the cursor keys opened stays while the mouse moves in empty space.
 - A popup that took the cursor (`ItemPopup._focused`, the crate weapon popup) keeps the mouse too:
   only its own buttons are hit.
 - A mouse press stands for an accept that is held until the button comes up. `LocalPanel` then
@@ -1835,7 +1840,8 @@ As of 2026-11-19, protocol 30.
 
 **Shop and level-up panels**
 
-- The host and the other clients do not see the own panel's focused inventory popup.
+- The host and the other clients do not see the own panel's focused inventory popup. They still
+  show an item popup the mouse closed on the client while the cursor stays on its item.
 - The client's hold-to-ban depends on its own `chal_banned_items` unlock. Hold-to-ban has no mouse
   path in co-op, and a mouse click on Ban counts as a full hold (`button_up` is never emitted
   through an emulator).
