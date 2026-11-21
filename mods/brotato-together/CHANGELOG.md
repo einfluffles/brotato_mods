@@ -15,6 +15,10 @@ upload; three of them are marked where the upload may have differed.
   appear in later waves.
 - No more `Can't call non-static function 'duplicate'` error in the game's log at startup.
 - Shop and level-up panels on a client: an item's details close when the mouse moves out of them.
+- On a client, other players block you right away instead of letting you walk through them and
+  pulling you back.
+- On a client with a screen faster than 60 Hz, your character and the camera move smoothly
+  together; at the edge of the map your character no longer shakes.
 
 ## 2026-11-18 14:51
 

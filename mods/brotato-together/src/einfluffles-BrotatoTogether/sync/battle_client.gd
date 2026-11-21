@@ -36,6 +36,7 @@ const RenderDelay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sy
 const OwnPickups := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/own_pickups.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
 const WarmPools := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/warm_pools.gd")
+const OwnView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/own_view.gd")
 const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
 )
@@ -120,6 +121,7 @@ var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppet
 var _render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
 var _snapshot_gaps = StreamGaps.new("snapshot")  # stalls of the host's snapshots, for the log
 var _pickups = OwnPickups.new()  # consumables the own player picks up
+var _view = OwnView.new()  # other players' blockers, the own player's drawn position, the camera
 var _warm = WarmPools.new()  # puppets made while the battle scene loads; kept across battles
 
 
@@ -302,6 +304,7 @@ func _reset_battle_state() -> void:
 	_render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
 	_snapshot_gaps.reset()
 	_pickups = OwnPickups.new()
+	_view = OwnView.new()
 
 
 func _on_node_added(node: Node) -> void:
@@ -369,8 +372,8 @@ func _freeze(main: Node) -> void:
 			if timer is Timer:
 				timer.stop()
 	for player in main.get("_players"):
-		PuppetEntity.puppetize(player)
-		player.collision_mask = BattleScene.OBSTACLES  # no layer: nothing runs into a puppet
+		PuppetEntity.puppetize(player)  # no layer: nothing runs into a puppet
+	_view.setup(main)  # the prediction's mask, the other players' blockers, the camera
 	# On a bullet-hell wave main._ready adds its own generator (a random pattern); the host's
 	# bullets arrive as puppets.
 	var enemy_projectiles = main.get("_enemy_projectiles")
@@ -468,6 +471,7 @@ func _process(delta: float) -> void:
 		alpha = clamp((render_t - from.t) / float(to.t - from.t), 0.0, 1.0)
 	interp_lag_msec = int(_buffer[-1].t - render_t)
 	_apply_players(from, to, alpha, _buffer[-1], delta)
+	_view.draw(_main.get("_players"), _you if _own_base_t >= 0 else -1, _own_display, delta)
 	var players_done := OS.get_ticks_usec()
 	_apply_entities(from, to, alpha)
 	var entities_done := OS.get_ticks_usec()
@@ -489,6 +493,7 @@ func _apply_players(
 	from: Dictionary, to: Dictionary, alpha: float, newest: Dictionary, delta: float
 ) -> void:
 	var players: Array = _main.get("_players")
+	_view.place(players, newest, _you)  # before the prediction runs into them
 	for i in min(players.size(), to.players.size()):
 		var player = players[i]
 		BattleScene.apply_speed(player, newest.players[i])  # before the prediction reads it
@@ -533,9 +538,11 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 			_own_error.length(), late, ClientReport.unacked(history, ack), player.get_move_speed()
 		)
 	_own_base_t = newest.t
-	_own_seq = history[-1][0] if not history.empty() else 0
 	_own_error *= exp(-delta * PREDICTION_ERROR_DECAY)
+	var seq: int = history[-1][0] if not history.empty() else 0
+	_view.note_display(_own_display, predicted + _own_error, seq - _own_seq, _predicting())
 	_own_display = predicted + _own_error
+	_own_seq = seq
 	_move(player, "p%s" % i, _own_display)
 
 

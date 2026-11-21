@@ -8,6 +8,7 @@ const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/p
 const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/snapshot_tests.gd")
+const OwnViewTests := preload("res://mods-unpacked/einfluffles-TogetherTests/own_view_tests.gd")
 const PF := Snapshot.PlayerField
 const SLOW := -100  # bonus_speed of the slowed host player
 const SNAPSHOTS_EACH := 10  # recorded before and after the break
@@ -16,11 +17,13 @@ const WALKER := 1  # the host player walked into the holes
 const WALK_STEPS := 40  # physics ticks: far past a hole's edge from WALK_START
 const WALK_START := 180.0  # px beside a hole's center (its capsule reaches 105, a player 24 more)
 const WALK_ANGLE := 0.3  # rad off the hole's center: the player slides along it
+const BUMP_ANGLE := 0.1  # rad off the other player's center: 18 px of the 48 their bodies need
 # px from other holes and players: a walk only reaches the hole it is meant for (it starts
 # WALK_START from it and heads for it, another hole reaches 105 + 24 px towards it)
 const ROOM := 350.0
 
 var _t: Node
+var _own_view = OwnViewTests.new()  # kept alive across its yields
 
 
 class FakePlayer:
@@ -203,7 +206,11 @@ func _test_battle(together: Node):
 	yield(_record(host, recorded), "completed")
 	var walks := []
 	for hole in [layout_hole, stomp_at]:
-		walks.append(yield(_host_walk(main, hole), "completed"))
+		walks.append(yield(_host_walk(main, hole, WALK_ANGLE, "hole"), "completed"))
+	var standing := _clear_spot(main)  # player 0 stands there, WALKER runs into it
+	host_player.global_position = standing
+	walks.append(yield(_host_walk(main, standing, BUMP_ANGLE, "other player"), "completed"))
+	OwnViewTests.check_host_camera(_t, main)
 	var weapon_count: int = host_player.current_weapons.size()
 	var broken_slot: int = weapon_count - 2  # the first one added: a neighbour on each side
 	host_player.on_weapon_wanted_to_break(host_player.current_weapons[broken_slot], 0)
@@ -278,14 +285,14 @@ func _room(main: Node, position: Vector2) -> float:
 	return room
 
 
-# The host's own physics walks WALKER into the hole from WALK_START beside it, a tick per input:
-# [start, direction, position after every tick].
-func _host_walk(main: Node, hole: Vector2):
+# The host's own physics walks WALKER into what stands at `hole` from WALK_START beside it, a tick
+# per input: [start, direction, position after every tick].
+func _host_walk(main: Node, hole: Vector2, angle: float, what: String):
 	var player: Node = main.get("_players")[WALKER]
 	var middle: Vector2 = ZoneService.get_current_zone_rect().get_center()
 	var side := Vector2.LEFT if hole.x > middle.x else Vector2.RIGHT  # from the map's middle
 	var walk := Walk.new()
-	walk.direction = -side.rotated(WALK_ANGLE)
+	walk.direction = -side.rotated(angle)
 	var saved = player._current_movement_behavior
 	var start := hole + side * WALK_START
 	yield(_t.get_tree(), "idle_frame")  # not between a physics_frame and its tick
@@ -300,7 +307,7 @@ func _host_walk(main: Node, hole: Vector2):
 	var straight: Vector2 = start + walk.direction * step * WALK_STEPS
 	_t._check(
 		path[0] == start and path[-1].distance_to(straight) > 30.0,
-		"the hole stops the host's player (%.0f px short)" % path[-1].distance_to(straight)
+		"the %s stops the host's player (%.0f px short)" % [what, path[-1].distance_to(straight)]
 	)
 	var direction := walk.direction
 	walk.free()
@@ -419,7 +426,9 @@ func _client_from_start(
 	_t._check(aim_ok, "every weapon after the broken one aims like its host weapon")
 	_check_full_slots(main.get("_players")[1], start, last.players[1])
 	_test_prediction_speed(client, player, last.players[0], walks[0][0])
-	_test_hole_walks(client, main, stomp_at, walks, last.players[WALKER])
+	_test_hole_walks(client, main, stomp_at, walks.slice(0, 1), last.players[WALKER])
+	_test_bump(client, main, walks[2], last.players[WALKER])
+	yield(_own_view.test_client(_t, client, WALKER), "completed")
 	client._leave_battle()
 	Puppet.set_active(false)
 
@@ -438,6 +447,7 @@ func _test_hole_walks(
 	var input_sync: Node = client.input_sync
 	var saved: Array = input_sync.history
 	client._newest_rx_msec = OS.get_ticks_msec()
+	client._view.place(main.get("_players"), client._buffer[-1], WALKER)  # the one it predicts
 	for k in walks.size():
 		var walk: Array = walks[k]
 		var host_entry := entry.duplicate()
@@ -457,6 +467,38 @@ func _test_hole_walks(
 				% [["layout", "single"][k], worst]
 			)
 		)
+	input_sync.history = saved
+
+
+# The host's WALKER ran into player 0 standing; the client's prediction of that walk runs into
+# player 0 where the newest snapshot has it. Without the blocker it would walk through.
+func _test_bump(client: Node, main: Node, walk: Array, entry: Array) -> void:
+	var players: Array = main.get("_players")
+	var player: Node = players[WALKER]
+	var input_sync: Node = client.input_sync
+	var saved: Array = input_sync.history
+	client._newest_rx_msec = OS.get_ticks_msec()
+	var host_entry := entry.duplicate()
+	host_entry[PF.POSITION] = walk[0]
+	host_entry[PF.INPUT_ACK] = 0
+	var worst := 0.0
+	var through := INF
+	for steps in [WALK_STEPS / 2, WALK_STEPS]:
+		input_sync.history = []
+		for seq in range(1, steps + 1):
+			input_sync.history.append([seq, walk[1]])
+		client._view.place(players, client._buffer[-1], WALKER)
+		var predicted: Vector2 = client._own_target(player, host_entry)
+		worst = max(worst, predicted.distance_to(walk[2][steps]))
+		client._view.place(players, {"players": []}, WALKER)
+		through = min(through, client._own_target(player, host_entry).distance_to(walk[2][steps]))
+	_t._check(
+		worst < 0.1 and through > 10.0,
+		(
+			"prediction into another player ends where the host's player did (off by %.2f px, "
+			+ "%.0f px without its blocker)"
+		) % [worst, through]
+	)
 	input_sync.history = saved
 
 
@@ -514,6 +556,7 @@ func _test_prediction_speed(client: Node, player: Node, entry: Array, clear: Vec
 	host_entry[PF.POSITION] = clear
 	host_entry[PF.INPUT_ACK] = 0
 	client._newest_rx_msec = OS.get_ticks_msec()
+	client._view.place([], {"players": []}, 0)  # no other player in the way
 	var lead: float = client._own_target(player, host_entry).distance_to(clear)
 	var step := float(host_speed) / Engine.iterations_per_second
 	_t._check(abs(lead - step) < 0.01, "prediction steps %.2f px per input (host %.2f)" % [lead, step])

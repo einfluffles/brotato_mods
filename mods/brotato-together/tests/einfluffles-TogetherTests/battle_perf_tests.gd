@@ -44,6 +44,7 @@ func test_prediction(client: Node, input_sync: Node, player: Node2D, entry: Arra
 	var saved: Array = input_sync.history
 	input_sync.history = history
 	client._newest_rx_msec = OS.get_ticks_msec()
+	client._view.place([], {"players": []}, client._you)  # no other player in the way
 	var step: float = player.get_move_speed() / float(Engine.iterations_per_second)
 	var lead: float = client._own_target(player, host_entry).distance_to(entry[PF.POSITION])
 	_t._check(

@@ -711,10 +711,10 @@ The client's explosion puppet never runs `start_explosion`, so the fire puddle a
 - **Single holes** (`BrachiosaurusFoot._stomp` calls `GPESpawner.spawn_single_hole_at_position`) are
   static snapshot entities (`BattleScene.spawned_holes`). The client's puppet goes into
   `_gpe_container` and keeps its body.
-- **Holes block the prediction.** The client's players keep `collision_mask` = obstacles (layer 8:
-  holes and the map's limits) and have no layer of their own. Every replayed input is one
-  `Unit._physics_process` tick (`BattleScene.step`: `body_test_motion` from the predicted position,
-  then the slide).
+- **Holes block the prediction.** The client's players get `collision_mask` = obstacles (layer 8:
+  holes and the map's limits) plus the blockers' layer (below) and have no layer of their own. Every
+  replayed input is one `Unit._physics_process` tick (`BattleScene.step`: `body_test_motion` from
+  the predicted position, then the slide).
 - **Weapons during a wave.** The only way the game changes a player's weapon nodes mid-wave is
   `Player.on_weapon_wanted_to_break` (the brick's `break_on_hit`). The host remembers the instance
   ids of each player's weapons at wave start. Once a player has fewer, every snapshot carries its
@@ -863,9 +863,33 @@ stick. On the host a `Utils` extension answers `is_manual_aim` for virtual devic
 
 `BattleClient._predict_own`. The client shows its own player at the host's last position plus one
 step per input the host has not acked, at most 45 inputs (`MAX_REPLAY_INPUTS`, 0.75 s). Steps go
-through `BattleScene.step`, so holes and the map's limits block them. When the host disagrees, the
-difference is blended out at 12/s (`PREDICTION_ERROR_DECAY`). The steps of inputs sent since the
-last frame are motion, not a correction.
+through `BattleScene.step`, so holes, the map's limits and other players block them. When the host
+disagrees, the difference is blended out at 12/s (`PREDICTION_ERROR_DECAY`). The steps of inputs
+sent since the last frame are motion, not a correction.
+
+`sync/own_view.gd` holds what moves with the own player, one instance per battle:
+
+- **Other players block it.** On the host every player is a kinematic body on layer 2 with layer 2
+  in its mask, so players stop each other (`test_motion` counts kinematic and static bodies). The
+  client's puppets have no layer. Instead each player gets a blocker, a `StaticBody2D` with a copy
+  of its body shape on layer 21 (`OwnView.BLOCKER_LAYER`, unused by the game). Every frame, before
+  the prediction runs, each other living player's blocker moves to that player's position in the
+  newest snapshot, not to its puppet. The puppet is drawn a render delay (100 ms or more) behind,
+  while the host applies this client's inputs against where the others are then, and the newest
+  snapshot is the closest the client knows. The newest snapshot also gives the replay's start, so
+  the two never overlap in it. The own player's blocker and dead players' blockers are off.
+- **Drawn every frame.** The prediction moves on inputs, one per physics tick (60 Hz), while the
+  puppets move every frame. On a faster screen the own player moved on some frames only and shook
+  against the background where the camera stood still (at the map's edge). It is drawn between its
+  last two ticks instead: a frame that took exactly one new input remembers how far it moved the
+  display (`jump`), and the player is drawn `(1 - Engine.get_physics_interpolation_fraction()) *
+  jump` short of it, a tick (16 ms) behind. `_own_display` itself stays the prediction: corrections
+  and pickups use it.
+- **Camera.** `MyCamera` moves a co-op camera in `_physics_process` (when it is snapped to one
+  player, in `_process`), towards the players' average. On a client both are off, and
+  `BattleClient._process` calls its `_process_internal(delta)` right after placing the players, so
+  the camera follows the positions drawn in that frame. Its lerp and snap are time based, so the
+  frame step changes nothing else. The host and single player keep the game's camera.
 
 Prediction is off, and the player stands at the host's position, in these cases:
 
