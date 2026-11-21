@@ -335,6 +335,11 @@ func _client_buy(popup):
 	_t.check(not popup._focused, "the popup closed")
 	_t.check(emulator.focused_control == node._button, "the cursor is back on the item")
 	_t.check(popup._trade_hint.visible, "its hint shows again")
+	_sync.local.set_paused(true)
+	yield(_t.get_tree().create_timer(0.15), "timeout")
+	yield(_key(KEY_T), "completed")
+	_t.check(not popup._focused, "while the host pauses the shop, T opens nothing")
+	_sync.local.set_paused(false)
 	yield(_pad(JOY_L3), "completed")
 	_t.check(
 		_glyph(popup) == Hotkey._icon("pad_xbox_view.png"), "a pad in the hand: the View glyph"

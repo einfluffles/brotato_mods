@@ -141,8 +141,9 @@ own:
 
 A key name or button the mod does not know falls back to the default (T, Back), and
 `modloader.log` says "Unknown trade_key ..." or "Unknown trade_joypad_button ...". Pick a key the
-game does not use: on an item that can be traded, the trade key opens the list in place of the
-game's own action for that key (for example `R`, which bans an item).
+game does not use. In local co-op and on the host, the trade key opens the list in place of the
+game's own action for that key (for example `R`, which bans an item). On a brotato:together client
+both happen: brotato:together reads the client's buttons directly, so the game's action runs too.
 
 ## Limitations
 

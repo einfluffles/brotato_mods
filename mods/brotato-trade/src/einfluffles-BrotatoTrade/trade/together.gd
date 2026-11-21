@@ -105,6 +105,11 @@ static func own_player(shop: Node) -> int:
 	var shop_sync = _shop_sync()
 	if shop_sync == null or not shop_sync.is_puppet_shop(shop):
 		return -1
+	# While the host pauses its shop, brotato:together parks the own panel's device: a list opened
+	# then could not be used until the host resumes. Read tolerantly (its internals may change).
+	var local = shop_sync.get("local")
+	if local != null and local.get("_paused") == true:
+		return -1
 	return shop_sync.own_player()
 
 
