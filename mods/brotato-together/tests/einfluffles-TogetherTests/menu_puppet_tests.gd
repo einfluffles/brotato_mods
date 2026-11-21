@@ -20,6 +20,9 @@ const OnlineLayoutTests := preload(
 const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
+const EndRunMouseTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/end_run_mouse_tests.gd"
+)
 const CHARACTERS := "character_selection"
 const WEAPONS := "weapon_selection"
 const DIFFICULTY := "difficulty_selection"
@@ -200,7 +203,7 @@ func _show(kind: String, state: Dictionary):
 		scene != null and scene != before and scene.filename == _menus.SCENES[kind],
 		"%s: it is the game's own scene" % kind
 	)
-	if scene != null:
+	if scene != null and kind != END_RUN:  # EndRunMouseTests
 		var glass: Node = scene.get_node_or_null(_menus.GLASS)
 		t._check(
 			glass != null and glass.get_index() == scene.get_child_count() - 1
@@ -507,6 +510,7 @@ func _client_end_run():
 	)
 	_menus._apply_pages(scene, [0, 1])
 	_cursors(END_RUN, scene)
+	yield(EndRunMouseTests.new().run(t, _menus, scene), "completed")
 	scene._on_NewRunButton_pressed()
 	scene._on_RestartButton_pressed()
 	scene._on_ExitButton_pressed()

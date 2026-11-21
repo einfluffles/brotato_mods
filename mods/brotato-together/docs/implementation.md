@@ -1396,7 +1396,9 @@ covers the co-op shop (`CoopShopPlayerContainer`), the level-up / crate panels
 called from the `FocusEmulator` extension's `_input`, scrolls the innermost `ScrollContainer` under
 the pointer in the mouse player's own panel and marks the event handled. The mouse player is the
 keyboard player (`KEYBOARD_REMAPPED_DEVICE_ID`) on the host and in local co-op, and `you` on a
-client's copy. A client's own shop or level-up panel scrolls in `LocalPanel`. On the host the game
+client's copy. The panels are the shop's, the level-up panels', the selection screens' and the end
+of run's (`CoopEndRun.player_containers`). A client's own shop or level-up panel scrolls in
+`LocalPanel`. On the host the game
 hides the pointer in co-op, so the wheel scrolls where the hidden pointer is.
 
 **Right stick.** The game scrolls each panel's description with that player's right stick
@@ -1443,8 +1445,31 @@ because `CharacterSelectionInventory.update_elements_color` reads this machine's
 `_go_back`; in character selection also `_on_BackButton_pressed`, `_on_coop_initialized` and
 `_on_ZoneSelectionButton_item_selected` (it writes `ProgressData.settings`).
 `CoopService.listening_for_inputs` is kept off (nobody joins on a client). At the end of run,
-`BaseEndRun._button_pressed = true` spends its three buttons. A full-rect control on top of the copy
-takes the mouse, and a control of the copy that gets the keyboard focus loses it in the same frame.
+`BaseEndRun._button_pressed = true` spends its three buttons. On the selection screens a full-rect
+control on top of the copy takes the mouse (the end of run: see below). A control of the copy that
+gets the keyboard focus loses it in the same frame.
+
+**Mouse at the end of run** (`sync/end_run_mouse.gd`). A node added as the copy's last child (after
+`FocusEmulator1..4`, so its `_input` runs first) is the mouse for looking, as on the host:
+
+- Every mouse event but the wheel is marked handled, so the copy's own controls never get one:
+  restart, new run, exit, the inventories' sort buttons. Nothing is sent and no cursor moves.
+- Hovering an item (weapons, items, the progress rewards) or a stat of any panel shows that
+  player's popup, the progress rewards the own player's. Items go through
+  `ItemPopup.display_element`, not `PopupManager._on_element_hovered`, which grabs the focus (a
+  cursor would follow). Stats get `mouse_entered` / `mouse_exited` on their label through
+  `FocusEmulatorSignal`, which names the player. The popup stays while the mouse is on it or in
+  the gap to it. When the mouse leaves, the popup of that player's cursor shows again.
+- A click on a carousel arrow turns that panel's page here only, through the `index` setter
+  without `index_changed` (the container would move the cursor). A popup whose control the page
+  took away closes. A page turned here stays until the host's page of that panel changes
+  (`MenuPuppet._apply_pages` applies a page only when it differs from the last one received). A
+  key or pad press brings the own panel back to the host's page, where its cursor moves.
+- The wheel goes on to the emulators (`WheelScroll`, the own panel). The end of run has no
+  scroll mirror, so it stays local.
+- Nothing is handled while the lobby popup is open (`InputSync.local_input_blocked`).
+- The script is loaded when the copy is ready, not preloaded: compiling its game classes at mod
+  init broke the shop hints' scripts (`coop_ban_shop_hint.gd` parse errors).
 
 **Applied from every state:**
 
@@ -1456,7 +1481,8 @@ takes the mouse, and a control of the copy that gets the keyboard focus loses it
   `_set_selected_element`, which ends the screen.
 - Zone, background and endless, without the scene's handlers.
 - The join progress, through the `CoopService` extension (`bt_remote_progress`).
-- Pick counts and end-of-run carousel pages.
+- Pick counts and end-of-run carousel pages (a page changes only when the host's page does, see
+  above).
 - `character_shown`: `WeaponSelection._input` switches a panel to the player's character while
   `ui_info` is held. The copy makes the same calls when the state differs from what its panel
   shows. The host reads the value off its panels (`MenuSync.shows_character`).

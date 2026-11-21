@@ -163,6 +163,7 @@ func _ready() -> void:
 	menu_puppet.state_stream = state_stream
 	menu_puppet.setup(session)
 	input_sync.menu_puppet = menu_puppet
+	menu_puppet.input_sync = input_sync
 
 	ui_sounds = _add("sync/ui_sounds.gd", "UiSounds")
 	ui_sounds.setup(session)

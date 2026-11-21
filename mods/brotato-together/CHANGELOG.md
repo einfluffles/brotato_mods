@@ -16,6 +16,10 @@ upload; three of them are marked where the upload may have differed.
 - Co-op shop, level-up and end-of-run panels: an item's details open right against the item, with
   no gap over the next item, so a client's mouse can move straight from a shop item into its
   details.
+- End-of-run screen on a client: the mouse works for looking. Hover an item or a stat for its
+  details, click the arrows to turn a panel's page, scroll your own panel with the wheel. Restart,
+  new run and exit stay with the host. On the host, the wheel now scrolls the keyboard player's
+  panel there too.
 
 ## 2026-11-21 13:43 UTC
 
