@@ -9,6 +9,7 @@ const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
+const LOG_NAME := "einfluffles-BrotatoTogether:BattleClient"
 const PREPARED_META := "brotato_together_prepared"  # scene path, until a battle takes the node
 const ENEMIES := 6  # per enemy type no earlier battle used any of
 const EXPLOSIONS := 4  # likewise per explosion scene
@@ -110,6 +111,8 @@ func fill(client: Node, main: Node, types: Dictionary) -> int:
 		if count > 0:
 			_prepared[path] = count
 			made += count
+	if made > 0:
+		ModLoaderLog.info("Prepared %d puppets and effects for the battle" % made, LOG_NAME)
 	return made
 
 

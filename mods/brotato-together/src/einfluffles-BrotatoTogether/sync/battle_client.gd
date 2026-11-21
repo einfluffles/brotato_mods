@@ -332,9 +332,7 @@ func _on_battle_scene_ready(main: Node) -> void:
 		_pickups.set_gold_sounds(main)
 		if _queued_start.empty():  # else the next battle's scene replaces this one at once
 			started = OS.get_ticks_usec()
-			var made: int = _warm.fill(self, main, _types)
-			if made > 0:
-				ModLoaderLog.info("Prepared %d puppets and effects for the battle" % made, LOG_NAME)
+			_warm.fill(self, main, _types)
 			ClientReport.mark(ClientReport.Mark.PUPPET_SETUP, OS.get_ticks_usec() - started)
 		# The next screen can replace the scene without a BATTLE_END (the shop was faster).
 		main.connect("tree_exited", self, "_on_battle_scene_exited", [_main_id], CONNECT_ONESHOT)
