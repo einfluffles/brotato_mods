@@ -1,8 +1,9 @@
 extends Reference
 # Suite wave_start: the start of a late endless wave with a build of structures and rocket
 # launchers, played by the real game on the host and replayed on a client in real time. Prints
-# what the client's mirror spends its frames on and what each freshly instanced puppet costs.
-# Headless: no rendering, and the times are this machine's, so compare them with each other.
+# what the client's mirror spends its frames on, the whole frames around it, and what each freshly
+# instanced puppet costs. Headless there is no rendering or audio, and the times are always this
+# machine's, so compare them with each other.
 
 const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
@@ -145,7 +146,13 @@ func _mirror_frame(client: Node, report: Node, replay_start: int, last_usec: int
 	var fresh := []
 	for k in range(fresh_before, report.fresh_log.size()):
 		fresh.append(report.fresh_log[k])
-	return {"at": OS.get_ticks_msec() - replay_start, "usec": usec, "phases": phases, "fresh": fresh}
+	return {
+		"at": OS.get_ticks_msec() - replay_start,
+		"usec": usec,
+		"frame": started - last_usec,  # the frame before: this mirror's and the rest of it
+		"phases": phases,
+		"fresh": fresh,
+	}
 
 
 func _print_frames(frames: Array) -> void:
@@ -166,6 +173,12 @@ func _print_frames(frames: Array) -> void:
 			slow[1], SLOW_MIRROR_MSEC[1]
 		]
 	)
+	var whole := frames.duplicate()
+	whole.sort_custom(self, "_longer")
+	var longest := []
+	for frame in whole.slice(0, min(TOP_FRAMES, whole.size()) - 1):
+		longest.append("%.1f ms at %.2f s" % [frame.frame / 1000.0, frame.at / 1000.0])
+	print("  info: longest whole frames (the one before each mirror): %s" % [longest])
 	var worst := frames.duplicate()
 	worst.sort_custom(self, "_slower")
 	for frame in worst.slice(0, min(TOP_FRAMES, worst.size()) - 1):
@@ -212,6 +225,10 @@ func _print_scenes(fresh: Array) -> void:
 
 func _slower(a: Dictionary, b: Dictionary) -> bool:
 	return a.usec > b.usec
+
+
+func _longer(a: Dictionary, b: Dictionary) -> bool:
+	return a.frame > b.frame
 
 
 func _costlier(a: Array, b: Array) -> bool:
