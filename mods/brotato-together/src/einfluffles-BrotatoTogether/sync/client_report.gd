@@ -54,6 +54,7 @@ var session: Node = null
 var active := false  # a ready client: nothing is measured otherwise
 var test_client := false  # measure and keep what would be sent, without a session
 var sent := []  # the bodies kept while test_client
+var fresh_log = null  # an Array: [file, usec] of every fresh puppet appended (tests)
 var window_msec := WINDOW_MSEC
 var baseline_msec := BASELINE_MSEC
 # Host: what was logged.
@@ -123,6 +124,8 @@ static func fresh(file: String, usec: int) -> void:
 	var report = _active_report()
 	if report == null or report._window.empty():
 		return
+	if report.fresh_log != null:
+		report.fresh_log.append([file, usec])
 	var window: Dictionary = report._window
 	report._fresh += 1
 	window.fresh += 1

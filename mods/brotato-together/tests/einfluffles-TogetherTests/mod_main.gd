@@ -96,6 +96,9 @@ const TrafficTests := preload("res://mods-unpacked/einfluffles-TogetherTests/tra
 const ClientReportTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/client_report_tests.gd"
 )
+const WaveStartTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/wave_start_tests.gd"
+)
 const AxolotlTests := preload("res://mods-unpacked/einfluffles-TogetherTests/axolotl_tests.gd")
 const OwnPickupsTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/own_pickups_tests.gd"
@@ -144,6 +147,7 @@ const SUITES := [
 	"client_report",
 	"axolotl",
 	"own_pickups",
+	"wave_start",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -463,6 +467,12 @@ func _suite_axolotl(together: Node):
 func _suite_own_pickups(together: Node):
 	coop_run(3)
 	_suite = OwnPickupsTests.new(self)
+	yield(_suite.run(together), "completed")
+
+
+func _suite_wave_start(together: Node):
+	coop_run(WaveStartTests.WAVE)
+	_suite = WaveStartTests.new(self)
 	yield(_suite.run(together), "completed")
 
 
