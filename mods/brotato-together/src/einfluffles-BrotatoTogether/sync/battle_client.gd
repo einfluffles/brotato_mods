@@ -35,6 +35,7 @@ const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sy
 const RenderDelay := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/render_delay.gd")
 const OwnPickups := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/own_pickups.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
+const WarmPools := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/warm_pools.gd")
 const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
 )
@@ -119,6 +120,7 @@ var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppet
 var _render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
 var _snapshot_gaps = StreamGaps.new("snapshot")  # stalls of the host's snapshots, for the log
 var _pickups = OwnPickups.new()  # consumables the own player picks up
+var _warm = WarmPools.new()  # puppets made while the battle scene loads; kept across battles
 
 
 func setup(netplay_session: Node, local_input: Node) -> void:
@@ -252,6 +254,7 @@ func _leave_battle() -> void:
 
 func _on_lobby_left() -> void:
 	_reset_battle_state()
+	_warm = WarmPools.new()
 	if session.transport.was_host:
 		return  # the host's own run (and its co-op slots) goes on: see InputSync._on_lobby_left
 	Puppet.set_active(false)  # restores the client's own saved run (session/puppet.gd)
@@ -286,6 +289,9 @@ func _reset_battle_state() -> void:
 	if input_sync != null:
 		input_sync.set_host_paused("battle", false)
 	_events.clear()
+	for path in _feedback.fresh:
+		_warm.note_fresh(path, _feedback.fresh[path])
+	_warm.remember()
 	_feedback = FeedbackMirror.new()
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
@@ -318,6 +324,11 @@ func _on_battle_scene_ready(main: Node) -> void:
 		_battle_scene.client_scene_ready(main)
 		_main = main
 		_main_id = main.get_instance_id()
+		started = OS.get_ticks_usec()
+		var made: int = _warm.fill(self, main, _types)
+		if made > 0:
+			ModLoaderLog.info("Prepared %d puppets for the battle" % made, LOG_NAME)
+		ClientReport.mark(ClientReport.Mark.PUPPET_SETUP, OS.get_ticks_usec() - started)
 		# The next screen can replace the scene without a BATTLE_END (the shop was faster).
 		main.connect("tree_exited", self, "_on_battle_scene_exited", [_main_id], CONNECT_ONESHOT)
 		_set_paused(_paused)
@@ -819,6 +830,8 @@ func _spawn(type_idx: int) -> Node:
 	AnimMirror.detach_game_handlers(node)
 	if node != pooled:
 		ClientReport.fresh(scene.resource_path.get_file(), OS.get_ticks_usec() - started)
+		if node is Entity:
+			_warm.note_fresh(scene.resource_path)
 	return node
 
 

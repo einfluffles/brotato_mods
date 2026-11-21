@@ -19,6 +19,7 @@ const STATE_REPEAT := 4  # snapshots a state event is sent for after it changes
 const STATE_REFRESH := 15  # snapshots between resends, so a lost snapshot does not lose it
 const MAX_STAT_TEXTS := 16  # per snapshot (a build can add a stat with every kill)
 
+var fresh := {}  # scene path -> explosions instanced (not taken from main's pool)
 var _explosions := {}  # instance id -> animation position at the last capture
 var _picked := []  # [position, boost] of boosted gold picked up since the last capture
 var _stat_texts := []  # [player, stat, value] added (removed: negative) since the last capture
@@ -215,6 +216,7 @@ func explode(main: Node, scene, position: Vector2, scale: float, smoke: int) -> 
 	animation_player.play(EXPLODE_ANIMATION)
 	if started >= 0:
 		ClientReport.fresh(scene.resource_path.get_file(), OS.get_ticks_usec() - started)
+		fresh[scene.resource_path] = fresh.get(scene.resource_path, 0) + 1
 	return explosion
 
 

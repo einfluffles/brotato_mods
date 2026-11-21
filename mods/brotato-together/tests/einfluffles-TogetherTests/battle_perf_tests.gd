@@ -1,6 +1,7 @@
 extends Reference
 # Battle mirror robustness and performance: own-player prediction during pauses and stalls, reused
-# net ids of pooled nodes, the brachiosaurus foot on clients, recorded sounds, puppet pooling.
+# net ids of pooled nodes, the brachiosaurus foot on clients, recorded sounds, puppet pooling and
+# the puppets made while the battle scene loads.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -11,6 +12,7 @@ const BRACHIOSAURUS := BOSSES + "brachiosaurus.tscn"
 const FOOT := BOSSES + "brachiosaurus_foot/brachiosaurus_foot.tscn"
 const BULLET := "res://projectiles/bullet/bullet_projectile.tscn"
 const STEP_SOUND := "res://entities/units/player/step_sounds/Step 1.mp3"
+const EXPLOSION := "res://projectiles/explosion.tscn"
 
 var _t: Node
 
@@ -110,6 +112,8 @@ func test_battle(together: Node):
 	var main: Node = _t.get_tree().current_scene
 	host._start_battle(main)
 	_check_preregistered(host, main)
+	var wave_data = main._wave_manager.current_wave_data
+	var unit_path: String = wave_data.groups_data[0].wave_units_data[0].unit_scene.resource_path
 	_check_pool_reuse_ids(host, main)
 	_check_recorded_sounds(host)
 	var spawner = main.get("_entity_spawner")
@@ -136,9 +140,11 @@ func test_battle(together: Node):
 		"host lists bosses before their parts"
 	)
 
+	client._warm = client.WarmPools.new()  # what earlier suites' battles needed does not count
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
 	client.set_process(false)
+	_check_warm_pools(client, unit_path)
 	var foot_only := _single(ids.foot, foot_type, last.positions[Snapshot.index_of(last, ids.foot)])
 	client._apply_entities(foot_only, foot_only, 1.0)
 	_t._check(not client._entities.has(ids.foot), "foot waits for its boss puppet")
@@ -165,11 +171,71 @@ func test_battle(together: Node):
 			boss_puppet.global_position.distance_to(host_position) < 1.0,
 			"the foot's _ready did not send the boss puppet away"
 		)
-	_check_puppet_pool(client, bullet_type)
+	var needed: int = client._warm.battle.get(unit_path, 0)
+	_check_puppet_pool(client, bullet_type)  # ends with the battle's state reset
+	_t._check(
+		client._warm.needed.get(unit_path) == needed and needed >= client._warm.ENEMIES
+		and client._warm.battle.empty(),
+		"what the battle needed (%d %s) is what the next one makes" % [needed, unit_path.get_file()]
+	)
 	client.set_process(true)
 	client._leave_battle()
 	Puppet.set_active(false)
 	host.set_process(true)
+
+
+# Enemies and explosions are made in the frame that loads the battle, not mid-wave.
+func _check_warm_pools(client: Node, unit_path: String) -> void:
+	var main: Node = client._main
+	var unit: PackedScene = load(unit_path)
+	var pool: Array = main._pool.get(unit.get_instance_id(), [])
+	var ready := 0
+	for node in pool:
+		if (
+			is_instance_valid(node) and node is Enemy and not node.is_inside_tree()
+			and node.collision_layer == 0 and node.pool_id == unit.get_instance_id()
+		):
+			ready += 1
+	_t._check(
+		ready == client._warm.ENEMIES and pool.size() == ready
+		and client._warm.needed.get(unit_path) == client._warm.ENEMIES,
+		"the wave's enemies are in main's pool, puppetized (%d %s)" % [ready, unit_path.get_file()]
+	)
+	var explosions: Array = main._pool.get(load(EXPLOSION).get_instance_id(), [])
+	_t._check(
+		explosions.size() == client._warm.EXPLOSIONS and explosions[0] is PlayerExplosion
+		and not explosions[0].is_inside_tree(),
+		"and explosions (%d)" % explosions.size()
+	)
+	_t._check(
+		client._warm.needed.get(BULLET) == 0 and client._warm.needed.get(BRACHIOSAURUS) == 0
+		and not client._warm.needed.has(FOOT),
+		"not projectiles, bosses or a boss part without its boss"
+	)
+	var idx := -1
+	for k in client._types:
+		if client._types[k] == unit:
+			idx = k
+	var expected = pool[-1] if not pool.empty() else null
+	var taken: Node = client._spawn(idx)
+	_t._check(
+		taken != null and taken == expected and taken.is_inside_tree() and taken.visible
+		and not taken.dead and client._warm.battle.get(unit_path) == client._warm.ENEMIES,
+		"a spawn takes a prepared puppet, no new one"
+	)
+	client._despawn(taken)
+	var saved: Dictionary = client._warm.needed.duplicate()
+	for path in saved:
+		client._warm.needed[path] = 0
+	client._warm.needed[unit_path] = 1000
+	var before := pool.size()
+	client._warm.fill(client, main, client._types)
+	_t._check(
+		pool.size() - before == client._warm.MAX_PER_TYPE,
+		"at most %d of a kind (%d)" % [client._warm.MAX_PER_TYPE, pool.size() - before]
+	)
+	client._warm.needed = saved
+	client._warm.battle[unit_path] -= client._warm.MAX_PER_TYPE
 
 
 func _check_preregistered(host: Node, main: Node) -> void:

@@ -537,6 +537,18 @@ Mirrored nodes are the entity spawner's lists (`bosses`, `enemies`, `neutrals`, 
   snapped, not interpolated. An id that comes back with another type is respawned. Puppets of
   non-Entity scenes (projectiles, gold, consumables) are pooled per type like the game's Entity
   pool, out of the tree, and freed when the battle state resets.
+- **Prepared puppets** (`sync/warm_pools.gd`). Instancing an enemy or an explosion makes the
+  graphics driver wait for the GPU once in the frame it happens in. The cost comes with the first
+  `CPUParticles2D` the frame instances (every unit has `unit_burning_particles.tscn`), and the
+  instances after it in the same frame are cheap. On a fast PC that is about 3 ms. On a slower one
+  with frames queued it reads as a frame of 57 to 100 ms. A new main scene starts with empty pools,
+  so at a wave's start nearly every frame with a new enemy paid it. In the frame that loads the
+  battle scene, the client now makes the units and explosions the battle will likely need and puts
+  them into main's pool, the way `Entity.free_entity` pools a unit (into the tree once, puppetized,
+  then out of it). How many of a scene: what the last battle with it needed (made plus instanced in
+  it), at most 40 of a scene and 200 in all. A scene no battle needed yet: 6 of an enemy type that
+  is not a boss, 4 of an explosion, none of anything else. Only types that came with BATTLE_START
+  are made, and not a boss part whose boss is missing.
 
 ### Puppets
 

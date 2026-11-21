@@ -11,6 +11,8 @@ upload; three of them are marked where the upload may have differed.
 - Small wording changes in the lobby page and the client's status line.
 - The host's log says what a client's slowest frame was spent on, to track down hitches at the
   start of later waves.
+- Clients prepare the wave's enemies while the battle loads, instead of stuttering when they first
+  appear in later waves.
 
 ## 2026-11-18 14:51
 

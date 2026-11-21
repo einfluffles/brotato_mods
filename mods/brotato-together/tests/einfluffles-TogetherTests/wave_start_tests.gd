@@ -1,6 +1,7 @@
 extends Reference
 # Suite wave_start: the start of a late endless wave with a build of structures and rocket
-# launchers, played by the real game on the host and replayed on a client in real time. Prints
+# launchers, played by the real game on the host and replayed on a client in real time, twice: the
+# second battle starts with the puppets the first one needed (sync/warm_pools.gd). Prints
 # what the client's mirror spends its frames on, the whole frames around it, and what each freshly
 # instanced puppet costs. Headless there is no rendering or audio, and the times are always this
 # machine's, so compare them with each other.
@@ -14,6 +15,7 @@ const SnapshotTests := preload("res://mods-unpacked/einfluffles-TogetherTests/sn
 const WAVE := 25
 const RECORD_MSEC := 8000
 const SETTLE_MSEC := 500
+const ROUNDS := 2
 const STRUCTURE_ITEMS := [
 	"item_turret",
 	"item_turret_flame",
@@ -61,27 +63,53 @@ func run(together: Node):
 	start.types = {}
 	for path in host_types:
 		start.types[host_types[path]] = path
-	var snaps := []
 	var most := 0
 	for msg in recorded:
-		var snap := SnapshotTests.retimed(msg, recorded, 0)
-		most = max(most, snap.ids.size())
-		snaps.append(snap)
+		most = max(most, Snapshot.parse(msg[1]).ids.size())
 	print(
 		(
 			"  info: wave %d endless, 2 players with %d structure items and %s: %d snapshots"
 			+ " over %d s, up to %d entities"
 		)
-		% [WAVE, items, WEAPON, snaps.size(), RECORD_MSEC / 1000, most]
+		% [WAVE, items, WEAPON, recorded.size(), RECORD_MSEC / 1000, most]
+	)
+	client._warm = client.WarmPools.new()  # what earlier suites' battles needed does not count
+	var fresh_counts := []
+	var structures := false
+	for round_index in ROUNDS:
+		var fresh: Array = yield(_replay(client, report, start, recorded, round_index), "completed")
+		fresh_counts.append(fresh.size())
+		for entry in fresh:
+			structures = structures or (round_index == 0 and "turret" in entry[0])
+	Puppet.set_active(false)
+	host.set_process(true)
+	RunData.invulnerable = false
+	_t._check(most > 0, "the late wave is recorded")
+	_t._check(structures, "the first battle instances the build's structures")
+	_t._check(
+		fresh_counts[-1] < fresh_counts[0],
+		"the second battle instances fewer puppets: %s" % [fresh_counts]
 	)
 
+
+# One battle of the recording on the client; returns its fresh puppets ([file, usec] each).
+func _replay(client: Node, report: Node, start: Dictionary, recorded: Array, round_index: int):
+	var tree: SceneTree = _t.get_tree()
+	var snaps := []
+	for msg in recorded:
+		snaps.append(SnapshotTests.retimed(msg, recorded, 0))
 	report.test_client = true
 	report.sent.clear()
 	report.fresh_log = []
-	yield(tree.create_timer(0.2), "timeout")  # active, on the host's battle scene
+	yield(tree.create_timer(0.2), "timeout")  # active, on the battle scene
+	var entering := OS.get_ticks_usec()
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
+	entering = OS.get_ticks_usec() - entering
 	client.set_process(false)  # run below, timed per frame
+	var prepared := 0
+	for path in client._warm.battle:
+		prepared += client._warm.battle[path]
 	var frames := []
 	var replay_start := OS.get_ticks_msec()
 	var next := 0
@@ -101,17 +129,13 @@ func run(together: Node):
 	report.test_client = false
 	report.sent.clear()
 	client._leave_battle()
-	Puppet.set_active(false)
-	host.set_process(true)
-	RunData.invulnerable = false
-
+	print(
+		"  info: battle %d: %d puppets prepared, entering took %.0f ms"
+		% [round_index + 1, prepared, entering / 1000.0]
+	)
 	_print_frames(frames)
 	_print_scenes(fresh)
-	var structures := false
-	for entry in fresh:
-		structures = structures or "turret" in entry[0]
-	_t._check(most > 0 and not frames.empty(), "the late wave is recorded and replayed")
-	_t._check(structures, "the build's structures are mirrored as fresh puppets")
+	return fresh
 
 
 # Both players: the structure items COPIES times, a rocket launcher, no damage taken.
