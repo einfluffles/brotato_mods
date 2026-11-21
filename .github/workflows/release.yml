@@ -89,7 +89,7 @@ jobs:
           {
             python3 tools/changelog.py notes "$changelog"
             echo
-            echo "SHA256 \`$(cut -d' ' -f1 "$out/$zip.sha256")\`. To the Workshop: \`tools/release.sh $MOD $GITHUB_REF_NAME test\`, then \`live\`."
+            echo "SHA256 \`$(cut -d' ' -f1 "$out/$zip.sha256")\`. Try it: \`tools/release.sh $MOD $GITHUB_REF_NAME local\`, then to the Workshop with \`live\`."
           } > "$RUNNER_TEMP/notes.md"
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
             --notes-file "$RUNNER_TEMP/notes.md" \

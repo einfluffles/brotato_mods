@@ -41,7 +41,7 @@ podman build -t brotato-modtools -f tools/Containerfile tools   # or: docker bui
 | `tools/package.sh [target]` | Writes `<target>/<name>/<name>.zip` and `preview.png` for every mod (default target: `dist/`). |
 | `tools/deploy.sh <name> <workshop_item_id>` | Replaces the subscribed Workshop item's zip with the package (see [Trying a build in the game](#trying-a-build-in-the-game)). |
 | `tools/local-check.sh [mods/<folder> ...]` | Lint and tests on a clean, pushed HEAD, then marks the commit on GitHub (see [Publishing](#publishing)). |
-| `tools/release.sh <mod> <tag> test\|live` | Uploads a GitHub Release to the mod's Workshop item with steamcmd (see [Publishing](#publishing)). |
+| `tools/release.sh <mod> <tag> local\|live` | Installs a GitHub Release locally to try it, or uploads it to the mod's Workshop item with steamcmd (see [Publishing](#publishing)). |
 
 The scripts use podman, or docker when podman is missing (`CONTAINER=...` picks one).
 
@@ -124,25 +124,29 @@ Workshop with steamcmd on the maintainer's PC. GitHub holds no Steam credentials
    *Unreleased* empty. It packages the mod and creates the GitHub Release with `<Name>.zip`,
    `<Name>.zip.sha256` and `changenote.txt` (the section as Steam BBCode). A failed check can be
    fixed and the workflow re-run.
-5. **Workshop**: `tools/release.sh <mod> <tag> test` downloads the release, checks the hash,
-   shows what it will upload and asks, then runs
-   `steamcmd +login "$STEAM_USER" +workshop_build_item <vdf> +quit` for the test item of
-   `mods/<mod>/workshop.json`. Subscribe to the test item, start the game and check the mod.
-   Then the same with `live`. The upload's content is a folder that holds only the zip (the Mod
+5. **Try it**: `tools/release.sh <mod> <tag> local` downloads the release, checks the hash and
+   puts exactly that zip into this PC's copy of the subscribed item, as `tools/deploy.sh` does
+   (`BROTATO_WORKSHOP_DIR`, see below). Start the game and check the mod. Nobody else gets it yet.
+6. **Workshop**: `tools/release.sh <mod> <tag> live` downloads and checks the release again, shows
+   what it will upload and asks, then runs
+   `steamcmd +login "$STEAM_USER" +workshop_build_item <vdf> +quit` for the item of
+   `mods/<mod>/workshop.json`. The upload's content is a folder that holds only the zip (the Mod
    Loader loads every `.zip` in an item's folder), and the change note is `changenote.txt`. Title,
    description, preview and visibility stay as on the item's page. `-y` skips the question,
    `--dry-run` does everything but steamcmd, `--from-dir DIR` takes the three files from DIR.
-6. **Rollback**: `tools/release.sh <mod> <previous tag> live` uploads the previous release again.
+7. **Rollback**: `tools/release.sh <mod> <previous tag> live` uploads the previous release again.
 
 One-time setup:
 
-- steamcmd: install it ([Valve's page](https://developer.valvesoftware.com/wiki/SteamCMD)), log in
-  once by hand (`steamcmd +login <account> +quit`, with Steam Guard) so the login is cached, and
-  set `STEAM_USER` to that account. `STEAMCMD` is the path of steamcmd when it is not on `PATH`
-  (Git Bash: e.g. `C:/steamcmd/steamcmd.exe`). release.sh never takes a password.
-- Test items: create a private Workshop item per mod (the game's `GodotWorkshopUtility`, or a
-  first `workshop_build_item` with `publishedfileid` 0 and `visibility` 2) and put its id as
-  `"test"` in `mods/<mod>/workshop.json`. Until then `release.sh ... test` stops with that hint.
+- steamcmd: install it ([Valve's page](https://developer.valvesoftware.com/wiki/SteamCMD); on
+  Windows release.sh finds it in `%LOCALAPPDATA%\steamcmd\steamcmd.exe` without further setup),
+  log in once by hand with the Steam account that **owns the Workshop items**
+  (`steamcmd +login <account> +quit`, with Steam Guard) so the login is cached, and set
+  `STEAM_USER` to that account. `STEAMCMD` is the path of steamcmd when it is somewhere else.
+  release.sh never takes a password.
+- `BROTATO_WORKSHOP_DIR` for `local` (and `tools/deploy.sh`): the Workshop content folder of app
+  1942280, e.g. `/f/SteamLibrary/steamapps/workshop/content/1942280` in Git Bash. Subscribe to the
+  mod's item so its folder exists.
 - GitHub `gh` logged in on the maintainer's PC (local-check.sh and release.sh use it).
 - Repository settings, set by an admin: *Actions, General: Allow GitHub Actions to create and
   approve pull requests* (for the release PR); a tag ruleset that lets only maintainers create,
@@ -152,8 +156,9 @@ One-time setup:
 #### Trying a build in the game
 
 The Steam build of Brotato only loads **subscribed Workshop items** (`<game>/mods` is ignored). To
-try a local build in the real game, run `tools/package.sh`, subscribe to a private Workshop item
-(the test item above) and overwrite its local copy with `tools/deploy.sh <name> <item id>`. Steam
+try a local build in the real game, run `tools/package.sh`, subscribe to the mod's Workshop item
+and overwrite its local copy with `tools/deploy.sh <name> <item id>` (a released build:
+`tools/release.sh <mod> <tag> local`). Steam
 may put the uploaded version back when it updates or verifies the item, so run the script again
 after that.
 
