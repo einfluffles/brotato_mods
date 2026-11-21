@@ -20,6 +20,7 @@ const EXTENSIONS := [
 	"extensions/singletons/utils.gd",
 	"extensions/entities/brachiosaurus_foot.gd",
 	"extensions/entities/stay_edges_of_map_movement_behavior.gd",
+	"extensions/weapons/fireball.gd",
 	"extensions/effects/swap_max_min_stat_effect.gd",
 	"extensions/ui/shop_item.gd",
 	"extensions/ui/coop_shop.gd",
@@ -34,6 +35,7 @@ const EXTENSIONS := [
 	"extensions/ui/coop_shop_player_container.gd",
 	"extensions/ui/coop_end_run_player_container.gd",
 	"extensions/ui/coop_upgrades_ui_player_container.gd",
+	"extensions/ui/coop_item_popup.gd",
 ]
 # Game scripts extended above whose class has its own duplicate() (Effect). The Mod Loader backs a
 # script up with script.duplicate() before extending it, which on these runs that method on the
@@ -161,6 +163,7 @@ func _ready() -> void:
 	menu_puppet.state_stream = state_stream
 	menu_puppet.setup(session)
 	input_sync.menu_puppet = menu_puppet
+	menu_puppet.input_sync = input_sync
 
 	ui_sounds = _add("sync/ui_sounds.gd", "UiSounds")
 	ui_sounds.setup(session)

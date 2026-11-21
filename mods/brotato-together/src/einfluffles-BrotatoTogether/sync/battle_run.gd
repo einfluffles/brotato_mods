@@ -6,9 +6,6 @@ extends Reference
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
-const ClientReport := preload(
-	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
-)
 
 
 static func take(store, body) -> bool:
@@ -22,13 +19,7 @@ static func state(store, body: Dictionary) -> Dictionary:
 		if store.session != null:
 			store.session.ask_resync()
 		return {}
-	var started := OS.get_ticks_usec()
-	store.raws(ids)  # decompresses and parses the parts not parsed yet
-	ClientReport.mark(ClientReport.Mark.PARSE, OS.get_ticks_usec() - started)
-	started = OS.get_ticks_usec()
-	var state: Dictionary = store.state_for(ids)
-	ClientReport.mark(ClientReport.Mark.DESERIALIZE, OS.get_ticks_usec() - started)
-	return state
+	return store.timed_state(ids)
 
 
 static func apply(state: Dictionary) -> void:

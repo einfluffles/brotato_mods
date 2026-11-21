@@ -4,6 +4,9 @@ extends Node
 # panel runs locally and sends UPGRADE_INTENT; the other panels stay mirrored.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
+const ClientReport := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
+)
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
@@ -545,6 +548,7 @@ func apply(main: Node, msg: Dictionary) -> void:
 	var changed = _apply_run(msg.get("run"))
 	if changed == null:
 		return  # a run part is missing: nothing applied, the host resyncs this client
+	var started := OS.get_ticks_usec()
 	ui.show()
 	var seqs = msg.get("seqs")
 	var pages = msg.get("pages")
@@ -562,6 +566,8 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var gear_cursor := []
 		if gear_changed:
 			gear_cursor = UpgradesGear.rebuild_gear(ui, container, p)
+		elif player_changed:  # its weapons are new objects
+			gear_cursor = UpgradesGear.rebuild_gear(ui, container, p, false)
 		if player_changed:
 			container.update_stats()
 			container._update_gold_label()
@@ -599,6 +605,7 @@ func apply(main: Node, msg: Dictionary) -> void:
 		var page: int = _int_at(pages, p)
 		if p != you and page >= 0 and container.carousel.index != page:
 			container.carousel.index = page
+	ClientReport.mark(ClientReport.Mark.PANELS, OS.get_ticks_usec() - started)
 
 
 # The puppet scene goes with its wave: keep nothing of it (a freed node's address is reused).
@@ -647,7 +654,7 @@ func _apply_run(run):
 	var ids = run_store.ids_for(run)
 	if RunParts.same_ids(ids, _run_key):
 		return {}
-	var state: Dictionary = run_store.state_for(ids)
+	var state: Dictionary = run_store.timed_state(ids)
 	if state.empty():
 		return null
 	RunStateCodec.apply(state)

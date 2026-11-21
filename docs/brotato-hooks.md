@@ -278,6 +278,11 @@ same shop or the same upgrades. **brotato:together** applies all of these on the
   `Player.on_weapon_wanted_to_break` (signal `Weapon.wanted_to_break`, the `break_on_hit`
   effect, the brick of `abyssal_terrors`) erases the node from `current_weapons` and calls
   `RunData.remove_weapon_by_index`. Crates add to `RunData` after the wave.
+- **Cursed weapons:** `Weapon._ready` frees every child of `Sprite/Muzzle` when `is_cursed` and puts
+  the curse particles there. Molotov lists `Sprite/Muzzle/BurningParticles` in
+  `throwned_projectile_hide`, which `RangedWeapon.on_projectile_shot` hides and shows by path on
+  every throw: a cursed Molotov logs two `get_node` errors per throw, in solo too.
+  **brotato:together** drops such paths after `_ready` (`extensions/weapons/fireball.gd`).
 - **Move speed:** `Player.get_move_speed()` is (`current_stats.speed` + `bonus_speed` +
   `decaying_bonus_speed`) / (1 + `petrol_malus`). Petrol is set per physics frame
   (`update_petrol_effect`), and the slow decays in `Unit._physics_process`.
@@ -299,6 +304,13 @@ same shop or the same upgrades. **brotato:together** applies all of these on the
     level-up screen). Its buttons are in `ItemPanelUI/MarginContainer/VBoxContainer` (Combine,
     Recycle, Cancel, Upgrade), and `_update_button_focus_neighbours` rebuilds their up and down
     neighbours. With two players, `_ready` replaces the popup's outer box.
+- **Placement:** `BasePopup._process` calls `_reposition` every frame, which takes
+  `_get_new_position(_attachment, _anchor_panel)`: below the item (above it from the parent
+  rect's lower half) with `DIST` (10 px) between them, clamped to the parent rect, then shifted
+  sideways by the item's width plus `DIST` (100 px for a `ButtonWithIcon`) if it still covers
+  the item. An override of
+  `_get_new_position` therefore holds every frame. **brotato:together** drops the vertical gap
+  (`extensions/ui/coop_item_popup.gd`).
 - **Closing:** the popup's `item_cancel_button_pressed` reaches
   `BaseShop._on_item_cancel_button_pressed` (`_popup_manager.reset_focus(p)`, cursor back on the
   element; `CoopShop` hides the dim screen). `ItemPopup._input` emits the signal on the player's

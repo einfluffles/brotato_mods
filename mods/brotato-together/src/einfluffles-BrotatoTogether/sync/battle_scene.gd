@@ -238,6 +238,9 @@ static func step(player: Node2D, from: Vector2, motion: Vector2, result) -> Vect
 	xform.origin = from
 	var body: RID = player.get_rid()
 	var hit := Physics2DServer.body_test_motion(body, xform, motion, true, MOTION_MARGIN, result)
+	# RigidBody2D.test_motion reports no hit for a body that only touches something and gets its
+	# whole way: the server does, and a second slide along a wall doubled the step.
+	hit = hit and result.collision_safe_fraction < 1.0
 	from += result.motion
 	if hit:
 		xform.origin = from

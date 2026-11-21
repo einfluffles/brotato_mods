@@ -46,7 +46,7 @@ which lists every message with its fields).
 | `session/` | handshake, compatibility, puppet mode, DLC borrowing, sound relay, progress sharing, settings |
 | `sync/` | everything that mirrors game state: battle (`battle_host.gd`, `battle_client.gd`, `snapshot.gd` and helpers), input, state stream, shop, level-up panels, menus, cursors, pause |
 | `ui/` | controls the mod adds to the game's screens (lobby, Co-op row, damage meter views) and helpers for cursors and scrolling |
-| `extensions/` | script extensions of game scripts (singletons, UI scenes, one effect), and `script_backup.gd` for the Mod Loader's backups of them |
+| `extensions/` | script extensions of game scripts (singletons, UI scenes, one effect, one weapon), and `script_backup.gd` for the Mod Loader's backups of them |
 
 ### Engine and game behaviour several modules rely on
 
@@ -427,6 +427,13 @@ that lack them.
   `deserialize_run_state` on a deep copy of `c` (the game writes into its input) whose
   `players_data` holds only the players whose parts changed, and puts the previous `PlayerRunData`
   objects back for the others. `changed_players()` and `gear_changed(p)` name what moved.
+- **Kept items** (`Store._kept_items`, issue #110). A changed player keeps the item objects of its
+  previous `PlayerRunData` whose dictionary in the `g` part hashes the same (all of them when only
+  `p<p>` moved); only the others go through `deserialize_run_state`. A crate item then deserializes
+  one item instead of ~250. Weapons are always deserialized (few, and the player's effects are
+  resolved against them). No item is kept when the old part is no longer stored or the old objects
+  no longer line up with it index for index. `timed_state(ids)` is `state_for` with the client
+  report's marks (run parse, deserialize); every section uses it.
 
 Ids are content hashes, so parts carry over between screens: the shop's first state after the panels
 sends little more than `c`. A purchase sends `c`, `p<p>` and `g<p>`, a paid reroll `c` and `p<p>`, a
@@ -715,7 +722,12 @@ The client's explosion puppet never runs `start_explosion`, so the fire puddle a
 - **Holes block the prediction.** The client's players get `collision_mask` = obstacles (layer 8:
   holes and the map's limits) plus the blockers' layer (below) and have no layer of their own. Every
   replayed input is one `Unit._physics_process` tick (`BattleScene.step`: `body_test_motion` from
-  the predicted position, then the slide).
+  the predicted position, then the slide). The slide only follows a hit as `RigidBody2D.test_motion`
+  reports it: the server also reports a body that touches a wall (within the 0.08 px margin) and
+  gets its whole way, and the node leaves that out (`collision_safe_fraction < 1`). Sliding after
+  such a touch moved a player walking along the map's edge twice as far a tick, and snapshot
+  positions (0.5 px steps) put the replay's start at the edge whenever the host was within 0.25 px
+  of it: at a 200 ms round trip the client ran 100 px ahead along the edge (issue #109).
 - **Weapons during a wave.** The only way the game changes a player's weapon nodes mid-wave is
   `Player.on_weapon_wanted_to_break` (the brick's `break_on_hit`). The host remembers the instance
   ids of each player's weapons at wave start. Once a player has fewer, every snapshot carries its
@@ -876,7 +888,8 @@ plus 1 (`LocalAim.type_flags`, 0: none). It only changes key hints (see
 
 `BattleClient._predict_own`. The client shows its own player at the host's last position plus one
 step per input the host has not acked, at most 45 inputs (`MAX_REPLAY_INPUTS`, 0.75 s). Steps go
-through `BattleScene.step`, so holes, the map's limits and other players block them. When the host
+through `BattleScene.step`, so holes, the map's limits and other players block them, and a step
+along a wall is the host's ([Scene state](#scene-state-holes-weapons-speed)). When the host
 disagrees, the difference is blended out at 12/s (`PREDICTION_ERROR_DECAY`). The steps of inputs
 sent since the last frame are motion, not a correction.
 
@@ -1181,7 +1194,16 @@ shown until its scene goes.
   `main._on_EndWaveTimer_timeout` does on the host and which never runs on a puppet.
 - **Per-player rebuild** (`UpgradesGear.changed_players`). A new run state rebuilds only the players
   whose parts changed: stats, gold label and crate weapons list when `p<p>` or `g<p>` moved, the
-  gear page only when `g<p>` moved. The first state for new panels rebuilds every player.
+  gear page's items only when `g<p>` moved, its weapons (new objects of the same weapons) when
+  either moved. The first state for new panels rebuilds every player.
+- **Gear in place** (`UpgradesGear.sync_inventory`, issue #110). The game's `update_inventory` frees
+  and instances every element (~250 late in a run, about 47 ms headless for one player). The gear
+  page instead keeps every element that shows the same (item id, tier, cursed / meca / mutant,
+  icon), points it at the new object and sets its count, repaints a spare one or instances only
+  for the rest, and frees what is left. The order is the one `set_elements` leaves (entries
+  reversed, the character and builder turret first, `order_of_addition`), then
+  `need_to_sort_inventory` lets the game's sorter order them as it would after a rebuild. An empty
+  inventory (new panels) or a locked item takes the game's way.
 
 **Guard.** On every container the four decision signals lose `UpgradesUI`'s handlers
 (`choose_button_pressed`, `item_take / discard / ban_button_pressed`), the reroll button loses
@@ -1307,8 +1329,18 @@ scripts fail to parse when the shop loads.
   under the pointer, the last in tree order, with clipping parents cutting their children. An open
   `ItemPopup` covers the controls below it, so hovering its description does not move the cursor or
   click the item underneath.
-- Motion from the cursor's item or its open popup (or the `BasePopup.DIST` gap between them) to
-  where no control is hit closes that popup, also off the panels. Only the popup is hidden: the
+- The popup touches its item (`extensions/ui/coop_item_popup.gd`). `BasePopup._get_new_position`
+  leaves `BasePopup.DIST` (10 px) above or below the item. In the stacked shop the next item lay in
+  that gap, so the mouse on its way down into the popup hovered it and the popup switched to that
+  item. The extension moves a popup that sits within `DIST` above or below its item onto the
+  item's edge and keeps the game's flip above, clamping and sideways shift. It applies to every
+  `CoopItemPopup` (shop, level-up, end of run) on every machine, online or not: on the host the
+  game's own `mouse_exited` closes the popup when the mouse leaves the item, so nothing changes
+  there but the drawing, and all machines draw the panels alike. The popup never covers its own
+  item, so the keys' cursor stays visible.
+- Motion from the cursor's item or its open popup (or within `BasePopup.DIST` of the item, the gap
+  the game's sideways shift still leaves) to where no control is hit closes that popup, also off
+  the panels. Only the popup is hidden: the
   cursor and the shop's focused item (lock, steal and ban keys) stay, where the game's
   `mouse_exited` unfocuses the item. Hovering the item again re-emits its `focus_entered`. A popup
   the cursor keys opened stays while the mouse moves in empty space.
@@ -1386,7 +1418,9 @@ covers the co-op shop (`CoopShopPlayerContainer`), the level-up / crate panels
 called from the `FocusEmulator` extension's `_input`, scrolls the innermost `ScrollContainer` under
 the pointer in the mouse player's own panel and marks the event handled. The mouse player is the
 keyboard player (`KEYBOARD_REMAPPED_DEVICE_ID`) on the host and in local co-op, and `you` on a
-client's copy. A client's own shop or level-up panel scrolls in `LocalPanel`. On the host the game
+client's copy. The panels are the shop's, the level-up panels', the selection screens' and the end
+of run's (`CoopEndRun.player_containers`). A client's own shop or level-up panel scrolls in
+`LocalPanel`. On the host the game
 hides the pointer in co-op, so the wheel scrolls where the hidden pointer is.
 
 **Right stick.** The game scrolls each panel's description with that player's right stick
@@ -1433,8 +1467,31 @@ because `CharacterSelectionInventory.update_elements_color` reads this machine's
 `_go_back`; in character selection also `_on_BackButton_pressed`, `_on_coop_initialized` and
 `_on_ZoneSelectionButton_item_selected` (it writes `ProgressData.settings`).
 `CoopService.listening_for_inputs` is kept off (nobody joins on a client). At the end of run,
-`BaseEndRun._button_pressed = true` spends its three buttons. A full-rect control on top of the copy
-takes the mouse, and a control of the copy that gets the keyboard focus loses it in the same frame.
+`BaseEndRun._button_pressed = true` spends its three buttons. On the selection screens a full-rect
+control on top of the copy takes the mouse (the end of run: see below). A control of the copy that
+gets the keyboard focus loses it in the same frame.
+
+**Mouse at the end of run** (`sync/end_run_mouse.gd`). A node added as the copy's last child (after
+`FocusEmulator1..4`, so its `_input` runs first) is the mouse for looking, as on the host:
+
+- Every mouse event but the wheel is marked handled, so the copy's own controls never get one:
+  restart, new run, exit, the inventories' sort buttons. Nothing is sent and no cursor moves.
+- Hovering an item (weapons, items, the progress rewards) or a stat of any panel shows that
+  player's popup, the progress rewards the own player's. Items go through
+  `ItemPopup.display_element`, not `PopupManager._on_element_hovered`, which grabs the focus (a
+  cursor would follow). Stats get `mouse_entered` / `mouse_exited` on their label through
+  `FocusEmulatorSignal`, which names the player. The popup stays while the mouse is on it or in
+  the gap to it. When the mouse leaves, the popup of that player's cursor shows again.
+- A click on a carousel arrow turns that panel's page here only, through the `index` setter
+  without `index_changed` (the container would move the cursor). A popup whose control the page
+  took away closes. A page turned here stays until the host's page of that panel changes
+  (`MenuPuppet._apply_pages` applies a page only when it differs from the last one received). A
+  key or pad press brings the own panel back to the host's page, where its cursor moves.
+- The wheel goes on to the emulators (`WheelScroll`, the own panel). The end of run has no
+  scroll mirror, so it stays local.
+- Nothing is handled while the lobby popup is open (`InputSync.local_input_blocked`).
+- The script is loaded when the copy is ready, not preloaded: compiling its game classes at mod
+  init broke the shop hints' scripts (`coop_ban_shop_hint.gd` parse errors).
 
 **Applied from every state:**
 
@@ -1446,7 +1503,8 @@ takes the mouse, and a control of the copy that gets the keyboard focus loses it
   `_set_selected_element`, which ends the screen.
 - Zone, background and endless, without the scene's handlers.
 - The join progress, through the `CoopService` extension (`bt_remote_progress`).
-- Pick counts and end-of-run carousel pages.
+- Pick counts and end-of-run carousel pages (a page changes only when the host's page does, see
+  above).
 - `character_shown`: `WeaponSelection._input` switches a panel to the player's character while
   `ui_info` is held. The copy makes the same calls when the state differs from what its panel
   shows. The host reads the value off its panels (`MenuSync.shows_character`).
@@ -1714,17 +1772,25 @@ A `FocusEmulator` that keeps a freed control crashes a release build on its next
 objects in the [Overview](#1-overview)). A real session crashed this way on the level-up gear page
 (see [Measurements](#12-measurements-and-session-findings)). Three measures:
 
-- **Take the cursor off first.** Before a gear rebuild (`UpgradesGear.rebuild_gear`,
-  `ShopSync._refresh_gear`) or `_refresh_weapons_inventory`, the cursor is taken off the element,
-  also the element a focused popup was opened from. Afterwards it goes to the same item (the
-  element nearest its old index), else the element at the same index, else for the own panel the
-  page's default (`focus()`). The game's way back to the gear page
-  (`_resume_inventory_control_focus`) is redirected the same way.
+- **Take the cursor off first.** Before a gear rebuild (`ShopSync._refresh_gear`, the game's way
+  in `UpgradesGear.rebuild_gear`) or `_refresh_weapons_inventory`, the cursor is taken off the
+  element, also the element a focused popup was opened from. The level-up gear updated in place
+  frees only the elements nothing shows any more: the cursor stays on a kept one and is taken off
+  a freed one. Afterwards it goes to the same item (the element nearest its old index), else the
+  element at the same index, else for the own panel the page's default (`focus()`). The game's way
+  back to the gear page (`_resume_inventory_control_focus`) is redirected the same way.
 - **Relink neighbours.** `CoopUpgradesUIPlayerContainer._set_focus_neighbours` links weapons and
-  items by node path, and only on a page change. After a rebuild, focus neighbours that name a
-  freed node are dropped and, on the gear page, `_set_focus_neighbours` links the new elements. The
-  game logs "Node not found" and `Parameter "p_node" is null` when this is missing, and
-  `tools/check.sh` fails on both messages.
+  items by node path, and only on a page change (or, by `InputTypes`, on an input type switch).
+  With trigger glyphs the rows name each other's elements. After every `update_inventory` (the
+  extension's override: the game's crate weapons list, a client's rebuild, brotato:trade's crate
+  trade), focus neighbours that name a freed node are dropped and, on the gear page,
+  `_set_focus_neighbours` links the new elements. The game logs "Node not found" and
+  `Parameter "p_node" is null` when this is missing, and `tools/check.sh` fails on both messages.
+  A host logged both (suite `gear_links` repeats it: the client switches to its pad on the gear
+  page, then recycles or combines a crate weapon). The level-up gear updated in place drops them
+  between the weapons and the items too: the items' sort inherits its row's neighbours at once,
+  and the items row names the first weapon element (`gear_rebuild_tests.gd`, a client's first
+  weapon goes).
 - **Safety net** (`extensions/ui/focus_emulator.gd`, online or not). A control freed while it holds
   the cursor is dropped before the game's code touches it (`_input`, `_process`, the
   `focused_control` and `player_index` setters, `_clear_focused_control`). Existence is looked up by
@@ -1781,6 +1847,18 @@ calls `Keys.hash_to_string[stats_swapped[1]].to_upper()` on null.
   its `saved_scripts` dictionary, or with an entry already there, nothing is stored and the loader
   behaves as before. The suite `axolotl` checks that every extended script has a backup and that
   `OWN_DUPLICATE` names exactly the extended scripts whose class has its own `duplicate()`.
+
+### Cursed Molotov
+
+A cursed Molotov logged `Node not found: "Sprite/Muzzle/BurningParticles"` twice per throw (first
+seen on a host, 2026-11-21: 100 to 200 per wave). `Weapon._ready` frees everything in
+`Sprite/Muzzle` of a cursed weapon to put its curse particles there, and
+`RangedWeapon.on_projectile_shot` hides and shows the paths in `throwned_projectile_hide` by
+`get_node`, which for Molotov is the freed `BurningParticles`. In the game's release build the call
+on null is skipped (no script error), so only the log suffers; in a debug build the throw's
+coroutine stops and the bottle stays thrown. Only Molotov lists a path there.
+`extensions/weapons/fireball.gd` (Fireball's script serves Molotov) keeps only the paths that
+survive `_ready` on a cursed weapon. The suite `cursed_weapon` throws a plain and a cursed Molotov.
 
 ### Smaller quirks
 
@@ -1844,7 +1922,9 @@ calls holds a whole frame.
   took 50 ms or more, and shows a file name that is not plain as "?".
 - **Scene change.** The longest frame within 3 s of a change of `current_scene`, with the mod's
   share from timing marks (`ClientReport.mark(label, usec)`: run parse, deserialize, apply, puppet
-  setup). The host's line ends with the rest, the game's part. The node registers itself with
+  setup, level-up panels). The host's line ends with the rest, the game's part. "level-up panels"
+  is `UpgradesSync.apply` after the run (gear, stats, the panel shown); run parse and deserialize
+  cover every section's run (`Store.timed_state`). The node registers itself with
   `Engine.set_meta`, because Godot 3 has no static variables.
 - **Corrections.** In `_predict_own`, a new error longer than one step at the player's speed is
   counted per window, the largest with the snapshot's age, the inputs not acked and the speed. A
@@ -1879,6 +1959,9 @@ later changes may have moved it.
 | Client, `_on_battle_start` up to `change_scene` (late 2 / 4) | 87 / 95 ms | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
 | Host, run packed in parts as the battle scene enters (late 2 / 4) | 31 to 36 / 60 to 86 ms | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
 | Client time per applied level-up state: choice, reroll, crate item, new panels (late 2 players) | 40 to 45, 40 to 52, 94 to 149, 171 to 264 ms | 2026-11-17, 055222f | `upgrades_change_tests.gd` |
+| The same with kept items and the gear in place, late 2 / 4 players: choice, reroll, crate item | 10 / 11, 11 / 12, 30 / 31 ms | 2026-11-21, 0d1ccb3 | `upgrades_change_tests.gd` |
+| A crate item's state on a client, late 2 / 4: run parse, deserialize, apply, level-up panels (of which the gear about 11); the old way in the same run | 6.4 / 6.3, 6.8 / 6.4, 2.2 / 2.8, 14.9 / 15.0 ms; 98 / 92 ms | 2026-11-21, 0d1ccb3 | `upgrades_change_tests.gd` |
+| Host, a client's crate item to its answer sent (late 2 / 4): applying the intent, the stream's check (serializing the run) | 29 / 37 ms: 5.7 / 5.4, 23 / 31 ms | 2026-11-21, 0d1ccb3 | `upgrades_change_tests.gd` |
 | Effect custom args per serialization (late 2 / 4) | 2.4 / 3.0 ms | 2026-11-17, cc3f561 | recorded with the commit |
 | Battle scene change on a client, small two-player run | 284 ms stall, of which the mod 4.8 ms | 2026-11-17, f12aab4 | `client_report_tests.gd` |
 | Damage meter, one measurement (late run, 4 players, 6 weapons each) | 0.45 ms | 2026-11-16, 677a2bf | `damage_meter_tests.gd` |
@@ -1906,6 +1989,7 @@ enemies it is the host's game itself that slows down.
 | 2026-11-16 | three players, 43 waves, Steam send rate 262144 B/s | in the shop at wave 42, 251211 B of reliable run state pending for each of two clients, send queue 954 ms, pings of about 1 s; backlogs of 20 to 250 KB in the shop and 55 to 76 s into battles | send rate 512 KB/s, run state in parts, backpressure, the traffic log |
 | 2026-11-16 | the same session | 213 input gap lines of 200 to 847 ms, most at a battle start or shop entry; scene-change stalls of 150 to 700 ms per client | gap lines tell a client's own stall from the network; client reports |
 | 2026-11-16 | the same session | 7 fingerprint misses in the shop between waves 18 and 40 | effects' custom args are settled before serializing |
+| 2026-11-21 | two players, 47 waves | a client lags from the crate item to the level-up page (issue #110); one frame of 50 to 64 ms per wave end and shop, its only mark "apply 2" (the store's parse and deserialize and the panels had none) | kept items, gear in place, marks for every section's run and the level-up panels (0d1ccb3) |
 | 2026-11-17 or earlier (fix 055222f) | a real session, late endless waves | client frames of 100 to 205 ms during the level-up panels | per-player rebuild |
 | 2026-11-16 or earlier (fix 1ceb422) | online session | a client crashed natively on the level-up gear page after a run change | [Freed controls under a cursor](#freed-controls-under-a-cursor) |
 | 2026-11-17 or earlier (fix ec3c80b) | online endless run, wave 36 | the host crashed natively when the co-op shop opened | [Axolotl crash](#axolotl-crash) |
@@ -1943,6 +2027,11 @@ As of 2026-11-19, protocol 30.
 - A click outside an open popup does not close it.
 - After a combine on the level-up panels the client's cursor keeps its slot where the host's copy
   jumps to the new weapon, until the next `UPGRADE_FOCUS`.
+- A client's next level-up page waits for the host's answer: a round trip plus the host's check
+  (about 30 ms late in a run, mostly serializing the run). It cannot be shown ahead: the host rolls
+  the options (`ItemService.get_upgrades`) from the player's stats after the decision.
+- New panels on a client still instance every gear element (the inventory is empty, the game's
+  way): one longer frame at the wave's end.
 - A key tap shorter than a physics frame is lost while a panel is up (held state is polled).
 
 **Selection screens and end of run**

@@ -24,9 +24,62 @@ func cover(s, emulator: Node, own: Control, hovered: Control):
 	yield(s._mouse(hovered, "move"), "completed")
 
 
-# Leaving the hovered item's popup: through the gap and into it keeps it, into empty space closes
-# it (the cursor stays), the item shows it again, another item shows its own. A popup the keys
-# opened stays when the mouse moves in empty space.
+# The popup touches its item (extensions/ui/coop_item_popup.gd): no gap over the next item of the
+# stack. Placed at every item, flipped above near the bottom; it never covers its own item. The
+# mouse straight from the hovered item into it, pixel by pixel, keeps that item's popup.
+func adjacent(s, emulator: Node, own: Control, hovered: Control):
+	var popup = s._shop._get_item_popup(0)
+	var placed := []
+	for i in 4:
+		var button: Control = s._node(0, i)._button
+		if s._node(0, i).active:
+			var pos: Vector2 = popup._get_new_position(button, popup._panel)
+			var side := _side(Rect2(pos, popup.rect_size), button.get_global_rect())
+			placed.append(side)
+	s._t._check(
+		not placed.empty() and not "gap" in placed and not "covers" in placed,
+		"the shop popup touches each item, above or below, and covers none (%s)" % [placed]
+	)
+	s._t._check("below" in placed, "the shop popup opens below an upper item (%s)" % [placed])
+
+	var panel = s._sync.local.local_panel
+	var from: Rect2 = panel._rect(hovered)
+	var to: Rect2 = panel._rect(popup)
+	var x: float = (max(from.position.x, to.position.x) + min(from.end.x, to.end.x)) / 2.0
+	var down: bool = to.position.y >= from.position.y
+	var edge: float = from.end.y if down else from.position.y
+	var step := 1.0 if down else -1.0
+	var hit := []
+	for i in range(-4, 5):
+		var point := Vector2(x, edge + i * step)
+		yield(s._mouse_at(point, "move"), "completed")
+		var on = panel.control_at(own, point)
+		if on != null and on != hovered:
+			hit.append(on.name)
+		if not (popup.visible and popup._attachment == hovered):
+			hit.append("closed at %s" % point)
+	s._t._check(
+		hit.empty() and emulator.focused_control == hovered,
+		"the mouse straight from the item into its popup hovers nothing else (%s)" % [hit]
+	)
+	yield(s._mouse(hovered, "move"), "completed")
+
+
+# Where popup lies to item: "below" / "above" touching it, "beside" (the game's sideways shift),
+# "gap" with room between them, "covers" when it hides part of the item.
+static func _side(popup: Rect2, item: Rect2) -> String:
+	if popup.intersects(item.grow(-1.0)):
+		return "covers"
+	if popup.position.y >= item.end.y - 1.0:
+		return "below" if popup.position.y <= item.end.y + 1.0 else "gap"
+	if popup.end.y <= item.position.y + 1.0:
+		return "above" if popup.end.y >= item.position.y - 1.0 else "gap"
+	return "beside"
+
+
+# Leaving the hovered item's popup: through a gap (if any) and into it keeps it, into empty space
+# closes it (the cursor stays), the item shows it again, another item shows its own. A popup the
+# keys opened stays when the mouse moves in empty space.
 func leave(s, emulator: Node, own: Control, hovered: Control):
 	var local = s._sync.local
 	var panel = local.local_panel
@@ -164,6 +217,8 @@ func inventory(s, emulator: Node):
 		popup._focused and popup.is_a_parent_of(emulator.focused_control),
 		"a click on an own weapon opens its popup with the cursor in it"
 	)
+	var side := _side(popup.get_global_rect(), element.get_global_rect())
+	s._t._check(side != "gap", "the weapon's popup leaves no gap to it (%s)" % side)
 	var outside: Control = null
 	for control in [shop._get_reroll_button(0), shop._get_go_button(0)]:
 		var middle: Vector2 = control.get_global_rect().position + control.rect_size / 2.0

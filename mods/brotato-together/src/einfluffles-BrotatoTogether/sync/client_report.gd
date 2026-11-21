@@ -5,7 +5,7 @@ extends Node
 # corrections of the own player's prediction.
 
 # Timing marks, in the order of a report's "marks" (MARK_NAMES).
-enum Mark { PARSE, DESERIALIZE, APPLY, PUPPET_SETUP }
+enum Mark { PARSE, DESERIALIZE, APPLY, PUPPET_SETUP, PANELS }
 # Parts of BattleClient._process, in the order of a report's "worst_phases" (PHASE_NAMES).
 enum Phase { PLAYERS, ENTITIES, PICKUPS, EVENTS }
 
@@ -26,7 +26,7 @@ const SCENE_LINES_PER_MINUTE := 2
 const MAX_LINES_PER_MINUTE := 8
 const KIND_FRAMES := 1
 const KIND_SCENE := 2
-const MARK_NAMES := ["run parse", "deserialize", "apply", "puppet setup"]
+const MARK_NAMES := ["run parse", "deserialize", "apply", "puppet setup", "level-up panels"]
 const PHASE_NAMES := ["players", "entities", "pickups", "events"]
 const MAX_FILE_LENGTH := 40
 const FILE_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"

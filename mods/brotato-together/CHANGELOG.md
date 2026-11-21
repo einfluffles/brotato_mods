@@ -10,6 +10,21 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- A cursed Molotov no longer fills the game's log with `Node not found` errors on every throw.
+- No more "Node not found" errors in the host's log when an online player's gear changes on the
+  level-up panel (a crate weapon combined or recycled, a crate item traded to them).
+- Co-op shop, level-up and end-of-run panels: an item's details open right against the item, with
+  no gap over the next item, so a client's mouse can move straight from a shop item into its
+  details.
+- End-of-run screen on a client: the mouse works for looking. Hover an item or a stat for its
+  details, click the arrows to turn a panel's page, scroll your own panel with the wheel. Restart,
+  new run and exit stay with the host. On the host, the wheel now scrolls the keyboard player's
+  panel there too.
+- On a client, walking along the edge of the map is as fast as on the host. Before, your character
+  rushed ahead along it and was pulled back when you stopped or left it.
+- Level-up screen on a client: taking or recycling a crate item, choosing and rerolling no longer
+  hitch late in a run. The next page shows about three times sooner after the host answers.
+
 ## 2026-11-21 13:43 UTC
 
 - Shop, level-up and end-of-run panels show each player's key hints for the device that player

@@ -18,6 +18,8 @@ const SoundRelay := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/sound_relay.gd"
 )
 const SharedScroll := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/shared_scroll.gd")
+# Loaded with the copy: its game classes compiled at mod init break the shop hints' scripts.
+const MOUSE_SCRIPT := "res://mods-unpacked/einfluffles-BrotatoTogether/sync/end_run_mouse.gd"
 const LOG_NAME := "einfluffles-BrotatoTogether:MenuPuppet"
 const CHARACTERS := "character_selection"
 const WEAPONS := "weapon_selection"
@@ -30,12 +32,14 @@ const SCENES := {
 	END_RUN: "res://ui/menus/run/coop_end_run.tscn",
 }
 const GLASS := "BrotatoTogetherGlass"
+const END_RUN_MOUSE := "BrotatoTogetherEndRunMouse"
 const LOADING_TIMEOUT_MSEC := 10000
 const MAX_PLAYERS := 4
 const MAX_ELEMENTS := 400
 const MAX_ID_LENGTH := 96
 
 var state_stream: Node = null
+var input_sync: Node = null  # its local_input_blocked: the lobby popup has the mouse
 
 var _screen := 0  # the host screen the copy stands for
 var _kind := ""
@@ -45,6 +49,7 @@ var _state := {}  # the latest state of _screen
 var _grids_key := 0  # hash of the inventories the copy was built from
 var _items := {}  # my_id -> item of this machine
 var _join_received = null  # the host's last join progress (_apply_join)
+var _pages := []  # the host's end-of-run pages as last applied (-1: none)
 
 
 func _ready() -> void:
@@ -91,6 +96,7 @@ func forget() -> void:
 	_state = {}
 	CoopService.bt_remote_progress = null
 	_join_received = null
+	_pages = []
 	SharedScroll.clear_own_player()
 
 
@@ -166,13 +172,20 @@ func _on_scene_ready(scene: Node) -> void:
 	_stop_watching_scenes()
 	_scene_id = scene.get_instance_id()
 	CoopService.listening_for_inputs = false
-	# The mouse never reaches the copy's controls (Back, the run options, the end-of-run buttons).
-	var glass := Control.new()
-	glass.name = GLASS
-	glass.anchor_right = 1.0
-	glass.anchor_bottom = 1.0
-	glass.mouse_filter = Control.MOUSE_FILTER_STOP
-	scene.add_child(glass)
+	if _kind == END_RUN:
+		# Popups, pages and the wheel for looking; the buttons get no mouse event.
+		var mouse: Node = load(MOUSE_SCRIPT).new()
+		mouse.name = END_RUN_MOUSE
+		mouse.menu_puppet = self
+		scene.add_child(mouse)
+	else:
+		# The mouse never reaches the copy's controls (Back, the run options).
+		var glass := Control.new()
+		glass.name = GLASS
+		glass.anchor_right = 1.0
+		glass.anchor_bottom = 1.0
+		glass.mouse_filter = Control.MOUSE_FILTER_STOP
+		scene.add_child(glass)
 	if scene.get("_button_pressed") == false:
 		scene._button_pressed = true  # BaseEndRun: restart / new run / exit are the host's
 	_apply(scene, _state)
@@ -504,17 +517,27 @@ func _apply_character_shown(scene: Node, shown) -> void:
 			panel.selected = scene._has_player_selected[p]
 
 
+# A page the mouse turned here (sync/end_run_mouse.gd) stays until the host's page moves.
 func _apply_pages(scene: Node, pages) -> void:
 	if typeof(pages) != TYPE_ARRAY:
 		return
 	var containers: Array = scene.player_containers
+	var applied := []
 	for p in min(RunData.get_player_count(), min(pages.size(), containers.size())):
 		var carousel = containers[p].carousel
 		var page = pages[p]
 		if typeof(page) != TYPE_INT or page < 0:
+			applied.append(-1)
 			continue
-		if carousel.index != min(page, carousel._get_max_index()):
+		applied.append(page)
+		if host_page(p) != page and carousel.index != min(page, carousel._get_max_index()):
 			carousel.index = page
+	_pages = applied
+
+
+# The host's page of player p's end-of-run panel, -1 if none came.
+func host_page(p: int) -> int:
+	return _pages[p] if p >= 0 and p < _pages.size() else -1
 
 
 func _on_lobby_left(transport: Node) -> void:

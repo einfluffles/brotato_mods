@@ -64,6 +64,9 @@ static func own_roots(menu: Node, player: int):
 				roots.append(menu._get_wheel_grid())  # every cursor's grid
 			elif player < grids.size():
 				roots.append(grids[player])
+	elif menu.get("player_containers") is Array:  # CoopEndRun
+		if _has_player(player) and player < menu.player_containers.size():
+			roots.append(menu.player_containers[player])
 	else:
 		return null
 	return roots
