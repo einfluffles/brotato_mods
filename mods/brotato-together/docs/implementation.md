@@ -1717,6 +1717,12 @@ calls holds a whole frame.
 - **Frames.** Per window of 10 s of unpaused frames in one scene: count, average, worst, frames of
   50 ms or more, and in a battle what `BattleClient._process` took and the most entities it
   mirrored. Sent when the worst frame took 50 ms or more, else once a minute.
+- **Worst frame.** The window keeps what its worst frame was spent on: the timing marks of that
+  frame, the four parts of `BattleClient._process` (players, entities, pickups, events) and how
+  many puppets it instanced. A puppet instanced instead of taken from a pool (`_spawn`,
+  `FeedbackMirror.explode`) is also counted per window with its time, the costliest by scene file
+  name (`ClientReport.fresh(file, usec)`). The host adds this to the line only when the worst frame
+  took 50 ms or more, and shows a file name that is not plain as "?".
 - **Scene change.** The longest frame within 3 s of a change of `current_scene`, with the mod's
   share from timing marks (`ClientReport.mark(label, usec)`: run parse, deserialize, apply, puppet
   setup). The host's line ends with the rest, the game's part. The node registers itself with

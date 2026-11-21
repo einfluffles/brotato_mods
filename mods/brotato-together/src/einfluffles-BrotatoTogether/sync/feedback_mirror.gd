@@ -8,6 +8,9 @@ const PuppetEntity := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/puppet_entity.gd"
 )
 const AnimMirror := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/anim_mirror.gd")
+const ClientReport := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
+)
 const PF := Snapshot.PlayerField
 # Announced with BATTLE_START (rockets, grenades, landmines, ... all use it).
 const EXPLOSION_SCENE := "res://projectiles/explosion.tscn"
@@ -189,7 +192,9 @@ func explode(main: Node, scene, position: Vector2, scale: float, smoke: int) -> 
 	var container = main.get("_explosions")
 	var pool_id: int = scene.get_instance_id()
 	var explosion = main.get_node_from_pool(pool_id, container)
+	var started := -1  # instanced: when, else -1
 	if explosion == null:
+		started = OS.get_ticks_usec()
 		explosion = scene.instance()
 		if not explosion is PlayerExplosion:  # the path comes from the network
 			explosion.free()
@@ -208,6 +213,8 @@ func explode(main: Node, scene, position: Vector2, scale: float, smoke: int) -> 
 	var animation_player: AnimationPlayer = explosion._animation_player
 	animation_player.stop(true)
 	animation_player.play(EXPLODE_ANIMATION)
+	if started >= 0:
+		ClientReport.fresh(scene.resource_path.get_file(), OS.get_ticks_usec() - started)
 	return explosion
 
 

@@ -1,7 +1,7 @@
 extends Reference
-# Suite client_report (sync/client_report.gd): a client's frame windows, scene-change stalls and
-# prediction corrections, and the host's lines for them. Without a session the report runs as
-# test_client: it keeps what it would send instead of sending it.
+# Suite client_report (sync/client_report.gd): a client's frame windows with their worst frame,
+# scene-change stalls and prediction corrections, and the host's lines for them. Without a
+# session the report runs as test_client: it keeps what it would send instead of sending it.
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const ClientReport := preload(
@@ -32,6 +32,7 @@ func run(together: Node):
 	_test_budget(report)
 	_test_stall(report)
 	_test_corrections(report)
+	_test_worst_frame(report)
 	_end(report)
 	_test_host(together, report)
 	yield(_test_battle(together, report), "completed")
@@ -74,11 +75,13 @@ func _test_not_a_client(report: Node) -> void:
 	report._process(0.0)
 	report._process(0.0)
 	ClientReport.mark(ClientReport.Mark.PARSE, 5000)
-	ClientReport.mirror_cost(5000, 3)
+	ClientReport.mirror_cost(5000, 3, [1000, 2000, 1000, 1000])
+	ClientReport.fresh("turret.tscn", 5000)
 	ClientReport.note_correction(100.0, 10.0, 2, 400.0)
 	_t._check(
 		not report.active and report._window.empty() and report.sent.empty()
-		and report._marks == [0, 0, 0, 0],
+		and report._marks == [0, 0, 0, 0] and report._phases == [0, 0, 0, 0]
+		and report._fresh == 0,
 		"not a ready client: nothing is measured"
 	)
 
@@ -233,6 +236,57 @@ func _test_corrections(report: Node) -> void:
 	)
 
 
+# The window keeps what its worst frame was spent on, and every puppet instanced in it.
+func _test_worst_frame(report: Node) -> void:
+	var battle := _scene("res://main.tscn")
+	_feed(report, battle, 1)
+	report.sent.clear()
+	ClientReport.mirror_cost(30000, 10, [1000, 27000, 1000, 1000])
+	ClientReport.fresh("turret.tscn", 25000)
+	ClientReport.fresh("bullet.tscn", 2000)
+	ClientReport.mark(ClientReport.Mark.PARSE, 3000)
+	_feed(report, battle, 1, 60000)
+	ClientReport.mirror_cost(70000, 12, [2000, 3000, 1000, 64000])
+	ClientReport.fresh("explosion.tscn", 60000)
+	ClientReport.mark(ClientReport.Mark.APPLY, 5000)
+	_feed(report, battle, 1, 80000)
+	ClientReport.mirror_cost(5000, 12, [1000, 2000, 1000, 1000])
+	ClientReport.mark(ClientReport.Mark.DESERIALIZE, 2000)
+	_feed(report, battle, 1, 55000)
+	_feed(report, battle, 625)
+	var windows := _of_kind(report.sent, ClientReport.KIND_FRAMES)
+	_t._check(windows.size() == 1, "the window with the slow frames is sent (%d)" % windows.size())
+	if windows.size() != 1:
+		return
+	var body: Dictionary = windows[0]
+	_t._check(
+		body.worst == 80.0 and body.worst_phases == [2.0, 3.0, 1.0, 64.0]
+		and body.worst_marks == [0.0, 0.0, 5.0, 0.0] and body.worst_fresh == 1,
+		"the worst frame's phases, marks and fresh puppets, not a later or summed frame's: %s %s %s"
+		% [body.worst_phases, body.worst_marks, body.worst_fresh]
+	)
+	_t._check(
+		body.fresh == 3 and is_equal_approx(body.fresh_msec, 87.0) and body.fresh_worst == 60.0
+		and body.fresh_worst_file == "explosion.tscn",
+		"all fresh puppets of the window, the costliest by name"
+	)
+	_t._check(
+		report._window.fresh == 0 and report._window.worst_fresh == 0
+		and report._window.fresh_worst_file == "",
+		"the next window starts without them"
+	)
+	var lines: Array = ClientReport.report_lines(PEER_NAME, bytes2var(var2bytes(body), false))
+	var expected := (
+		"; worst frame: apply 5, mirror 70.0 (players 2.0, entities 3.0, pickups 1.0, events 64.0),"
+		+ " 1 fresh; 3 fresh in 87 ms, costliest explosion.tscn 60.0 ms"
+	)
+	_t._check(
+		lines.size() == 1 and lines[0].ends_with(expected),
+		"the host's line says what the worst frame was spent on: %s" % [lines]
+	)
+	report.sent.clear()
+
+
 func _test_host(together: Node, report: Node) -> void:
 	var session: Node = together.session
 	var transport: Node = session.transport
@@ -265,12 +319,49 @@ func _test_host(together: Node, report: Node) -> void:
 		report.last_lines == [frames_line, corrections_line],
 		"the host logs a report as lines: %s" % [report.last_lines]
 	)
+	var detailed := frames.duplicate()
+	detailed.worst = 96.0
+	detailed.corrections = 0
+	detailed.worst_marks = [0, 0, 74.4, 0]
+	detailed.worst_phases = [0, 0, 0, 0]
+	detailed.worst_fresh = 0
+	detailed.fresh = 0
+	detailed.fresh_msec = 0.0
+	detailed.fresh_worst = 0.0
+	detailed.fresh_worst_file = ""
+	var shop_line: Array = ClientReport.report_lines(PEER_NAME, detailed)
+	var shop_end := (
+		"worst 96, 0 over 50 ms; mirror avg 1.9, worst 6.2 ms; up to 412 entities;"
+		+ " worst frame: apply 74"
+	)
+	_t._check(
+		shop_line.size() == 1 and shop_line[0].ends_with(shop_end),
+		"a worst frame without mirror work names its marks only: %s" % [shop_line]
+	)
+	var smooth: Array = ClientReport.report_lines(PEER_NAME, _with(detailed, "worst", 30.0))
+	_t._check(
+		smooth.size() == 1 and not "worst frame" in smooth[0],
+		"a worst frame under 50 ms is not broken down"
+	)
+	var unknown := _with(_with(detailed, "worst_marks", [0, 0, 0, 0]), "fresh", 2)
+	unknown.fresh_worst = 9.0
+	var unknown_end := "worst frame: none of it measured; 2 fresh in 0 ms, costliest ? 9.0 ms"
+	for file in ["", "a b.tscn", "x".repeat(41), "evil\nline.tscn"]:
+		var named: Array = ClientReport.report_lines(
+			PEER_NAME, _with(unknown, "fresh_worst_file", file)
+		)
+		_t._check(
+			named.size() == 1 and named[0].ends_with(unknown_end),
+			"a scene file name that is not plain shows as ?: %s" % [named]
+		)
 	var malformed := [
 		null, [1, 2], {"kind": "frames"}, {"kind": 7, "scene": 1},
 		_with(frames, "avg", "17"), _with(frames, "worst", null), _with(frames, "scene", "main"),
 		_with(frames, "speed", NAN), {"kind": ClientReport.KIND_SCENE, "scene": 1, "stall": 600},
 		{"kind": ClientReport.KIND_SCENE, "scene": 1, "stall": 600, "marks": [1, 2, 3]},
 		{"kind": ClientReport.KIND_SCENE, "scene": 1, "stall": 600, "marks": [1, 2, "x", 4]},
+		_with(detailed, "worst_phases", [1, 2, 3]), _with(detailed, "worst_marks", null),
+		_with(detailed, "fresh", "3"), _with(detailed, "fresh_worst_file", 7),
 	]
 	var logged: int = report.lines_logged
 	for body in malformed:
@@ -391,6 +482,17 @@ func _test_battle(together: Node, report: Node):
 			body.entities > 0 and lines.size() >= 1 and "; mirror avg" in lines[0],
 			"and the host's line shows it with the entities (%d)" % body.entities
 		)
+	var fresh := 0
+	var files := []
+	for body in mirrored:
+		fresh += body.fresh
+		if body.fresh > 0:
+			files.append(body.fresh_worst_file)
+	print("  info: %d fresh puppets, costliest per window %s" % [fresh, files])
+	_t._check(
+		fresh > 0 and not files.empty() and files[0].ends_with(".tscn"),
+		"the puppets instanced for the battle are counted, the costliest by its scene file"
+	)
 	report.test_client = false
 	report.window_msec = ClientReport.WINDOW_MSEC
 	report.baseline_msec = ClientReport.BASELINE_MSEC

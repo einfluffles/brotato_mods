@@ -9,6 +9,8 @@ upload; three of them are marked where the upload may have differed.
 ## Unreleased
 
 - Small wording changes in the lobby page and the client's status line.
+- The host's log says what a client's slowest frame was spent on, to track down hitches at the
+  start of later waves.
 
 ## 2026-11-18 14:51
 

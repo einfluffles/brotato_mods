@@ -454,13 +454,21 @@ func _process(delta: float) -> void:
 		alpha = clamp((render_t - from.t) / float(to.t - from.t), 0.0, 1.0)
 	interp_lag_msec = int(_buffer[-1].t - render_t)
 	_apply_players(from, to, alpha, _buffer[-1], delta)
+	var players_done := OS.get_ticks_usec()
 	_apply_entities(from, to, alpha)
+	var entities_done := OS.get_ticks_usec()
 	var at := _own_display - _own_error  # without the blend: where the host will have it
 	for id in _pickups.update(_entities, _picker(), at, _own_seq, _buffer[-1], to, delta):
 		_drop_entity(id)
+	var pickups_done := OS.get_ticks_usec()
 	_apply_wave_timer(to.wave_time_left)
 	_fire_events(render_t)
-	ClientReport.mirror_cost(OS.get_ticks_usec() - started, _entities.size())
+	var done := OS.get_ticks_usec()
+	var phases := [
+		players_done - started, entities_done - players_done, pickups_done - entities_done,
+		done - pickups_done,
+	]
+	ClientReport.mirror_cost(done - started, _entities.size(), phases)
 
 
 func _apply_players(
@@ -774,6 +782,7 @@ func _spawn(type_idx: int) -> Node:
 	var pooled = _pop_valid(_main._pool[pool_id])
 	if pooled == null:
 		pooled = _pop_valid(_puppet_pool.get(type_idx, []))
+	var started := OS.get_ticks_usec()
 	var node: Node = pooled if pooled != null else scene.instance()
 	var container = _container_for(node)
 	if container == null:
@@ -808,6 +817,8 @@ func _spawn(type_idx: int) -> Node:
 	if not node is Hole:  # its body is what the own player's prediction runs into
 		PuppetEntity.puppetize(node)
 	AnimMirror.detach_game_handlers(node)
+	if node != pooled:
+		ClientReport.fresh(scene.resource_path.get_file(), OS.get_ticks_usec() - started)
 	return node
 
 

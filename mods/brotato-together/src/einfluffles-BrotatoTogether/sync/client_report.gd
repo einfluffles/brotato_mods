@@ -1,10 +1,13 @@
 extends Node
 # Clients report how their game runs into the host's log (CLIENT_REPORT): after a session only
-# the host's modloader.log is at hand. A ready client sends frame-time windows, the stall after a
-# scene change with the mod's share of it, and corrections of the own player's prediction.
+# the host's modloader.log is at hand. A ready client sends frame-time windows (with what the
+# worst frame was spent on), the stall after a scene change with the mod's share of it, and
+# corrections of the own player's prediction.
 
 # Timing marks, in the order of a report's "marks" (MARK_NAMES).
 enum Mark { PARSE, DESERIALIZE, APPLY, PUPPET_SETUP }
+# Parts of BattleClient._process, in the order of a report's "worst_phases" (PHASE_NAMES).
+enum Phase { PLAYERS, ENTITIES, PICKUPS, EVENTS }
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:ClientReport"
@@ -24,6 +27,9 @@ const MAX_LINES_PER_MINUTE := 8
 const KIND_FRAMES := 1
 const KIND_SCENE := 2
 const MARK_NAMES := ["run parse", "deserialize", "apply", "puppet setup"]
+const PHASE_NAMES := ["players", "entities", "pickups", "events"]
+const MAX_FILE_LENGTH := 40
+const FILE_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
 # Scenes by file name; index 0: any other.
 const SCENE_FILES := [
 	"",
@@ -57,6 +63,8 @@ var last_lines := []
 
 var _last_usec := 0  # when _process ran last
 var _marks := []  # usec per Mark in the frame running now
+var _phases := []  # usec per Phase in the frame running now
+var _fresh := 0  # puppets instanced (not taken from a pool) in the frame running now
 var _previous := [0, []]  # the frame before: usec, marks
 var _scene_id := 0  # instance id of the scene the window is in, 0: none yet
 var _window := {}
@@ -95,7 +103,8 @@ static func mark(label: int, usec: int) -> void:
 		report._marks[label] += usec
 
 
-static func mirror_cost(usec: int, entities: int) -> void:
+# phases: usec per Phase of this call's usec.
+static func mirror_cost(usec: int, entities: int, phases := []) -> void:
 	var report = _active_report()
 	if report == null or report._window.empty():
 		return
@@ -104,6 +113,23 @@ static func mirror_cost(usec: int, entities: int) -> void:
 	window.mirror_usec += usec
 	window.mirror_worst_usec = max(window.mirror_worst_usec, usec)
 	window.entities = max(window.entities, entities)
+	for i in min(phases.size(), report._phases.size()):
+		report._phases[i] += phases[i]
+
+
+# A puppet instanced instead of taken from a pool: file is its scene's, usec what instancing and
+# setting it up took.
+static func fresh(file: String, usec: int) -> void:
+	var report = _active_report()
+	if report == null or report._window.empty():
+		return
+	var window: Dictionary = report._window
+	report._fresh += 1
+	window.fresh += 1
+	window.fresh_usec += usec
+	if usec > window.fresh_worst_usec:
+		window.fresh_worst_usec = usec
+		window.fresh_worst_file = file.left(MAX_FILE_LENGTH)
 
 
 # px: from where the own player was shown to where the host's position puts it now. late_msec:
@@ -161,6 +187,10 @@ func _process(_delta: float) -> void:
 func step(frame_usec: int, scene: Node, paused: bool, now_msec: int) -> void:
 	var frame_marks := _marks
 	_marks = _no_marks()
+	var frame_phases := _phases
+	_phases = _no_phases()
+	var frame_fresh := _fresh
+	_fresh = 0
 	var previous := _previous
 	_previous = [frame_usec, frame_marks]
 	var scene_id := scene.get_instance_id() if scene != null else 0
@@ -188,7 +218,11 @@ func step(frame_usec: int, scene: Node, paused: bool, now_msec: int) -> void:
 	var msec := frame_usec / 1000.0
 	_window.msec += msec
 	_window.frames += 1
-	_window.worst = max(_window.worst, msec)
+	if msec > _window.worst:
+		_window.worst = msec
+		_window.worst_marks = frame_marks
+		_window.worst_phases = frame_phases
+		_window.worst_fresh = frame_fresh
 	if msec >= SLOW_FRAME_MSEC:
 		_window.over += 1
 	if _window.msec >= window_msec:
@@ -241,9 +275,7 @@ func _send_stall(now_msec: int) -> void:
 		return
 	if not _take_lines(_scene_lines, SCENE_LINES_PER_MINUTE, 1, now_msec):
 		return
-	var marks := []
-	for usec in stall.get("marks", _no_marks()):
-		marks.append(usec / 1000.0)
+	var marks := _msec_of(stall.get("marks", _no_marks()))
 	_send({"kind": KIND_SCENE, "scene": stall.scene, "stall": stall.frame / 1000.0, "marks": marks})
 
 
@@ -266,7 +298,21 @@ func _window_body() -> Dictionary:
 		"age": w.age,
 		"unacked": w.unacked,
 		"speed": w.speed,
+		"worst_marks": _msec_of(w.worst_marks),
+		"worst_phases": _msec_of(w.worst_phases),
+		"worst_fresh": w.worst_fresh,
+		"fresh": w.fresh,
+		"fresh_msec": w.fresh_usec / 1000.0,
+		"fresh_worst": w.fresh_worst_usec / 1000.0,
+		"fresh_worst_file": w.fresh_worst_file,
 	}
+
+
+static func _msec_of(usecs: Array) -> Array:
+	var msecs := []
+	for usec in usecs:
+		msecs.append(usec / 1000.0)
+	return msecs
 
 
 func _window_line_count() -> int:
@@ -296,19 +342,36 @@ func _new_window(scene: int) -> Dictionary:
 		"age": 0.0,
 		"unacked": 0,
 		"speed": 0.0,
+		"worst_marks": _no_marks(),
+		"worst_phases": _no_phases(),
+		"worst_fresh": 0,
+		"fresh": 0,
+		"fresh_usec": 0,
+		"fresh_worst_usec": 0,
+		"fresh_worst_file": "",
 	}
 
 
 func _no_marks() -> Array:
-	var marks := []
-	marks.resize(MARK_NAMES.size())
-	for i in marks.size():
-		marks[i] = 0
-	return marks
+	return _zeros(MARK_NAMES.size())
+
+
+func _no_phases() -> Array:
+	return _zeros(PHASE_NAMES.size())
+
+
+static func _zeros(size: int) -> Array:
+	var zeros := []
+	zeros.resize(size)
+	for i in size:
+		zeros[i] = 0
+	return zeros
 
 
 func _reset() -> void:
 	_marks = _no_marks()
+	_phases = _no_phases()
+	_fresh = 0
 	_previous = [0, _no_marks()]
 	_scene_id = 0
 	_window = {}
@@ -383,15 +446,13 @@ static func _scene_lines_of(client_name: String, where: String, body: Dictionary
 	var marks = body.get("marks")
 	if stall == null or typeof(marks) != TYPE_ARRAY or marks.size() != MARK_NAMES.size():
 		return []
-	var parts := []
+	var values = _numbers(marks, MARK_NAMES.size())
+	if values == null:
+		return []
+	var parts := _mark_parts(values)
 	var rest: float = stall
-	for i in marks.size():
-		var value = _number({"v": marks[i]}, "v", 0.0, MAX_MSEC)
-		if value == null:
-			return []
+	for value in values:
 		rest -= value
-		if value >= 0.5:
-			parts.append("%s %d" % [MARK_NAMES[i], round(value)])
 	parts.append("rest %d" % round(max(0.0, rest)))
 	var line := (
 		"Client %s entered %s: stalled %d ms (%s)"
@@ -422,6 +483,12 @@ static func _frame_lines_of(client_name: String, where: String, body: Dictionary
 			"; mirror avg %.1f, worst %.1f ms; up to %d entities"
 			% [v.mirror_avg, v.mirror_worst, v.entities]
 		)
+	if body.has("worst_phases"):
+		var worst = _worst_frame_text(body)
+		if worst == null:
+			return []
+		if v.worst >= SLOW_FRAME_MSEC:
+			line += worst
 	var lines := [line]
 	if v.corrections > 0:
 		lines.append(
@@ -432,6 +499,74 @@ static func _frame_lines_of(client_name: String, where: String, body: Dictionary
 			% [client_name, seconds, v.corrections, round(v.largest), round(v.age), v.unacked, v.speed]
 		)
 	return lines
+
+
+# "; worst frame: apply 74, mirror 56.8 (players 0.3, entities 55.9, ...), 1 fresh; 31 fresh in
+# 820 ms, costliest turret.tscn 55.2 ms", or null when a value is malformed.
+static func _worst_frame_text(body: Dictionary):
+	var marks = _numbers(body.get("worst_marks"), MARK_NAMES.size())
+	var phases = _numbers(body.get("worst_phases"), PHASE_NAMES.size())
+	var file = body.get("fresh_worst_file")
+	if marks == null or phases == null or typeof(file) != TYPE_STRING:
+		return null
+	var v := {}
+	for key in ["worst_fresh", "fresh"]:
+		v[key] = _number(body, key, 0.0, MAX_COUNT)
+	for key in ["fresh_msec", "fresh_worst"]:
+		v[key] = _number(body, key, 0.0, MAX_MSEC)
+	for key in v:
+		if v[key] == null:
+			return null
+	var parts := _mark_parts(marks)
+	var mirror := 0.0
+	var phase_parts := []
+	for i in phases.size():
+		mirror += phases[i]
+		phase_parts.append("%s %.1f" % [PHASE_NAMES[i], phases[i]])
+	if mirror > 0.0:
+		parts.append("mirror %.1f (%s)" % [mirror, PoolStringArray(phase_parts).join(", ")])
+	if v.worst_fresh > 0:
+		parts.append("%d fresh" % v.worst_fresh)
+	var text := "; worst frame: "
+	text += PoolStringArray(parts).join(", ") if not parts.empty() else "none of it measured"
+	if v.fresh > 0:
+		text += (
+			"; %d fresh in %d ms, costliest %s %.1f ms"
+			% [v.fresh, round(v.fresh_msec), _safe_file(file), v.fresh_worst]
+		)
+	return text
+
+
+# Marks of 0.5 ms or more, as "name ms".
+static func _mark_parts(marks: Array) -> Array:
+	var parts := []
+	for i in marks.size():
+		if marks[i] >= 0.5:
+			parts.append("%s %d" % [MARK_NAMES[i], round(marks[i])])
+	return parts
+
+
+# size numbers (msec), clamped, or null.
+static func _numbers(values, size: int):
+	if typeof(values) != TYPE_ARRAY or values.size() != size:
+		return null
+	var numbers := []
+	for value in values:
+		var number = _number({"v": value}, "v", 0.0, MAX_MSEC)
+		if number == null:
+			return null
+		numbers.append(number)
+	return numbers
+
+
+# A scene file name from the network as it may go into the log, else "?".
+static func _safe_file(file: String) -> String:
+	if file.empty() or file.length() > MAX_FILE_LENGTH:
+		return "?"
+	for i in file.length():
+		if not file[i] in FILE_CHARS:
+			return "?"
+	return file
 
 
 static func _number(body: Dictionary, key: String, lo: float, hi: float):
