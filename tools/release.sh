@@ -86,14 +86,16 @@ fi
 
 # Windows steamcmd.exe takes C:/... paths; elsewhere the path stays as it is.
 native() { if command -v cygpath > /dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi; }
-vdf_escape() { sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
-note="$(tr -d '\r' < "$work/release/changenote.txt" | vdf_escape)"
+# steamcmd reads VDF values without escape sequences: a " ends the value (the rest is misread as
+# keys and conditions, "Bad expression token"). Quotes become single quotes, backslashes stay.
+vdf_value() { sed -e "s/\"/'/g"; }
+note="$(tr -d '\r' < "$work/release/changenote.txt" | vdf_value)"
 vdf="$work/item.vdf"
 {
   printf '"workshopitem"\n{\n'
   printf '\t"appid"\t\t"%s"\n' "$APP_ID"
   printf '\t"publishedfileid"\t\t"%s"\n' "$item"
-  printf '\t"contentfolder"\t\t"%s"\n' "$(native "$work/content" | vdf_escape)"
+  printf '\t"contentfolder"\t\t"%s"\n' "$(native "$work/content" | vdf_value)"
   printf '\t"changenote"\t\t"%s"\n' "$note"
   printf '}\n'
 } > "$vdf"
@@ -129,8 +131,12 @@ set +e
 "$STEAMCMD" +login "$STEAM_USER" +workshop_build_item "$(native "$vdf")" +quit 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 set -e
-if grep -q "ERROR" "$log" || ! grep -q "^Success" "$log"; then
+# steamcmd prints "Committing update...Success." without a line break after it.
+if grep -q "ERROR" "$log" || ! grep -q "Committing update\.*Success" "$log"; then
   echo "upload FAILED (steamcmd exit $status): see the output above" >&2
   exit 1
+fi
+if grep -q "Bad expression token" "$log"; then
+  echo "WARNING: steamcmd misread the VDF: check the change note on the item's page" >&2
 fi
 echo "uploaded $tag to $target item $item"
