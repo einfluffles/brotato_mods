@@ -11,6 +11,9 @@ upload; three of them are marked where the upload may have differed.
 - Small wording changes in the lobby page and the client's status line.
 - The host's log says what a client's slowest frame was spent on, to track down hitches at the
   start of later waves.
+- Gold flies to you and is collected the moment you reach it on a client, also when running fast.
+  Before, it waited for the host, then flew after you and vanished behind you.
+- Running fast on a client with a low frame rate no longer skips fruit and crates beside your path.
 - Clients prepare the wave's enemies while the battle loads, instead of stuttering when they first
   appear in later waves.
 - No more `Can't call non-static function 'duplicate'` error in the game's log at startup.

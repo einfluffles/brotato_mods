@@ -814,6 +814,14 @@ uses a min-filtered offset.
   calm for 5 s.
 - Render time never runs backwards.
 
+**The world behind the own player.** The client shows the host's world the render delay behind the
+newest snapshot, and that snapshot is half a round trip old, while its own player is predicted half
+a round trip ahead of the host. Add the input's wait for its tick and the snapshot interval: at a
+60 ms ping the world is about 190 ms behind the own player. Enemies chasing it, their bullets and
+its own bullets show that offset, 85 px at 450 px/s and 170 px at 900 px/s, more visibly the more of
+them there are. Items are predicted ([Own pickups](#own-pickups)). Lowering the offset costs holds
+(a shorter render delay) or bandwidth and host time (more snapshots a second).
+
 ### Remote input
 
 `sync/input_sync.gd`, `sync/remote_buttons.gd`, `sync/press_counter.gd`. `INPUT` is sent unreliably
@@ -906,27 +914,41 @@ Nothing else stops a player mid-wave (`_move_locked` is used by enemies only).
 
 ### Own pickups
 
-`sync/own_pickups.gd`. The own player is predicted ahead while consumables show the host's world
-about 100 ms back, so without prediction a fruit or crate the player ran over would vanish late and
-behind the player.
+`sync/own_pickups.gd`. The own player is predicted ahead while items show the host's world about
+100 ms back. The host attracts and takes them at its own position of that player, which is a round
+trip, the render delay and a snapshot interval behind what the client shows: about 190 ms at a
+60 ms ping, so 85 px at 450 px/s and 170 px at 900 px/s. Without prediction a fruit or crate the
+player ran over would vanish late and behind the player, and gold would lie still while the player
+ran through its attract circle, then fly after it and vanish behind it ("skipping items" at high
+speed, issue #90).
 
-Game rules: a touch takes a consumable (`Player._on_ItemPickupArea_area_entered`: the pickup circle,
-radius 32 at (0, -24), against the item's 16 px box). Only a healing one is attracted, and only
-below max health (`_on_ItemAttractArea_area_entered`, radius 150 times pickup range).
+Game rules: a touch takes an item (`Player._on_ItemPickupArea_area_entered`: the pickup circle,
+radius 32 at (0, -24), against the item's 32 px box). Gold is always attracted, a healing
+consumable only below max health (`_on_ItemAttractArea_area_entered`, radius 150 times pickup
+range), and an attracted item flies to the player (`Item._physics_process`: 500 px/s, +20 per
+tick). Gold lies turned at random (`Item.drop`), which is not mirrored: the client takes its box
+unturned, so a corner can reach up to 7 px further on the host.
 
-The client runs those rules on its predicted position for consumables that stand where the newest
-snapshot has them:
+The client runs those rules on its predicted position for consumables and gold that stand where the
+newest snapshot has them:
 
-- A touch takes the puppet out of the mirror and plays one of its `pickup_sounds`. Below max health
-  a healing one in the attract circle first flies to the player like `Item._physics_process`
-  (500 px/s, +20 per tick), but not while a heal taken here is still unconfirmed.
+- A touch takes the puppet out of the mirror and plays one of its pickup sounds (gold: the game's
+  or the alternative ones, by this player's setting, with the gold sparkle). An attracted one first
+  flies to the player, but a healing one not while a heal taken here is still unconfirmed.
+- Touches are checked along the way the predicted position took since the last frame, in steps of
+  8 px (`OwnPickups.way`), as the host checks each tick. A slow frame covers several ticks: at
+  20 fps and 1200 px/s that is 60 px, and a crate beside the way would be missed between the
+  frames' ends. A way longer than 1.5 times the steps of its new inputs is a correction: only its end
+  counts.
 - The id is held (not respawned) until the newest snapshot drops it too. That snapshot's matching
   pickup sound is removed before it is queued.
-- If the id is still there once the host has applied 10 more inputs (`CONFIRM_INPUTS`, at most 60
-  snapshots), it is released, respawns where the host has it and is never predicted again.
-- Nothing is predicted while the prediction is off. Gold is not predicted.
+- If the host still has it where it stood once it has applied 10 more inputs than the one the own
+  player reached it with (touched or attracted; `CONFIRM_INPUTS`), it is released, respawns where
+  the host has it and is never predicted again. While the host moves it (its own flight, to this
+  player most likely) the client waits for it to land, at most 60 snapshots.
+- Nothing is predicted while the prediction is off.
 - If another player took it meanwhile, it vanished at the own player (the client cannot tell who
-  took it).
+  took it). The HUD's gold count follows the host's snapshots.
 
 ### Pause and live menu
 
@@ -1824,10 +1846,19 @@ later changes may have moved it.
 | Battle scene change on a client, small two-player run | 284 ms stall, of which the mod 4.8 ms | 2026-11-17, f12aab4 | `client_report_tests.gd` |
 | Damage meter, one measurement (late run, 4 players, 6 weapons each) | 0.45 ms | 2026-11-16, 677a2bf | `damage_meter_tests.gd` |
 | Damage board update, 4 players with 3 sources each | 968 B | 2026-11-18, 3f5da8f | recorded with the commit |
+| Crowded late wave: 3 players with 6 pistols, a bullet hell, 180 enemies alive (the cap of endless wave 30 for 3 players). Entities, snapshot size, per client, host per snapshot, client mirror per frame, client parse per snapshot | 210, 1.5 KB (2 packets), 43 KB/s, 2.3 ms, 0.9 ms, 0.34 ms | 2026-11-21, e6f9bc2 | `late_load_tests.gd` |
+| The same with 400 enemies alive | 420, 2.7 KB (3 packets), 79 KB/s, 1.4 ms client mirror, 0.66 ms parse; the host's game itself takes 300 to 370 ms a frame | 2026-11-21, e6f9bc2 | `late_load_tests.gd` |
+| The same with 180 enemies in a real window on the dev machine: host frames, client frames (mean / max) | 4.3 / 16 ms, 2.8 / 6.7 ms | 2026-11-21, e6f9bc2 | `tools\check-window.ps1 -Suites late_load` |
 
 The purchase is not small on the wire in the test runs because every test player carries nearly
 the same 250 items, so a whole run compresses across players while one `g` part alone does not. What
 remains on a client after a change is mostly the changed player's `PlayerRunData.deserialize`.
+
+In the crowded wave the mirror stays small: the snapshots use a twelfth of the send rate, and the
+client's mirror about 1 ms of a 16.7 ms frame. Every snapshot is two packets, so a lost
+packet loses a snapshot, which the render delay rides out. The replay's first frame instances the
+whole crowd at once (150 to 760 ms headless), as only a client that joins mid-wave sees. With 400
+enemies it is the host's game itself that slows down.
 
 ### Findings from real sessions
 
