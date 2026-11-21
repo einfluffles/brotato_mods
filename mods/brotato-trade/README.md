@@ -8,7 +8,7 @@ item for another player.
 **Status (2026-11-21):** all three ways to trade and the trade key are covered by headless
 tests (6 suites). What is still open is listed under [Limitations](#limitations).
 
-Mod id: `einfluffles-BrotatoTrade` · source: [`src/einfluffles-BrotatoTrade`](src/einfluffles-BrotatoTrade) · license: [MIT](../../LICENSE)
+Workshop: [item 3841589038](https://steamcommunity.com/sharedfiles/filedetails/?id=3841589038) · mod id: `einfluffles-BrotatoTrade` · source: [`src/einfluffles-BrotatoTrade`](src/einfluffles-BrotatoTrade) · license: [MIT](../../LICENSE)
 
 ## Requirements
 
@@ -151,13 +151,12 @@ As of 2026-11-21:
 
 - Not played in the real game. The headless tests have no renderer, so these looks are unseen:
   the character icon on a player button, the popup's height with four players, the crate panel's
-  list with four players and its crate weapons below, the hint line in a popup and the mod's own
-  key glyphs.
+  list with four players and its crate weapons below. The hint line and the mod's key glyphs were
+  seen with three players in a real window (`tools\check-window.ps1`).
 - Online, a crate trade is tested on the host and on a client's side of panels set up by hand,
   not between two running games.
 - Online, a cursor on a *Trade* button is shown only to players who have the mod too.
 - The texts "Trade" and "Press [key] to trade" are English in every language.
-- There is no Workshop item yet.
 
 ## How it works
 
