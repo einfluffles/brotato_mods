@@ -103,6 +103,7 @@ const AxolotlTests := preload("res://mods-unpacked/einfluffles-TogetherTests/axo
 const OwnPickupsTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/own_pickups_tests.gd"
 )
+const LateLoadTests := preload("res://mods-unpacked/einfluffles-TogetherTests/late_load_tests.gd")
 const DeadPlayerTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/dead_player_tests.gd"
 )
@@ -148,6 +149,7 @@ const SUITES := [
 	"axolotl",
 	"own_pickups",
 	"wave_start",
+	"late_load",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -467,6 +469,11 @@ func _suite_axolotl(together: Node):
 func _suite_own_pickups(together: Node):
 	coop_run(3)
 	_suite = OwnPickupsTests.new(self)
+	yield(_suite.run(together), "completed")
+
+
+func _suite_late_load(together: Node):
+	_suite = LateLoadTests.new(self)
 	yield(_suite.run(together), "completed")
 
 
