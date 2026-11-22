@@ -1874,6 +1874,11 @@ that device joins, else gets a new entry. So nobody keeps another local player's
 new pad that joins before the host gets the host's colour only until the host joins, then an entry
 of its own. A borrower that picks gets its own entry first.
 
+Known behaviour: a host who switched device and then picks leaves the old entry's pick reserved, so
+that colour is blocked for everyone until the host joins on the old device again or the lobby
+closes. The other way round, the host on a pad that borrows its keyboard entry loses that colour to
+a couch player who joins on the keyboard, whose entry it is.
+
 It rewrites `player_colors` on `connected_players_updated` and on every pick: picks of the players
 in a slot first, in slot order (a later slot with the same pick loses it), then each other slot its
 default colour if free and not reserved, else the first such one. Reserved are the picks of players

@@ -388,6 +388,12 @@ func _test_local_entries(pad: int, host_pick: int):
 	_join([9, KEYBOARD])
 	yield(_frames(2), "completed")
 	var borrowed: Array = _first_two()
+	CoopService.bt_cycle_color(1)  # the borrower picks: into an entry of its own
+	t._check(
+		CoopService._bt_picks.get("local:1") == 7 and CoopService.bt_slot_colors[1] != 7,
+		"lobby colours: a borrower's pick leaves the lender's pick alone (%s, %s)"
+		% [CoopService.bt_slot_colors, CoopService._bt_picks]
+	)
 	CoopService._add_player(8, CoopService.PlayerType.GAMEPAD_XBOX)
 	yield(_frames(2), "completed")
 	var slots: Array = CoopService.bt_slot_colors
