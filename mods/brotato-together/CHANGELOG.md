@@ -33,6 +33,9 @@ upload; three of them are marked where the upload may have differed.
 - The host's log no longer fills with "run state changed without a change of its fingerprint"
   warnings during the level-up panels when a player has Bot-O-Mine (its pet keeps laying mines
   there). The new mine count now reaches the clients at once instead of up to a second later.
+- Less data goes to the clients in the shop and on the level-up panels late in a run: a lock or a
+  changed item counter (such as Bot-O-Mine's mines) no longer resends the run's common data, about
+  1 to 2.5 KB less each.
 - Needs everybody on this update (protocol 31).
 
 ## 2026-11-21 21:08 UTC

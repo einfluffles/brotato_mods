@@ -525,7 +525,8 @@ func apply_state(section: int, body, _revision: int) -> bool:
 			return true
 		_state = state
 		_run_ids = ids
-		_state_keys = player_keys(ids, run_store.raws({"c": ids.get("c")}).c)
+		var raws: Dictionary = run_store.raws({"c": ids.get("c"), "s": ids.get("s")})
+		_state_keys = player_keys(ids, raws.c, raws.s)
 	if entering:
 		_client_shop_id = body.shop_id
 		_enter_shop(_state)
@@ -565,17 +566,19 @@ func clear_state(section: int) -> void:
 
 
 # Per player, what of the sent run state its panel is built from: its run parts' ids (data: the
-# "p" and "g" parts, gear: "g") and a hash of its offered items (in the common part as parsed).
-# A panel is only rebuilt when its part differs from what it shows.
-static func player_keys(ids: Dictionary, common) -> Array:
+# "p" and "g" parts, gear: "g") and a hash of its offered items. common, shop: the "c" and "s"
+# parts as parsed (the player count, the offered items). A panel is only rebuilt when its part
+# differs from what it shows.
+static func player_keys(ids: Dictionary, common, shop) -> Array:
 	var keys := []
 	var raw: Dictionary = common if typeof(common) == TYPE_DICTIONARY else {}
+	var offers: Dictionary = shop if typeof(shop) == TYPE_DICTIONARY else {}
 	var count = raw.get("players_data")
 	if typeof(count) != TYPE_INT and typeof(count) != TYPE_REAL:
 		return keys
 	for p in int(count):
 		var gear = ids.get("g%d" % p)
-		var offered := [_at(raw.get("shop_items"), p), _at(raw.get("item_steals"), p)]
+		var offered := [_at(offers.get("shop_items"), p), _at(offers.get("item_steals"), p)]
 		keys.append({"data": [ids.get("p%d" % p), gear], "gear": gear, "items": hash(offered)})
 	return keys
 

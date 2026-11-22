@@ -2,8 +2,10 @@ extends Reference
 # The run state in parts, so that a state stream body carries only the parts a client lacks.
 #
 # split(data) cuts RunStateCodec.serialize()'s dictionary into ordered parts:
-#   "c": the dictionary with players_data replaced by its size (shop items, locked items,
-#     counters and whatever other mods add stay here);
+#   "c": the dictionary with players_data replaced by its size and the keys of OWN_PARTS kept as
+#     null (counters, spawns and whatever other mods add stay here);
+#   per key of OWN_PARTS ("s", "t"): those keys of the dictionary that it has, so that a change
+#     of one of them does not send the whole "c" again;
 #   per player p "g<p>": {weapons, items} (the big lists);
 #   per player p "p<p>": the rest of the player's dictionary (weapons and items kept as null, so
 #     that join puts them back at their place and the JSON text is the same).
@@ -22,6 +24,22 @@ const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
 const COMMON := "c"
+# Keys of the run state that move more often than the rest of "c", each set in a part of its own.
+# "s": the shop's own save fields (ProgressData.get_run_state's arguments and the locked items),
+# which every reroll, buy, lock and steal changes. "t": what items and pets count during a wave
+# (RunData.add_tracked_value), also under the level-up panels.
+const OWN_PARTS := {
+	"s": [
+		"shop_items",
+		"reroll_count",
+		"paid_reroll_count",
+		"initial_free_rerolls",
+		"free_rerolls",
+		"item_steals",
+		"locked_shop_items",
+	],
+	"t": ["tracked_item_effects"],
+}
 const GEAR_FIELDS := ["weapons", "items"]
 const LOG_NAME := "einfluffles-BrotatoTogether:RunParts"
 
@@ -30,6 +48,13 @@ static func split(data: Dictionary) -> Dictionary:
 	var parts := {}
 	var common: Dictionary = data.duplicate()
 	parts[COMMON] = common
+	for key in OWN_PARTS:
+		var own := {}
+		for field in OWN_PARTS[key]:
+			if common.has(field):
+				own[field] = common[field]
+				common[field] = null  # its place in the text, for join
+		parts[key] = own
 	var players = data.get("players_data")
 	if typeof(players) != TYPE_ARRAY:
 		return parts
@@ -53,6 +78,8 @@ static func join(parts: Dictionary) -> Dictionary:
 	if typeof(common) != TYPE_DICTIONARY:
 		return {}
 	var data: Dictionary = common.duplicate()
+	if not Store.put_back(data, parts, false):
+		return {}
 	var count = data.get("players_data")
 	if typeof(count) != TYPE_INT and typeof(count) != TYPE_REAL:
 		return data  # nothing split off (no players list)
@@ -365,6 +392,11 @@ class Store:
 		var gear := {}
 		var kept := []  # per changed player: _kept_items, or null
 		var input: Dictionary = common.duplicate(true)  # the game writes into its input
+		var own := {}
+		for key in OWN_PARTS:
+			own[key] = _raw(key, ids.get(key))
+		if not put_back(input, own, true):
+			return {}
 		input["players_data"] = []
 		for p in int(count):
 			var p_key: String = "p%d" % p
@@ -496,6 +528,24 @@ class Store:
 			for field in gear:
 				player[field] = gear[field]
 		return player
+
+	# The keys of OWN_PARTS back into data (the common part, copied), at the place split left them
+	# in. own: key -> part (parsed) for every key of OWN_PARTS; false when one is missing or not a
+	# dictionary (nothing may be dropped silently). deep: copies of the values (the game writes
+	# into what it deserializes).
+	static func put_back(data: Dictionary, own: Dictionary, deep: bool) -> bool:
+		for key in OWN_PARTS:
+			var part = own.get(key)
+			if typeof(part) != TYPE_DICTIONARY:
+				return false
+			for field in OWN_PARTS[key]:
+				if not part.has(field):
+					continue  # not in the run state split (no null left for it in "c" either)
+				var value = part[field]
+				if deep and (typeof(value) == TYPE_ARRAY or typeof(value) == TYPE_DICTIONARY):
+					value = value.duplicate(true)
+				data[field] = value
+		return true
 
 	static func same_id(a, b) -> bool:
 		return typeof(a) == TYPE_ARRAY and typeof(b) == TYPE_ARRAY and a == b

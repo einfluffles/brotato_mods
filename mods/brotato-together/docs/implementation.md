@@ -84,7 +84,7 @@ These facts explain many design choices below. They are stated here once.
 | panel revision (`seqs`, an intent's `seq`) | A counter per player and panel. The host raises it when the panel offers something new, so a press made on an outdated panel can be dropped. |
 | INPUT `seq` | The number of an `INPUT` message, one per physics step. The snapshot's input ack refers to it. |
 | run state | The game's serialized run (`ProgressData.get_run_state()`), the same data a save file holds. |
-| run part | A piece of the run state: `c` (common), `g<p>` (gear of player p: weapons and items), `p<p>` (the rest of player p). |
+| run part | A piece of the run state: `c` (common), `s` (the shop's own fields), `t` (tracked item effects), `g<p>` (gear of player p: weapons and items), `p<p>` (the rest of player p). |
 | run cache, fingerprint, `rev` | `sync/run_cache.gd` decides when the run must be serialized again. The fingerprint is a cheap value that every game mutation moves. `rev` rises when a part's id changes. |
 | net id | The host's number for a mirrored battle node (u16). |
 | type table | Per battle, index to scene path. Snapshots name types by index. |
@@ -411,9 +411,17 @@ The cache keeps text and ints only. It is dropped when its screen closes and on 
 that lack them.
 
 - **Split.** `RunParts.split` cuts the serialized dictionary into `c` (everything but
-  `players_data`, which is replaced by its size), and per player `g<p>` (`{weapons, items}`) and
-  `p<p>` (the rest of the player, with weapons and items kept as null so that `join` puts them back
-  in place). A part's id is `[hash(), length of its JSON text]`. `join` is the inverse.
+  `players_data`, which is replaced by its size), the parts of their own of `RunParts.OWN_PARTS`,
+  and per player `g<p>` (`{weapons, items}`) and `p<p>` (the rest of the player, with weapons and
+  items kept as null so that `join` puts them back in place). The parts of their own hold keys
+  that move more often than the rest of `c`, kept as null in `c` the same way: `s` the shop's own
+  fields (`shop_items`, `reroll_count`, `paid_reroll_count`, `initial_free_rerolls`,
+  `free_rerolls`, `item_steals`, `locked_shop_items`), which every reroll, buy, lock and steal
+  changes, and `t` `tracked_item_effects`, which items count in the shop and pets during the
+  battle under the level-up panels. Both are always there (`{}` when the run has none of their
+  keys). A part's id is `[hash(), length of its JSON text]`. `join` is the inverse; it and
+  `state_for` put `s` and `t` back through `Store.put_back` and give no run at all when one is
+  missing, so that no shop item or tracked value is dropped silently.
 - **Host.** After a serialization `RunCache.refresh` splits and hashes each part. Only a part whose
   hash changed is printed and compressed. One `RunParts.Sender` (created in `mod_main.gd`, shared by
   `ShopSync`, `UpgradesSync` and `BattleHost`) records per peer the ids it was last sent.
@@ -427,9 +435,10 @@ that lack them.
   and id (the last two versions of each key) and fills in the ids of a `{}` run. A body that names a
   part the client has neither stored nor been sent logs a warning, asks the host for a resync and
   applies nothing. `state_for(ids)` decompresses and parses only parts it has not parsed. It runs
-  `deserialize_run_state` on a deep copy of `c` (the game writes into its input) whose
-  `players_data` holds only the players whose parts changed, and puts the previous `PlayerRunData`
-  objects back for the others. `changed_players()` and `gear_changed(p)` name what moved.
+  `deserialize_run_state` on a deep copy of `c` with `s` and `t` put back (the game writes into
+  its input) whose `players_data` holds only the players whose parts changed, and puts the
+  previous `PlayerRunData` objects back for the others. `changed_players()` and `gear_changed(p)`
+  name what moved.
 - **Kept items** (`Store._kept_items`, issue #110). A changed player keeps the item objects of its
   previous `PlayerRunData` whose dictionary in the `g` part hashes the same (all of them when only
   `p<p>` moved); only the others go through `deserialize_run_state`. A crate item then deserializes
@@ -439,8 +448,12 @@ that lack them.
   report's marks (run parse, deserialize); every section uses it.
 
 Ids are content hashes, so parts carry over between screens: the shop's first state after the panels
-sends little more than `c`. A purchase sends `c`, `p<p>` and `g<p>`, a paid reroll `c` and `p<p>`, a
-lock `c`, and a level-up choice `p<p>` only.
+sends little more than `c` and `s`. A purchase sends `s`, `p<p>` and `g<p>`, a paid reroll `s` and
+`p<p>`, a lock `s`, a level-up choice `p<p>` only, and a tracked value (a mine laid by the
+Bot-O-Mine pet under the level-up panels) `t` only. Either of the first two also sends `t` when an
+item counts what it saved (coupon, spyglass), and a purchase `c` when it completes a challenge.
+Until 2026-11-22 `s` and `t` were in `c`, and `c` (with every player's offered items) went out
+with nearly every shop state.
 
 When the shop or the panels close, the host logs one line per screen, for example "Shop 40: 28
 states, 20 with run parts (501.9 KB: c 11, g0 5, ...), 8 view only (5.3 KB), largest 110.5 KB"
@@ -494,8 +507,8 @@ The run sent is the one the battle scene entered the tree with (taken on `SceneT
 connected between battles only, while a peer is ready). The reason: `main._ready` starts the wave,
 which sets every player's health to its start value (`hp_start_wave`, `hp_start_next_wave`) and
 writes it into the player's part. The client's own `main._ready` does the same to the run it gets.
-So the client runs the wave start once, like the host, and after a shop usually only `c` has
-changed. A player's parts are sent only when Go took one of its items (hourglass, lifeform scanner,
+So the client runs the wave start once, like the host, and after a shop usually only `c` and `s`
+have changed. A player's parts are sent only when Go took one of its items (hourglass, lifeform scanner,
 `BaseShop._on_GoButton_pressed`).
 
 - A peer that becomes ready mid-wave gets the run as it is then (`forget` first, then every part).
@@ -1122,7 +1135,7 @@ rolls nothing. It disconnects `BaseShop._on_tree_exited`, which would roll curse
 (`set_weapons_data / items_data`, `_update_stats`, gold label, reroll price through
 `ItemService.get_reroll_price`, `ShopItem.set_shop_item / activate / deactivate`, checkmarks).
 `ShopSync.player_keys` keys each player's data (the ids of its `p` and `g` parts), its gear (the `g`
-id) and its offered items (a hash).
+id) and its offered items (a hash of them in the `s` part).
 
 - A player whose data did not change keeps its `PlayerRunData` object across `resume_from_state`,
   because the panel's gear elements and popup hold those objects.

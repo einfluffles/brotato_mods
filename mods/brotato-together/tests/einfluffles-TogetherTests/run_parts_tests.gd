@@ -91,6 +91,7 @@ func _shop(players: int):
 	var label: String = "%d players" % players
 	_start(StateStream.RUN_SHOP, provider_node)
 	_first(label)
+	_test_own_parts(label)
 	_test_message_for(provider_node)
 
 	var panel = shop._get_coop_player_container(0)
@@ -103,25 +104,26 @@ func _shop(players: int):
 	shop._clear_go_button_pressed(0)
 	_change("Go cleared", [])
 	RunData.add_tracked_value(1, Keys.item_bot_o_mine_hash, 1, 1)
-	_change("tracked value", ["c"])
+	_change("tracked value", ["t"])
 	var node = tests._offered(0)
 	if node.item_data.is_lockable:
 		node.change_lock_status(true)
-		_change("lock", null)
+		_change("lock", ["s"])
 		node.change_lock_status(false)
-		_change("unlock", null)
+		_change("unlock", ["s"])
 	shop._free_rerolls[0] = 0
 	shop._reroll_price[0] = int(max(shop._reroll_price[0], 1))
 	FocusEmulatorSignal.emit(shop._get_reroll_button(0), "pressed", 0)
 	yield(_frames(1), "completed")
 	var before: Array = _state.players_data.duplicate()
-	_change("reroll", ["c", "p0"])
+	_change("reroll", ["p0", "s"], ["t"])  # t: what items saved (BaseShop.add_tracked_value)
 	_check_players(label + ", reroll", before, false)
 	yield(tests._buy_delay(), "completed")
 	FocusEmulatorSignal.emit(tests._offered(0)._button, "pressed", 0)
 	yield(_frames(1), "completed")
 	before = _state.players_data.duplicate()
-	_change("purchase", ["c", "g0", "p0"])
+	# c too when the item completes a challenge (challenges_completed_this_run)
+	_change("purchase", ["g0", "p0", "s"], ["c", "t"])
 	_check_players(label + ", purchase", before, true)
 	yield(tests._buy_delay(), "completed")
 
@@ -131,6 +133,53 @@ func _shop(players: int):
 	_test_missing(provider_node, label)
 	_test_close(provider_node, label)
 	_end_stream()
+
+
+# The shop's fields and the tracked values travel in parts of their own (RunParts.OWN_PARTS),
+# null in "c". join and state_for put every one of them back; a missing one fails the whole
+# state instead of dropping its fields.
+func _test_own_parts(label: String) -> void:
+	var data := RunStateCodec.serialize(_args())
+	var parts := RunParts.split(data)
+	var moved := []
+	for key in RunParts.OWN_PARTS:
+		for field in RunParts.OWN_PARTS[key]:
+			var common: Dictionary = parts.c
+			if data.has(field) and common.has(field) and typeof(common[field]) == TYPE_NIL:
+				if parts[key].has(field) and typeof(parts[key][field]) != TYPE_NIL:
+					moved.append(field)
+	_t._check(
+		moved.size() == 8 and parts.keys().slice(0, 2) == ["c", "s", "t"],
+		"run parts, %s: the shop's fields and the tracked values in s and t, null in c (%s)"
+		% [label, moved]
+	)
+	var parsed := {}  # as a client parses them
+	for key in parts:
+		parsed[key] = JSON.parse(JSON.print(parts[key])).result
+	_t._check(
+		JSON.print(RunParts.join(parsed)) == JSON.print(data),
+		"run parts, %s: join puts s and t back in place (the same JSON text)" % label
+	)
+	var run := RunParts.pack_all(data)
+	var store = RunParts.Store.new()
+	var complete: bool = store.ingest(run)
+	var lacking := []
+	for key in RunParts.OWN_PARTS:
+		var without: Dictionary = parsed.duplicate()
+		without.erase(key)
+		var unknown: Dictionary = run.ids.duplicate()
+		unknown[key] = [0, 0]
+		var unnamed: Dictionary = run.ids.duplicate()
+		unnamed.erase(key)
+		if RunParts.join(without).empty() and store.state_for(unknown).empty():
+			if store.state_for(unnamed).empty():
+				lacking.append(key)
+	var state: Dictionary = store.state_for(run.ids)
+	_t._check(
+		complete and lacking == ["s", "t"] and state.get("has_run_state", false),
+		"run parts, %s: without s or t neither join nor state_for gives a run (%s)"
+		% [label, lacking]
+	)
 
 
 func _test_message_for(provider_node: Node) -> void:
@@ -316,7 +365,7 @@ func _panels(players: int):
 	_start(StateStream.UPGRADES, provider_node)
 	_first("%d players, panels" % players)
 	RunData.add_tracked_value(0, Keys.item_bot_o_mine_hash, 1, 1)  # a mine laid under the panels
-	_change("tracked value", ["c"])
+	_change("tracked value", ["t"])
 	yield(tests._button_delay(), "completed")
 	var p: int = players - 1
 	var container = tests._ui._get_player_container(p)
@@ -433,8 +482,9 @@ func _first(label: String) -> void:
 	_check_join(label + ", first state")
 
 
-# One check of the host stream after a change. expected: the part ids (sorted; null: any).
-func _change(change: String, expected) -> void:
+# One check of the host stream after a change. expected: the part ids (sorted; null: any);
+# optional: ids it may carry on top.
+func _change(change: String, expected, optional := []) -> void:
 	var started := OS.get_ticks_usec()
 	_stream.step(1.0)
 	var host := OS.get_ticks_usec() - started
@@ -447,7 +497,10 @@ func _change(change: String, expected) -> void:
 	var keys: Array = body.run.get("parts", {}).keys()
 	keys.sort()
 	if expected != null:
-		_t._check(keys == expected, "run parts: %s carries %s (%s)" % [change, expected, keys])
+		var required := keys.duplicate()
+		for key in optional:
+			required.erase(key)
+		_t._check(required == expected, "run parts: %s carries %s (%s)" % [change, expected, keys])
 	var now := Protocol.encode(Protocol.Msg.STATE, message).size()
 	if keys.empty():
 		_t._check(now < VIEW_LIMIT, "run parts: %s is %d B on the wire" % [change, now])
@@ -494,6 +547,29 @@ func _check_join(label: String) -> void:
 		"run parts: after %s the client's parts make the host's run (%d / %d B of JSON)"
 		% [label, text.length(), expected.length()]
 	)
+	var host := RunStateCodec.serialize(_args())
+	var differ := []
+	for key in RunParts.OWN_PARTS:
+		for field in RunParts.OWN_PARTS[key]:
+			if JSON.print(_by_id(_state.get(field))) != JSON.print(_by_id(host.get(field))):
+				differ.append(field)
+	_t._check(
+		not _state.empty() and differ.empty(),
+		"run parts: after %s the client's state has the host's s and t fields (%s differ)"
+		% [label, differ]
+	)
+
+
+# Items (objects as deserialized, dictionaries as serialized) by their id, inside lists.
+static func _by_id(value):
+	if typeof(value) == TYPE_ARRAY:
+		var list := []
+		for element in value:
+			list.append(_by_id(element))
+		return list
+	if value is Object or (typeof(value) == TYPE_DICTIONARY and value.has("my_id")):
+		return value.my_id
+	return value
 
 
 # After a change of player changed only (-1: player 0): its PlayerRunData is new, the others
