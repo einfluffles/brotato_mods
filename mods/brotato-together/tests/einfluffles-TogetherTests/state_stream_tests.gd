@@ -144,6 +144,7 @@ func run(test_mod: Node, together: Node):
 	yield(_test_flush(), "completed")
 	_test_resync()
 	yield(_test_resync_after_modules(), "completed")
+	yield(_test_cursors_after_builders(), "completed")
 	_test_inactive()
 	_test_pending()
 	_test_revisions()
@@ -816,3 +817,75 @@ func _measure_idle() -> void:
 	var line := "  info: state stream idle frame, %d sections checked: %.2f us all inactive, "
 	line += "%.2f us half active and unchanged"
 	print(line % [StateStream.NAMES.size(), inactive, usec])
+
+
+# A changed cursor names gear that a shop or level-up state may have changed in the same frame
+# (an item that came in before it): no peer gets the cursors before what those sections owe it.
+# Steps a frame apart, as in the game: a section is checked at most once per frame.
+func _test_cursors_after_builders():
+	var stream := _stream(true, [P1, P2])
+	var statuses: Dictionary = stream.session.transport.statuses
+	var shop := _probe("s1", {"s": 1})
+	var cursors := _probe("c1", {"c": 1})
+	stream.register_provider(StateStream.RUN_SHOP, shop, 0.1, true)
+	stream.register_provider(StateStream.CURSORS, cursors, 0.05)
+	stream.step(0.0)
+	_take(stream)
+	yield(t.get_tree(), "idle_frame")
+	shop.key = "s2"
+	cursors.key = "c2"
+	stream.step(0.05)  # the cursors are due, the shop is not
+	var sent := _take(stream)
+	t._check(
+		_sections(sent, P1) == [StateStream.RUN_SHOP, StateStream.CURSORS],
+		"cursors after builders: a shop change goes out before the changed cursors: %s" % [sent]
+	)
+
+	yield(t.get_tree(), "idle_frame")
+	shop.key = "s3"
+	cursors.key = "c3"
+	stream.flush(StateStream.RUN_SHOP, true)  # a remote intent: deferred game code runs first
+	stream.step(0.05)
+	t._check(_take(stream).empty(), "cursors after builders: a held shop holds the cursors too")
+	yield(t.get_tree(), "idle_frame")
+	stream.step(0.0)
+	sent = _take(stream)
+	t._check(
+		_sections(sent, P1) == [StateStream.RUN_SHOP, StateStream.CURSORS],
+		"cursors after builders: both in the next frame, the shop first: %s" % [sent]
+	)
+
+	yield(t.get_tree(), "idle_frame")
+	statuses[P1] = {"pending_reliable": StateStream.HOLD_BYTES + 1}
+	shop.key = "s4"
+	cursors.key = "c4"
+	stream.step(0.05)
+	sent = _take(stream)
+	t._check(
+		(
+			_sections(sent, P1).empty()
+			and _sections(sent, P2) == [StateStream.RUN_SHOP, StateStream.CURSORS]
+			and stream._providers[StateStream.CURSORS].dirty.has(P1)
+		),
+		"cursors after builders: a peer the shop is held for gets no cursors yet: %s" % [sent]
+	)
+	statuses.erase(P1)
+	var to_p1 := []
+	for _i in 4:
+		yield(t.get_tree(), "idle_frame")
+		stream.step(0.05)
+		to_p1.append_array(_sections(_take(stream), P1))
+	t._check(
+		to_p1 == [StateStream.RUN_SHOP, StateStream.CURSORS],
+		"cursors after builders: once the hold ends, the shop and then the cursors: %s" % [to_p1]
+	)
+
+	yield(t.get_tree(), "idle_frame")
+	var builds := shop.builds
+	cursors.key = "c5"
+	stream.step(0.05)
+	sent = _take(stream)
+	t._check(
+		_sections(sent, P1) == [StateStream.CURSORS] and shop.builds == builds,
+		"cursors after builders: an unchanged shop is not sent again: %s" % [sent]
+	)

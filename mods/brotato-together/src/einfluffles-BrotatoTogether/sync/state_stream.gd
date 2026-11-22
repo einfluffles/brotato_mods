@@ -30,6 +30,9 @@ const DEFAULT_TIMEOUT_SEC := 10.0
 # the next state later (about 94 ms of queue at Steam's default 262144 B/s).
 const HOLD_BYTES := 24 * 1024
 const MAX_HOLD_MSEC := 2000  # then sent anyway: a state late is better than none
+# The sections that build the gear rows the cursors name: a peer gets no cursors before what they
+# owe it (_builders_out, _behind_builders).
+const BUILDERS := [RUN_SHOP, UPGRADES]
 
 var session: Node = null
 var hold_lines := []  # host: the lines logged about holds when a heavy section closed last
@@ -89,6 +92,7 @@ func register_provider(
 		"sent": provider.has_method("state_sent"),
 		"interval": interval,
 		"left": 0.0,
+		"checked": -1,  # the idle frame of the last check
 		"key": "",
 		"rev": 0,
 		"flush_frame": -1,
@@ -153,6 +157,7 @@ func _host_step(delta: float) -> void:
 # resend_to (0: nobody).
 func _check(section: int, entry: Dictionary, peers: Array, resend_to: int) -> void:
 	entry.left = entry.interval
+	entry.checked = Engine.get_idle_frames()
 	if entry.flush_frame >= 0 and Engine.get_idle_frames() >= entry.flush_frame:
 		entry.flush_frame = -1  # a check before its frame (a resync) leaves the flush armed
 	var key = entry.provider.call("state_key", section)
@@ -160,6 +165,9 @@ func _check(section: int, entry: Dictionary, peers: Array, resend_to: int) -> vo
 		return  # provider error: keep what was sent, check again next interval
 	var targets := []
 	if key != entry.key:
+		if section == CURSORS and key != "" and not _builders_out(peers):
+			entry.left = 0.0  # checked again next frame
+			return
 		entry.key = key
 		entry.rev += 1
 		targets = peers
@@ -168,6 +176,8 @@ func _check(section: int, entry: Dictionary, peers: Array, resend_to: int) -> vo
 			if entry.dirty.has(peer) or peer == resend_to:
 				targets.append(peer)
 	entry.dirty.clear()
+	if section == CURSORS and key != "":
+		targets = _behind_builders(entry, targets)
 	if targets.empty() or (key == "" and entry.rev == 0):
 		return  # nobody to send to, or never active: nothing to clear
 	if entry.heavy and key != "":
@@ -184,6 +194,40 @@ func _check(section: int, entry: Dictionary, peers: Array, resend_to: int) -> vo
 			_end_hold(entry, peer)
 	if entry.heavy and key == "" and not entry.held.empty():
 		_log_holds(section, entry)
+
+
+# A cursor changed: the gear it names may have changed in the same frame (an item that came in
+# before it shifts it), and a client resolves the cursor on the rows it has. False while a builder
+# section is held for game code that runs deferred (flush(section, true)): the cursor waits for
+# that frame. A builder not checked this frame yet is checked now, ahead of its interval, so a
+# change of it goes out first.
+func _builders_out(peers: Array) -> bool:
+	var frame := Engine.get_idle_frames()
+	for section in BUILDERS:
+		var entry = _providers.get(section)
+		if entry == null:
+			continue
+		if entry.hold and entry.flush_frame >= 0 and frame < entry.flush_frame:
+			return false
+		if entry.checked != frame:
+			_check(section, entry, peers, 0)
+	return true
+
+
+# The cursors' targets that no builder section owes a state (held by Steam's queue, or marked
+# dirty). The others stay dirty here and get the cursors with a later check.
+func _behind_builders(entry: Dictionary, targets: Array) -> Array:
+	var free := []
+	for peer in targets:
+		var owed := false
+		for section in BUILDERS:
+			var builder = _providers.get(section)
+			owed = owed or (builder != null and builder.dirty.has(peer))
+		if owed:
+			entry.dirty[peer] = true
+		else:
+			free.append(peer)
+	return free
 
 
 # The targets that get a heavy section now. The others (Steam's queue to them over HOLD_BYTES)
