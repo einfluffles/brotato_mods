@@ -190,6 +190,8 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 # popup: the client's open menu (PopupView), shown on the host's copy before the cursor goes
 # into it. The page first, as on the level-up panels: the popup's element shows only on it.
 func host_apply_focus(shop: Node, p: int, page, target, popup = [], steam_id := 0) -> void:
+	if not FocusTargets.is_valid(target):
+		target = []  # network data: checked before it is compared (var2str) or kept
 	var old = _reported.get(p)
 	var same: bool = old != null and old[0] == shop.get_instance_id() and _same(old[1], target)
 	_reported[p] = [shop.get_instance_id(), target, old[2] if same else []]
