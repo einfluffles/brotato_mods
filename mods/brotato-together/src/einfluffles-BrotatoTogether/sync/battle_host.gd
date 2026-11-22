@@ -24,6 +24,7 @@ const PuppetEntity := preload(
 const FeedbackMirror := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
 )
+const HitNumbers := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/hit_numbers.gd")
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
 const Facing := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/facing.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
@@ -44,7 +45,7 @@ const REST_AFTER := 4  # snapshots without movement before an entity's position 
 const REST_REFRESH := 15  # snapshots between resends of a resting position (staggered by id)
 const STATS_REPEAT := 4  # snapshots player stats are sent for after they change
 const STATS_REFRESH := 10  # snapshots between resends of the stats
-const MAX_EVENTS := 48  # per snapshot; Snapshot.select_events drops the least valuable
+const MAX_EVENTS := 48  # per snapshot; HitNumbers.select_events drops the least valuable
 const KIND_ENTITY := 1  # has `dead` and an AnimationPlayer worth watching
 const KIND_UNIT := 2  # has a sprite whose facing is host state
 const KIND_POSE := 4  # its scene has parts that sync/pose.gd captures
@@ -78,6 +79,7 @@ var _events := []  # one-shot feedback since the last snapshot
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
 var _feedback = FeedbackMirror.new()
+var _numbers = HitNumbers.new()  # damage and heal numbers waiting to go out
 var _looks = Looks.new()
 var _facing = Facing.new()
 var _battle_scene = BattleScene.new()  # weapons at wave start, sent speeds
@@ -164,12 +166,14 @@ func _start_battle(main: Node) -> void:
 	_events.clear()
 	_anim_mirror = AnimMirror.new()
 	_feedback = FeedbackMirror.new()
+	_numbers = HitNumbers.new()
 	_looks = Looks.new()
 	_facing = Facing.new()
 	SoundRelay.set_sink(self)
 	var main_players: Array = main.get("_players")
 	for i in main_players.size():
 		main_players[i].connect("took_damage", self, "_on_took_damage", [-(i + 1)])
+		main_players[i].connect("healed", self, "_on_healed")
 	_types.clear()
 	_records.clear()
 	_fresh_ids.clear()
@@ -239,6 +243,7 @@ func _end_battle() -> void:
 	_events.clear()
 	_anim_mirror = AnimMirror.new()
 	_feedback = FeedbackMirror.new()
+	_numbers = HitNumbers.new()
 	_looks = Looks.new()
 	_facing = Facing.new()
 	_battle_scene = BattleScene.new()
@@ -326,6 +331,13 @@ func _on_entity_respawned(entity: Node) -> void:
 	_assign_net_id(entity)
 	_records.erase(entity.get_instance_id())
 	_fresh_ids[entity.get_instance_id()] = true  # the id its first snapshot uses, hits included
+	if entity is Unit:
+		_watch_hits(entity)  # a hit before its first snapshot (in its spawn tick) has a number too
+
+
+func _watch_hits(unit: Node) -> void:
+	if not unit.is_connected("took_damage", self, "_on_took_damage"):
+		unit.connect("took_damage", self, "_on_took_damage", [0])
 
 
 func _assign_net_id(node: Node) -> void:
@@ -476,7 +488,9 @@ func _build_snapshot() -> Array:
 	view.positions = positions
 	view.flags = Snapshot.pack_flags(flags)
 	_feedback.capture(_main, _events, _snapshot_count, funcref(self, "_type_idx"))
-	view["events"] = Snapshot.select_events(_events, MAX_EVENTS)
+	_numbers.offer(_events, _snapshot_count)
+	view["events"] = HitNumbers.select_events(_events, MAX_EVENTS)
+	_numbers.sent(view.events)
 	view["looks"] = _looks.end_snapshot()
 	view["angles"] = _facing.end_snapshot()
 	_events = []
@@ -493,8 +507,7 @@ func _record(node: Node, key: int) -> Array:
 		kind |= KIND_ENTITY
 	if node is Unit:
 		kind |= KIND_UNIT
-		if not node.is_connected("took_damage", self, "_on_took_damage"):
-			node.connect("took_damage", self, "_on_took_damage", [0])
+		_watch_hits(node)
 	_feedback.track(node)
 	var layout: Dictionary = _pose.layout(node)
 	if not layout.parts.empty() or layout.group != Pose.Group.NONE:
@@ -567,7 +580,12 @@ func _on_took_damage(
 	flags |= Snapshot.DAMAGE_PROTECTED if is_protected else 0
 	flags |= Snapshot.DAMAGE_ARMOR if armor_did_something else 0
 	flags |= Snapshot.DAMAGE_ONE_SHOT if is_one_shot else 0
-	_events.append([Snapshot.EVENT_DAMAGE, target, value, knockback, flags, hit_type])
+	_numbers.damage(unit, target, value, knockback, flags, hit_type, args)
+
+
+func _on_healed(value: int, player_index: int) -> void:
+	if is_in_battle():
+		_numbers.heal(value, player_index)
 
 
 # cooldown: playSingle's duplicate_cooldown, 0 for play(). Not while paused: the pause menu's

@@ -4,6 +4,7 @@ extends Reference
 # replayed on a client.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const HitNumbers := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/hit_numbers.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
@@ -61,7 +62,7 @@ func _test_wire() -> void:
 # change, and the snapshots after it (only refreshes).
 func _test_sizes() -> void:
 	var view: Dictionary = SnapshotTests.new(_t).scenario(4, 150, 90, 50, 10, 30, 6, 8, true)
-	view.events = Snapshot.select_events(view.events, 48)
+	view.events = HitNumbers.select_events(view.events, 48)
 	var plain := Protocol.encode(Protocol.Msg.SNAPSHOT, Snapshot.encode(view)).size()
 	var looks := Looks.new()
 	var sizes := []

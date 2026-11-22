@@ -12,8 +12,11 @@ extends Reference
 #   flags: PoolByteArray, FLAG_BITS per entity (entity i at bit i * FLAG_BITS)
 #   poses: {entity index: PoolRealArray} (sync/pose.gd)
 #   events: Array of
-#     [EVENT_DAMAGE, target, value, knockback: Vector2, DAMAGE_* flags, hit_type]
-#       target: entity net id, or -(player_index + 1) for players
+#     [EVENT_DAMAGE, target, value, knockback: Vector2, DAMAGE_* flags, hit_type, seq,
+#      effect scale, from: Vector2 or null] (damage_event(); sync/hit_numbers.gd)
+#       target: entity net id, or -(player_index + 1) for players; seq: u16 number id (see
+#       below); from: the hitbox' position, sent for targets with an aim shape
+#     [EVENT_HEAL, player index, value, seq] (Player.healed)
 #     [EVENT_SOUND, type idx of the stream, position: Vector2 or null, volume, pitch_rand,
 #      always_play: bool, single cooldown (s, 0: SoundManager.play)]
 #     [EVENT_ANIM, net id, animation name, position (s), speed]
@@ -39,7 +42,9 @@ extends Reference
 #     entity order); net ids as zigzag varint deltas to the previous one (the host sorts each run
 #     by id: mostly 1 byte); flags; i16 x, i16 y per entity without FLAG_REST
 #   varint pose count; per pose: varint entity index (ascending), u8 value count, f32 values
-#   u8 event count; per event: u8 kind + payload (see _put_event)
+#   u8 event count; per event: u8 kind + payload (see _put_event). A damage or heal event's seq
+#     travels as a varint of its difference (mod 2^16) to the one before in the snapshot (0 for
+#     the first): the host sends them in seq order, so mostly 1 byte.
 #   varint look count; per look: varint gap to the previous entity index + 1 (ascending), u8 bits
 #   varint angle count; per angle: varint gap like the looks', i16 angle
 # Nothing may follow. Angles are i16 over [-PI, PI].
@@ -62,13 +67,20 @@ const EVENT_WAVE_END := 5
 const EVENT_GOLD_BOOST := 6
 const EVENT_STAT := 7
 const EVENT_WEAPON_ANIM := 8
+const EVENT_HEAL := 9
 const DAMAGE_CRIT := 1
 const DAMAGE_DODGE := 2
 const DAMAGE_PROTECTED := 4
 const DAMAGE_ARMOR := 8
 const DAMAGE_ONE_SHOT := 16
 const DAMAGE_FLAGS := 31
+const DAMAGE_SCALE := 32  # wire only: an effect scale other than 1 follows
+const DAMAGE_FROM := 64  # wire only: the hitbox' position follows
 const DAMAGE_TO_PLAYER := 128  # wire only: target is a player index
+# Fields on the wire. The host's events carry their rank after them (sync/hit_numbers.gd).
+const DAMAGE_FIELDS := 9
+const HEAL_FIELDS := 4
+const SEQ_MASK := 65535
 const SOUND_POSITION := 1  # wire only
 const SOUND_ALWAYS := 2
 const SOUND_SINGLE := 4
@@ -80,6 +92,7 @@ const WAVE_WON := 4
 const WAVE_LABEL := 8  # the "wave completed" label is showing
 const WAVE_FLAGS := 15
 const EXPLOSION_SCALE := 100.0
+const EFFECT_SCALE := 100.0  # TakeDamageArgs.get_effect_scale(): 0.1 for burning
 const PLAYER_WEAPON_SLOTS := 2  # wire only (sync/battle_scene.gd)
 const PLAYER_SPEED := 4  # wire only
 # wire only: Player.dead. Not health 0: a Veteran who died starts the next wave alive at 0 health
@@ -116,7 +129,6 @@ const VOLUME_SCALE := 2.0  # 0.5 dB
 const PITCH_SCALE := 100.0
 const COOLDOWN_SCALE := 50.0
 const ANIM_TIME_SCALE := 1000.0
-const RANK_STRIDE := 1 << 20
 
 
 static func encode(view: Dictionary) -> PoolByteArray:
@@ -171,8 +183,10 @@ static func encode(view: Dictionary) -> PoolByteArray:
 		for value in values:
 			buf.put_float(value)
 	buf.put_u8(view.events.size())
+	var seq := 0
 	for event in view.events:
-		_put_event(buf, event)
+		_put_event(buf, event, seq)
+		seq = number_seq(event, seq)
 	_put_looks(buf, view.get("looks", {}))
 	_put_angles(buf, view.get("angles", {}))
 	return buf.data_array
@@ -302,13 +316,18 @@ static func _sprite_moved(weapons: PoolRealArray, k: int) -> bool:
 	)
 
 
-static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
+# seq: the seq of the damage or heal event before this one in the snapshot (0: none).
+static func _put_event(buf: StreamPeerBuffer, event: Array, seq: int) -> void:
 	buf.put_u8(event[0])
 	match event[0]:
 		EVENT_DAMAGE:
 			var target: int = event[1]
+			var scale := int(round(clamp(event[7] * EFFECT_SCALE, 0, 255)))
 			var flags: int = event[4] & DAMAGE_FLAGS
-			buf.put_u8(flags | (DAMAGE_TO_PLAYER if target < 0 else 0))
+			flags |= DAMAGE_TO_PLAYER if target < 0 else 0
+			flags |= DAMAGE_SCALE if scale != EFFECT_SCALE else 0
+			flags |= DAMAGE_FROM if event[8] != null else 0
+			buf.put_u8(flags)
 			if target < 0:
 				buf.put_u8(int(clamp(-target - 1, 0, 255)))
 			else:
@@ -318,6 +337,15 @@ static func _put_event(buf: StreamPeerBuffer, event: Array) -> void:
 			buf.put_8(int(round(clamp(knockback.x, -1.0, 1.0) * KNOCKBACK_SCALE)))
 			buf.put_8(int(round(clamp(knockback.y, -1.0, 1.0) * KNOCKBACK_SCALE)))
 			buf.put_u8(int(clamp(event[5], 0, 255)))
+			_put_varint(buf, (event[6] - seq) & SEQ_MASK)
+			if flags & DAMAGE_SCALE:
+				buf.put_u8(scale)
+			if event[8] != null:
+				_put_position(buf, event[8])
+		EVENT_HEAL:
+			buf.put_u8(int(clamp(event[1], 0, 255)))
+			_put_varint(buf, event[2])
+			_put_varint(buf, (event[3] - seq) & SEQ_MASK)
 		EVENT_SOUND:
 			var flags := 0
 			flags |= SOUND_POSITION if event[2] != null else 0
@@ -448,11 +476,13 @@ static func parse(body) -> Dictionary:
 	if event_count > MAX_EVENTS:
 		return {}
 	view["events"] = []
+	var seq := 0
 	for _i in event_count:
-		var event = _get_event(buf)
+		var event = _get_event(buf, seq)
 		if event == null:
 			return {}
 		view.events.append(event)
+		seq = number_seq(event, seq)
 	if not _get_looks(buf, view) or not _get_angles(buf, view):
 		return {}
 	return view if buf.get_available_bytes() == 0 else {}
@@ -623,7 +653,8 @@ static func _get_poses(buf: StreamPeerBuffer, view: Dictionary) -> bool:
 	return true
 
 
-static func _get_event(buf: StreamPeerBuffer):
+# seq: as for _put_event.
+static func _get_event(buf: StreamPeerBuffer, seq: int):
 	if buf.get_available_bytes() < 1:
 		return null
 	var kind := buf.get_u8()
@@ -633,8 +664,6 @@ static func _get_event(buf: StreamPeerBuffer):
 				return null
 			var flags := buf.get_u8()
 			var to_player := bool(flags & DAMAGE_TO_PLAYER)
-			if flags & ~(DAMAGE_FLAGS | DAMAGE_TO_PLAYER):
-				return null
 			if buf.get_available_bytes() < (1 if to_player else 2):
 				return null
 			var target: int = -(buf.get_u8() + 1) if to_player else buf.get_u16()
@@ -642,7 +671,24 @@ static func _get_event(buf: StreamPeerBuffer):
 			if value == null or buf.get_available_bytes() < 3:
 				return null
 			var knockback := Vector2(buf.get_8(), buf.get_8()) / KNOCKBACK_SCALE
-			return [EVENT_DAMAGE, target, value, knockback, flags & DAMAGE_FLAGS, buf.get_u8()]
+			var hit_type := buf.get_u8()
+			var delta := _get_varint(buf)
+			var size := (1 if flags & DAMAGE_SCALE else 0) + (4 if flags & DAMAGE_FROM else 0)
+			if delta < 0 or delta > SEQ_MASK or buf.get_available_bytes() < size:
+				return null
+			var scale: float = buf.get_u8() / EFFECT_SCALE if flags & DAMAGE_SCALE else 1.0
+			var from = _get_position(buf) if flags & DAMAGE_FROM else null
+			var event := [EVENT_DAMAGE, target, value, knockback, flags & DAMAGE_FLAGS, hit_type]
+			return event + [(seq + delta) & SEQ_MASK, scale, from]
+		EVENT_HEAL:
+			if buf.get_available_bytes() < 3:
+				return null
+			var player := buf.get_u8()
+			var value := _get_varint(buf)
+			var delta := _get_varint(buf)
+			if player >= MAX_PLAYERS or value < 0 or delta < 0 or delta > SEQ_MASK:
+				return null
+			return [EVENT_HEAL, player, value, (seq + delta) & SEQ_MASK]
 		EVENT_SOUND:
 			if buf.get_available_bytes() < 1:
 				return null
@@ -893,35 +939,18 @@ static func get_flags(flags: PoolByteArray, i: int) -> int:
 	return (flags[bit / 8] >> (bit % 8)) & ((1 << FLAG_BITS) - 1)
 
 
-# At most `limit` events, the least valuable dropped first: duplicate sounds (same stream already
-# in this snapshot), then damage numbers on enemies, sounds, damage on players and explosions;
-# animations, bonus gold and the wave's end last (they are state). Kept events stay in order.
-static func select_events(events: Array, limit: int) -> Array:
-	if events.size() <= limit:
-		return events
-	var ranked := []
-	var sounds := {}
-	for i in events.size():
-		var event: Array = events[i]
-		var rank := 1
-		match event[0]:
-			EVENT_ANIM, EVENT_BONUS_GOLD, EVENT_WAVE_END:
-				rank = 0
-			EVENT_DAMAGE:
-				rank = 1 if event[1] < 0 else 3
-			EVENT_SOUND:
-				rank = 4 if sounds.has(event[1]) else 2
-				sounds[event[1]] = true
-		ranked.append(rank * RANK_STRIDE + i)
-	ranked.sort()
-	var keep := {}
-	for k in limit:
-		keep[ranked[k] % RANK_STRIDE] = true
-	var selected := []
-	for i in events.size():
-		if keep.has(i):
-			selected.append(events[i])
-	return selected
+static func damage_event(
+	target: int, value: int, knockback: Vector2, flags: int, hit_type: int, seq := 0, scale := 1.0,
+	from = null
+) -> Array:
+	return [EVENT_DAMAGE, target, value, knockback, flags, hit_type, seq, scale, from]
+
+
+# The seq of a damage or heal event, else `other`.
+static func number_seq(event: Array, other: int) -> int:
+	if event[0] == EVENT_DAMAGE:
+		return event[6]
+	return event[3] if event[0] == EVENT_HEAL else other
 
 
 # State rather than a moment: still applied when it arrives late, never dropped first.

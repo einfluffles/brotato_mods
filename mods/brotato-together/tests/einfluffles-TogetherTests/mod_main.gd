@@ -75,6 +75,9 @@ const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
+const HitNumbersTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/hit_numbers_tests.gd"
+)
 const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks_tests.gd")
 const DigSiteTests := preload("res://mods-unpacked/einfluffles-TogetherTests/dig_site_tests.gd")
 const ProgressShareTests := preload(
@@ -148,6 +151,7 @@ const SUITES := [
 	"cleanup_client",
 	"cleanup_misc",
 	"feedback",
+	"hit_numbers",
 	"looks",
 	"damage",
 	"damage_run",
@@ -405,6 +409,12 @@ func _suite_cleanup_misc(together: Node):
 func _suite_feedback(together: Node):
 	coop_run(8)
 	_suite = FeedbackTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_hit_numbers(together: Node):
+	coop_run(8)
+	_suite = HitNumbersTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

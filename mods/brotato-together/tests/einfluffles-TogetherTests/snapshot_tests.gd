@@ -4,6 +4,7 @@ extends Reference
 # player stats) and event selection.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const HitNumbers := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/hit_numbers.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const PF := Snapshot.PlayerField
 const MAP := Vector2(2048, 1536)
@@ -102,6 +103,13 @@ func _events_match(a: Array, b: Array) -> bool:
 			Snapshot.EVENT_DAMAGE:
 				if x[2] != y[2] or x[4] != y[4] or x[5] != y[5] or x[3].distance_to(y[3]) > 0.01:
 					return false
+				if x[6] != y[6] or abs(x[7] - y[7]) > 0.006 or typeof(x[8]) != typeof(y[8]):
+					return false
+				if x[8] != null and x[8].distance_to(y[8]) > 0.36:
+					return false
+			Snapshot.EVENT_HEAL:
+				if x[2] != y[2] or x[3] != y[3]:
+					return false
 			Snapshot.EVENT_SOUND:
 				var same_position: bool = (
 					(x[2] == null and y[2] == null)
@@ -141,7 +149,7 @@ func _test_malformed() -> void:
 	var many := view.duplicate(true)
 	many.events = []
 	for i in Snapshot.MAX_EVENTS + 1:
-		many.events.append([Snapshot.EVENT_DAMAGE, 1, i, Vector2.ZERO, 0, 0])
+		many.events.append(Snapshot.damage_event(1, i, Vector2.ZERO, 0, 0, i))
 	_t._check(Snapshot.parse(Snapshot.encode(many)).empty(), "too many events rejected")
 	var odd_name := view.duplicate(true)
 	odd_name.events = [[Snapshot.EVENT_ANIM, 1, "shööt", 0.0, 1.0]]
@@ -179,7 +187,7 @@ func _test_sizes() -> void:
 		var args: Array = scenarios[label]
 		var view: Dictionary = callv("scenario", args + [true])
 		var old_size := var2bytes([Protocol.Msg.SNAPSHOT, old_format(view)]).size()
-		view.events = Snapshot.select_events(view.events, 48)  # BattleHost.MAX_EVENTS
+		view.events = HitNumbers.select_events(view.events, 48)  # BattleHost.MAX_EVENTS
 		var new_size := Protocol.encode(Protocol.Msg.SNAPSHOT, Snapshot.encode(view)).size()
 		sizes[label] = new_size
 		print(
@@ -196,7 +204,7 @@ func _test_sizes() -> void:
 			)
 		)
 	_t._check(sizes["mid (wave 10, 3 players)"] < 1000, "mid-wave snapshot well under 1200 B")
-	_t._check(sizes["late (wave 18, 4 players)"] < 2200, "late-wave snapshot about a quarter")
+	_t._check(sizes["late (wave 18, 4 players)"] < 2250, "late-wave snapshot about a quarter")
 
 
 # var2bytes of plain arrays (the format of protocol 3), for the size comparison.
@@ -311,12 +319,12 @@ func _test_event_selection() -> void:
 	for i in 10:
 		events.append([Snapshot.EVENT_ANIM, i, "shoot", 0.0, 1.0])
 	for i in 5:
-		events.append([Snapshot.EVENT_DAMAGE, -1, i, Vector2.ZERO, 0, 0])
+		events.append(Snapshot.damage_event(-1, i, Vector2.ZERO, 0, 0, 200 + i))
 	for i in 30:
-		events.append([Snapshot.EVENT_DAMAGE, 100 + i, i, Vector2.ZERO, 0, 0])
+		events.append(Snapshot.damage_event(100 + i, i, Vector2.ZERO, 0, 0, i))
 	for i in 15:
 		events.append([Snapshot.EVENT_SOUND, i % 5, null, 0.0, 0.0, false, 0.0])
-	var selected := Snapshot.select_events(events, 48)
+	var selected := HitNumbers.select_events(events, 48)
 	var kinds := {"anim": 0, "player": 0, "enemy": 0, "sound": 0}
 	for event in selected:
 		match event[0]:
@@ -404,7 +412,8 @@ func scenario(
 		if i % 8 == 0 and players > 0:
 			target = -(i % players) - 1
 		var knockback := Vector2.RIGHT.rotated(_rng.randf_range(-PI, PI))
-		view.events.append([Snapshot.EVENT_DAMAGE, target, _rng.randi() % 60, knockback, i % 3, 0])
+		var value := _rng.randi() % 60
+		view.events.append(Snapshot.damage_event(target, value, knockback, i % 3, 0, 4000 + i))
 	for i in sounds:
 		var position = null
 		if i % 2 == 0:

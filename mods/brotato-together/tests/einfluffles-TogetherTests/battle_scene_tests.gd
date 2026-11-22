@@ -4,6 +4,7 @@ extends Reference
 # jungle zone, so the jungle waves' flag is set on a base-game wave.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const HitNumbers := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/hit_numbers.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const BattleScene := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/battle_scene.gd")
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
@@ -126,7 +127,7 @@ func _test_sizes() -> void:
 
 func scenario_view(args: Array) -> Dictionary:
 	var view: Dictionary = SnapshotTests.new(_t).callv("scenario", args + [true])
-	view.events = Snapshot.select_events(view.events, 48)
+	view.events = HitNumbers.select_events(view.events, 48)
 	return view
 
 

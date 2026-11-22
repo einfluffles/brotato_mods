@@ -27,6 +27,7 @@ const PauseControl := preload(
 const FeedbackMirror := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/feedback_mirror.gd"
 )
+const HitNumbers := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/hit_numbers.gd")
 const Looks := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/looks.gd")
 const Facing := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/facing.gd")
 const Puddles := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/puddles.gd")
@@ -116,6 +117,7 @@ var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
 var _feedback = FeedbackMirror.new()
+var _numbers = HitNumbers.new()  # damage and heal numbers
 var _looks = Looks.new()
 var _battle_scene = BattleScene.new()  # hole layout, weapon slots of the puppets
 var _render_delay = RenderDelay.new(INTERP_DELAY_MSEC)
@@ -297,6 +299,7 @@ func _reset_battle_state() -> void:
 		_warm.note_taken(path, _feedback.taken[path])
 	_warm.remember()
 	_feedback = FeedbackMirror.new()
+	_numbers = HitNumbers.new()
 	SoundRelay.set_muted(false)
 	_own_base_t = -1
 	_own_error = Vector2.ZERO
@@ -447,7 +450,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 	if i == _buffer.size() - 1:
 		_pickups.confirm(snapshot, _you, _types)  # before its pickup sound is queued
 	for event in snapshot.events:
-		if _events.size() < MAX_QUEUED_EVENTS:
+		if _events.size() < MAX_QUEUED_EVENTS and _numbers.fresh(event):  # a number comes twice
 			_events.append([snapshot.t, event])
 	_note_wave_end(snapshot.events)
 	while _buffer.size() > MAX_BUFFERED:
@@ -590,7 +593,7 @@ static func _in_zone(position: Vector2) -> Vector2:
 # HUD values (the HUD listens to these signals). Level-ups only update visuals here: the game's
 # own levelled_up handler would also change stats, which is the host's job.
 func _apply_player_stats(player: Node, i: int, entry: Array) -> void:
-	_feedback.player_stats(_main, i, entry)  # heal and level-up texts
+	_feedback.player_stats(_main, i, entry)  # the level-up text
 	BattleScene.apply_hit_protection(_main, i, player, entry)
 	if (
 		player.current_stats.health != entry[PF.HEALTH]
@@ -939,8 +942,10 @@ func _fire_events(render_t: float) -> void:
 		# Animations, bonus gold and the wave's end are state and still count.
 		if entry[0] < render_t - STALE_EVENT_MSEC and not Snapshot.is_state_event(event[0]):
 			continue
-		if event[0] == Snapshot.EVENT_DAMAGE and event.size() == 6:
+		if event[0] == Snapshot.EVENT_DAMAGE and event.size() == Snapshot.DAMAGE_FIELDS:
 			_show_damage(event)
+		elif event[0] == Snapshot.EVENT_HEAL:
+			_numbers.show_heal(_main, event)
 		elif event[0] == Snapshot.EVENT_SOUND and event.size() == 7:
 			var sound = _types.get(event[1])
 			if sound is AudioStream and (event[2] == null or typeof(event[2]) == TYPE_VECTOR2):
@@ -951,31 +956,9 @@ func _fire_events(render_t: float) -> void:
 			_feedback.fire(_main, _types, entry[0], event)
 
 
-# Same handlers main.gd connects to Unit.took_damage (numbers, particles) + the hit flash.
+# The handlers main.gd connects to Unit.took_damage, plus the hit flash (sync/hit_numbers.gd).
 func _show_damage(event: Array) -> void:
-	var target = _damage_target(event[1])
-	if target == null or typeof(event[3]) != TYPE_VECTOR2:
-		return
-	var flags := int(event[4])
-	var args := [
-		target,
-		int(event[2]),
-		event[3],
-		bool(flags & Snapshot.DAMAGE_CRIT),
-		bool(flags & Snapshot.DAMAGE_DODGE),
-		bool(flags & Snapshot.DAMAGE_PROTECTED),
-		bool(flags & Snapshot.DAMAGE_ARMOR),
-		TakeDamageArgs.new(RunData.DUMMY_PLAYER_INDEX),  # no hitbox: feedback at the unit
-		int(event[5]),
-		bool(flags & Snapshot.DAMAGE_ONE_SHOT),
-	]
-	for manager_name in ["_floating_text_manager", "_effects_manager"]:
-		var manager = _main.get(manager_name)
-		if manager != null:
-			manager.callv("_on_unit_took_damage", args)
-	FeedbackMirror.shake(_main, target, args)
-	if int(event[2]) > 0 and target.has_method("flash") and not target.dead:
-		target.flash()
+	_numbers.show_damage(_main, _damage_target(event[1]), event)
 
 
 func _damage_target(id):
