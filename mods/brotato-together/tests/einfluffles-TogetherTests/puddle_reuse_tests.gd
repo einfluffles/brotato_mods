@@ -17,7 +17,6 @@ const LIFETIME := 2.0  # GPESpawner.FIRE_PUDDLE_LIFETIME, also for acid and petr
 const STEP := 1.0  # px per physics tick
 const SIDE := 250.0  # px between the trails
 const MIN_TRAIL := 6  # of the 8 that LIFETIME and DROP_MSEC keep on the ground
-const SETTLE_MARGIN := 0.1  # s after the spawn tween: a puppet is first seen up to a frame late
 
 var t: Node
 
@@ -83,10 +82,10 @@ func run(together: Node):
 	client._on_battle_start(start)
 	yield(client, "battle_entered")
 	var cmain: Node = client._main
-	var lives := {}  # puppet instance id -> [lives so far, when the current one was first seen]
+	var lives := {}  # puppet instance id -> [lives so far, seen in the last sample]
 	var shown_least := _counts(99)
 	var reused_shown := _counts(0)
-	var unsettled := []  # puppets past their spawn tween that are not fully shown
+	var unsettled := []  # puppets whose tween is done that are not fully shown
 	var local := 0
 	var replay_start := OS.get_ticks_msec()
 	for msg in recorded:
@@ -101,11 +100,11 @@ func run(together: Node):
 			var key: int = puddle.get_instance_id()
 			alive[key] = true
 			var life = lives.get(key)
-			if life == null or life[1] < 0:  # new, or back from the pool
-				life = [(life[0] if life != null else 0) + 1, OS.get_ticks_msec()]
+			if life == null or not life[1]:  # new, or back from the pool
+				life = [(life[0] if life != null else 0) + 1, true]
 				lives[key] = life
 			var kind := _kind(puddle)
-			if (OS.get_ticks_msec() - life[1]) / 1000.0 < puddle.spawn_duration + SETTLE_MARGIN:
+			if puddle.tween.is_active():
 				shown[kind] += 1  # coming up
 				continue
 			if not _fully_shown(puddle):
@@ -117,7 +116,7 @@ func run(together: Node):
 				reused_shown[kind] += 1
 		for key in lives:
 			if not alive.has(key):
-				lives[key][1] = -1  # fading or pooled: its next appearance is a new life
+				lives[key][1] = false  # fading or pooled: its next appearance is a new life
 		if late:
 			for kind in KINDS:
 				shown_least[kind] = int(min(shown_least[kind], shown[kind]))
@@ -136,7 +135,7 @@ func run(together: Node):
 		)
 	t._check(
 		unsettled.empty(),
-		"every puddle puppet past its spawn tween is fully shown %s" % [unsettled.slice(0, 4)]
+		"every puddle puppet whose tween is done is fully shown %s" % [unsettled.slice(0, 4)]
 	)
 	t._check(local == 0, "the client puts down no puddles of its own (%d)" % local)
 	trail.erase(boots)
