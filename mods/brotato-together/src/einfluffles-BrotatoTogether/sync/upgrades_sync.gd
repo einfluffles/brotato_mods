@@ -619,6 +619,7 @@ func apply(main: Node, msg: Dictionary) -> void:
 	var seqs = msg.get("seqs")
 	var pages = msg.get("pages")
 	var popups_changed := false
+	var gear_rebuilt := false  # another player's gear page and crate weapons list
 	for p in min(msg.players.size(), RunData.get_player_count()):
 		var entry = msg.players[p]
 		if typeof(entry) != TYPE_ARRAY or entry.empty() or typeof(entry[0]) != TYPE_STRING:
@@ -676,8 +677,11 @@ func apply(main: Node, msg: Dictionary) -> void:
 			var rolls := _list_at(msg.get("mecas"), p)
 			var popup_changed := _apply_popup(ui, p, _at(msg.get("popups"), p), rolls)
 			popups_changed = popups_changed or popup_changed
-	# Opening a copy of a popup takes that player's cursor to its Cancel button.
-	if popups_changed and focus_sync != null:
+			gear_rebuilt = gear_rebuilt or player_changed
+	# Opening a copy of a popup takes that player's cursor to its Cancel button. A rebuild leaves
+	# it on the element at its place when its own was freed or shows another item now (the cursor
+	# body can come before the run state).
+	if (popups_changed or gear_rebuilt) and focus_sync != null:
 		focus_sync.reapply()
 	ClientReport.mark(ClientReport.Mark.PANELS, OS.get_ticks_usec() - started)
 

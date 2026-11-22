@@ -30,9 +30,11 @@ func host(s):
 	for child in inventory.get_children():
 		if pistol == null and child.item.my_id == "weapon_pistol_1":
 			pistol = child
+	var place: int = pistol.get_index()
 	target = FocusTargets.describe(pistol, shop, REMOTE)
 	yield(_press(s, "combine", pistol, target), "completed")
-	var shown = FocusTargets.resolve(target, shop, REMOTE)
+	# Where the client's own cursor goes when the host's state takes its pistol (_refresh_gear).
+	var shown = s._sync._live_at(inventory, place)
 	t._check(
 		shown != null and emulator.focused_control == shown,
 		"host: after a remote combine the cursor is where its client has it (client %s, host %s)"
