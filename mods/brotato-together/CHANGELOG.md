@@ -29,6 +29,15 @@ upload; three of them are marked where the upload may have differed.
 - Damage meter: the builder's turret and the chef's consumable explosions are counted. An "Other"
   row holds what the ten rows leave out, so the shares add up to 100%.
 - Damage meter: a run started or resumed later no longer shows the board of the run before.
+- Damage numbers on a client: a big hit, such as an explosion in a crowd, shows all of its numbers,
+  crits and kills first. Before, a client lost more than half of them, with their hit flash and
+  blood. Numbers no longer go missing when the network loses a packet, a hit on an enemy right as
+  it spawns shows its number, and pets (dino egg, scapegoat) no longer show a "1" when hit: the
+  game shows none.
+- Heal numbers on a client are the real heals: a hit and a heal at the same moment show both
+  numbers, not their difference, and a heal no longer goes missing next to a bigger hit.
+- Burn ticks on a client make the small hit effect the host shows, not a full one, and the
+  brachiosaurus' damage numbers appear where the host shows them.
 - Needs everybody on this update (protocol 32).
 
 ## 2026-11-22 11:57 UTC

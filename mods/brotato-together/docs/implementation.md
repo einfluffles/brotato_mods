@@ -546,8 +546,11 @@ missing part asks for a resync and the start is dropped. A queued start keeps it
   snapshots after a change and in every 10th. `Snapshot.resolve` fills both from earlier snapshots
   and builds the id to index map used for interpolation. A resting entity the client never saw is
   skipped until its refresh.
-- **Events** are capped at 48 per snapshot. `Snapshot.select_events` drops duplicate sounds first,
-  then enemy damage numbers, sounds and player damage, and animations last.
+- **Events** are capped at 48 per snapshot. `HitNumbers.select_events` drops second copies of
+  enemy damage numbers first, then duplicate sounds, enemy damage numbers (normal hits before
+  crits, kills, one-shots and gold hits), sounds, numbers on players, explosions and the like, and
+  animations and the state events last. Damage and heal numbers left out wait for the next
+  snapshots ([Damage and heal numbers](#damage-and-heal-numbers)); everything else left out is lost.
 - A one-shot event that is older than 250 ms when its turn comes (a stall, a scene load) is dropped.
   Animations and the state events are kept.
 
@@ -559,9 +562,10 @@ Mirrored nodes are the entity spawner's lists (`bosses`, `enemies`, `neutrals`, 
 - **Net ids** are u16, wrap, and skip ids alive in the last snapshot. An id is assigned on the
   `EntitySpawner.*_respawned` signals (fired on every spawn, pool reuse included) and kept by the
   entity's first snapshot (`_fresh_ids`), so a hit that lands before that snapshot targets an id the
-  clients will see. A node absent from the last snapshot gets a new id. The id is dropped on
-  `tree_exiting`: the game's pools take nodes out of the tree and are LIFO, so a projectile or gold
-  can be pooled and reused between two snapshots.
+  clients will see. The same signal connects a unit's `took_damage`, so such a hit (one in the
+  spawn tick) has its number. A node absent from the last snapshot gets a new id. The id is
+  dropped on `tree_exiting`: the game's pools take nodes out of the tree and are LIFO, so a
+  projectile or gold can be pooled and reused between two snapshots.
 - **Types.** A type is the node's `filename`, sent once per battle. Some types carry a tag after
   `#` (spawn markers, puddles, see below).
 - **Records.** The host keeps `[net id, type idx, kind bits, node, quantized x / y, still count]`
@@ -796,7 +800,8 @@ instance per battle on each side and keeps no node references.
 
 | Event | Host | Client |
 |---|---|---|
-| `EVENT_DAMAGE` | connects to every mirrored unit's `took_damage` (players as target `-(player_index + 1)`) | calls the handlers `main.gd` uses (`FloatingTextManager._on_unit_took_damage`, `EffectsManager._on_unit_took_damage`) with a hitbox-less `TakeDamageArgs`, plus `Unit.flash()` |
+| `EVENT_DAMAGE` `[target, value, knockback, flags, hit type, seq, effect scale, hitbox position or null]` | connects to the `took_damage` of every unit at its spawn signal (or its first snapshot) and of the players (target `-(player_index + 1)`) | for players, enemies and neutrals the handlers `main.connect_visual_effects` connects (`FloatingTextManager._on_unit_took_damage`, `EffectsManager._on_unit_took_damage`; pets get no number, like in the game), then `Unit.flash()` on every unit. See [Damage and heal numbers](#damage-and-heal-numbers). |
+| `EVENT_HEAL` `[player, value, seq]` | connects to `Player.healed` | `FloatingTextManager._on_player_healed`, which `main` connects to it |
 | `EVENT_SOUND` | see Sounds below | see Sounds below |
 | `EVENT_ANIM` | see [Animations](#flags-poses-and-animations) | |
 | `EVENT_EXPLOSION` `[scene type, position, scale, smoke amount]` (`WeaponService.explode`) | finds new children of `main._explosions` at each snapshot (a node whose "explode" restarted was pooled and reused) | takes a node from main's pool like the game, makes it a puppet (no physics: its first physics frame would play the sound; hitboxes off), sets this player's `explosion_opacity` and plays "explode" from the start. `end_explosion` pools it. Fog waves get their light (`FogViewport._on_spawn_explosion`). |
@@ -818,9 +823,8 @@ the signal.
 - Screen shake (`Screenshaker._on_player_took_damage`, `_on_unit_took_damage`), called with each
   damage event (the host already leaves out `hide_feedback` hits). This client's screenshake option
   applies.
-- Level-up and heal texts, from the host's player stats compared with the previous ones. A heal and
-  a hit within one snapshot show as their sum. These follow the newest snapshot, about 100 ms ahead
-  of the interpolated world.
+- The level-up text, from the host's player level compared with the previous one. It follows the
+  newest snapshot, about 100 ms ahead of the interpolated world.
 - The gold pickup sparkle where a gold puppet vanished from the snapshots (`main.on_gold_picked_up`
   is the only way out of `_active_golds`), not after the wave's end.
 
@@ -846,6 +850,36 @@ players: [[consumable my_id]]}` from the lists' `_elements`. The client makes it
 with their own `add_element` / `remove_element` (a copy per entry, with the zone's sprite as
 `ItemService.get_consumable_for_tier` sets it). Ids it does not know are left out. The level-up
 icons of that row come from `BattleClient._show_level_up`.
+
+### Damage and heal numbers
+
+`sync/hit_numbers.gd`, one instance per battle on each side. A big hit (an explosion over 80
+enemies) used to lose most of its numbers to the event cap, and a lost snapshot lost its numbers.
+
+- **Host.** Every number gets a seq (u16 per battle, wrapping). It waits up to `MAX_DELAY` (3)
+  snapshots, 100 ms, for room under the cap and goes out in two snapshots, the second copy in a
+  later one than the first, so a lost snapshot loses none. At most `MAX_COPIES` (16) second copies
+  go into one snapshot. Numbers are offered oldest first, so their seqs ascend and travel as a
+  varint difference to the number before (mostly 1 B). More than 256 waiting: new ones are dropped.
+- **Rank** (`select_events`): crits, kills (health 0 after the hit), one-shots and gold hits go
+  before other enemy hits. The second copy of an enemy number comes after everything else, a
+  player number's second copy at the crits' rank. So an 80-hit tick sends its crits and kills with
+  the first snapshot and all of its numbers within 4 snapshots (47, 47, 17, 17 numbers a snapshot);
+  only the first 32 get their second copy in time.
+- **Client.** `fresh` drops a seq it already queued (it remembers the last 1024), before the event
+  is queued. A number fires at the time of the snapshot it came in, so one that waited or whose
+  first copy was lost shows up to 100 ms late.
+- **Hit effects.** `TakeDamageArgs.get_effect_scale()` (a weapon's `effect_scale`, 0.1 for a burn
+  tick) is sent when it is not 1 (1 B). For a target with an aim shape (in the game only the
+  brachiosaurus) the hitbox's position is sent too (4 B): the client puts a stand-in `Hitbox` there
+  (in the battle scene, not monitoring or monitorable, its shape disabled), so
+  `Unit.get_hit_feedback_position` gives the host's spot for the number and the hit effect.
+- **Bytes.** A damage number is 9 B (8 before the seq), a heal 4 B. Each number goes out twice,
+  which doubles what numbers cost in a fight that does not fill the cap; in a big fight the copies
+  add at most 144 B to a snapshot (4.2 KB/s per client). In the crowded late wave of
+  `late_load_tests.gd` (2026-11-22): 180 enemies 43.2 KB/s per client (43.5 before), 400
+  enemies a median of 24 events and 2808 B per snapshot (14 and 2700 B before), still 2 and 3
+  packets.
 
 ### Snapshot time and render delay
 
@@ -2175,6 +2209,7 @@ later changes may have moved it.
 | What | Value | Date, commit | Source |
 |---|---|---|---|
 | Snapshot size with envelope: 45 entities and 8 events / 136 and 11 / 300 and 44 | 452 / 968 / 2184 B | 2026-11-15, 82a0d7e | `snapshot_tests.gd`, `looks_tests.gd` |
+| The same with the damage numbers' seq (4 / 6 / 30 damage events); on main the same day | 460 / 980 / 2220 B; 452 / 972 / 2188 B | 2026-11-22, 5bc2d0e | `snapshot_tests.gd` |
 | Late endless wave (400 enemies, 200 projectiles, 50 gold, 2 players): host per snapshot, client per frame, snapshot size | 3.7 ms, 1.4 ms, 2.7 KB | 2026-11-15, c25808e | `cleanup_tests.gd` |
 | Reading looks on the host, 600 plain entities per snapshot | 0.5 ms | 2026-11-15, 82a0d7e | `looks_tests.gd` |
 | Scene load stall: battle scene; shop scene (small / late 2 / late 4 players) | 0.3 s; 0.2 / 0.5 / 0.8 s | 2026-11-15, c00c55c | `session_lifecycle_tests.gd` |
@@ -2205,6 +2240,7 @@ later changes may have moved it.
 | Damage board update, 4 players with 3 sources each | 968 B | 2026-11-18, 3f5da8f | recorded with the commit |
 | Crowded late wave: 3 players with 6 pistols, a bullet hell, 180 enemies alive (the cap of endless wave 30 for 3 players). Entities, snapshot size, per client, host per snapshot, client mirror per frame, client parse per snapshot | 210, 1.5 KB (2 packets), 43 KB/s, 2.3 ms, 0.9 ms, 0.34 ms | 2026-11-21, e6f9bc2 | `late_load_tests.gd` |
 | The same with 400 enemies alive | 420, 2.7 KB (3 packets), 79 KB/s, 1.4 ms client mirror, 0.66 ms parse; the host's game itself takes 300 to 370 ms a frame | 2026-11-21, e6f9bc2 | `late_load_tests.gd` |
+| The same with the damage numbers carried over and sent twice: 180 / 400 enemies, per client; events per snapshot (median) and snapshot size (median) with 400; the commit before in the same container | 43.2 / 80.3 KB/s, 24 events, 2808 B; 43.5 / 78.7 KB/s, 14 events, 2700 B | 2026-11-22, 5bc2d0e | `late_load_tests.gd` |
 | The same with 180 enemies in a real window on the dev machine: host frames, client frames (mean / max) | 4.3 / 16 ms, 2.8 / 6.7 ms | 2026-11-21, e6f9bc2 | `tools\check-window.ps1 -Suites late_load` |
 
 The purchase is not small on the wire in the test runs because every test player carries nearly
@@ -2255,7 +2291,8 @@ As of 2026-11-22, protocol 32.
 - A projectile's scale (the baryonyx' lasers are 0.55 on the host).
 - Percent-damage-taken outlines (lute, diver) and the one-shot boost particles (`stats_boosted`).
 - The tint of a player standing in acid or petrol (`Player._set_color_modulation`).
-- A one-shot event is lost with its snapshot (for example one whip lash).
+- A one-shot event other than a damage or heal number is lost with its snapshot (for example one
+  whip lash).
 
 **Shop and level-up panels**
 
