@@ -1123,16 +1123,25 @@ id) and its offered items (a hash).
 
 - A player whose data did not change keeps its `PlayerRunData` object across `resume_from_state`,
   because the panel's gear elements and popup hold those objects.
-- Gear rows are rebuilt only when the gear changed, and then in place
-  (`UpgradesGear.sync_inventory`, as on the [level-up panels](#level-up-and-crate-panels)): an
-  element that shows the same item is kept and pointed at the new object, so a cursor on it stays.
-  So does an item popup opened from it (its buttons, the meca choice, brotato:trade's player list),
+- Gear rows are rebuilt only when the gear changed, and then in place (`UpgradesGear.sync_gear`,
+  shared with the [level-up panels](#level-up-and-crate-panels)): an element that shows the same
+  item is kept and pointed at the new object, so a cursor on it stays. A kept element also gets
+  the marks `set_element` takes from the player's run (banned, recently mutated). Late in a run a
+  purchase instances one element instead of about 250 (see
+  [Measurements](#12-measurements-and-session-findings)). So does an item popup opened from it
+  (its buttons, the meca choice, brotato:trade's player list),
   for example when another player trades this one something. The popup then holds the new object
-  (Cancel finds its element by it, and a meca roll it waits for follows it). Only when its element
+  (Cancel finds its element by it, and a meca roll it waits for follows it), and its buttons are
+  shown again for the run now (`ShopSync._refresh_popup_buttons`: Combine once a second copy came,
+  the recycle value) unless it lists meca effects or another mod's menu (`together_menu`). A
+  cursor on a button hidden that way goes to Cancel. Only when its element
   is gone does the popup close, and the cursor goes to the element at the same place; with no
   element left there (and no default for another player's panel) it is taken off. A node kept at
   the cursor's place that shows another item now gets the cursor anew, so its details follow. An
   empty row or a locked item takes the game's `set_*_data`, with the cursor taken off first.
+- A change of a player's other parts only (`p<p>`: gold, stats, a reroll) brings new objects of
+  the same weapons: the weapons row is pointed at them the same way (nothing instanced), so the
+  elements and an open popup hold the run's weapons, as an intent names them.
 - Shop item nodes are re-set only when the player's data, offered items or slot layout changed. A
   slot the host's state deactivates moves the cursor only when it was on that slot (or on nothing):
   `BaseShop.on_shop_item_deactivated` is cut and called only then (`ShopSync._deactivate`). The game
@@ -1878,7 +1887,9 @@ objects in the [Overview](#1-overview)). A real session crashed this way on the 
   cursor stays on a kept one and is taken off a freed one; in the shop a popup opened from a kept
   one stays open. Afterwards it goes to the same item (the element nearest its old index), else the
   element at the same index, else for the own panel the page's default (`focus()`). The game's way
-  back to the gear page (`_resume_inventory_control_focus`) is redirected the same way.
+  back to the gear page (`_resume_inventory_control_focus`) is redirected the same way, and so is
+  the shop's way back from the stats page (`_resume_shop_control_focus`, to the element at the
+  same index).
 - **Relink neighbours.** `CoopUpgradesUIPlayerContainer._set_focus_neighbours` links weapons and
   items by node path, and only on a page change (or, by `InputTypes`, on an input type switch).
   With trigger glyphs the rows name each other's elements. After every `update_inventory` (the
@@ -1887,8 +1898,9 @@ objects in the [Overview](#1-overview)). A real session crashed this way on the 
   `_set_focus_neighbours` links the new elements. The game logs "Node not found" and
   `Parameter "p_node" is null` when this is missing, and `tools/check.sh` fails on both messages.
   A host logged both (suite `gear_links` repeats it: the client switches to its pad on the gear
-  page, then recycles or combines a crate weapon). The level-up gear updated in place drops them
-  between the weapons and the items too: the items' sort inherits its row's neighbours at once,
+  page, then recycles or combines a crate weapon). The gear updated in place (`sync_gear`, level-up
+  and shop) drops them between the weapons and the items too: the items' sort inherits its row's
+  neighbours at once,
   and the items row names the first weapon element (`gear_rebuild_tests.gd`, a client's first
   weapon goes).
 - **Safety net** (`extensions/ui/focus_emulator.gd`, online or not). A control freed while it holds
@@ -2019,11 +2031,15 @@ calls holds a whole frame.
   many puppets it instanced. A puppet instanced instead of taken from a pool (`_spawn`,
   `FeedbackMirror.explode`) is also counted per window with its time, the costliest by scene file
   name (`ClientReport.fresh(file, usec)`). The host adds this to the line only when the worst frame
-  took 50 ms or more, and shows a file name that is not plain as "?".
+  took 50 ms or more, and shows a file name that is not plain as "?". When the frame has a mark,
+  mirror work or a fresh puppet, the line ends with the rest: what none of them holds (the game's
+  own work, deferred layout, freed nodes).
 - **Scene change.** The longest frame within 3 s of a change of `current_scene`, with the mod's
   share from timing marks (`ClientReport.mark(label, usec)`: run parse, deserialize, apply, puppet
-  setup, level-up panels). The host's line ends with the rest, the game's part. "level-up panels"
-  is `UpgradesSync.apply` after the run (gear, stats, the panel shown); run parse and deserialize
+  setup, level-up panels, shop panels). The host's line ends with the rest, the game's part.
+  "level-up panels" is `UpgradesSync.apply` after the run (gear, stats, the panel shown), "shop
+  panels" `ShopSync._apply_body` after `RunStateCodec.apply` (gear rows, stats, shop items, locks,
+  popups; also the first state of a shop just entered); run parse and deserialize
   cover every section's run (`Store.timed_state`). The node registers itself with
   `Engine.set_meta`, because Godot 3 has no static variables.
 - **Corrections.** In `_predict_own`, a new error longer than one step at the player's speed is
@@ -2061,6 +2077,8 @@ later changes may have moved it.
 | Client time per applied level-up state: choice, reroll, crate item, new panels (late 2 players) | 40 to 45, 40 to 52, 94 to 149, 171 to 264 ms | 2026-11-17, 055222f | `upgrades_change_tests.gd` |
 | The same with kept items and the gear in place, late 2 / 4 players: choice, reroll, crate item | 10 / 11, 11 / 12, 30 / 31 ms | 2026-11-21, 0d1ccb3 | `upgrades_change_tests.gd` |
 | A crate item's state on a client, late 2 / 4: run parse, deserialize, apply, level-up panels (of which the gear about 11); the old way in the same run | 6.4 / 6.3, 6.8 / 6.4, 2.2 / 2.8, 14.9 / 15.0 ms; 98 / 92 ms | 2026-11-21, 0d1ccb3 | `upgrades_change_tests.gd` |
+| Another player's purchase on a client's shop, late 2 / 4: run parse, deserialize, apply, shop panels (of which that player's gear in place 14 to 19); the old gear rebuild of that player alone, in the same shop | 6.1 / 7.4, 7.9 / 9.0, 1.9 / 2.7, 18 to 20 / 19 to 22 ms; 71 to 92 / 97 to 104 ms | 2026-11-22, d5db093 | `shop_gear_change_tests.gd` |
+| The same for a reroll (weapons pointed at new objects only), of which shop panels | 15 to 17 / 17 to 23 ms, 5.5 to 6.5 / 5.7 to 9.4 ms | 2026-11-22, d5db093 | `shop_gear_change_tests.gd` |
 | Host, a client's crate item to its answer sent (late 2 / 4): applying the intent, the stream's check (serializing the run) | 29 / 37 ms: 5.7 / 5.4, 23 / 31 ms | 2026-11-21, 0d1ccb3 | `upgrades_change_tests.gd` |
 | Effect custom args per serialization (late 2 / 4) | 2.4 / 3.0 ms | 2026-11-17, cc3f561 | recorded with the commit |
 | Battle scene change on a client, small two-player run | 284 ms stall, of which the mod 4.8 ms | 2026-11-17, f12aab4 | `client_report_tests.gd` |
@@ -2090,6 +2108,7 @@ enemies it is the host's game itself that slows down.
 | 2026-11-16 | the same session | 213 input gap lines of 200 to 847 ms, most at a battle start or shop entry; scene-change stalls of 150 to 700 ms per client | gap lines tell a client's own stall from the network; client reports |
 | 2026-11-16 | the same session | 7 fingerprint misses in the shop between waves 18 and 40 | effects' custom args are settled before serializing |
 | 2026-11-21 | two players, 47 waves | a client lags from the crate item to the level-up page (issue #110); one frame of 50 to 64 ms per wave end and shop, its only mark "apply 2" (the store's parse and deserialize and the panels had none) | kept items, gear in place, marks for every section's run and the level-up panels (0d1ccb3) |
+| 2026-11-22 (log read) | two players, endless to wave 38 | a client's shop frames of 50 ms or more track the gear parts sent (`g`): 20 to 34 per shop from wave 33, up to 169 ms at wave 36; states with only `c` and `p` (rerolls, locks) stayed under 50 ms. The shop still rebuilt every gear element of a changed player. | shop gear in place, the "shop panels" mark (d5db093) |
 | 2026-11-17 or earlier (fix 055222f) | a real session, late endless waves | client frames of 100 to 205 ms during the level-up panels | per-player rebuild |
 | 2026-11-16 or earlier (fix 1ceb422) | online session | a client crashed natively on the level-up gear page after a run change | [Freed controls under a cursor](#freed-controls-under-a-cursor) |
 | 2026-11-17 or earlier (fix ec3c80b) | online endless run, wave 36 | the host crashed natively when the co-op shop opened | [Axolotl crash](#axolotl-crash) |
