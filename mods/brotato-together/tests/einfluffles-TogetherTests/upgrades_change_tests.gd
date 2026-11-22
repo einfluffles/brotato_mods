@@ -15,6 +15,7 @@ const RunStateCodec := preload(
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const GearView := preload("res://mods-unpacked/einfluffles-TogetherTests/gear_view.gd")
 const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
@@ -690,7 +691,7 @@ func _client_apply(body: Dictionary, players: int):
 	var views := []
 	for p in players:
 		var container = _ui._get_player_container(p)
-		views.append(_gear_view(container))
+		views.append(GearView.ids(container))
 		container.primary_stats_container.general_stats[0]._value.text = STATS_MARK
 	var made: int = _sync.run_store.items_made
 	var report: Node = _together.client_report
@@ -715,7 +716,7 @@ func _client_apply(body: Dictionary, players: int):
 	}
 	for p in players:
 		var container = _ui._get_player_container(p)
-		var view := _gear_view(container)
+		var view := GearView.ids(container)
 		if view[1] != views[p][1]:
 			done.gear.append(p)
 		for node in view[0]:
@@ -723,43 +724,9 @@ func _client_apply(body: Dictionary, players: int):
 				done.instanced += 1
 		if container.primary_stats_container.general_stats[0]._value.text != STATS_MARK:
 			done.stats.append(p)
-		done.shows_run = done.shows_run and _shows_run(container, p)
+		done.shows_run = done.shows_run and GearView.shows_run(container, p)
 	yield(_t.get_tree(), "idle_frame")
 	return done
-
-
-# [instance ids of the live elements of a panel's gear page, of their items] (weapons, then
-# items).
-static func _gear_view(container: Node) -> Array:
-	var nodes := []
-	var items := []
-	var gear = container.player_gear_container
-	for inventory in [gear.weapons_container._elements, gear.items_container._elements]:
-		for element in inventory.get_children():
-			if not element.is_queued_for_deletion():
-				nodes.append(element.get_instance_id())
-				items.append(element.item.get_instance_id())
-	return [nodes, items]
-
-
-# The gear page shows p's own weapon and item objects, each item counted once.
-static func _shows_run(container: Node, p: int) -> bool:
-	var gear = container.player_gear_container
-	var weapons: Array = RunData.get_player_weapons(p)
-	var items: Array = RunData.get_player_items(p)
-	var shown := 0
-	for element in gear.weapons_container._elements.get_children():
-		if not element.item in weapons:
-			return false
-		shown += 1
-	if shown != weapons.size():
-		return false
-	shown = 0
-	for element in gear.items_container._elements.get_children():
-		if not element.item in items:
-			return false
-		shown += element.current_number
-	return shown == items.size()
 
 
 # The panels' state now, as a client gets it (every part, a copy), for the replay; only when
