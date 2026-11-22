@@ -248,6 +248,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `damage` | The damage meter: counting, the row in the wave, the pages, the switch. |
 | `damage_run` | The damage meter in real waves: the total against the health lost with Giant Belt, Scared Sausage and Greek Fire, the end of the wave before its panels, the run stats over waves, retries and new runs. |
 | `battle_scene` | A breaking weapon, the hole layout, a stomped hole, the host's speed in the own-player prediction, walking into holes. |
+| `puddle_reuse` | Trails of fire (another player's magma boots), acid and petrol puddles on a client, also once the puddle puppets come back from the pool. |
 | `dead_player` | A player who died stays visible when the next wave starts him at 0 health. |
 | `selection` | The host's selection screens and end of run on a client, colours and join hints, the shared character grid, wheel and right stick. |
 | `state_stream` | The state stream on a fake session: change keys, resyncs, states held for a full send queue, malformed messages. |
