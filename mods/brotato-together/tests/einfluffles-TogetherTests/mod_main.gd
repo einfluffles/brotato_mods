@@ -80,6 +80,9 @@ const HitNumbersTests := preload(
 )
 const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks_tests.gd")
 const DigSiteTests := preload("res://mods-unpacked/einfluffles-TogetherTests/dig_site_tests.gd")
+const MagmaTrailTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/magma_trail_tests.gd"
+)
 const ProgressShareTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/progress_share_tests.gd"
 )
@@ -157,6 +160,7 @@ const SUITES := [
 	"damage_run",
 	"battle_scene",
 	"dig_site",
+	"magma_trail",
 	"dead_player",
 	"selection",
 	"state_stream",
@@ -445,6 +449,12 @@ func _suite_battle_scene(together: Node):
 func _suite_dig_site(together: Node):
 	coop_run(3)
 	_suite = DigSiteTests.new(self)
+	yield(_suite.run(together), "completed")
+
+
+func _suite_magma_trail(together: Node):
+	coop_run(3)
+	_suite = MagmaTrailTests.new(self)
 	yield(_suite.run(together), "completed")
 
 

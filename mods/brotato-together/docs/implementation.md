@@ -736,7 +736,10 @@ and `_fire_puddles_container`) are tracked like gold. A puddle's sprite index an
 set once in `init()` and travel in the type key, `<scene>#puddle:<sprite>:<scale x>:<scale y>`
 (1/100). The sprite's random rotation is the client's own. The host drops a puddle from the
 snapshots when it starts to fade (`is_active()`). The client runs the puddle's own spawn tween when
-it appears and its `despawn()` fade before pooling the puppet. Damage, slow and ignition stay with
+it appears and its `despawn()` fade before pooling the puppet. A reused puppet's tween is cleared
+first (`remove_all`, as the game's `_return_to_pool` does): the fade left in it ended the spawn
+tween at alpha 0, so after 2 s a magma boots trail showed one puddle at a time (suite
+`magma_trail`). Damage, slow and ignition stay with
 the host's puddles. The host's scan takes only `AcidPuddle`, `PetrolPuddle` and `FirePuddle`, so
 holes, dig sites and poacher zones in the same container are left alone.
 The client's explosion puppet never runs `start_explosion`, so the fire puddle an explosion leaves

@@ -61,8 +61,11 @@ static func container(main: Node, puddle: Node) -> Node:
 	return main.get("_fire_puddles_container" if puddle is FirePuddle else "_gpe_container")
 
 
-# The lifetime timer never starts on a puppet: the host's puddle decides when it goes.
+# The lifetime timer never starts on a puppet: the host's puddle decides when it goes. A pooled
+# puppet's tween still holds its fade (the game's _return_to_pool clears it, which puppets skip),
+# and that fade would end the spawn tween at alpha 0.
 static func start(puddle: Node, spec) -> void:
+	puddle.tween.remove_all()
 	puddle._is_dying = false
 	puddle.set_deferred("monitoring", false)
 	var size: Vector2 = puddle._base_scale

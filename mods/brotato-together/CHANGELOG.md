@@ -10,6 +10,10 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Magma Boots on a client: another player's trail now shows all of its fire puddles. Before, once
+  the first puddles had burnt out, only one at a time flashed up for a moment. Other acid, petrol
+  and fire puddles that came after earlier ones had gone could stay invisible the same way.
+
 ## 2026-11-22 17:57 UTC
 
 - Co-op shop and level-up panels: the weapon or item another player has selected in their gear is
