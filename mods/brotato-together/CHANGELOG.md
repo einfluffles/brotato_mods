@@ -14,7 +14,8 @@ upload; three of them are marked where the upload may have differed.
   colour from the run before, also when you join into another slot or the host plays on another
   controller, and nobody else can take your colour while you have not joined yet. Dropping out
   mid-run and rejoining keeps your colour. Leaving the lobby before the run drops it. Once the host
-  closes the lobby, the next run starts with the game's colours.
+  closes the lobby, a colour lasts only while its player keeps their slot: the next run starts with
+  the game's colours, unless the host opens a new lobby before it.
 
 ## 2026-11-22 17:57 UTC
 

@@ -362,6 +362,10 @@ func _on_peer_ready(steam_id: int) -> void:
 	ModLoaderLog.info("Peer %s -> virtual device %s" % [steam_id, device], LOG_NAME)
 
 
+func has_peer(steam_id: int) -> bool:
+	return session.peers.has(steam_id)
+
+
 func steam_id_of(device: int) -> int:
 	for steam_id in devices:
 		if devices[steam_id] == device:
