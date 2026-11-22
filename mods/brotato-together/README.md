@@ -63,8 +63,12 @@ used like them, with mouse, keyboard or gamepad.
 - **Colours:** in character selection each player changes their colour with **F** (keyboard) or
   **Y** (gamepad; Triangle on PlayStation pads). It cycles through 8 colours and skips those that
   other players have. The colour is used wherever the game uses player colours (cursor, panels,
-  HUD, player highlight), and clients see the same colours. Nothing is saved; a player who does
-  not pick keeps the game's colour.
+  HUD, player highlight), and clients see the same colours. In a lobby your colour stays yours
+  while you are in it: every new run starts with it, whatever slot you join into, and nobody else
+  can pick it meanwhile. A drop mid-run keeps it for your rejoin. Once the host closes the lobby,
+  a colour lasts only while its player keeps their slot: the next run starts with the game's
+  colours, unless the host opens a new lobby before it. Nothing is saved; a player who does not
+  pick keeps the game's colour.
 - A locked character under a cursor shows how to unlock it, on clients too.
 - **Aiming** follows each player's own manual-aim setting (mouse or right stick).
 - **A player who drops:** if they do not come back within 20 s, the host makes their level-up,

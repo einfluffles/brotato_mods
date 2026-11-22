@@ -10,6 +10,12 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Player colours stay picked for as long as you are in the lobby: a new run starts with everyone's
+  colour from the run before, also when you join into another slot or the host plays on another
+  controller, and nobody else can take your colour while you have not joined yet. Dropping out
+  mid-run and rejoining keeps your colour. Leaving the lobby before the run drops it. Once the host
+  closes the lobby, a colour lasts only while its player keeps their slot: the next run starts with
+  the game's colours, unless the host opens a new lobby before it.
 - Magma Boots on a client: another player's trail now shows all of its fire puddles. Before, once
   the first puddles had burnt out, only one at a time flashed up for a moment.
 - Acid and petrol puddles on a client no longer go invisible. Before, a puddle that came after

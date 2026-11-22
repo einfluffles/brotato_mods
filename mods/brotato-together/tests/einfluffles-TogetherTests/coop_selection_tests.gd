@@ -16,6 +16,8 @@ const OnlineLayoutTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/online_layout_tests.gd"
 )
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
+const PEER_A := 801
+const PEER_B := 802
 # Viewport sizes the colour hint is checked at (16:9 and 16:10).
 const SIZES := [Vector2(1920, 1080), Vector2(2560, 1440), Vector2(1280, 720), Vector2(1920, 1200)]
 
@@ -40,6 +42,7 @@ func run(test_mod: Node, together: Node):
 	var layout := OnlineLayoutTests.new()
 	yield(layout.run(t, scene), "completed")
 	yield(_test_color_picks(scene), "completed")
+	yield(_test_lobby_picks(together.input_sync, together.session), "completed")
 	_test_color_mirror(together, scene)
 	yield(_test_locked(scene), "completed")
 	CoopService.listening_for_inputs = false
@@ -238,6 +241,287 @@ func _test_color_picks(scene: Node):
 	t._check(
 		CoopService.connected_players.size() == 2 and _distinct(CoopService.bt_slot_colors),
 		"colours: still distinct after a player left (%s)" % [CoopService.bt_slot_colors]
+	)
+
+
+func _join(devices: Array) -> void:
+	CoopService.clear_coop_players()
+	for device in devices:
+		var type: int = CoopService.PlayerType.GAMEPAD_XBOX
+		if device == KEYBOARD:
+			type = CoopService.PlayerType.KEYBOARD_AND_MOUSE
+		CoopService._add_player(device, type)
+
+
+static func _first_two() -> Array:
+	return [CoopService.bt_slot_colors[0], CoopService.bt_slot_colors[1]]
+
+
+# The colours slot 0 goes through, one ui_info press of device each.
+func _cycle_seen(device: int, times: int):
+	var seen := []
+	for _i in times:
+		yield(_press_virtual(device), "completed")
+		seen.append(CoopService.bt_slot_colors[0])
+	return seen
+
+
+# In a lobby a pick is the player's until the lobby closes: a remote player's by steam id, a local
+# player's by its entry (_bt_slot_players).
+func _test_lobby_picks(input_sync: Node, session: Node):
+	var saved: Dictionary = input_sync.devices
+	var a := VirtualDevices.FIRST
+	var b := VirtualDevices.FIRST + 1
+	var c := VirtualDevices.FIRST + 2
+	var pad := 6  # CoopService.GAMEPAD_REMAPPED_DEVICE_ID
+	input_sync.devices = {PEER_A: a, PEER_B: b}
+	session._add_peer(PEER_A)
+	session._add_peer(PEER_B)
+	CoopService.clear_coop_players()  # outside a lobby this drops every pick
+	CoopService._bt_local.clear()
+	CoopService.bt_set_lobby(true)
+	_join([a, b, KEYBOARD])
+	yield(_frames(2), "completed")
+	yield(_press_virtual(b), "completed")
+	yield(_press_key(KEY_F), "completed")
+	var b_pick: int = CoopService.bt_slot_colors[1]
+	var host_pick: int = CoopService.bt_slot_colors[2]
+	t._check(
+		b_pick == 3 and host_pick == 4,
+		"lobby colours: B and the host picked (%s)" % [CoopService.bt_slot_colors]
+	)
+	_join([KEYBOARD, a, c, VirtualDevices.FIRST + 3])
+	yield(_frames(2), "completed")
+	var slots: Array = CoopService.bt_slot_colors
+	t._check(
+		not slots.has(b_pick) and _distinct(slots),
+		"lobby colours: no default colour takes the pick of B, who has not joined (%s)" % [slots]
+	)
+	# Next run: another join order, B on the other virtual device, the host on a gamepad.
+	input_sync.devices = {PEER_A: b, PEER_B: a}
+	_join([pad, a, b])
+	yield(_frames(2), "completed")
+	slots = CoopService.bt_slot_colors
+	t._check(
+		slots == [host_pick, b_pick, 2, 0],
+		"lobby colours: the next run keeps the picks, in B's and the host's new slots (%s)" % [slots]
+	)
+	t._check(
+		CoopService.player_colors[1] == CoopService.bt_palette[b_pick],
+		"lobby colours: player_colors in B's new slot is its pick"
+	)
+	# A joins first and cycles: the picks of B and the host are kept for them.
+	_join([b])
+	yield(_frames(2), "completed")
+	var seen: Array = yield(_cycle_seen(b, CoopService.bt_palette.size() + 1), "completed")
+	var a_pick: int = CoopService.bt_slot_colors[0]
+	_join([b, KEYBOARD])
+	yield(_frames(2), "completed")
+	t._check(
+		not seen.has(b_pick) and not seen.has(host_pick) and a_pick == 5,
+		"lobby colours: A skips the picks of B and the host, who have not joined (%s)" % [seen]
+	)
+	t._check(
+		_first_two() == [a_pick, host_pick],
+		"lobby colours: the host joining after A has its pick (%s)" % [CoopService.bt_slot_colors]
+	)
+	yield(_test_local_entries(pad, host_pick), "completed")
+	var couch_pick: int = CoopService._bt_picks.get("local:1", -1)
+	_join([KEYBOARD, pad, a, b])
+	yield(_frames(2), "completed")
+	slots = CoopService.bt_slot_colors
+	t._check(
+		slots == [host_pick, couch_pick, b_pick, a_pick] and couch_pick >= 0,
+		"lobby colours: everyone back has its pick, local players by device (%s)" % [slots]
+	)
+	# Two players with the same pick: the earlier slot keeps it, the later one gets its default
+	# colour if free and not reserved, else the first such one.
+	CoopService._bt_picks["steam:%d" % PEER_A] = b_pick
+	CoopService.bt_apply_colors()
+	slots = CoopService.bt_slot_colors
+	t._check(
+		slots == [host_pick, couch_pick, b_pick, 0],
+		"lobby colours: a shared pick goes to the earlier slot (%s)" % [slots]
+	)
+	_join([b, a])
+	yield(_frames(2), "completed")
+	slots = CoopService.bt_slot_colors
+	t._check(
+		slots[0] == b_pick and slots[1] != b_pick and _distinct(slots),
+		"lobby colours: the earlier slot wins whoever is in it (%s)" % [slots]
+	)
+	CoopService._bt_picks["steam:%d" % PEER_A] = a_pick
+	yield(_test_peer_leaves(input_sync, session, [a, b, c], b_pick, a_pick), "completed")
+	yield(_test_lobby_closes([a, b, pad], host_pick, couch_pick), "completed")
+	input_sync.devices = saved
+	session.peers.erase(PEER_A)
+	session.peers.erase(PEER_B)
+	_join([a, b])
+	yield(_frames(2), "completed")
+
+
+# Local players: a new device never keeps the entry of one that is connected and has not joined
+# yet; it takes over the entry of one that is gone. There is no joypad here: pads are gone.
+func _test_local_entries(pad: int, host_pick: int):
+	_join([pad, KEYBOARD])  # a new pad joins before the host on the keyboard
+	yield(_frames(2), "completed")
+	t._check(
+		_first_two() == [0, host_pick] and CoopService._bt_local == [KEYBOARD, pad],
+		"lobby colours: a new pad first, the host on the keyboard still has its pick (%s, %s)"
+		% [CoopService.bt_slot_colors, CoopService._bt_local]
+	)
+	CoopService.bt_cycle_color(0)
+	var couch_pick: int = CoopService.bt_slot_colors[0]
+	_join([pad, KEYBOARD])
+	yield(_frames(2), "completed")
+	t._check(
+		_first_two() == [couch_pick, host_pick] and couch_pick != 0,
+		"lobby colours: the pad picked; the next run both have theirs (%s)"
+		% [CoopService.bt_slot_colors]
+	)
+	var saved_local: Array = CoopService._bt_local.duplicate()
+	var saved_picks: Dictionary = CoopService._bt_picks.duplicate()
+	# Debug devices stand in for connected pads 2 and 1: they are always there.
+	CoopService._bt_local = [9, 8]
+	CoopService._bt_picks["local:0"] = 6
+	CoopService._bt_picks["local:1"] = 7
+	_join([9, KEYBOARD])
+	yield(_frames(2), "completed")
+	var borrowed: Array = _first_two()
+	CoopService.bt_cycle_color(1)  # the borrower picks: into an entry of its own
+	t._check(
+		CoopService._bt_picks.get("local:1") == 7 and CoopService.bt_slot_colors[1] != 7,
+		"lobby colours: a borrower's pick leaves the lender's pick alone (%s, %s)"
+		% [CoopService.bt_slot_colors, CoopService._bt_picks]
+	)
+	CoopService._add_player(8, CoopService.PlayerType.GAMEPAD_XBOX)
+	yield(_frames(2), "completed")
+	var slots: Array = CoopService.bt_slot_colors
+	t._check(
+		borrowed == [6, 7] and slots[0] == 6 and slots[2] == 7 and slots[1] != 7,
+		"lobby colours: the keyboard borrows pad 1's pick only until pad 1 joins (%s, %s)"
+		% [borrowed, slots]
+	)
+	t._check(
+		CoopService._bt_local == [9, 8, KEYBOARD],
+		"lobby colours: ... and pad 1 keeps its entry (%s)" % [CoopService._bt_local]
+	)
+	CoopService._bt_local = [KEYBOARD, 3]  # pad 3 is not connected
+	CoopService._bt_picks["local:0"] = host_pick
+	CoopService._bt_picks["local:1"] = 6
+	_join([2, KEYBOARD])
+	yield(_frames(2), "completed")
+	t._check(
+		_first_two() == [6, host_pick] and CoopService._bt_local == [KEYBOARD, 2],
+		"lobby colours: a new pad takes over the entry of a pad that is gone (%s, %s)"
+		% [CoopService.bt_slot_colors, CoopService._bt_local]
+	)
+	CoopService._bt_local = saved_local
+	CoopService._bt_picks = saved_picks
+
+
+# B (on a) drops while the slot is kept (weapon selection), the host goes back to the character
+# selection: the slot keeps B's pick, also over a rejoin. A peer gone for good reserves nothing.
+func _test_peer_leaves(input_sync: Node, session: Node, devices: Array, b_pick: int, a_pick: int):
+	var a: int = devices[0]
+	var b: int = devices[1]
+	var c: int = devices[2]
+	_join([a, b])
+	yield(_frames(2), "completed")
+	CoopService.listening_for_inputs = false
+	session.peers.erase(PEER_B)
+	input_sync._on_peer_removed(PEER_B)
+	CoopService.listening_for_inputs = true
+	CoopService.bt_apply_colors()
+	t._check(
+		_first_two() == [b_pick, a_pick],
+		"lobby colours: a slot kept for a rejoin keeps its player's pick (%s)"
+		% [CoopService.bt_slot_colors]
+	)
+	session._add_peer(PEER_B)
+	_join([b, a])
+	yield(_frames(2), "completed")
+	t._check(
+		_first_two() == [a_pick, b_pick],
+		"lobby colours: ... and the player has it after the rejoin (%s)" % [CoopService.bt_slot_colors]
+	)
+	session.peers.erase(PEER_A)
+	input_sync._on_peer_removed(PEER_A)  # while players can join: its slot is freed
+	_join([a, b])
+	yield(_frames(2), "completed")
+	var slots: Array = CoopService.bt_slot_colors
+	t._check(
+		slots[0] == b_pick and slots[1] != a_pick and _distinct(slots),
+		"lobby colours: a player who left before the run has no pick any more (%s)" % [slots]
+	)
+	# A dropped mid-run and did not come back: its kept pick reserves nothing until it rejoins.
+	CoopService._bt_picks["steam:%d" % PEER_A] = a_pick
+	_join([c])
+	yield(_frames(2), "completed")
+	var seen: Array = yield(_cycle_seen(c, CoopService.bt_palette.size()), "completed")
+	session._add_peer(PEER_A)
+	var back: Array = yield(_cycle_seen(c, CoopService.bt_palette.size()), "completed")
+	t._check(
+		seen.has(a_pick) and not seen.has(b_pick) and not back.has(a_pick),
+		"lobby colours: a peer gone for good reserves nothing, back in the lobby it does (%s, %s)"
+		% [seen, back]
+	)
+	session.peers.erase(PEER_A)
+	session.peers.erase(PEER_B)
+	CoopService.clear_coop_players()
+	var mapped: Dictionary = input_sync.devices.duplicate()
+	input_sync._forget_unassigned_devices()  # neither is a peer of this session now
+	input_sync.devices = mapped
+	session._add_peer(PEER_A)
+	session._add_peer(PEER_B)
+	t._check(
+		not CoopService._bt_picks.has("steam:%d" % PEER_A)
+		and not CoopService._bt_picks.has("steam:%d" % PEER_B),
+		"lobby colours: no pick of a player whose kept device was dropped (%s)"
+		% [CoopService._bt_picks]
+	)
+
+
+# Closing drops the picks of players out of a slot, also when a lobby opens again at once.
+# Co-op Online -> Local in the character selection: the host keeps its colour while in its slot;
+# the next run starts with the game's colours.
+func _test_lobby_closes(devices: Array, host_pick: int, couch_pick: int):
+	var a: int = devices[0]
+	var b: int = devices[1]
+	var pad: int = devices[2]
+	_join([KEYBOARD, a, b])
+	yield(_frames(2), "completed")
+	yield(_press_virtual(b), "completed")
+	var picks: Array = CoopService.bt_slot_colors.duplicate()
+	t._check(
+		picks[0] == host_pick and picks[2] != 2, "lobby colours: picks before closing (%s)" % [picks]
+	)
+	CoopService.bt_set_lobby(false)
+	CoopService.bt_set_lobby(true)
+	_join([pad, KEYBOARD, a, b])
+	yield(_frames(2), "completed")
+	var slots: Array = CoopService.bt_slot_colors
+	t._check(
+		slots[0] != couch_pick and slots[1] == host_pick and slots[3] == picks[2],
+		"lobby colours: closing dropped the pad's pick (out of a slot), not the others' (%s)"
+		% [slots]
+	)
+	CoopService.bt_set_lobby(false)
+	CoopService._remove_player(b)
+	CoopService._remove_player(a)
+	CoopService._remove_player(pad)
+	CoopService._add_player(pad, CoopService.PlayerType.GAMEPAD_XBOX)
+	yield(_frames(2), "completed")
+	t._check(
+		CoopService.bt_slot_colors[0] == host_pick,
+		"lobby colours: closed, the host in its slot keeps its pick (%s)" % [CoopService.bt_slot_colors]
+	)
+	_join([KEYBOARD, a, b])
+	yield(_frames(2), "completed")
+	t._check(
+		CoopService.bt_slot_colors == [0, 1, 2, 3],
+		"lobby colours: no pick left at the next run once the lobby closed (%s)"
+		% [CoopService.bt_slot_colors]
 	)
 
 
