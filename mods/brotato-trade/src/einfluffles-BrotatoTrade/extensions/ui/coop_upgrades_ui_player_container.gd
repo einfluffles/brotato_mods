@@ -91,6 +91,19 @@ func trade_is_choosing() -> bool:
 	return _trade_choosing
 
 
+# brotato:together shows the list on the other machines' copies of this panel.
+func together_menu():
+	return ["trade"] if _trade_choosing else null
+
+
+# A copy opens the list without the meca effect choice, which only the player's own panel has.
+func together_show_menu(menu) -> void:
+	if menu == null:
+		trade_back(false)
+	elif not _trade_choosing and _trade_offered():
+		_trade_open()
+
+
 func trade_back(refocus: bool) -> void:
 	if not _trade_choosing:
 		return
@@ -106,6 +119,10 @@ func trade_back(refocus: bool) -> void:
 func _on_trade_button_pressed() -> void:
 	if _trade_choosing or not _trade_offered() or not _trade_item_ready():
 		return
+	_trade_open()
+
+
+func _trade_open() -> void:
 	var entries: Array = trade_ui.trade_crate_receivers(player_index)
 	var first: Button = null
 	for i in _trade_players.size():

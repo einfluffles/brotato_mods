@@ -9,6 +9,7 @@ const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const PopupView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/popup_view.gd")
 # ShopItemsContainer.connect_shop_items: ShopItem signal -> container handler. The container
 # mutates before BaseShop hears of it, so the cuts sit here. The lock has no signal at all:
 # extensions/ui/shop_item.gd.
@@ -69,6 +70,8 @@ func guard(shop: Node, shop_id: int) -> void:
 		for node in items._shop_items:
 			for signal_name in ITEM_HANDLERS:
 				_disconnect(node, signal_name, items, ITEM_HANDLERS[signal_name])
+		# Called by ShopSync only for a cursor on that item: see ShopSync._deactivate.
+		_disconnect(items, "shop_item_deactivated", shop, "on_shop_item_deactivated")
 		_disconnect(shop._get_reroll_button(p), "pressed", shop, "_on_RerollButton_pressed")
 		_disconnect(shop._get_go_button(p), "pressed", shop, "_on_GoButton_pressed")
 		var popup = shop._get_item_popup(p)
@@ -302,7 +305,12 @@ func _report_focus() -> void:
 	var target := []
 	if control != null and is_instance_valid(control):
 		target = FocusTargets.describe(control, _shop, you)  # [] outside the own panel
-	var message := {"shop_id": _shop_id, "page": panel.carousel.index, "target": target}
+	var popup := PopupView.describe(
+		_shop, _shop._popup_manager, _shop._get_item_popup(you), panel, you
+	)
+	var message := {
+		"shop_id": _shop_id, "page": panel.carousel.index, "target": target, "popup": popup
+	}
 	var key := var2str(message)
 	if key != _sent_focus:
 		_sent_focus = key

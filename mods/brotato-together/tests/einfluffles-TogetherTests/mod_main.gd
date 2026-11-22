@@ -52,6 +52,9 @@ const BulletHellTests := preload(
 const ShopLoopbackTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_loopback_tests.gd"
 )
+const ShopGearChangeTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/shop_gear_change_tests.gd"
+)
 const ShopChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_change_tests.gd"
 )
@@ -62,6 +65,9 @@ const BattleStartTests := preload(
 const UpgradesChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_change_tests.gd"
 )
+const UpgradesPopupTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_popup_tests.gd"
+)
 const SelectionScreenTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/selection_screen_tests.gd"
 )
@@ -70,6 +76,7 @@ const CoopSelectionTests := preload(
 )
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
 const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks_tests.gd")
+const DigSiteTests := preload("res://mods-unpacked/einfluffles-TogetherTests/dig_site_tests.gd")
 const ProgressShareTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/progress_share_tests.gd"
 )
@@ -140,14 +147,17 @@ const SUITES := [
 	"looks",
 	"damage",
 	"battle_scene",
+	"dig_site",
 	"dead_player",
 	"selection",
 	"state_stream",
 	"shop_change",
+	"shop_gear_change",
 	"run_parts",
 	"battle_start",
 	"cursor_key",
 	"upgrades_change",
+	"upgrades_popup",
 	"lobby_menu",
 	"network_stalls",
 	"traffic",
@@ -410,6 +420,12 @@ func _suite_battle_scene(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
+func _suite_dig_site(together: Node):
+	coop_run(3)
+	_suite = DigSiteTests.new(self)
+	yield(_suite.run(together), "completed")
+
+
 func _suite_dead_player(together: Node):
 	_suite = DeadPlayerTests.new()
 	yield(_suite.run(self, together), "completed")
@@ -423,6 +439,12 @@ func _suite_state_stream(together: Node):
 func _suite_shop_change(together: Node):
 	coop_run(2)
 	_suite = ShopChangeTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_shop_gear_change(together: Node):
+	coop_run(2)
+	_suite = ShopGearChangeTests.new()
 	yield(_suite.run(self, together), "completed")
 
 
@@ -444,6 +466,11 @@ func _suite_cursor_key(together: Node):
 
 func _suite_upgrades_change(together: Node):
 	_suite = UpgradesChangeTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_upgrades_popup(together: Node):
+	_suite = UpgradesPopupTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

@@ -84,6 +84,28 @@ static func can_request_buy(shop: Node, from: int) -> bool:
 	return shop_sync.own_player() == from and shop_sync.host_handles(KIND_BUY)
 
 
+# Whether player from's trade buttons and lists show here: where this machine trades for it, and
+# on a brotato:together client also another player's panel (a copy of what that player sees)
+# while the host trades.
+static func can_show(shop: Node, from: int) -> bool:
+	if can_request(shop, from):
+		return true
+	var shop_sync = _shop_sync()
+	return (
+		shop_sync != null
+		and shop_sync.is_puppet_shop(shop)
+		and shop_sync.host_handles(KIND_WEAPON)
+		and shop_sync.host_handles(KIND_ITEM)
+	)
+
+
+static func can_show_buy(shop: Node, from: int) -> bool:
+	if can_request_buy(shop, from):
+		return true
+	var shop_sync = _shop_sync()
+	return shop_sync != null and shop_sync.is_puppet_shop(shop) and shop_sync.host_handles(KIND_BUY)
+
+
 static func send_buy(shop: Node, from: int, shop_item: Node, to: int) -> bool:
 	var shop_sync = _shop_sync()
 	if shop_sync == null or not can_request_buy(shop, from) or shop_item.item_data == null:
@@ -136,6 +158,17 @@ static func can_request_crate(ui: Node, from: int) -> bool:
 	if not upgrades_sync.is_puppet_ui(ui):
 		return true
 	return upgrades_sync.own_player() == from and upgrades_sync.host_handles(KIND_CRATE)
+
+
+static func can_show_crate(ui: Node, from: int) -> bool:
+	if can_request_crate(ui, from):
+		return true
+	var upgrades_sync = _upgrades_sync()
+	return (
+		upgrades_sync != null
+		and upgrades_sync.is_puppet_ui(ui)
+		and upgrades_sync.host_handles(KIND_CRATE)
+	)
 
 
 static func is_puppet_ui(ui: Node) -> bool:

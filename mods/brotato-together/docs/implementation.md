@@ -2,7 +2,7 @@
 
 How the mod works, for a developer who is new to it. The game hooks it builds on are listed in
 [`docs/brotato-hooks.md`](../../../docs/brotato-hooks.md). This document describes the code as of
-2026-11-19 (protocol 30, mod version 0.2.1). File paths are relative to
+2026-11-21 (protocol 31, mod version 0.2.1). File paths are relative to
 `src/einfluffles-BrotatoTogether/`, test suites live in `tests/einfluffles-TogetherTests/`.
 
 Contents: [Overview](#1-overview), [Glossary](#2-glossary), [Session](#3-session),
@@ -84,7 +84,7 @@ These facts explain many design choices below. They are stated here once.
 | panel revision (`seqs`, an intent's `seq`) | A counter per player and panel. The host raises it when the panel offers something new, so a press made on an outdated panel can be dropped. |
 | INPUT `seq` | The number of an `INPUT` message, one per physics step. The snapshot's input ack refers to it. |
 | run state | The game's serialized run (`ProgressData.get_run_state()`), the same data a save file holds. |
-| run part | A piece of the run state: `c` (common), `g<p>` (gear of player p: weapons and items), `p<p>` (the rest of player p). |
+| run part | A piece of the run state: `c` (common), `s` (the shop's own fields), `t` (tracked item effects), `g<p>` (gear of player p: weapons and items), `p<p>` (the rest of player p). |
 | run cache, fingerprint, `rev` | `sync/run_cache.gd` decides when the run must be serialized again. The fingerprint is a cheap value that every game mutation moves. `rev` rises when a part's id changes. |
 | net id | The host's number for a mirrored battle node (u16). |
 | type table | Per battle, index to scene path. Snapshots name types by index. |
@@ -389,8 +389,11 @@ have changed:
   reroll and steal counters, per player gold, meca parts, health, level, xp, ban tokens, item count
   and the last item's instance, weapon instances, the sizes of the other lists (banned items,
   upgrades, mutations, sets, effects), and wave, endless, bonus gold, retries, background and
-  challenges. Each screen adds its own values (`ShopSync.shop_args`; for the panels the option each
-  panel processes, its crate item, rerolls and done).
+  challenges. `RunData.tracked_item_effects` (four dictionaries of about 93 small counters) goes in
+  as its `hash()`, by content: the battle goes on under the level-up panels, and a pet such as
+  Bot-O-Mine's counts its mines there (`add_tracked_value`), which left alone filled the host's log
+  with safety net warnings. Each screen adds its own values (`ShopSync.shop_args`; for the panels
+  the option each panel processes, its crate item, rerolls and done).
 - **Force.** The check after an applied intent (`force()`) and after `peer_ready` serializes in any
   case.
 - **Safety net.** Every second, while a peer is ready, the run is serialized without `JSON.print`
@@ -408,9 +411,17 @@ The cache keeps text and ints only. It is dropped when its screen closes and on 
 that lack them.
 
 - **Split.** `RunParts.split` cuts the serialized dictionary into `c` (everything but
-  `players_data`, which is replaced by its size), and per player `g<p>` (`{weapons, items}`) and
-  `p<p>` (the rest of the player, with weapons and items kept as null so that `join` puts them back
-  in place). A part's id is `[hash(), length of its JSON text]`. `join` is the inverse.
+  `players_data`, which is replaced by its size), the parts of their own of `RunParts.OWN_PARTS`,
+  and per player `g<p>` (`{weapons, items}`) and `p<p>` (the rest of the player, with weapons and
+  items kept as null so that `join` puts them back in place). The parts of their own hold keys
+  that move more often than the rest of `c`, kept as null in `c` the same way: `s` the shop's own
+  fields (`shop_items`, `reroll_count`, `paid_reroll_count`, `initial_free_rerolls`,
+  `free_rerolls`, `item_steals`, `locked_shop_items`), which every reroll, buy, lock and steal
+  changes, and `t` `tracked_item_effects`, which items count in the shop and pets during the
+  battle under the level-up panels. Both are always there (`{}` when the run has none of their
+  keys). A part's id is `[hash(), length of its JSON text]`. `join` is the inverse; it and
+  `state_for` put `s` and `t` back through `Store.put_back` and give no run at all when one is
+  missing, so that no shop item or tracked value is dropped silently.
 - **Host.** After a serialization `RunCache.refresh` splits and hashes each part. Only a part whose
   hash changed is printed and compressed. One `RunParts.Sender` (created in `mod_main.gd`, shared by
   `ShopSync`, `UpgradesSync` and `BattleHost`) records per peer the ids it was last sent.
@@ -424,9 +435,10 @@ that lack them.
   and id (the last two versions of each key) and fills in the ids of a `{}` run. A body that names a
   part the client has neither stored nor been sent logs a warning, asks the host for a resync and
   applies nothing. `state_for(ids)` decompresses and parses only parts it has not parsed. It runs
-  `deserialize_run_state` on a deep copy of `c` (the game writes into its input) whose
-  `players_data` holds only the players whose parts changed, and puts the previous `PlayerRunData`
-  objects back for the others. `changed_players()` and `gear_changed(p)` name what moved.
+  `deserialize_run_state` on a deep copy of `c` with `s` and `t` put back (the game writes into
+  its input) whose `players_data` holds only the players whose parts changed, and puts the
+  previous `PlayerRunData` objects back for the others. `changed_players()` and `gear_changed(p)`
+  name what moved.
 - **Kept items** (`Store._kept_items`, issue #110). A changed player keeps the item objects of its
   previous `PlayerRunData` whose dictionary in the `g` part hashes the same (all of them when only
   `p<p>` moved); only the others go through `deserialize_run_state`. A crate item then deserializes
@@ -436,8 +448,12 @@ that lack them.
   report's marks (run parse, deserialize); every section uses it.
 
 Ids are content hashes, so parts carry over between screens: the shop's first state after the panels
-sends little more than `c`. A purchase sends `c`, `p<p>` and `g<p>`, a paid reroll `c` and `p<p>`, a
-lock `c`, and a level-up choice `p<p>` only.
+sends little more than `c` and `s`. A purchase sends `s`, `p<p>` and `g<p>`, a paid reroll `s` and
+`p<p>`, a lock `s`, a level-up choice `p<p>` only, and a tracked value (a mine laid by the
+Bot-O-Mine pet under the level-up panels) `t` only. Either of the first two also sends `t` when an
+item counts what it saved (coupon, spyglass), and a purchase `c` when it completes a challenge.
+Until 2026-11-22 `s` and `t` were in `c`, and `c` (with every player's offered items) went out
+with nearly every shop state.
 
 When the shop or the panels close, the host logs one line per screen, for example "Shop 40: 28
 states, 20 with run parts (501.9 KB: c 11, g0 5, ...), 8 view only (5.3 KB), largest 110.5 KB"
@@ -491,8 +507,8 @@ The run sent is the one the battle scene entered the tree with (taken on `SceneT
 connected between battles only, while a peer is ready). The reason: `main._ready` starts the wave,
 which sets every player's health to its start value (`hp_start_wave`, `hp_start_next_wave`) and
 writes it into the player's part. The client's own `main._ready` does the same to the run it gets.
-So the client runs the wave start once, like the host, and after a shop usually only `c` has
-changed. A player's parts are sent only when Go took one of its items (hourglass, lifeform scanner,
+So the client runs the wave start once, like the host, and after a shop usually only `c` and `s`
+have changed. A player's parts are sent only when Go took one of its items (hourglass, lifeform scanner,
 `BaseShop._on_GoButton_pressed`).
 
 - A peer that becomes ready mid-wave gets the run as it is then (`forget` first, then every part).
@@ -527,7 +543,7 @@ missing part asks for a resync and the start is dropped. A queued start keeps it
 ### Entities and net ids
 
 Mirrored nodes are the entity spawner's lists (`bosses`, `enemies`, `neutrals`, `structures`,
-`pets`), projectiles, gold, consumables, spawn markers, puddles and single holes.
+`pets`), projectiles, gold, consumables, spawn markers, puddles, single holes and dig sites.
 
 - **Net ids** are u16, wrap, and skip ids alive in the last snapshot. An id is assigned on the
   `EntitySpawner.*_respawned` signals (fired on every spawn, pool reuse included) and kept by the
@@ -605,6 +621,12 @@ from a live node, because a puppet's `die()` frees its `Pivot`.
 | `EnemyLaser(Follow)` never moves | its `rotation` (aim) and the `visible` of the beam and aura sprites as one bitmask |
 | `BrachiosaurusFoot` | `visible` of the shadow, foot and release sprites, and the foot's `flip_h` |
 | every `Boss` scene | `Pose.Kind.HEALTH`, the health fraction, last of the base parts |
+| `DigSite` (archaeologist) digs while a player stands in it | `DIG_PROGRESS`, the progress fraction (1: dug up), and `DIG_STATE`: its particles emitting, and being dug |
+
+The client sets a dig site's progress and `dug_up` and redraws it (`DigSite._draw` picks the
+sprite), turns its particles on with the scene's `body_enter` squash as `_on_body_entered` does,
+and loops the dig sound while it is being dug, as `_physics_process` does. The dug-up sound is a
+`SoundManager2D` sound and the crate a consumable, both mirrored already.
 
 Turrets do not rotate in this game (`Turret.shoot` only aims projectiles). The client hands the
 health value to the puppet's own `on_health_updated`, which follows this client's "life bars on
@@ -716,6 +738,11 @@ The client's explosion puppet never runs `start_explosion`, so the fire puddle a
   `ZoneService.forbidden_circles` is cleared before that (`Hole._ready` is the only thing that adds
   circles). The swap only takes a child whose scene is one of the spawner's layouts, and it runs
   before any puddle puppet exists. A mid-wave resync keeps the layout.
+- **Dig sites.** `DigSiteSceneEffectBehavior._ready` (archaeologist, the dig site item) places them
+  at random in `_gpe_container`, on every machine. The client frees its own in
+  `client_scene_ready`. The host's are static snapshot entities (`BattleScene.dig_sites`) whose dig
+  travels as pose values (see [Flags, poses and animations](#flags-poses-and-animations)). The
+  puppet goes into `_gpe_container`.
 - **Single holes** (`BrachiosaurusFoot._stomp` calls `GPESpawner.spawn_single_hole_at_position`) are
   static snapshot entities (`BattleScene.spawned_holes`). The client's puppet goes into
   `_gpe_container` and keeps its body.
@@ -1054,10 +1081,11 @@ end of run, retry prompt) are plain copies whose cursors make the round trip thr
 - **The host keeps remote buttons off its copy.** While the screen is up and the tree is not paused,
   `InputSync.blocked_by` / `blocked_buttons` keep every remote button but pause off the virtual
   devices, so a remote accept cannot also press the host's copy.
-- **Presence is cosmetic.** The client reports its page and cursor (`SHOP_FOCUS`, `UPGRADE_FOCUS`:
-  a cursor target restricted to the sender's own anchors). The host puts them on its copy, from
-  where `FocusSync` and the state's `pages` carry them to the other clients. Decisions never depend
-  on it. A target that does not resolve or is not visible is ignored.
+- **Presence is cosmetic.** The client reports its page, cursor and open popup (`SHOP_FOCUS`,
+  `UPGRADE_FOCUS`: a cursor target restricted to the sender's own anchors, and a popup view, see
+  [Open popups](#open-popups)). The host puts them on its copy, from where `FocusSync` and the
+  state's `pages` and `popups` carry them to the other clients. Decisions never depend on it. A
+  target that does not resolve or is not visible is ignored.
 - **A control the mod does not know** (another mod's button) keeps its own handler and can show
   things. Other mods register their decisions (see below).
 - **The client rebuilds as little as possible.** A panel is rebuilt only when its revision or data
@@ -1077,6 +1105,9 @@ end of run, retry prompt) are plain copies whose cursors make the round trip thr
   its target and whose handler checks everything again. A second press sent before the host's
   answer then runs too (two quick trades of the same item).
 - The state names the host's kinds (`kinds`, part of the key).
+- A menu the mod opens in the item popup or on the panel (brotato:trade's player lists) is shown
+  on the other machines when the popup or panel defines `together_menu()` and
+  `together_show_menu(menu)` (see [Open popups](#open-popups)).
 - Client: `is_puppet_shop(shop)` / `is_puppet_ui(ui)` tell the mod that it must not change the run,
   `host_handles(kind)` whether the host has the mod, `own_player()` whose panel is local (-1: none),
   and `send_intent(...)` sends a press of the own panel (false: not sent).
@@ -1091,7 +1122,8 @@ end of run, retry prompt) are plain copies whose cursors make the round trip thr
 paid_reroll_count, initial_free_rerolls, free_rerolls, item_steals)` (the shop's own save
 arguments). The key is the run cache's `rev` plus what is sent without serializing: per-slot
 `active` layout, locks, Go flags (`_player_pressed_go_button`), panel revisions (`seqs`), carousel
-pages (`pages`), meca rolls (`mecas`), `shop_id`, colours, `kinds` and every peer's player index.
+pages (`pages`), meca rolls (`mecas`), open popups (`popups`), `shop_id`, colours, `kinds` and every
+peer's player index.
 `you` and the run parts the peer lacks are the per-peer patch.
 
 **Entering.** The client enters through the game's resume path (`ProgressData.saved_run_state`,
@@ -1103,12 +1135,34 @@ rolls nothing. It disconnects `BaseShop._on_tree_exited`, which would roll curse
 (`set_weapons_data / items_data`, `_update_stats`, gold label, reroll price through
 `ItemService.get_reroll_price`, `ShopItem.set_shop_item / activate / deactivate`, checkmarks).
 `ShopSync.player_keys` keys each player's data (the ids of its `p` and `g` parts), its gear (the `g`
-id) and its offered items (a hash).
+id) and its offered items (a hash of them in the `s` part).
 
 - A player whose data did not change keeps its `PlayerRunData` object across `resume_from_state`,
   because the panel's gear elements and popup hold those objects.
-- Gear elements are replaced only when the gear changed. Shop item nodes are replaced only when the
-  player's data, offered items or slot layout changed.
+- Gear rows are rebuilt only when the gear changed, and then in place (`UpgradesGear.sync_gear`,
+  shared with the [level-up panels](#level-up-and-crate-panels)): an element that shows the same
+  item is kept and pointed at the new object, so a cursor on it stays. A kept element also gets
+  the marks `set_element` takes from the player's run (banned, recently mutated). Late in a run a
+  purchase instances one element instead of about 250 (see
+  [Measurements](#12-measurements-and-session-findings)). So does an item popup opened from it
+  (its buttons, the meca choice, brotato:trade's player list),
+  for example when another player trades this one something. The popup then holds the new object
+  (Cancel finds its element by it, and a meca roll it waits for follows it), and its buttons are
+  shown again for the run now (`ShopSync._refresh_popup_buttons`: Combine once a second copy came,
+  the recycle value) unless it lists meca effects or another mod's menu (`together_menu`). A
+  cursor on a button hidden that way goes to Cancel. Only when its element
+  is gone does the popup close, and the cursor goes to the element at the same place; with no
+  element left there (and no default for another player's panel) it is taken off. A node kept at
+  the cursor's place that shows another item now gets the cursor anew, so its details follow. An
+  empty row or a locked item takes the game's `set_*_data`, with the cursor taken off first.
+- A change of a player's other parts only (`p<p>`: gold, stats, a reroll) brings new objects of
+  the same weapons: the weapons row is pointed at them the same way (nothing instanced), so the
+  elements and an open popup hold the run's weapons, as an intent names them.
+- Shop item nodes are re-set only when the player's data, offered items or slot layout changed. A
+  slot the host's state deactivates moves the cursor only when it was on that slot (or on nothing):
+  `BaseShop.on_shop_item_deactivated` is cut and called only then (`ShopSync._deactivate`). The game
+  also moves a cursor that rests on no shop item, which for a buy confirmed late would pull it out
+  of an open popup.
 - The same part ids again (only a Go flag, a page or a revision differs) skip `resume_from_state`.
 
 **Locks.** The state carries the lock of every slot node (`locks`), and the client sets each node
@@ -1181,7 +1235,7 @@ on its way, and the cursor rests on Go, mouse hover leaves the cursor there
 **State** (section `upgrades`). The provider is inactive unless the host's battle shows the panels.
 The key is the run cache's `rev` plus the text of the panels (`capture` from `_old_upgrades`,
 `_level`, `_reroll_price`, `_item_data`, `_checkmark_group`; `seqs`, `pages`, golds, meca rolls,
-`kinds`, battle id). The run travels in parts as in the shop. A run change alone (gold or a fruit
+open popups, `kinds`, battle id). The run travels in parts as in the shop. A run change alone (gold or a fruit
 still flying in) is sent too.
 
 **Client.** `apply_state` returns false until the state's battle is the puppet's and its scene is
@@ -1263,6 +1317,73 @@ and while choosing there is no cancel.
   index)` goes to the game's handler (`UpgradesUI._on_weapon_meca_upgrade_selected`, or the popup's
   `item_meca_upgrade_selected`), which spends the parts. A client can therefore only get one of the
   two options the host rolled.
+- **Other players' copies.** The choice is part of the popup's view (below). A copy shows it from
+  the host's roll: the host's copy with the roll its popup keeps (`MecaChoice.show_kept`, never a
+  new roll), a client's copy with the state's `mecas` entry of that weapon
+  (`MecaChoice.show_roll`). A client's gear can show the weapon objects of an older run state
+  (gear elements are only rebuilt when the gear changed), so an entry matches by slot and id when
+  the popup's object is no longer the player's.
+- **Log.** The game's `coop_item_popup.tscn` connects the two option buttons' signals to
+  `_on_ButtonWithIcon_*` on the popup, which has no such methods: every focus, hover or press of
+  an option logged "Method not found". `extensions/ui/coop_item_popup.gd` defines them empty (the
+  buttons' own scene does the work), since the choice now shows on every machine.
+### Open popups
+
+`sync/popup_view.gd`, used by the shop and the level-up / crate panels. A player's open menu is
+shown on every machine's copy of that player's panel, as in local co-op: the item popup the game
+focuses on accept on a gear weapon (its buttons, or the meca upgrade's two options), and the menus
+other mods open in that popup or on the panel.
+
+- **View** (wire format): `[]` when nothing is open, else `[element, id, meca, mods]`: the gear
+  element the popup was opened from (`PopupManager._elements_pressed`, as a cursor target in the
+  player's panel, `[]` when a mod opened the popup on something else), its item's `my_id`, 1 while
+  the meca choice shows, and `[popup's menu, panel's menu]` from `together_menu()` (null: none;
+  only ints and strings, at most 256 bytes).
+- **Where it travels.** A client reports its own panel's view with its cursor (`popup` in
+  `SHOP_FOCUS` / `UPGRADE_FOCUS`). The host shows it on its copy before it puts the cursor there.
+  The host's state carries every player's view as its copies have it (`popups`), and a client
+  shows every view but its own.
+- **Showing a view** (`PopupView.apply`) uses the game's own steps: the cursor onto the element,
+  then the element's press through `FocusEmulatorSignal` (`PopupManager` focuses the popup, the
+  shop dims the panel), then the meca choice (see [Meca upgrade](#meca-upgrade)), then
+  `together_show_menu(menu)` on the popup or panel. A view that names something else closes what
+  is open first: `together_show_menu(null)`, then the view half of the game's Cancel
+  (`PopupManager.reset_focus`, the dim screen off, a cursor left on a hidden button back on the
+  element). It does not emit `item_cancel_button_pressed`: the game's handler moves the cursor with
+  a deferred `grab_focus`, which would land after the mirrored cursor. A popup left focused or a
+  panel left dimmed with nothing open (the game hid the popup under a cursor move) counts as open
+  and is closed by an empty view. An element whose item has another id opens nothing. A view this
+  machine cannot show (no roll yet, a weapon that differs, its element hidden) is not tried again
+  until the view, the rolls, whether the element shows or what the panel shows change (`memo`).
+  The host's shop sets the reported carousel page before it shows the view, as the level-up side
+  does: the element shows only on the gear page.
+- **Godot's focus.** The press runs `ItemPopup.focus()`, whose `grab_focus` goes to that player's
+  FocusEmulator, which releases the focus owner. A control that held the focus before (one no
+  emulator takes, such as the lobby popup's buttons) gets it back at the end of `apply`.
+- **Cursors.** Opening a popup takes that player's cursor to its Cancel button. A client then
+  re-applies the last cursors body (`FocusSync.reapply`); a body still pending is retried by the
+  stream anyway. The host puts the reported cursor back itself.
+- **The host keeps a reported view** (`_reported_popups`) and shows it again each frame when its
+  copy changed under it (a gear rebuild closes the popup), until an intent of that player is
+  applied (the game's handler closes the popup then, and the client's next report says what is
+  open) or that client leaves (`peer_removed`: the copy closes).
+- brotato:trade's remote buy for another player closes the giver's buy-for list on the host's copy
+  first (`trade_buy_apply_request`), as the local press does.
+- brotato:trade defines the menu methods on its `CoopItemPopup` extension (`["give"]`, `["buy",
+  shop item slot]`) and on its crate panel (`["trade"]`). On a client its lists and buttons show on
+  another player's copy while the host trades (`Together.can_show*`), and only the own panel's
+  presses are sent.
+
+`shop_popup_view_tests.gd` (suite `local_shop`) checks a remote player's popup and meca choice on
+the host's copy, the host's state, a client's copy of another player's popup and its meca choice
+with the host's roll, the cursor going back into the copy, and the own popup's report; also a
+copy left dimmed, a client that leaves, the cursor after a closing state, and gear changing under
+another player's cursor; also a report with the gear page and its popup, Godot's focus kept,
+`ShopSync._deactivate` and `FocusSync.reapply` with a body pending. `upgrades_change_tests.gd`
+checks a crate weapon popup on the host's copy, in the panels' state, and on a client's copy
+through `UpgradesSync.apply`; `upgrades_popup_tests.gd` (suite `upgrades_popup`) Godot's focus and
+a client that leaves there. brotato:trade's `together` and `together_crate` suites check its lists
+on both kinds of copies.
 
 ### Keyboard and mouse on the own panel
 
@@ -1633,7 +1754,10 @@ the action state because of the input order.
   root's last child sees key and pad events first, marks them handled and `Input.action_release`s
   what they pressed. After closing it also swallows the releases of keys pressed while open (the
   game pauses and goes back on release).
-- The popup moves the Godot focus and handles the mouse itself (`handle_panel_mouse`).
+- The popup moves the Godot focus and handles the mouse itself (`handle_panel_mouse`). A
+  FocusEmulator that takes a control (another player's mirrored cursor or popup on a co-op screen
+  under the popup) releases that focus: the page gives it back to the button that had it, every
+  frame and before an arrow or accept (`LobbyPage._keep_focus`).
 - `InputService` hides the cursor in co-op, so the popup shows it again every frame.
 - Clients send neutral `INPUT` while it is open (`InputSync.local_input_blocked`).
 
@@ -1772,13 +1896,16 @@ A `FocusEmulator` that keeps a freed control crashes a release build on its next
 objects in the [Overview](#1-overview)). A real session crashed this way on the level-up gear page
 (see [Measurements](#12-measurements-and-session-findings)). Three measures:
 
-- **Take the cursor off first.** Before a gear rebuild (`ShopSync._refresh_gear`, the game's way
-  in `UpgradesGear.rebuild_gear`) or `_refresh_weapons_inventory`, the cursor is taken off the
-  element, also the element a focused popup was opened from. The level-up gear updated in place
-  frees only the elements nothing shows any more: the cursor stays on a kept one and is taken off
-  a freed one. Afterwards it goes to the same item (the element nearest its old index), else the
+- **Take the cursor off first.** Before a gear rebuild (the game's way in
+  `ShopSync._refresh_gear` and `UpgradesGear.rebuild_gear`) or `_refresh_weapons_inventory`, the
+  cursor is taken off the element, also the element a focused popup was opened from. The gear
+  updated in place (shop and level-up panels) frees only the elements nothing shows any more: the
+  cursor stays on a kept one and is taken off a freed one; in the shop a popup opened from a kept
+  one stays open. Afterwards it goes to the same item (the element nearest its old index), else the
   element at the same index, else for the own panel the page's default (`focus()`). The game's way
-  back to the gear page (`_resume_inventory_control_focus`) is redirected the same way.
+  back to the gear page (`_resume_inventory_control_focus`) is redirected the same way, and so is
+  the shop's way back from the stats page (`_resume_shop_control_focus`, to the element at the
+  same index).
 - **Relink neighbours.** `CoopUpgradesUIPlayerContainer._set_focus_neighbours` links weapons and
   items by node path, and only on a page change (or, by `InputTypes`, on an input type switch).
   With trigger glyphs the rows name each other's elements. After every `update_inventory` (the
@@ -1787,8 +1914,9 @@ objects in the [Overview](#1-overview)). A real session crashed this way on the 
   `_set_focus_neighbours` links the new elements. The game logs "Node not found" and
   `Parameter "p_node" is null` when this is missing, and `tools/check.sh` fails on both messages.
   A host logged both (suite `gear_links` repeats it: the client switches to its pad on the gear
-  page, then recycles or combines a crate weapon). The level-up gear updated in place drops them
-  between the weapons and the items too: the items' sort inherits its row's neighbours at once,
+  page, then recycles or combines a crate weapon). The gear updated in place (`sync_gear`, level-up
+  and shop) drops them between the weapons and the items too: the items' sort inherits its row's
+  neighbours at once,
   and the items row names the first weapon element (`gear_rebuild_tests.gd`, a client's first
   weapon goes).
 - **Safety net** (`extensions/ui/focus_emulator.gd`, online or not). A control freed while it holds
@@ -1919,11 +2047,15 @@ calls holds a whole frame.
   many puppets it instanced. A puppet instanced instead of taken from a pool (`_spawn`,
   `FeedbackMirror.explode`) is also counted per window with its time, the costliest by scene file
   name (`ClientReport.fresh(file, usec)`). The host adds this to the line only when the worst frame
-  took 50 ms or more, and shows a file name that is not plain as "?".
+  took 50 ms or more, and shows a file name that is not plain as "?". When the frame has a mark,
+  mirror work or a fresh puppet, the line ends with the rest: what none of them holds (the game's
+  own work, deferred layout, freed nodes).
 - **Scene change.** The longest frame within 3 s of a change of `current_scene`, with the mod's
   share from timing marks (`ClientReport.mark(label, usec)`: run parse, deserialize, apply, puppet
-  setup, level-up panels). The host's line ends with the rest, the game's part. "level-up panels"
-  is `UpgradesSync.apply` after the run (gear, stats, the panel shown); run parse and deserialize
+  setup, level-up panels, shop panels). The host's line ends with the rest, the game's part.
+  "level-up panels" is `UpgradesSync.apply` after the run (gear, stats, the panel shown), "shop
+  panels" `ShopSync._apply_body` after `RunStateCodec.apply` (gear rows, stats, shop items, locks,
+  popups; also the first state of a shop just entered); run parse and deserialize
   cover every section's run (`Store.timed_state`). The node registers itself with
   `Engine.set_meta`, because Godot 3 has no static variables.
 - **Corrections.** In `_predict_own`, a new error longer than one step at the player's speed is
@@ -1946,7 +2078,7 @@ later changes may have moved it.
 | Late endless wave (400 enemies, 200 projectiles, 50 gold, 2 players): host per snapshot, client per frame, snapshot size | 3.7 ms, 1.4 ms, 2.7 KB | 2026-11-15, c25808e | `cleanup_tests.gd` |
 | Reading looks on the host, 600 plain entities per snapshot | 0.5 ms | 2026-11-15, 82a0d7e | `looks_tests.gd` |
 | Scene load stall: battle scene; shop scene (small / late 2 / late 4 players) | 0.3 s; 0.2 / 0.5 / 0.8 s | 2026-11-15, c00c55c | `session_lifecycle_tests.gd` |
-| Shop fingerprint check (small / late 2 / late 4) | 45 / 51 / 92 us | 2026-11-15, 4364835 | `shop_change_tests.gd` |
+| Shop fingerprint check (small / late 2 / late 4), with `tracked_item_effects` (without it in the same runs: 45 to 51 / 51 to 53 / 90 us) | 45 to 50 / 53 to 56 / 95 to 101 us | 2026-11-22, 294abf7 | `shop_change_tests.gd` |
 | Run cache safety net, per second (small / late 2 / late 4) | 1.2 / 8 / 15 ms | 2026-11-15, 4364835 | `shop_change_tests.gd` |
 | Level-up key check (late 2 / 4) | 0.16 / 0.32 ms | 2026-11-15, 4b1ca91 | `upgrades_change_tests.gd` |
 | Cursor key / cursor description, two-player shop | about 16 us / 380 us | 2026-11-15, 826b3f9 | `cursor_key_tests.gd` |
@@ -1956,11 +2088,16 @@ later changes may have moved it.
 | Purchase: same columns | 30.4 / 31.9 KB, 28 / 33 ms, 39 / 56 ms | 2026-11-17, 65d6baa | `run_parts_tests.gd` |
 | Level-up choice: same columns | 7.1 / 7.6 KB, 10 / 25 ms, 30 / 29 ms | 2026-11-17, 65d6baa | `run_parts_tests.gd` |
 | `BATTLE_START` per client after a shop (late 2 / 4) | 3.1 / 3.3 KB, of which run 1.5 / 1.6 KB | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
+| With `s` and `t` split off from `c`, bytes per client (late 2 / 4): lock, paid reroll, purchase; in two runs each of the commit before | 3.1 / 4.4, 10.2 to 10.6 / 11.3 to 11.8, 30.4 to 31.2 / 31.6 to 32.0 KB; before 4.1 / 5.5, 10.8 / 12.0, 30.8 to 31.1 / 32.2 to 32.4 KB | 2026-11-22, 7ecced4 | `run_parts_tests.gd` |
+| The same: a tracked value alone in the shop, under the level-up panels | 1.5 / 1.9, 1.5 / 2.1 KB; before 4.1 / 5.5, 2.1 / 2.6 KB | 2026-11-22, 7ecced4 | `run_parts_tests.gd` |
+| The same: `BATTLE_START` after a shop | 2.6 to 2.7 / 2.8 to 3.0 KB, of which run 1.0 / 1.2 KB; before 3.0 to 3.1 / 3.4 KB, run 1.5 / 1.6 KB | 2026-11-22, 7ecced4 | `battle_start_tests.gd` |
 | Client, `_on_battle_start` up to `change_scene` (late 2 / 4) | 87 / 95 ms | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
 | Host, run packed in parts as the battle scene enters (late 2 / 4) | 31 to 36 / 60 to 86 ms | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
 | Client time per applied level-up state: choice, reroll, crate item, new panels (late 2 players) | 40 to 45, 40 to 52, 94 to 149, 171 to 264 ms | 2026-11-17, 055222f | `upgrades_change_tests.gd` |
 | The same with kept items and the gear in place, late 2 / 4 players: choice, reroll, crate item | 10 / 11, 11 / 12, 30 / 31 ms | 2026-11-21, 0d1ccb3 | `upgrades_change_tests.gd` |
 | A crate item's state on a client, late 2 / 4: run parse, deserialize, apply, level-up panels (of which the gear about 11); the old way in the same run | 6.4 / 6.3, 6.8 / 6.4, 2.2 / 2.8, 14.9 / 15.0 ms; 98 / 92 ms | 2026-11-21, 0d1ccb3 | `upgrades_change_tests.gd` |
+| Another player's purchase on a client's shop, late 2 / 4: run parse, deserialize, apply, shop panels (of which that player's gear in place 14 to 19); the old gear rebuild of that player alone, in the same shop | 6.1 / 7.4, 7.9 / 9.0, 1.9 / 2.7, 18 to 20 / 19 to 22 ms; 71 to 92 / 97 to 104 ms | 2026-11-22, d5db093 | `shop_gear_change_tests.gd` |
+| The same for a reroll (weapons pointed at new objects only), of which shop panels | 15 to 17 / 17 to 23 ms, 5.5 to 6.5 / 5.7 to 9.4 ms | 2026-11-22, d5db093 | `shop_gear_change_tests.gd` |
 | Host, a client's crate item to its answer sent (late 2 / 4): applying the intent, the stream's check (serializing the run) | 29 / 37 ms: 5.7 / 5.4, 23 / 31 ms | 2026-11-21, 0d1ccb3 | `upgrades_change_tests.gd` |
 | Effect custom args per serialization (late 2 / 4) | 2.4 / 3.0 ms | 2026-11-17, cc3f561 | recorded with the commit |
 | Battle scene change on a client, small two-player run | 284 ms stall, of which the mod 4.8 ms | 2026-11-17, f12aab4 | `client_report_tests.gd` |
@@ -1973,6 +2110,10 @@ later changes may have moved it.
 The purchase is not small on the wire in the test runs because every test player carries nearly
 the same 250 items, so a whole run compresses across players while one `g` part alone does not. What
 remains on a client after a change is mostly the changed player's `PlayerRunData.deserialize`.
+
+Splitting `s` off `c` saves little on a reroll or purchase: `s` holds every player's offered
+items, which were most of the old `c`. A part per player (`s<p>`) would carry only the rerolling
+player's items; not done yet.
 
 In the crowded wave the mirror stays small: the snapshots use a twelfth of the send rate, and the
 client's mirror about 1 ms of a 16.7 ms frame. Every snapshot is two packets, so a lost
@@ -1990,6 +2131,8 @@ enemies it is the host's game itself that slows down.
 | 2026-11-16 | the same session | 213 input gap lines of 200 to 847 ms, most at a battle start or shop entry; scene-change stalls of 150 to 700 ms per client | gap lines tell a client's own stall from the network; client reports |
 | 2026-11-16 | the same session | 7 fingerprint misses in the shop between waves 18 and 40 | effects' custom args are settled before serializing |
 | 2026-11-21 | two players, 47 waves | a client lags from the crate item to the level-up page (issue #110); one frame of 50 to 64 ms per wave end and shop, its only mark "apply 2" (the store's parse and deserialize and the panels had none) | kept items, gear in place, marks for every section's run and the level-up panels (0d1ccb3) |
+| 2026-11-22 (log read) | two players, endless to wave 38 | a client's shop frames of 50 ms or more track the gear parts sent (`g`): 20 to 34 per shop from wave 33, up to 169 ms at wave 36; states with only `c` and `p` (rerolls, locks) stayed under 50 ms. The shop still rebuilt every gear element of a changed player. | shop gear in place, the "shop panels" mark (d5db093) |
+| 2026-11-22 | two players, endless to wave 38 | 198 fingerprint misses, all on the level-up panels from wave 18 on, all `c.tracked_item_effects[1].item_bot_o_mine`: the Bot-O-Mine pet lays mines while the panels show | the fingerprint covers `tracked_item_effects` |
 | 2026-11-17 or earlier (fix 055222f) | a real session, late endless waves | client frames of 100 to 205 ms during the level-up panels | per-player rebuild |
 | 2026-11-16 or earlier (fix 1ceb422) | online session | a client crashed natively on the level-up gear page after a run change | [Freed controls under a cursor](#freed-controls-under-a-cursor) |
 | 2026-11-17 or earlier (fix ec3c80b) | online endless run, wave 36 | the host crashed natively when the co-op shop opened | [Axolotl crash](#axolotl-crash) |
@@ -2000,7 +2143,7 @@ slow-answer lines' `rate` should read 524288 B/s).
 
 ## 13. Known gaps
 
-As of 2026-11-19, protocol 30.
+As of 2026-11-21, protocol 31.
 
 **Not mirrored in a battle**
 
@@ -2016,8 +2159,10 @@ As of 2026-11-19, protocol 30.
 
 **Shop and level-up panels**
 
-- The host and the other clients do not see the own panel's focused inventory popup. They still
-  show an item popup the mouse closed on the client while the cursor stays on its item.
+- The host and the other clients still show an item popup the mouse closed on the client while
+  the cursor stays on its item (only an open popup that took the cursor is mirrored).
+- The meca effect a player picked on a shop item or crate item before buying or taking it is not
+  shown on the other machines.
 - The client's hold-to-ban depends on its own `chal_banned_items` unlock. Hold-to-ban has no mouse
   path in co-op, and a mouse click on Ban counts as a full hold (`button_up` is never emitted
   through an emulator).

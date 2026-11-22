@@ -210,11 +210,13 @@ func move_focus(step: int) -> void:
 	var buttons := nav_buttons()
 	if buttons.empty():
 		return
+	_keep_focus()
 	var index := buttons.find(get_focus_owner())
 	buttons[0 if index < 0 else posmod(index + step, buttons.size())].grab_focus()
 
 
 func press_focused() -> void:
+	_keep_focus()
 	press(get_focus_owner() as Button)
 
 
@@ -225,9 +227,20 @@ func back() -> void:
 		_on_back_pressed()
 
 
+# A FocusEmulator that takes a control (another player's mirrored cursor or popup on a co-op
+# screen under the popup) releases Godot's focus, which these buttons move by: the button that
+# had it gets it back.
+func _keep_focus() -> void:
+	if is_asking() or get_focus_owner() != null:
+		return
+	if _focused != null and _focused in nav_buttons():
+		_focused.grab_focus()
+
+
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
+	_keep_focus()
 	_refresh_left -= delta
 	if _refresh_left <= 0.0:
 		refresh()

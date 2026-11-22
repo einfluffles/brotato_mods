@@ -30,6 +30,13 @@ const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const UpgradesGear := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_gear.gd"
+)
+const ClientReport := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
+)
+const PopupView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/popup_view.gd")
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:ShopSync"
@@ -57,6 +64,10 @@ var _seq_keys := []
 var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method, revision]
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
 var _reported := {}  # player -> [shop instance id, the last SHOP_FOCUS target of its client]
+# player -> [shop instance id, its client's open menu (PopupView), its client's steam id], kept
+# on the host's copy until an intent of that player changes the panel or the client leaves
+var _reported_popups := {}
+var _popup_memo := {}  # PopupView.apply's, for the copy of each player's panel here
 
 var _client_shop: Node = null
 # When the puppet shop began to load. It starts far enough back to count as not loading.
@@ -74,6 +85,7 @@ func setup(netplay_session: Node) -> void:
 	local.session = session
 	session.connect("message", self, "_on_message")
 	session.connect("peer_ready", self, "_on_peer_ready")
+	session.connect("peer_removed", self, "_on_peer_removed")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
 	RunData.connect("stat_added", self, "_on_stat_added")
 	var timeout_sec := LOADING_TIMEOUT_MSEC / 1000.0
@@ -110,8 +122,11 @@ func _process(_delta: float) -> void:
 	if scene != _host_shop:
 		_host_shop = scene
 		_shop_id += 1  # part of the state key: the new shop goes out at the next check
+		_reported_popups = {}
+		_popup_memo = {}
 	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
 	_block_remote_buttons(not get_tree().paused)
+	_keep_reported_popups()
 
 
 # For other mods: a decision of their own on a player's shop panel (a button they add).
@@ -166,12 +181,52 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 			var shop = _host_shop_for(body)
 			var p := _player_index_of(steam_id)
 			if shop != null and p >= 0 and p < RunData.get_player_count():
-				host_apply_focus(shop, p, body.get("page"), body.get("target"))
+				var popup = body.get("popup")
+				host_apply_focus(shop, p, body.get("page"), body.get("target"), popup, steam_id)
 
 
-func host_apply_focus(shop: Node, p: int, page, target) -> void:
+# popup: the client's open menu (PopupView), shown on the host's copy before the cursor goes
+# into it. The page first, as on the level-up panels: the popup's element shows only on it.
+func host_apply_focus(shop: Node, p: int, page, target, popup = [], steam_id := 0) -> void:
 	_reported[p] = [shop.get_instance_id(), target]
+	_reported_popups[p] = [shop.get_instance_id(), popup, steam_id]
+	ShopIntents.apply_page(shop, p, page)
+	_apply_popup(shop, p, popup, null)
 	ShopIntents.apply_focus(shop, p, page, target)
+
+
+# The host's copy closes a remote player's popup on its own (a gear rebuild): open again what
+# that player's client still has open.
+func _keep_reported_popups() -> void:
+	for p in _reported_popups:
+		var reported: Array = _reported_popups[p]
+		if reported[0] != _host_shop.get_instance_id():
+			continue
+		if p < RunData.get_player_count() and _apply_popup(_host_shop, p, reported[1], null):
+			var control := _reported_control(_host_shop, p)
+			var emulator = Utils.get_focus_emulator(p, _host_shop)
+			if control != null and emulator != null and emulator.focused_control != control:
+				emulator.focused_control = control
+
+
+# A client that left keeps no popup open on the host's copy.
+func _on_peer_removed(steam_id: int) -> void:
+	for p in _reported_popups.keys():
+		var reported: Array = _reported_popups[p]
+		if reported[2] != steam_id:
+			continue
+		_reported_popups.erase(p)
+		var shop := _host_shop
+		if is_instance_valid(shop) and shop.get_instance_id() == reported[0]:
+			if p < RunData.get_player_count():
+				_apply_popup(shop, p, [], null)
+
+
+func _apply_popup(shop: Node, p: int, view, rolls) -> bool:
+	var manager: Node = shop._popup_manager
+	var popup: Node = shop._get_item_popup(p)
+	var panel: Node = shop._get_coop_player_container(p)
+	return PopupView.apply(shop, manager, popup, panel, p, view, rolls, _popup_memo)
 
 
 # A reroll that gives a stat (bone dice) floats its icon and number over the player's reroll
@@ -212,7 +267,7 @@ func state_key(_section: int) -> String:
 	var parts := _shop_parts()
 	var rest := [
 		_shop_id, parts.slots, parts.locks, parts.go, parts.seqs, parts.pages, parts.mecas,
-		_yous(), CoopService.bt_slot_colors, _kinds(),
+		parts.popups, _yous(), CoopService.bt_slot_colors, _kinds(),
 	]
 	return str(run_cache.rev) + var2str(rest)
 
@@ -222,6 +277,7 @@ func state_key(_section: int) -> String:
 #   slots: which slot nodes are active; locks: the lock per slot; go: the Go flag
 #   seqs: the panel revision; pages: the carousel page
 #   mecas: the meca upgrade rolls its item popup remembers (MecaChoice.entries)
+#   popups: its open menu (PopupView)
 # plus colors (palette index per slot), kinds (other mods' intent kinds the host handles) and,
 # per peer, you (which player it is, -1: none).
 func state_body(_section: int) -> Dictionary:
@@ -236,6 +292,7 @@ func state_body(_section: int) -> Dictionary:
 		"seqs": parts.seqs,
 		"pages": parts.pages,
 		"mecas": parts.mecas,
+		"popups": parts.popups,
 		"colors": CoopService.bt_slot_colors.duplicate(),
 		"kinds": _kinds(),
 	}
@@ -285,8 +342,12 @@ func _shop_parts() -> Dictionary:
 	var locks := []
 	var pages := []
 	var mecas := []
+	var popups := []
 	for p in RunData.get_player_count():
-		mecas.append(MecaChoice.entries(shop._get_item_popup(p), p))
+		var popup = shop._get_item_popup(p)
+		mecas.append(MecaChoice.entries(popup, p))
+		var panel = shop._get_coop_player_container(p)
+		popups.append(PopupView.describe(shop, shop._popup_manager, popup, panel, p))
 		var active := []
 		var locked := []
 		for node in shop._get_shop_items_container(p)._shop_items:
@@ -302,6 +363,7 @@ func _shop_parts() -> Dictionary:
 		"seqs": _seqs.duplicate(),
 		"pages": pages,
 		"mecas": mecas,
+		"popups": popups,
 	}
 
 
@@ -323,6 +385,8 @@ func host_apply_intent(shop: Node, p: int, msg: Dictionary) -> bool:
 	if result == ShopIntents.CHANGED:
 		# A second press made on the same panel is stale, whatever this one turns out to do.
 		_seqs[p] += 1
+	# The game's handler closes the popup itself; the client's next report says what is open.
+	_reported_popups.erase(p)
 	# The game connects Buy and Steal deferred: they run at the end of this frame, so the stream
 	# holds its check until the next one, which serializes the run whatever the fingerprint says.
 	run_cache.force(1)
@@ -461,7 +525,8 @@ func apply_state(section: int, body, _revision: int) -> bool:
 			return true
 		_state = state
 		_run_ids = ids
-		_state_keys = player_keys(ids, run_store.raws({"c": ids.get("c")}).c)
+		var raws: Dictionary = run_store.raws({"c": ids.get("c"), "s": ids.get("s")})
+		_state_keys = player_keys(ids, raws.c, raws.s)
 	if entering:
 		_client_shop_id = body.shop_id
 		_enter_shop(_state)
@@ -501,17 +566,19 @@ func clear_state(section: int) -> void:
 
 
 # Per player, what of the sent run state its panel is built from: its run parts' ids (data: the
-# "p" and "g" parts, gear: "g") and a hash of its offered items (in the common part as parsed).
-# A panel is only rebuilt when its part differs from what it shows.
-static func player_keys(ids: Dictionary, common) -> Array:
+# "p" and "g" parts, gear: "g") and a hash of its offered items. common, shop: the "c" and "s"
+# parts as parsed (the player count, the offered items). A panel is only rebuilt when its part
+# differs from what it shows.
+static func player_keys(ids: Dictionary, common, shop) -> Array:
 	var keys := []
 	var raw: Dictionary = common if typeof(common) == TYPE_DICTIONARY else {}
+	var offers: Dictionary = shop if typeof(shop) == TYPE_DICTIONARY else {}
 	var count = raw.get("players_data")
 	if typeof(count) != TYPE_INT and typeof(count) != TYPE_REAL:
 		return keys
 	for p in int(count):
 		var gear = ids.get("g%d" % p)
-		var offered := [_at(raw.get("shop_items"), p), _at(raw.get("item_steals"), p)]
+		var offered := [_at(offers.get("shop_items"), p), _at(offers.get("item_steals"), p)]
 		keys.append({"data": [ids.get("p%d" % p), gear], "gear": gear, "items": hash(offered)})
 	return keys
 
@@ -562,6 +629,7 @@ func _on_shop_ready(shop: Node) -> void:
 	_loading_msec = -LOADING_TIMEOUT_MSEC
 	_client_shop = shop
 	_applied = {}
+	_popup_memo = {}
 	# Leaving the shop would roll curses on locked items locally; the host decides those.
 	if shop.is_connected("tree_exited", shop, "_on_tree_exited"):
 		shop.disconnect("tree_exited", shop, "_on_tree_exited")
@@ -580,6 +648,7 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 	run_changed = run_changed or _applied.empty()
 	if run_changed:
 		RunStateCodec.apply(state)
+	var started := OS.get_ticks_usec()  # "shop panels" (apply has its own mark)
 	local.guard(shop, _client_shop_id)
 	for p in RunData.get_player_count():
 		# No keys for this player (not in the sent run state): everything counts as new.
@@ -608,12 +677,14 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 	shop.update_go_next_button_text()
 	var you: int = body.you if typeof(body.get("you")) == TYPE_INT else -1
 	_mirror_view(shop, you, body.get("pages"))
+	_mirror_popups(shop, you, body)
 	if you >= 0 and you < RunData.get_player_count():
 		local.take_over(you)
 		local.on_state(_int_at(body.get("seqs"), you), shop._player_pressed_go_button[you])
 		local.on_mecas(_list_at(body.get("mecas"), you))
 	else:
 		local.stop("no own panel in the host's state")
+	ClientReport.mark(ClientReport.Mark.SHOP_PANELS, OS.get_ticks_usec() - started)
 
 
 # The per-player part of BaseShop._ready, re-run with the host's values (no RNG anywhere).
@@ -624,6 +695,8 @@ func _refresh_player(
 ) -> void:
 	if changed.gear:
 		_refresh_gear(shop, p)
+	elif changed.data:
+		_refresh_gear(shop, p, false)
 	if changed.data:
 		shop._update_stats(p)
 		shop._get_gold_label(p).update_value(RunData.get_player_gold(p))
@@ -658,13 +731,25 @@ func _refresh_player(
 					node.activate()
 				next += 1
 			elif node.active:
-				node.deactivate()
+				_deactivate(shop, p, node)
 	shop._refresh_currency_dependent_buttons(p)
 	shop._refresh_bonus_free_reroll(p)
 
 	var go: bool = body.go[p] if p < body.go.size() else false
 	shop._player_pressed_go_button[p] = go
 	shop._get_checkmark(p).visible = go
+
+
+# BaseShop.on_shop_item_deactivated sends a cursor that rests on no shop item to the default
+# control. From the host's state (a buy that arrives late) that would pull it out of an open popup:
+# only a cursor on that item, or on nothing, moves.
+static func _deactivate(shop: Node, p: int, node: Node) -> void:
+	var emulator = Utils.get_focus_emulator(p, shop)
+	var control = emulator.focused_control if emulator != null else null
+	var moves: bool = not is_instance_valid(control) or node.is_a_parent_of(control)
+	node.deactivate()
+	if moves:
+		shop.on_shop_item_deactivated(node, p)
 
 
 # By slot: BaseShop._update_visual_locks matches by index in the offered list, which is wrong
@@ -687,46 +772,89 @@ func _apply_locks(shop: Node, locks) -> void:
 				popup.show_shop_hints(node)  # "lock" <-> "unlock"
 
 
-# set_weapons_data / set_items_data replace every inventory element: a cursor resting on one (or
-# in the popup opened from one) is taken off first and put back on the element at the same place.
-func _refresh_gear(shop: Node, p: int) -> void:
+# The rows keep every element that shows the same (UpgradesGear.sync_inventory), so a cursor on
+# one stays, and so does the popup opened from one (its buttons, another mod's menu in it). Only
+# when that element is gone does the popup close; the cursor then goes to the element at its place.
+# items false: only p's other parts changed, its weapons are new objects of the same weapons (the
+# elements and an open popup are pointed at them, as a shop intent names them).
+func _refresh_gear(shop: Node, p: int, items := true) -> void:
 	var gear = shop._get_gear_container(p)
 	var inventories := [gear.weapons_container._elements, gear.items_container._elements]
 	var emulator = Utils.get_focus_emulator(p, shop)
-	var cursor := _take_gear_cursor(shop, p, emulator, inventories)
-	gear.set_weapons_data(RunData.get_player_weapons(p))
-	gear.set_items_data(RunData.get_player_items(p))
-	if cursor.empty():
-		return
-	var inventory: Node = inventories[cursor[0]]
-	var target: Control = null
-	if inventory.get_child_count() > 0:
-		target = inventory.get_child(int(min(cursor[1], inventory.get_child_count() - 1)))
-	elif local.active and p == local.you:
-		target = shop._get_default_focus_control(p)
-	if target != null and target.is_visible_in_tree():
-		emulator.focused_control = target
-
-
-# [inventory, element index] when player p's cursor is in the gear, else [].
-func _take_gear_cursor(shop: Node, p: int, emulator: Node, inventories: Array) -> Array:
-	if emulator == null:
-		return []
-	var element = emulator.focused_control
 	var popup = shop._get_item_popup(p)
-	var in_popup: bool = popup._focused
+	var manager = shop._popup_manager
+	var pressed = manager._elements_pressed[p]
+	var in_popup: bool = popup._focused and not _gear_place(pressed, inventories).empty()
+	var element = pressed if in_popup else (emulator.focused_control if emulator != null else null)
+	var place := _gear_place(element, inventories)
+	var old_item = element.item if not place.empty() else null
+	var panel = shop._get_coop_player_container(p)
+	var resume := _gear_place(panel._resume_shop_control_focus, inventories)
+	var weapons: Array = RunData.get_player_weapons(p)
+	UpgradesGear.sync_gear(gear, emulator, weapons, RunData.get_player_items(p), items)
+	if not resume.empty() and _gear_place(panel._resume_shop_control_focus, inventories).empty():
+		# The game's way back from the stats page names no freed element.
+		panel._resume_shop_control_focus = _live_at(inventories[resume[0]], resume[1])
+	if place.empty():
+		return
+	var now := _gear_place(element, inventories)
+	if not now.empty() and now[0] == place[0] and now[2] == place[2]:
+		if in_popup:
+			# Cancel puts the cursor back on the element holding this object.
+			popup._item_data = element.item
+			local.meca.retarget(old_item, element.item)
+			_refresh_popup_buttons(popup, emulator)
+		elif manager._elements_focused[p] == element:
+			popup.display_element(element)  # what focusing it shows
+		return
 	if in_popup:
-		# The view half of the game's "close the popup" handler; its weapon may be gone.
-		element = shop._popup_manager._elements_pressed[p]
-		shop._popup_manager.reset_focus(p)
+		# The view half of the game's "close the popup" handler: its item is gone.
+		manager.reset_focus(p)
 		shop._get_coop_player_container(p).on_hide_focused_inventory_popup()
-	if element == null or not is_instance_valid(element):
+	var target: Control = _live_at(inventories[place[0]], place[1])
+	if target == null and local.active and p == local.you:
+		target = shop._get_default_focus_control(p)
+	if emulator != null and target != null and target.is_visible_in_tree():
+		if emulator.focused_control == target:
+			# The same node shows another item now: its focus shows that item's details.
+			emulator.focused_control = null
+		emulator.focused_control = target
+	elif emulator != null and (in_popup or emulator.focused_control == element):
+		emulator.focused_control = null  # never left on a freed element or a hidden popup
+
+
+# [inventory, element index, what it shows] of a gear element, else [].
+static func _gear_place(control, inventories: Array) -> Array:
+	if not is_instance_valid(control) or control.is_queued_for_deletion():
 		return []
 	for i in inventories.size():
-		if element.get_parent() == inventories[i]:
-			emulator.focused_control = null
-			return [i, element.get_index()]
+		if control.get_parent() == inventories[i] and control.item != null:
+			return [i, control.get_index(), UpgradesGear.shows(control.item)]
 	return []
+
+
+# A popup kept open on its weapon shows the buttons for the run now (Combine once a second copy
+# came, the recycle value). Not while it lists meca effects or another mod's menu (brotato:trade's
+# player list, PopupView's together_menu): the game's refresh would close those. A cursor on a
+# button that is hidden now goes to Cancel.
+static func _refresh_popup_buttons(popup: Node, emulator) -> void:
+	if popup.is_choosing_meca_upgrade():
+		return
+	if popup.has_method("together_menu") and popup.together_menu() != null:
+		return
+	popup._update_button_visibilities()
+	var control = emulator.focused_control if emulator != null else null
+	if is_instance_valid(control) and popup.is_a_parent_of(control) and not control.visible:
+		emulator.focused_control = popup._cancel_button
+
+
+# The live element at index in inventory (the last one if there are fewer), null when it has none.
+static func _live_at(inventory: Node, index: int):
+	var live := []
+	for child in inventory.get_children():
+		if not child.is_queued_for_deletion():
+			live.append(child)
+	return live[int(min(index, live.size() - 1))] if not live.empty() else null
 
 
 # View state that is not this client's own: the other players' pages, and the "endless" toggle.
@@ -743,6 +871,18 @@ func _mirror_view(shop: Node, you: int, pages) -> void:
 			endless.set_pressed_no_signal(RunData.is_endless_run)
 
 
+# The other players' open menus. Their cursors go back where the host has them: opening a popup
+# moves the game's cursor to Cancel.
+func _mirror_popups(shop: Node, you: int, body: Dictionary) -> void:
+	var changed := false
+	for p in RunData.get_player_count():
+		if p != you:
+			var view = _at(body.get("popups"), p)
+			changed = _apply_popup(shop, p, view, _list_at(body.get("mecas"), p)) or changed
+	if changed and focus_sync != null:
+		focus_sync.reapply()
+
+
 func _on_lobby_left() -> void:
 	_stop_watching_scenes()
 	_loading_msec = -LOADING_TIMEOUT_MSEC
@@ -757,6 +897,8 @@ func _on_lobby_left() -> void:
 	_state_keys = []
 	_applied = {}
 	_host_kinds = []
+	_reported_popups = {}
+	_popup_memo = {}
 
 
 # values[index] when values is a list that long, else null (network data).

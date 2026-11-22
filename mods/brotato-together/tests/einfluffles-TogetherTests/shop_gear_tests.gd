@@ -1,9 +1,11 @@
 extends Reference
 # The shop's weapons row (ui/shop_gear.gd, extensions/ui/coop_shop.gd and shop.gd): the Anvil's
-# upgrade at shop entry and the "WEAPONS (n/m)" label after a new weapon slot. entry() runs in the
-# shop loopback suite and leaves a solo shop behind; the rest runs in the local shop suite.
+# upgrade at shop entry, the "WEAPONS (n/m)" label after a new weapon slot and a client's open
+# popup while its weapons row changes. entry() runs in the shop loopback suite and leaves a solo
+# shop behind; the rest runs in the local shop suite.
 
 const PISTOL := "weapon_pistol_1"
+const SMG := "weapon_smg_1"
 const ARM := "item_cybernetic_arm"
 const REMOTE := 1
 const DMG := 321  # last wave's damage of the weapons the Anvil may upgrade
@@ -201,6 +203,72 @@ static func client_anvil(s, host_weapons: Array) -> void:
 		RunData.shop_effects_checked and s._weapon_ids(0) == host_weapons,
 		"client: the host's Anvil is not applied again in its copy %s" % [s._weapon_ids(0)]
 	)
+
+
+# Host, at the end: the own player (0) with one SMG ("own_single"), then with two ("own_pair"),
+# for client_popup. Its weapons are put back after.
+static func host_popup(s) -> void:
+	var weapons: Array = RunData.players_data[0].weapons
+	var kept: Array = weapons.duplicate()
+	var smg = s._t._find_by_id(ItemService.weapons, SMG)
+	weapons.clear()
+	RunData.add_weapon(smg, 0)
+	s._capture("own_single")
+	RunData.add_weapon(smg, 0)
+	s._capture("own_pair")
+	weapons.clear()
+	weapons.append_array(kept)
+
+
+# Client: the own popup stays open on its SMG while the host's state brings a second one (a trade,
+# a purchase) and takes it again. Its buttons follow, as the game's own popup shows them when it
+# opens: Combine appears and goes, and a cursor on Combine when it goes lands on Cancel.
+func client_popup(s, shop: Node):
+	yield(s._frames(1), "completed")
+	if not s._states.has("own_pair"):
+		return
+	var t: Node = s._t
+	var popup = shop._get_item_popup(0)
+	var emulator = Utils.get_focus_emulator(0, shop)
+	var row: Node = shop._get_gear_container(0).weapons_container._elements
+	s._receive(s._states.own_single)
+	yield(s._frames(2), "completed")
+	var element = row.get_child(0)
+	emulator.focused_control = element
+	yield(s._tap("ui_accept"), "completed")
+	t._check(
+		(
+			popup._focused
+			and popup._item_data != null
+			and popup._item_data.my_id == SMG
+			and not popup._combine_button.visible
+		),
+		"(the own popup is open on a single SMG, without Combine)"
+	)
+	s._receive(s._states.own_pair)
+	t._check(
+		(
+			popup._focused
+			and shop._popup_manager._elements_pressed[0] == element
+			and RunData.get_player_weapons(0).has(popup._item_data)
+			and popup._combine_button.visible
+		),
+		"client: a second SMG from outside shows Combine in the own open popup"
+	)
+	emulator.focused_control = popup._combine_button
+	s._receive(s._states.own_single)
+	t._check(
+		(
+			popup._focused
+			and not popup._combine_button.visible
+			and emulator.focused_control == popup._cancel_button
+		),
+		"client: and when it goes again, Combine goes, the cursor on it moves to Cancel"
+	)
+	yield(s._tap("ui_cancel"), "completed")
+	t._check(not popup._focused, "(Cancel closes the own popup)")
+	s._receive(s._states.remote_armed if s._states.has("remote_armed") else s._states.start)
+	yield(s._frames(2), "completed")
 
 
 # Player p's shop slot shows item (activated if it was not), and the offered list has it.

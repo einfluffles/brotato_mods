@@ -111,6 +111,8 @@ The mod works online with [brotato:together](../brotato-together).
 
 - The host needs both mods.
 - A client needs brotato:trade to trade itself. Without it, it still sees what the others trade.
+- Everyone with brotato:trade sees the player lists the others have open, in the shop and on the
+  crate panels (brotato:together protocol 31, from 2026-11-21 on).
 - A client whose host has no brotato:trade gets no *Trade* button.
 - brotato:together must accept other mods' decisions: protocol 21 for the shop and protocol 30
   for crates (on its main branch since 2026-11-18). With an older one, only the host's own
@@ -165,7 +167,9 @@ As of 2026-11-21:
   receiver's in the same call, through the game's own `RunData` functions, so stats, sets and
   caches follow. Each step is counted before the next: an object that did not leave is not added
   anywhere, and one that did not arrive goes back to the giver. No frame, save or network state
-  sees the object in both lists or in none.
+  sees the object in both lists or in none. A weapon that combines takes `RunData.combine_weapon`'s
+  steps by instance: the game's removes the first weapons equal to the two, which can be another
+  copy than the chosen partner.
 - **UI:** the mod extends five of the game's scripts. `CoopItemPopup` gets the button, the list
   (built from the popup's own *Cancel* button) and the hint (the game's `CoopShopHint` scene with
   the mod's glyphs). `CoopShop` decides who can take what and refreshes both panels afterwards. `CoopUpgradesUIPlayerContainer` gets the crate panel's button
@@ -191,6 +195,18 @@ As of 2026-11-21:
   (price, coupons, the offer); only `buy_item` / `buy_weapon` are redirected to the receiver.
   The slot then behaves as after a buy, and the receiver's stats, prices, rerolls and cursor are
   refreshed.
+- **The receiver's own menu stays open.** A given item or weapon enters the receiver's rows as
+  a buy adds one (`Inventory.add_element`); the other elements stay, and with them the receiver's
+  cursor and an item popup it has open (its buttons or its own player list). A weapon combined
+  into the one received leaves the row without the game's `remove_element`, which would move the
+  receiver's cursor; when the cursor or the popup is on that weapon, the rows are built again and
+  the popup closes. A popup that stays shows its buttons for the new gear
+  (`_trade_refresh_popups`: Combine once a twin came, none once the twin went, a cursor on a
+  button that went moves to Cancel; not during the meca choice), and every open give list marks
+  again who would combine (`trade_relabel`). During a buy for another player the popup stays too, and its cursor comes
+  back after the game's own moves; it closes only when the buy freed its element. The giver's
+  rows are built again as before. On a brotato:together client the host's state brings the
+  change, and brotato:together keeps the menu the same way.
 - **Online, only the host changes the run** (`trade/together.gd`). A client's press leaves as a
   decision ("intent") of one of four kinds, and the host checks the sender and the rules again
   and applies it with the same code as a local trade. The result reaches every client with the
@@ -207,6 +223,12 @@ As of 2026-11-21:
   two quick trades of the same item both count. That needs a brotato:together whose
   `ShopSync.register_intent` takes the `revision` argument; with an older one the second of two
   quick trades is dropped.
+- **Online, the lists show on every screen.** brotato:together mirrors a player's open item popup
+  to the other machines and asks the popup and the crate panel what else they show
+  (`together_menu()`: `["give"]`, `["buy", shop item slot]`, `["trade"]`), and opens that on its
+  copies of the panel (`together_show_menu(menu)`). On a client, the Trade button, hint and lists
+  of another player's panel show while the host trades (`Together.can_show*`); only the own
+  panel's presses leave as intents.
 
 ## Tests
 
@@ -217,8 +239,8 @@ As of 2026-11-21:
 | Suite | What it covers |
 |---|---|
 | `rules` | The rules and the hand-over on `RunData`: limits, the same object in several lists, effects moving with the item, combining with the cursed weapon, nothing appearing or vanishing. |
-| `shop` | The real co-op shop driven with each player's buttons: popup, list, cancel, both panels and every cursor after a trade. Buying for another player (`buy_tests.gd`), started with the trade key: the hint, a giver with 6/6 weapons, a receiver without room, price, lock, slot and offers as for a buy, not enough gold. |
+| `shop` | The real co-op shop driven with each player's buttons: popup, list, cancel, both panels and every cursor after a trade, the receiver's open popup kept through a trade and a buy (closed when its weapon is combined away). Buying for another player (`buy_tests.gd`), started with the trade key: the hint, a giver with 6/6 weapons, a receiver without room, price, lock, slot and offers as for a buy, not enough gold. |
 | `hotkey` | The trade key in local co-op: the give list on the own gear, nothing without a target, in an open popup or paused, the hint's glyph for keyboard, PlayStation, Switch and Xbox, real key and pad events, the InputMap rebuilt by the game, a key rebound in the config, an invalid config. |
 | `crate` | The crate panels on the real battle scene: the button, the list with a player who has no room, cancel, an item and a weapon passed on by a giver without a free slot, the receiver's cursor. |
-| `together` | With brotato:together loaded: a remote player's request applied once on the host, a client's press only sending it, the host's state bringing the result, the host's own trade key, a client's buy for another player with the mouse and T and with the pad's Back, a client's give with the trade key, T in a text field. |
-| `together_crate` | The same for a crate trade. |
+| `together` | With brotato:together loaded: a remote player's request applied once on the host, a client's press only sending it, the host's state bringing the result, the host's own trade key, a client's buy for another player with the mouse and T and with the pad's Back, a client's give with the trade key, T in a text field, an open give list or popup kept when the host's player or the host's state brings the player something, a player's give and buy-for lists on the host's and a client's copy of its panel. |
+| `together_crate` | The same for a crate trade, and its list on a client's copy of another player's panel. |

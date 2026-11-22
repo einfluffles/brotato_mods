@@ -5,7 +5,7 @@ extends Node
 # corrections of the own player's prediction.
 
 # Timing marks, in the order of a report's "marks" (MARK_NAMES).
-enum Mark { PARSE, DESERIALIZE, APPLY, PUPPET_SETUP, PANELS }
+enum Mark { PARSE, DESERIALIZE, APPLY, PUPPET_SETUP, PANELS, SHOP_PANELS }
 # Parts of BattleClient._process, in the order of a report's "worst_phases" (PHASE_NAMES).
 enum Phase { PLAYERS, ENTITIES, PICKUPS, EVENTS }
 
@@ -26,7 +26,9 @@ const SCENE_LINES_PER_MINUTE := 2
 const MAX_LINES_PER_MINUTE := 8
 const KIND_FRAMES := 1
 const KIND_SCENE := 2
-const MARK_NAMES := ["run parse", "deserialize", "apply", "puppet setup", "level-up panels"]
+const MARK_NAMES := [
+	"run parse", "deserialize", "apply", "puppet setup", "level-up panels", "shop panels"
+]
 const PHASE_NAMES := ["players", "entities", "pickups", "events"]
 const MAX_FILE_LENGTH := 40
 const FILE_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
@@ -487,7 +489,7 @@ static func _frame_lines_of(client_name: String, where: String, body: Dictionary
 			% [v.mirror_avg, v.mirror_worst, v.entities]
 		)
 	if body.has("worst_phases"):
-		var worst = _worst_frame_text(body)
+		var worst = _worst_frame_text(body, v.worst)
 		if worst == null:
 			return []
 		if v.worst >= SLOW_FRAME_MSEC:
@@ -504,9 +506,10 @@ static func _frame_lines_of(client_name: String, where: String, body: Dictionary
 	return lines
 
 
-# "; worst frame: apply 74, mirror 56.8 (players 0.3, entities 55.9, ...), 1 fresh; 31 fresh in
-# 820 ms, costliest turret.tscn 55.2 ms", or null when a value is malformed.
-static func _worst_frame_text(body: Dictionary):
+# "; worst frame: apply 74, mirror 56.8 (players 0.3, entities 55.9, ...), 1 fresh, rest 3; 31
+# fresh in 820 ms, costliest turret.tscn 55.2 ms", or null when a value is malformed. The rest
+# is what no mark or mirror part holds of worst (the game's: deferred layout, freed nodes, ...).
+static func _worst_frame_text(body: Dictionary, worst: float):
 	var marks = _numbers(body.get("worst_marks"), MARK_NAMES.size())
 	var phases = _numbers(body.get("worst_phases"), PHASE_NAMES.size())
 	var file = body.get("fresh_worst_file")
@@ -530,6 +533,11 @@ static func _worst_frame_text(body: Dictionary):
 		parts.append("mirror %.1f (%s)" % [mirror, PoolStringArray(phase_parts).join(", ")])
 	if v.worst_fresh > 0:
 		parts.append("%d fresh" % v.worst_fresh)
+	if not parts.empty():
+		var rest := worst - mirror
+		for value in marks:
+			rest -= value
+		parts.append("rest %d" % round(max(0.0, rest)))
 	var text := "; worst frame: "
 	text += PoolStringArray(parts).join(", ") if not parts.empty() else "none of it measured"
 	if v.fresh > 0:

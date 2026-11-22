@@ -18,7 +18,7 @@ func _ready() -> void:
 
 
 func trade_crate_offered(from: int) -> bool:
-	return RunData.get_player_count() > 1 and Together.can_request_crate(self, from)
+	return RunData.get_player_count() > 1 and Together.can_show_crate(self, from)
 
 
 # [player, can take the item, combines it] for every other player.

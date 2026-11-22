@@ -30,6 +30,8 @@ func run(t: Node):
 	yield(_give_weapon(), "completed")
 	yield(_receiver_popup(), "completed")
 	_refusals()
+	yield(_receiver_combine(), "completed")
+	yield(_kept_popup_buttons(), "completed")
 	yield(_other_popup(), "completed")
 	yield(_four_players(), "completed")
 	var buy = load(t.DIR + "buy_tests.gd").new()
@@ -225,26 +227,164 @@ func _give_weapon():
 	_cursors_valid("after giving a weapon")
 
 
-# The receiver has its own popup open when its rows are rebuilt.
+# The receiver has its own popup open when it is given something.
 func _receiver_popup():
 	var theirs = _emulator(2)
 	var their_popup = _popup(2)
-	theirs.focused_control = _element(2, RunData.get_player_weapons_ref(2)[0])
+	var element = _element(2, RunData.get_player_weapons_ref(2)[0])
+	theirs.focused_control = element
 	yield(_t.tap("ui_accept", 2), "completed")
+	var cursor = theirs.focused_control
 	_t.check(their_popup._focused, "the receiver looks at its own weapon")
 	var weapon = RunData.get_player_weapons_ref(0)[0]
 	_t.check(_shop.trade_give(weapon, 0, 2), "meanwhile it is given another weapon")
+	_t.check(_shop.trade_give(_plain, 0, 2), "and an item")
 	yield(_t.frames(2), "completed")
 	_t.check(
-		not their_popup._focused and not _panel(2)._popup_dim_screen.visible,
-		"its popup closed with the old row"
+		their_popup._focused and _panel(2)._popup_dim_screen.visible and theirs.focused_control == cursor,
+		"its popup stays open, its cursor where it was"
+	)
+	_t.check(_shop._popup_manager._elements_pressed[2] == element, "on the same weapon")
+	_t.check(
+		_row(2, true).get_child_count() == 2 and _element(2, _plain) != null,
+		"its rows show what came"
+	)
+	_t.check("(2/" in _shop._get_gear_container(2).weapons_container.get_label().text, "and count it")
+	_cursors_valid("after a hand-over to a player with an open popup")
+	yield(_t.tap("ui_cancel", 2), "completed")
+	_t.check(not their_popup._focused and theirs.focused_control == element, "cancel closes it")
+	_t.check(_shop.trade_give(_plain, 2, 0), "(the item given back)")
+
+
+# A weapon given to a player without a free slot combines with one of its own: a popup on another
+# weapon stays open, one on the weapon that went closes.
+func _receiver_combine():
+	var pistol = _t.weapon()
+	for _i in 2:
+		RunData.add_weapon(pistol, 0)
+	_t.fill_weapons(2, pistol)
+	for p in [0, 2]:
+		_emulator(p).focused_control = null  # off the elements set_weapons_data frees
+		_shop._get_gear_container(p).set_weapons_data(RunData.get_player_weapons(p))
+	yield(_t.frames(1), "completed")
+	var theirs = _emulator(2)
+	var popup = _popup(2)
+	var given = RunData.get_player_weapons_ref(0)[0]
+	var partner = Rules.combine_partner(given, 2)
+	var other = null
+	for weapon in RunData.get_player_weapons_ref(2):
+		other = weapon if other == null and weapon.my_id != pistol.my_id else other
+	var element = _shop._get_weapon_element(_row(2, true), other)
+	theirs.focused_control = element
+	yield(_t.tap("ui_accept", 2), "completed")
+	var cursor = theirs.focused_control
+	_t.check(popup._focused and partner != null, "(player 3, its slots full, looks at a weapon)")
+	_t.check(_shop.trade_give(given, 0, 2), "it is given a weapon it combines")
+	yield(_t.frames(2), "completed")
+	_t.check(
+		popup._focused and theirs.focused_control == cursor and is_instance_valid(element),
+		"its popup on another weapon stays open"
+	)
+	var shown := []
+	for child in _row(2, true).get_children():
+		if not child.is_queued_for_deletion():
+			shown.append(child.item)
+	var owned: Array = _t.ids(RunData.get_player_weapons_ref(2))
+	_t.check(
+		owned.has("weapon_pistol_2") and not partner in shown and _same(_t.ids(shown), owned),
+		"the weapon it combined with left the row, the new tier came %s" % [_t.ids(shown)]
+	)
+	yield(_t.tap("ui_cancel", 2), "completed")
+
+	given = RunData.get_player_weapons_ref(0)[0]
+	partner = Rules.combine_partner(given, 2)
+	theirs.focused_control = _shop._get_weapon_element(_row(2, true), partner)
+	yield(_t.tap("ui_accept", 2), "completed")
+	_t.check(popup._focused, "(player 3 looks at the weapon the next one combines with)")
+	_t.check(_shop.trade_give(given, 0, 2), "it is given one more")
+	yield(_t.frames(2), "completed")
+	_t.check(
+		not popup._focused and not _panel(2)._popup_dim_screen.visible,
+		"the popup on the weapon that went closes"
 	)
 	_t.check(
 		theirs.focused_control != null and theirs.focused_control.get_parent() == _row(2, true),
-		"and its cursor is on a weapon of the new row"
+		"and its cursor is on the weapon row"
 	)
-	_t.check(_row(2, true).get_child_count() == 2, "which shows both weapons")
-	_cursors_valid("after a hand-over to a player with an open popup")
+	_cursors_valid("after combining under a popup")
+
+
+# A popup the receiver keeps open shows the buttons of the gear it has now: Combine once a twin
+# came, none once the twin was combined away (the cursor on it goes to Cancel). Another player's
+# open give list marks again who would combine.
+func _kept_popup_buttons():
+	var pistol = _t.weapon()
+	var theirs: Array = RunData.get_player_weapons_ref(2)
+	theirs.clear()
+	RunData.add_weapon(pistol, 2)
+	_t.fill_weapons(2, pistol)
+	theirs.pop_back()  # one slot free: the next pistol is added, not combined
+	for p in [0, 1]:
+		RunData.add_weapon(pistol, p)
+	RunData.add_weapon(pistol, 0)
+	for p in [0, 1, 2]:
+		_emulator(p).focused_control = null  # off the elements set_weapons_data frees
+		_shop._get_gear_container(p).set_weapons_data(RunData.get_player_weapons(p))
+	yield(_t.frames(1), "completed")
+	var popup = _popup(2)
+	var first = theirs[0]
+	_emulator(2).focused_control = _shop._get_weapon_element(_row(2, true), first)
+	yield(_t.tap("ui_accept", 2), "completed")
+	_t.check(popup._focused and not popup._combine_button.visible, "(player 3 looks at its pistol)")
+	var list = _popup(1)
+	yield(_open_list(1, RunData.get_player_weapons_ref(1).back()), "completed")
+	var to_third = null
+	for button in list._trade_players:
+		to_third = button if button.visible and _to(button) == 2 else to_third
+	var combine_text: String = tr("MENU_COMBINE")
+	_t.check(
+		to_third != null and not combine_text in to_third.text,
+		"(player 2's give list: player 3 has a free slot, no Combine)"
+	)
+	var mine: Array = RunData.get_player_weapons_ref(0)
+	_t.check(_shop.trade_give(mine[mine.size() - 1], 0, 2), "player 3 is given a twin")
+	yield(_t.frames(2), "completed")
+	_t.check(
+		popup._focused and popup._item_data == first and popup._combine_button.visible,
+		"its popup on the pistol stays open and offers Combine now"
+	)
+	_t.check(
+		list._trade_choosing and to_third.visible and combine_text in to_third.text,
+		"the open give list says player 3 combines it now (%s)" % to_third.text
+	)
+	yield(_t.tap("ui_cancel", 2), "completed")
+
+	var given = mine[mine.size() - 1]
+	var partner = Rules.combine_partner(given, 2)
+	var kept = null
+	for weapon in theirs:
+		if weapon != partner and weapon.my_id == pistol.my_id:
+			kept = weapon
+	_emulator(2).focused_control = _shop._get_weapon_element(_row(2, true), kept)
+	yield(_t.tap("ui_accept", 2), "completed")
+	_emulator(2).focused_control = popup._combine_button
+	_t.check(popup._focused and partner != null, "(player 3, its slots full, looks at one twin)")
+	_t.check(_shop.trade_give(given, 0, 2), "it is given a pistol that combines with the other")
+	yield(_t.frames(2), "completed")
+	_t.check(
+		(
+			popup._focused
+			and popup._item_data == kept
+			and theirs.has(kept)
+			and not popup._combine_button.visible
+		),
+		"its popup stays open on a weapon it owns, without Combine %s" % [_t.ids(theirs)]
+	)
+	_t.check(_emulator(2).focused_control == popup._cancel_button, "the cursor on it went to Cancel")
+	_cursors_valid("after a kept popup's buttons changed")
+	yield(_t.tap("ui_cancel", 2), "completed")
+	for _i in 2:
+		yield(_t.tap("ui_cancel", 1), "completed")
 
 
 func _refusals() -> void:
@@ -328,6 +468,14 @@ func _cursors_valid(label: String) -> void:
 		elif not control.is_visible_in_tree():
 			bad.append("player %d: hidden %s" % [p + 1, control.name])
 	_t.check(bad.empty(), "every cursor rests on a live control %s %s" % [label, bad])
+
+
+static func _same(a: Array, b: Array) -> bool:
+	var x := a.duplicate()
+	var y := b.duplicate()
+	x.sort()
+	y.sort()
+	return x == y
 
 
 func _to(button) -> int:

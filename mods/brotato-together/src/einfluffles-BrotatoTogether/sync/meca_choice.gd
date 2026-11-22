@@ -183,30 +183,52 @@ func _on_upgrade_pressed() -> void:
 	emit_signal("roll_requested", weapon)
 
 
-# The game's own choice UI with the host's two options: the preview is built like
-# DLC2Data.meca_item builds it (without rolling: do_not_add_effect), plus the host's options.
+# The game's own choice UI with the host's two options.
 func _show(weapon, entry: Array) -> void:
 	_waiting = null
+	show_roll(popup, weapon, player, entry)
+
+
+func _roll_of(weapon) -> Array:
+	return entry_of(rolls, weapon, player)
+
+
+# The rolls' entry for player p's weapon, [] when there is none. A client's gear can show the
+# object of an older run state (only a change of the gear rebuilds it): then the slot's id counts.
+static func entry_of(list: Array, weapon, p: int) -> Array:
+	var weapons: Array = RunData.get_player_weapons(p)
+	var owned: bool = weapon in weapons
+	for entry in list:
+		if entry[0] >= weapons.size() or weapon.my_id != entry[1]:
+			continue
+		if weapons[entry[0]] == weapon or (not owned and weapons[entry[0]].my_id == entry[1]):
+			return entry
+	return []
+
+
+# The popup shows the choice between the two options of entry (the host's roll): the preview is
+# built like DLC2Data.meca_item builds it (without rolling: do_not_add_effect), plus the options.
+static func show_roll(item_popup: Node, weapon, p: int, entry: Array) -> void:
 	var dlc = dlc_data()
 	if dlc == null:
 		return
-	var preview = dlc.meca_item(weapon, player, true)
+	var preview = dlc.meca_item(weapon, p, true)
 	for i in [2, 4]:
 		var option := EffectOption.new()
 		option.key = Keys.hash_to_string[entry[i]]
 		option.key_hash = entry[i]
 		option.value = entry[i + 1]
 		preview.effects.append(option)
-	popup._upgrade_preview_cache[weapon.get_instance_id()] = preview
-	popup._on_UpgradeButton_pressed()
+	item_popup._upgrade_preview_cache[weapon.get_instance_id()] = preview
+	item_popup._on_UpgradeButton_pressed()
 
 
-func _roll_of(weapon) -> Array:
-	var weapons: Array = RunData.get_player_weapons(player)
-	for entry in rolls:
-		if entry[0] < weapons.size() and weapons[entry[0]] == weapon and weapon.my_id == entry[1]:
-			return entry
-	return []
+# Host: the choice of the roll the popup already keeps for its weapon; never a new roll.
+static func show_kept(item_popup: Node) -> void:
+	var weapon = item_popup._item_data
+	var preview = item_popup._upgrade_preview_cache.get(weapon.get_instance_id())
+	if preview != null and options(preview).size() == 2:
+		item_popup._on_UpgradeButton_pressed()
 
 
 # One pick raises two of the popup's signals (effect button, item_meca_upgrade_selected) in an
@@ -235,3 +257,9 @@ func _send_pick() -> void:
 	if not entry.empty():
 		rolls.erase(entry)
 	emit_signal("picked", weapon, index)
+
+
+# The popup's weapon is now the run's new object of it (a gear change kept the popup open).
+func retarget(old, new) -> void:
+	if _waiting != null and _waiting == old:
+		_waiting = new

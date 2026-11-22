@@ -12,6 +12,8 @@ const REMOTE := 1
 const ITEM := "trade.item"
 const WEAPON := "trade.weapon"
 const BUY := "trade.buy"
+const FocusTargets := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd")
+const Together := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/together.gd")
 
 var _t: Node = null
 var _sync: Node = null
@@ -128,7 +130,11 @@ func _host(input: Node):
 	_capture("traded")
 	_host_ledger = _t.ledger()
 	yield(_host_hotkey(), "completed")
-	_host_buy()
+	yield(_host_buy(), "completed")
+	yield(_host_mirror(), "completed")
+	# Player 1 hands the client's player an item: the state for _client_receive.
+	_t.check(_shop.trade_give(_owned(0, _plain.my_id), 0, REMOTE), "(player 1 gives an item)")
+	_capture("received")
 	input.devices.erase(FAKE_PEER)
 
 
@@ -148,17 +154,107 @@ func _host_hotkey():
 		popup._focused and popup._trade_choosing and first.get_meta("trade_to", -1) == REMOTE,
 		"the trade key opens its give list, with the remote player"
 	)
+	var emulator = Utils.get_focus_emulator(0, _shop)
+	var cursor = emulator.focused_control
+	var item = _owned(REMOTE, _plain.my_id)
+	var weapon = RunData.get_player_weapons_ref(REMOTE)[0]
+	_t.check(
+		_apply(ITEM, RunData.get_player_items_ref(REMOTE).find(item), item.my_id, 0)
+		and _apply(WEAPON, 0, weapon.my_id, 0),
+		"(the remote player gives player 1 an item and a weapon meanwhile)"
+	)
+	yield(_t.frames(2), "completed")
+	_t.check(
+		popup._focused and popup._trade_choosing and emulator.focused_control == cursor,
+		"player 1's give list stays open, its cursor where it was"
+	)
+	_t.check(
+		is_instance_valid(element) and _shop._popup_manager._elements_pressed[0] == element,
+		"on the weapon it was opened from"
+	)
+	_t.check(_row_has(0, item) and _weapon_element(0, 1) != null, "the rows show what came")
 	yield(_t.tap("ui_cancel", 0), "completed")
 	yield(_t.frames(1), "completed")
 	_t.check(not popup._focused, "cancel closes it")
+	_t.check(
+		_shop.trade_give(item, 0, REMOTE)
+		and _shop.trade_give(RunData.get_player_weapons_ref(0).back(), 0, REMOTE),
+		"(given back)"
+	)
 
 
-func _host_buy() -> void:
+# The remote player's open trade lists (its client reports them with its cursor) show on the
+# host's copy of its panel, and go on to the other clients from there.
+func _host_mirror():
+	yield(_t.frames(1), "completed")
+	var popup = _shop._get_item_popup(REMOTE)
+	var element = _element(REMOTE, _plain)
+	_t.check(element != null, "(the remote player has an item to give)")
+	if element == null:
+		return
+	var target: Array = FocusTargets.describe(element, _shop, REMOTE)
+	var first: Array = FocusTargets.describe(popup._trade_players[0], _shop, REMOTE)
+	var give := [target, _plain.my_id, 0, [["give"], null]]
+	_sync.host_apply_focus(_shop, REMOTE, 0, first, _wire(give))
+	_t.check(
+		(
+			popup._focused
+			and popup._trade_choosing
+			and popup._trade_players[0].get_meta("trade_to", -1) == 0
+		),
+		"host: a remote player's give list shows on its copy"
+	)
+	_t.check(
+		Utils.get_focus_emulator(REMOTE, _shop).focused_control == popup._trade_players[0],
+		"with that player's cursor on the receiver"
+	)
+	_t.check(popup.together_menu() == ["give"], "and goes on to the other clients")
+	_sync.host_apply_focus(_shop, REMOTE, 0, target, [])
+	_t.check(not popup._focused and not popup._trade_choosing, "host: closed with the client's")
+	var nodes: Array = _shop._get_shop_items_container(REMOTE)._shop_items
+	var node = _buyable(nodes, 0)
+	if node == null:
+		print("  info: nothing the remote player could buy for player 1, buy-for copy not tested")
+		return
+	var buy := [[], "", 0, [["buy", nodes.find(node)], null]]
+	_sync.host_apply_focus(_shop, REMOTE, 0, first, _wire(buy))
+	_t.check(
+		popup._focused and popup.trade_buy_item() == node,
+		"host: a remote player's buy-for list shows on its copy"
+	)
+	_sync.host_apply_focus(_shop, REMOTE, 0, [], [])
+	_t.check(not popup._focused and popup.trade_buy_item() == null, "and closes with the client's")
+	# The buy itself, with the list open on the copy: the client closed its list on the press.
+	var dim: Control = _shop._get_coop_player_container(REMOTE)._popup_dim_screen
+	_sync.host_apply_focus(_shop, REMOTE, 0, first, _wire(buy))
+	RunData.add_gold(node.value, REMOTE)
+	var request := _intent(BUY, nodes.find(node), node.item_data.my_id, 0)
+	_t.check(_sync.host_apply_intent(_shop, REMOTE, request), "(the remote player buys for player 1)")
+	_t.check(
+		not popup._focused and popup.trade_buy_item() == null and not dim.visible,
+		"host: the copy's buy-for list closes with the remote buy, the panel no longer dimmed"
+	)
+	yield(_t.frames(2), "completed")  # the game's deferred cursor moves after the buy
+	var reroll: Array = FocusTargets.describe(_shop._get_reroll_button(REMOTE), _shop, REMOTE)
+	_sync.host_apply_focus(_shop, REMOTE, 0, reroll, [])
+	_t.check(not popup._focused and not dim.visible, "and stays so with the client's next report")
+
+
+# Player 1 has its popup open on a weapon while the remote player buys for it.
+func _host_buy():
+	yield(_t.frames(1), "completed")
 	var nodes: Array = _shop._get_shop_items_container(REMOTE)._shop_items
 	var node = _buyable(nodes, 0)
 	_t.check(node != null, "(the remote player is offered something player 1 can take)")
 	if node == null:
 		return
+	var popup = _shop._get_item_popup(0)
+	var emulator = Utils.get_focus_emulator(0, _shop)
+	var element = _weapon_element(0, 0)
+	emulator.focused_control = element
+	yield(_t.tap("ui_accept", 0), "completed")
+	var cursor = emulator.focused_control
+	_t.check(popup._focused and popup.is_a_parent_of(cursor), "(player 1's popup is open)")
 	RunData.add_gold(node.value, REMOTE)
 	var gold := [RunData.get_player_gold(0), RunData.get_player_gold(REMOTE)]
 	var count: int = _held(0, node.item_data)
@@ -176,6 +272,14 @@ func _host_buy() -> void:
 	)
 	_t.check(not _sync.host_apply_intent(_shop, REMOTE, request), "the same buy twice: once")
 	_t.check(_held(0, node.item_data) == count + 1, "no second copy")
+	yield(_t.frames(2), "completed")
+	_t.check(
+		popup._focused and emulator.focused_control == cursor,
+		"player 1's popup stayed open through the buy, its cursor where it was"
+	)
+	_t.check(_shop._popup_manager._elements_pressed[0] == element, "on the same weapon")
+	yield(_t.tap("ui_cancel", 0), "completed")
+	_t.check(not popup._focused, "(closed)")
 
 
 func _client():
@@ -201,6 +305,7 @@ func _client():
 	emulator.focused_control = popup._trade_button
 	yield(_t.tap("ui_accept", REMOTE), "completed")
 	_t.check(popup._trade_players[0].visible, "and lists the receiver")
+	_t.check(popup.together_menu() == ["give"], "the list goes to the host with the cursor")
 	local.last_intent = {}
 	yield(_t.tap("ui_accept", REMOTE), "completed")
 	var sent: Dictionary = local.last_intent
@@ -235,15 +340,16 @@ func _client():
 	_t.check(_t.ledger() == before, "and still nothing changed here")
 
 	# A reroll changes the own player's data (gold) but not its gear: the client's run keeps its
-	# item objects but gets fresh weapons, the gear rows keep their elements and what those show.
+	# item objects but gets fresh weapons, the gear rows keep their elements and point the weapon
+	# elements at the fresh weapons (ShopSync._refresh_gear).
 	_receive(_states.rerolled)
 	yield(_t.frames(2), "completed")
 	var shown = _element(REMOTE, own).item
 	var shown_weapon = _weapon_element(REMOTE, 1).item
 	_t.check(
 		RunData.get_player_items_ref(REMOTE).has(shown)
-		and not RunData.get_player_weapons_ref(REMOTE).has(shown_weapon),
-		"(after a reroll the weapon row shows an object the run has no more, the items not)"
+		and RunData.get_player_weapons_ref(REMOTE).has(shown_weapon),
+		"(after a reroll the gear rows show the run's own item and weapon objects)"
 	)
 	_t.check(_shop.trade_receivers(shown, REMOTE) == [0], "the old element still offers Trade")
 	_t.check(_shop.trade_receivers(shown_weapon, REMOTE) == [0], "an old weapon element too")
@@ -300,6 +406,88 @@ func _client():
 		_shop._get_gear_container(REMOTE).weapons_container._elements.get_child_count() == 1,
 		"the giver's weapon row has one weapon left"
 	)
+	yield(_client_receive(popup), "completed")
+	_client_mirror()
+
+
+# The own give list is open when the host's state brings the own player an item from another.
+func _client_receive(popup):
+	var own = _owned(REMOTE, _plain.my_id)
+	var element = _element(REMOTE, own)
+	var emulator = Utils.get_focus_emulator(REMOTE, _shop)
+	emulator.focused_control = element
+	yield(_t.get_tree().create_timer(0.15), "timeout")
+	yield(_pad(JOY_SELECT), "completed")
+	var cursor = emulator.focused_control
+	_t.check(popup._focused and popup._trade_choosing, "(the own give list is open)")
+	_receive(_states.received)
+	yield(_t.frames(2), "completed")
+	_t.check(_count(REMOTE, _plain) == 2, "(the state brings a second copy of the item)")
+	_t.check(
+		popup._focused and popup._trade_choosing and emulator.focused_control == cursor,
+		"an item from another player keeps the own give list open, its cursor where it was"
+	)
+	_t.check(
+		is_instance_valid(element) and _shop._popup_manager._elements_pressed[REMOTE] == element,
+		"on the same element"
+	)
+	_t.check(RunData.get_player_items_ref(REMOTE).has(popup._item_data), "holding the run's object")
+	_sync.local.last_intent = {}
+	yield(_t.tap("ui_accept", REMOTE), "completed")
+	var sent: Dictionary = _sync.local.last_intent
+	_t.check(
+		sent.get("kind") == ITEM and sent.get("id") == _plain.my_id and sent.get("arg") == 0,
+		"and still sends the trade (%s)" % [sent]
+	)
+
+
+# Player 1's open trade lists on this client's copy of its panel, from the host's state.
+func _client_mirror() -> void:
+	_receive(_states.traded)  # player 1 holds the plain item again (_client_receive took it)
+	var other = _shop._get_item_popup(0)
+	var element = _element(0, _plain)
+	if element == null:
+		_t.check(false, "(player 1 has an item to give)")
+		return
+	var before: String = _t.ledger()
+	_sync.local.last_intent = {}
+	var target: Array = FocusTargets.describe(element, _shop, 0)
+	var body: Dictionary = _states.traded.duplicate(true)
+	body.popups[0] = [target, _plain.my_id, 0, [["give"], null]]
+	_receive(body)
+	_t.check(
+		(
+			other._focused
+			and other._trade_choosing
+			and other._trade_players[0].get_meta("trade_to", -1) == REMOTE
+		),
+		"client: another player's give list shows on its panel here"
+	)
+	body.popups[0] = [target, _plain.my_id, 0, [null, null]]
+	_receive(body)
+	_t.check(
+		other._focused and not other._trade_choosing and other._trade_button.visible,
+		"back to its popup's buttons, Trade among them"
+	)
+	body.popups[0] = []
+	_receive(body)
+	_t.check(not other._focused, "and closed with the host's state")
+	var nodes: Array = _shop._get_shop_items_container(0)._shop_items
+	var node = _buyable(nodes, REMOTE)
+	if node != null:
+		body.popups[0] = [[], "", 0, [["buy", nodes.find(node)], null]]
+		_receive(body)
+		_t.check(
+			other._focused and other.trade_buy_item() == node,
+			"client: another player's buy-for list shows here"
+		)
+		body.popups[0] = []
+		_receive(body)
+		_t.check(not other._focused and other.trade_buy_item() == null, "and closes with it")
+	_t.check(
+		_sync.local.last_intent.empty() and _t.ledger() == before,
+		"the copies send and trade nothing"
+	)
 
 
 # Trade with the mouse and the keyboard's T, then with the pad (LocalPanel: the own cursor).
@@ -316,7 +504,9 @@ func _client_buy(popup):
 		"the mouse on an own offer: its popup shows the trade hint"
 	)
 	_t.check(_glyph(popup) == Hotkey._icon("key_t.png"), "with the T glyph")
-	_t.check(not _shop.trade_buy_anyone(theirs[0], 0), "another player's offers are not for here")
+	_t.check(
+		not Together.can_request_buy(_shop, 0), "another player's offers are not bought from here"
+	)
 	var before: String = _t.ledger()
 	_sync.local.last_intent = {}
 	yield(_key(KEY_T), "completed")
@@ -435,6 +625,10 @@ func _intent(kind: String, slot: int, id: String, to: int, seq_offset := 0) -> D
 
 func _apply(kind: String, slot: int, id: String, to: int, seq_offset := 0) -> bool:
 	return _sync.host_apply_intent(_shop, REMOTE, _intent(kind, slot, id, to, seq_offset))
+
+
+static func _wire(value):
+	return bytes2var(var2bytes(value), false)
 
 
 func _held(player: int, item) -> int:

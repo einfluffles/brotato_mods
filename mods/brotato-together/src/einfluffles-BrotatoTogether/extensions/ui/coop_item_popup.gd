@@ -18,3 +18,27 @@ func _get_new_position(control: Control, panel: Node) -> Vector2:
 	elif above > 0 and above <= DIST:
 		pos.y = item.position.y - rect_size.y
 	return pos
+
+
+# The game's coop_item_popup.tscn connects the meca choice's two ButtonWithIcon buttons to these
+# names on the popup, which has none of them: every focus, hover and press of an option logged a
+# "Method not found" error (on every machine, now that the choice shows on every copy). Each
+# button's own scene already handles them.
+func _on_ButtonWithIcon_pressed() -> void:
+	pass
+
+
+func _on_ButtonWithIcon_focus_entered() -> void:
+	pass
+
+
+func _on_ButtonWithIcon_focus_exited() -> void:
+	pass
+
+
+func _on_ButtonWithIcon_mouse_entered() -> void:
+	pass
+
+
+func _on_ButtonWithIcon_mouse_exited() -> void:
+	pass

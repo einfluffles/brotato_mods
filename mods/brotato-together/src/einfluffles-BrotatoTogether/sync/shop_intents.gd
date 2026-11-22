@@ -111,15 +111,20 @@ static func apply_focus(shop: Node, p: int, page, target) -> void:
 	var emulator = Utils.get_focus_emulator(p, shop)
 	if emulator == null:
 		return
+	apply_page(shop, p, page)
+	var control = FocusTargets.resolve(target, shop, p)
+	if control is Control and control.is_visible_in_tree() and emulator.focused_control != control:
+		emulator.focused_control = control
+
+
+# The carousel page of p's panel (gear, stats, ...).
+static func apply_page(shop: Node, p: int, page) -> void:
 	var carousel = shop._get_coop_player_container(p).carousel
 	# Compared clamped: a page this machine cannot show (the damage page with the meter off here)
 	# would otherwise run the setter again with every state.
 	var known: bool = typeof(page) == TYPE_INT and page >= 0
 	if known and min(page, carousel._get_max_index()) != carousel.index:
 		carousel.index = page
-	var control = FocusTargets.resolve(target, shop, p)
-	if control is Control and control.is_visible_in_tree() and emulator.focused_control != control:
-		emulator.focused_control = control
 
 
 # Identity over index: the node at the slot when it holds that item, else any node that does

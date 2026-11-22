@@ -82,6 +82,7 @@ func _small_run():
 	)
 	_run = _run_of(sent)
 	_test_idle()
+	_test_tracked()
 	yield(_test_slot_changes(), "completed")
 	yield(_test_weapon_changes(), "completed")
 	_test_view_changes()
@@ -110,6 +111,22 @@ func _test_idle() -> void:
 		_take().empty() and _cache.serialized == serialized + 1 and _cache.missed == 0,
 		"shop change: the safety net serializes once, finds nothing, sends nothing"
 	)
+
+
+# RunData.add_tracked_value (an item's counter, a value of a pair) moves the fingerprint: sent at
+# the next check, not by the safety net.
+func _test_tracked() -> void:
+	_expect_run("a tracked value (RunData.add_tracked_value)", funcref(self, "_add_tracked"))
+	_expect_run("a tracked pair's second value", funcref(self, "_add_tracked_pair"))
+
+
+func _add_tracked() -> void:
+	RunData.add_tracked_value(0, Keys.generate_hash("item_piggy_bank"), 1)
+
+
+# Bot-O-Mine's mine count (bot_o_mine.gd), which its pet adds to under the level-up panels.
+func _add_tracked_pair() -> void:
+	RunData.add_tracked_value(1, Keys.item_bot_o_mine_hash, 1, 1)
 
 
 func _test_slot_changes():
@@ -541,9 +558,9 @@ func _measure_client(label: String, late: bool) -> void:
 		texts.append(to_json(data) + to_json([data.weapons, data.items]) + to_json(offered))
 	var before := OS.get_ticks_usec() - started
 	var ids: Dictionary = _cache.all().ids
-	var common: Dictionary = RunParts.split(raw).c
+	var split := RunParts.split(raw)
 	started = OS.get_ticks_usec()
-	var keys: Array = _sync.player_keys(ids, common)
+	var keys: Array = _sync.player_keys(ids, split.c, split.s)
 	var now := OS.get_ticks_usec() - started
 	started = OS.get_ticks_usec()
 	RunStateCodec.deserialize(raw)
@@ -569,15 +586,18 @@ func _test_client_keys() -> void:
 	var parts := RunParts.split(data)
 	var ids: Dictionary = RunParts.pack_all(data).ids
 	var raw: Dictionary = JSON.parse(JSON.print(parts.c)).result
-	var keys: Array = _sync.player_keys(ids, raw)
-	var again: Array = _sync.player_keys(RunParts.pack_all(data).ids, raw.duplicate(true))
+	var shop: Dictionary = JSON.parse(JSON.print(parts.s)).result
+	var keys: Array = _sync.player_keys(ids, raw, shop)
+	var again: Array = _sync.player_keys(
+		RunParts.pack_all(data).ids, raw.duplicate(true), shop.duplicate(true)
+	)
 	_t._check(
 		keys.size() == 2 and var2str(keys) == var2str(again),
 		"player keys: the same state packed twice gives the same keys"
 	)
 	parts.p0["bt_test"] = 1.0
 	ids.p0 = RunParts.entry(parts.p0, hash(parts.p0)).id
-	var player: Array = _sync.player_keys(ids, raw)
+	var player: Array = _sync.player_keys(ids, raw, shop)
 	_t._check(
 		(
 			player[0].data != keys[0].data
@@ -590,7 +610,7 @@ func _test_client_keys() -> void:
 	var weapons: Array = parts.g1.weapons
 	weapons[0] = [weapons[0], 1.0]
 	ids.g1 = RunParts.entry(parts.g1, hash(parts.g1)).id
-	var gear: Array = _sync.player_keys(ids, raw)
+	var gear: Array = _sync.player_keys(ids, raw, shop)
 	_t._check(
 		(
 			gear[1].gear != player[1].gear
@@ -600,9 +620,9 @@ func _test_client_keys() -> void:
 		),
 		"player keys: a change inside a weapon changes its owner's gear and data keys"
 	)
-	var offered: Array = raw.shop_items[0]
+	var offered: Array = shop.shop_items[0]
 	offered[0] = [offered[0], 1.0]
-	var items: Array = _sync.player_keys(ids, raw)
+	var items: Array = _sync.player_keys(ids, raw, shop)
 	_t._check(
 		(
 			items[0].items != gear[0].items

@@ -1,7 +1,7 @@
 extends Reference
 # Battle state that changes the scene itself rather than moving something in it: the hole layout,
-# weapons that break during a wave, each player's move speed, and the obstacles that stop the
-# own-player prediction. One instance per battle on each side.
+# dig sites, weapons that break during a wave, each player's move speed, and the obstacles that
+# stop the own-player prediction. One instance per battle on each side.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
 const PF := Snapshot.PlayerField
@@ -93,6 +93,25 @@ static func spawned_holes(main) -> Array:
 	return holes
 
 
+# DigSiteSceneEffectBehavior places them at random on every machine: the host's are mirrored as
+# static snapshot entities, their progress as pose values (sync/pose.gd).
+static func dig_sites(main) -> Array:
+	var sites := []
+	var container = main.get("_gpe_container")
+	if not is_instance_valid(container):
+		return sites
+	for child in container.get_children():
+		if child is DigSite and not child.is_queued_for_deletion():
+			sites.append(child)
+	return sites
+
+
+static func free_own_dig_sites(main: Node) -> void:
+	for site in dig_sites(main):
+		site.get_parent().remove_child(site)
+		site.free()
+
+
 func client_start(body: Dictionary) -> void:
 	var holes = body.get("holes")
 	_start_holes = holes if typeof(holes) == TYPE_STRING else ""
@@ -120,6 +139,7 @@ static func _valid_slots(slots) -> bool:
 
 func client_scene_ready(main: Node) -> void:
 	apply_hole_layout(main, _start_holes)
+	free_own_dig_sites(main)  # before any puppet of the host's
 	var players: Array = main.get("_players")
 	for i in players.size():
 		var count: int = players[i].current_weapons.size()

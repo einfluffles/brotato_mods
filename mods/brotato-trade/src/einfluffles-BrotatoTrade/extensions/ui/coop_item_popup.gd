@@ -112,6 +112,39 @@ func trade_open_give() -> bool:
 	return _trade_choosing
 
 
+# An open give list marks again who would combine the item, after someone's gear changed.
+func trade_relabel() -> void:
+	if not _trade_choosing or _trade_buy != null or _item_data == null:
+		return
+	for button in _trade_players:
+		if button.visible and button.has_meta(TRADE_TO_META):
+			_trade_label(button, button.get_meta(TRADE_TO_META))
+
+
+# brotato:together shows the list on the other machines' copies of this panel:
+# ["give"] | ["buy", the shop item's slot] | null.
+func together_menu():
+	if not _trade_choosing or not _focused or not is_instance_valid(trade_shop):
+		return null
+	if _trade_buy == null:
+		return ["give"]
+	var nodes: Array = trade_shop._get_shop_items_container(player_index)._shop_items
+	return ["buy", nodes.find(_trade_buy)]
+
+
+func together_show_menu(menu) -> void:
+	if menu == null:
+		if _trade_choosing:
+			_trade_back(false)
+		return
+	if not is_instance_valid(trade_shop) or _trade_choosing or typeof(menu[0]) != TYPE_STRING:
+		return
+	if menu[0] == "give" and _focused:
+		_on_trade_button_pressed()
+	elif menu[0] == "buy" and menu.size() == 2 and typeof(menu[1]) == TYPE_INT:
+		trade_shop.trade_show_buy(player_index, menu[1])
+
+
 func show_shop_hints(p_shop_item: ShopItem) -> void:
 	.show_shop_hints(p_shop_item)
 	_trade_hint_for = p_shop_item

@@ -617,6 +617,19 @@ func _test_client_popup():
 	t._check(page.get_focus_owner() == page._leave_button, "popup: arrows move the cursor")
 	_key(KEY_DOWN, false)
 	yield(_frames(1), "completed")
+	# A FocusEmulator that takes a control (another player's mirrored cursor) releases the focus.
+	page._leave_button.release_focus()
+	page.move_focus(1)
+	t._check(
+		page.get_focus_owner() == page._back_button,
+		"popup: after a FocusEmulator took the focus, an arrow moves on from the last button"
+	)
+	page.move_focus(-1)
+	page._leave_button.release_focus()
+	yield(_frames(1), "completed")
+	t._check(
+		page.get_focus_owner() == page._leave_button, "popup: and the last button gets it back"
+	)
 	Input.action_press("ui_accept")
 	Input.action_press("analog_move_right")
 	var body: Array = input_sync.sample_local()

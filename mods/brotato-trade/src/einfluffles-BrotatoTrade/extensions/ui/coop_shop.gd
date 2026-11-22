@@ -73,7 +73,7 @@ func trade_hotkey(player_index: int) -> bool:
 
 
 func trade_buy_offered(shop_item: Node, from: int) -> bool:
-	if RunData.get_player_count() < 2 or not Together.can_request_buy(self, from):
+	if RunData.get_player_count() < 2 or not Together.can_show_buy(self, from):
 		return false
 	var item = shop_item.item_data
 	return shop_item.active and item != null and not item.is_meca
@@ -122,6 +122,7 @@ func trade_buy(shop_item: Node, from: int, to: int) -> bool:
 	_trade_buy_to = to
 	container.emit_signal("shop_item_bought", shop_item)
 	_trade_buy_to = -1
+	cursor = _trade_buy_settle(to, cursor)
 	shop_item.deactivate()
 	container.update_buttons_color()
 	container._is_delay_active = true
@@ -135,6 +136,10 @@ func trade_buy(shop_item: Node, from: int, to: int) -> bool:
 func trade_buy_apply_request(from: int, slot: int, id: String, to: int) -> bool:
 	if not Rules.is_player(from):
 		return false
+	# The client closed its list on the press; brotato:together's copy of it closes here, as a
+	# local press does (_on_trade_buy_requested).
+	if _get_item_popup(from).trade_buy_item() != null:
+		_trade_buy_close(from)
 	var nodes: Array = _get_shop_items_container(from)._shop_items
 	var found = null
 	if slot >= 0 and slot < nodes.size() and _trade_offers(nodes[slot], id):
@@ -156,7 +161,7 @@ func buy_weapon(item_data: WeaponData, player_index: int) -> void:
 
 
 func trade_receivers(item, from: int) -> Array:
-	if not Together.can_request(self, from):
+	if not Together.can_show(self, from):
 		return []
 	return Rules.receivers(_trade_own(item, from), from, self)
 
@@ -172,7 +177,7 @@ func trade_give(item, from: int, to: int) -> bool:
 	if result.empty():
 		return false
 	_trade_refresh_player(from)
-	_trade_refresh_player(to)
+	_trade_refresh_player(to, result)
 	if result.combined:
 		SoundManager.play(Utils.get_rand_element(combine_sounds), 0, 0.1, true)
 	return true
@@ -198,6 +203,13 @@ func trade_buy_anyone(shop_item: Node, from: int) -> bool:
 		if entry[1]:
 			return true
 	return false
+
+
+# brotato:together: player from's buy-for list on a copy of its panel, as that player has it.
+func trade_show_buy(from: int, slot: int) -> void:
+	var nodes: Array = _get_shop_items_container(from)._shop_items
+	if slot >= 0 and slot < nodes.size():
+		_trade_buy_open(nodes[slot], from)
 
 
 func _trade_buy_open(shop_item: Node, from: int) -> bool:
@@ -261,49 +273,82 @@ func _trade_buy_after(to: int, reroll_price_before: int) -> void:
 	_refresh_currency_dependent_buttons(to)
 
 
-# The receiver's rows change under its cursor: a cursor in them, or in a popup opened from
-# them, leaves first ([row, index], or [-1]); a cursor elsewhere is remembered ([control]).
-func _trade_buy_park(player_index: int) -> Array:
+# The receiver's rows change under its cursor, and the game's buy may build them again. A cursor
+# on an element leaves first ({place, element}); a popup opened from one stays open ({popup,
+# place, control}); a cursor elsewhere is remembered ({control}).
+func _trade_buy_park(player_index: int) -> Dictionary:
 	var emulator = Utils.get_focus_emulator(player_index, self)
 	if emulator == null:
-		return []
-	var gear = _get_gear_container(player_index)
-	var rows := [gear.weapons_container._elements, gear.items_container._elements]
-	var element = emulator.focused_control
-	var in_popup: bool = _popup_manager._elements_pressed[player_index] != null
-	if in_popup:
-		element = _popup_manager._elements_pressed[player_index]
-		_trade_buy_close(player_index)
-	for i in rows.size():
-		if element != null and is_instance_valid(element) and element.get_parent() == rows[i]:
-			emulator.focused_control = null
-			return [i, element.get_index()]
-	if in_popup:
+		return {}
+	var control = emulator.focused_control
+	var pressed = _popup_manager._elements_pressed[player_index]
+	if pressed != null:
+		return {"popup": pressed, "place": _trade_place(player_index, pressed), "control": control}
+	var place := _trade_place(player_index, control)
+	if not place.empty():
 		emulator.focused_control = null
-		return [-1]
-	return [element] if element != null else []
+		return {"place": place, "element": control}
+	return {"control": control} if control != null else {}
 
 
-func _trade_buy_unpark(player_index: int, cursor: Array) -> void:
+# Right after the buy: a popup whose element the buy freed (rows built again, a weapon combined
+# away) closes, and the cursor goes to that element's place. One that stays gets its cursor back.
+func _trade_buy_settle(player_index: int, cursor: Dictionary) -> Dictionary:
+	if not cursor.has("popup"):
+		return cursor
+	if _trade_alive(cursor.popup):
+		return {"control": cursor.control}
+	_trade_buy_close(player_index)
+	var emulator = Utils.get_focus_emulator(player_index, self)
+	if emulator != null:
+		emulator.focused_control = null
+	return {"place": cursor.place}
+
+
+# After the game's own deferred cursor moves (a combine moves the receiver's).
+func _trade_buy_unpark(player_index: int, cursor: Dictionary) -> void:
 	var emulator = Utils.get_focus_emulator(player_index, self)
 	if emulator == null or cursor.empty() or not is_inside_tree():
 		return
 	var target = null
-	if cursor.size() == 2:
+	if _trade_alive(cursor.get("element")):
+		target = cursor.element
+	elif not cursor.get("place", []).empty():
 		var gear = _get_gear_container(player_index)
-		var row: Node = [gear.weapons_container._elements, gear.items_container._elements][cursor[0]]
+		var rows := [gear.weapons_container._elements, gear.items_container._elements]
 		var live := []
-		for child in row.get_children():
+		for child in rows[cursor.place[0]].get_children():
 			if not child.is_queued_for_deletion():
 				live.append(child)
 		if not live.empty():
-			target = live[int(min(cursor[1], live.size() - 1))]
-	elif cursor[0] is Control and is_instance_valid(cursor[0]):
-		target = cursor[0]
+			target = live[int(min(cursor.place[1], live.size() - 1))]
+	elif cursor.get("control") is Control and is_instance_valid(cursor.control):
+		target = cursor.control
 	if target == null or target.is_queued_for_deletion() or not target.is_visible_in_tree():
 		target = _get_default_focus_control(player_index)
 	if target != null and target.is_visible_in_tree() and emulator.focused_control != target:
 		emulator.focused_control = target
+
+
+# [row (0 weapons, 1 items), index] of one of the player's gear elements, else [].
+func _trade_place(player_index: int, control) -> Array:
+	if not _trade_alive(control):
+		return []
+	var gear = _get_gear_container(player_index)
+	var rows := [gear.weapons_container._elements, gear.items_container._elements]
+	for i in rows.size():
+		if control.get_parent() == rows[i]:
+			return [i, control.get_index()]
+	return []
+
+
+static func _trade_alive(control) -> bool:
+	return (
+		control is Control
+		and is_instance_valid(control)
+		and control.is_inside_tree()
+		and not control.is_queued_for_deletion()
+	)
 
 
 static func _trade_offers(node: Node, id: String) -> bool:
@@ -329,9 +374,13 @@ func _trade_own(item, from: int):
 	return own if own != null else item
 
 
-# The per-player part of what the shop redoes after a buy.
-func _trade_refresh_player(player_index: int) -> void:
-	_trade_refresh_gear(player_index)
+# The per-player part of what the shop redoes after a buy. received: the receiver's Transfer
+# result ({}: the giver).
+func _trade_refresh_player(player_index: int, received := {}) -> void:
+	if received.empty():
+		_trade_refresh_gear(player_index)
+	else:
+		_trade_add_gear(player_index, received)
 	_update_stats(player_index)
 	# Prices and what can be bought follow the items and the free weapon slots.
 	_get_shop_items_container(player_index).reload_shop_items()
@@ -342,6 +391,57 @@ func _trade_refresh_player(player_index: int) -> void:
 	_reroll_discount[player_index] = price[1]
 	set_reroll_button_price(player_index)
 	_refresh_currency_dependent_buttons(player_index)
+	_trade_refresh_popups(player_index)
+
+
+# A popup the gear change left open shows what its buttons offer now: Combine once the player got
+# a twin of its weapon, none once its twin was combined away. The meca choice stays as it is. A
+# cursor on a button that went goes to Cancel, as on the game's focus(). Every open give list
+# marks again who would combine the item.
+func _trade_refresh_popups(player_index: int) -> void:
+	for p in RunData.get_player_count():
+		var popup = _get_item_popup(p)
+		if not popup._focused or not popup.has_method("trade_relabel"):
+			continue
+		if popup._trade_choosing:
+			popup.trade_relabel()
+			continue
+		if p != player_index or popup.is_choosing_meca_upgrade():
+			continue
+		popup._update_button_visibilities()
+		var emulator = Utils.get_focus_emulator(p, self)
+		var cursor = emulator.focused_control if emulator != null else null
+		if not is_instance_valid(cursor) or not popup.is_a_parent_of(cursor):
+			continue
+		if not cursor.is_visible_in_tree() and popup._cancel_button.is_visible_in_tree():
+			emulator.focused_control = popup._cancel_button
+
+
+# The receiver's rows get the new element as a buy adds one (BaseShop.buy_item / buy_weapon):
+# the others stay, and with them a cursor on one or a popup opened from one (an open trade list).
+# A weapon combined into the new tier goes; holding the player's cursor or popup, the rows are
+# built again instead (the popup closes, the cursor keeps its place).
+func _trade_add_gear(player_index: int, received: Dictionary) -> void:
+	var gear = _get_gear_container(player_index)
+	if not received.weapon:
+		gear.items_container._elements.add_element(received.received, true)
+		gear._on_weapons_changed()  # an item can bring a weapon slot
+		return
+	var row: Node = gear.weapons_container._elements
+	if received.combined:
+		var partner = _get_weapon_element(row, received.partner)
+		var emulator = Utils.get_focus_emulator(player_index, self)
+		var held: bool = _popup_manager._elements_pressed[player_index] == partner
+		if partner != null and (held or emulator != null and emulator.focused_control == partner):
+			_trade_refresh_gear(player_index)
+			return
+		if partner != null:
+			# Not Inventory.remove_element: it moves the player's cursor onto a neighbour.
+			row.order_of_addition.erase(partner)
+			row.remove_child(partner)
+			partner.queue_free()
+	row.add_element(received.received)
+	gear._on_weapons_changed()
 
 
 # Both gear rows are built again, as the game does after a buy that changed more than one

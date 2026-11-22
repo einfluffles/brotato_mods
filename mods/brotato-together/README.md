@@ -4,7 +4,7 @@ Online co-op for [Brotato](https://store.steampowered.com/app/1942280/Brotato/) 
 networking, in place of Steam Remote Play's video stream. Every player runs the game on their own
 machine, and their own character and menus react at once.
 
-**Status (2026-11-18, protocol 30):** early development. Sessions over Steam with friends work;
+**Status (2026-11-21, protocol 31):** early development. Sessions over Steam with friends work;
 the sessions measured in the implementation notes were played on 2026-11-16. Expect rough edges
 and please report them (see [Reporting problems](#reporting-problems)).
 
@@ -165,7 +165,7 @@ To change it, set a launch option in Steam (right-click *Brotato*, *Properties*,
 
 ## Limitations
 
-As of 2026-11-18 (protocol 30):
+As of 2026-11-21 (protocol 31):
 
 - Not shared with clients yet: the species challenges of Primal Dread (trophy hunter, clever
   girl, egg hunt) and the codex's kill counts.
@@ -232,7 +232,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `bullet_hell_left`, `bullet_hell_top`, `bullet_hell_bottom` | Every visible enemy bullet of a bullet-hell wave is in the snapshot and mirrored (one suite per variant). |
 | `menu_ux` | The wave-failed prompt and its cursor on clients, the change from the battle to the next screen. |
 | `shop_loopback` | The host's real co-op shop and a purchase mirrored on a client with cursor and sounds, the weapons row (Anvil at shop entry, a new weapon slot). |
-| `local_shop` | The own shop panel on a client, decisions applied or refused by the host, locks, the meca upgrade, the reroll's stat text, another mod's decision, the mouse on the item popup, the wheel. |
+| `local_shop` | The own shop panel on a client, decisions applied or refused by the host, locks, the meca upgrade, the reroll's stat text, another mod's decision, the mouse on the item popup, the own popup kept open through a gear change, the wheel. |
 | `local_device` | Which screen drives a client's own input from the level-up panels to the shop, with a host pause across the change. |
 | `pause_input` | Remote button presses, timeouts and pause, menu echo, the own aim setting, who owns the pause menu, absent players. |
 | `live_menu` | The Esc menu over a running online wave, on the host and on a client. |
@@ -251,6 +251,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `battle_start` | A wave's start sending only the run parts a client lacks. |
 | `cursor_key` | The change key of the cursors on the co-op shop. |
 | `upgrades_change` | Change detection of the run state of the level-up / crate panels. |
+| `upgrades_popup` | A remote player's open popup on the host's level-up / crate panels: the lobby popup keeps its focus, a client that leaves takes it off. |
 | `lobby_menu` | The lobby in the game's menus on a fake Steam: title screen, kicking, the Co-op row and slot invite of character selection, the client's popup, the pause menu page. |
 | `network_stalls` | The render delay through stalls, the log lines for gaps, the session's path. |
 | `traffic` | The reliable traffic that the log names. |

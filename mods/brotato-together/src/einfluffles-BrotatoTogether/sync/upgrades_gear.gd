@@ -1,6 +1,7 @@
 extends Reference
 # The gear page and the crate weapons list of a puppet's level-up / crate panels, rebuilt when
-# the host's run state changes (static helpers of sync/upgrades_sync.gd).
+# the host's run state changes (static helpers of sync/upgrades_sync.gd). The shop's gear rows
+# use sync_gear too (sync/shop_sync.gd).
 
 
 # p -> whether its gear ("g<p>" part) changed, for each player whose parts changed. store: the
@@ -84,17 +85,7 @@ static func rebuild_gear(ui: Node, container: Node, p: int, items := true) -> Ar
 		cursor = _gear_place(container, ui._popup_manager._elements_pressed[p])
 	var resume := _gear_place(container, container._resume_inventory_control_focus)
 	var gear = container.player_gear_container
-	var weapons: Array = RunData.get_player_weapons(p)
-	if not sync_inventory(gear.weapons_container._elements, weapons, false, false):
-		_release(emulator, gear.weapons_container._elements)
-		gear.weapons_container.set_data("", Category.WEAPON, weapons)
-	gear._on_weapons_changed()  # what set_weapons_data does after it
-	# The items' sort inherits their row's neighbours: one may name a weapon element freed above.
-	_drop_dead_rows(gear)
-	var all_items: Array = RunData.get_player_items(p)
-	if items and not sync_inventory(gear.items_container._elements, all_items, true, true):
-		_release(emulator, gear.items_container._elements)
-		gear.set_items_data(all_items)
+	sync_gear(gear, emulator, RunData.get_player_weapons(p), RunData.get_player_items(p), items)
 	if on_gear and _gear_place(container, emulator.focused_control).empty():
 		emulator.focused_control = null  # its element was freed
 	var resume_control = container._resume_inventory_control_focus
@@ -104,9 +95,25 @@ static func rebuild_gear(ui: Node, container: Node, p: int, items := true) -> Ar
 	return cursor
 
 
+# A PlayerGearContainer's rows after a run change, in place where sync_inventory applies, else
+# the game's set_data (set_weapons_data / set_items_data) with the cursor taken off the row first.
+# The level-up panels (rebuild_gear) and the shop (ShopSync._refresh_gear) share it. with_items
+# false: the weapons only. The caller handles a cursor or popup on an element freed here.
+static func sync_gear(gear: Node, emulator, weapons: Array, items: Array, with_items: bool) -> void:
+	if not sync_inventory(gear.weapons_container._elements, weapons, false, false):
+		_release(emulator, gear.weapons_container._elements)
+		gear.weapons_container.set_data("", Category.WEAPON, weapons)
+	gear._on_weapons_changed()  # what set_weapons_data does after it
+	# The items' sort inherits their row's neighbours: one may name a weapon element freed above.
+	_drop_dead_rows(gear)
+	if with_items and not sync_inventory(gear.items_container._elements, items, true, true):
+		_release(emulator, gear.items_container._elements)
+		gear.set_items_data(items)
+
+
 # Takes the cursor off inventory before the game frees all of its elements.
-static func _release(emulator: Node, inventory: Node) -> void:
-	if is_child_of(emulator.focused_control, inventory):
+static func _release(emulator, inventory: Node) -> void:
+	if emulator != null and is_child_of(emulator.focused_control, inventory):
 		emulator.focused_control = null
 
 
@@ -133,13 +140,13 @@ static func sync_inventory(inventory: Node, elements: Array, reverse: bool, firs
 			entries.append([element, 1])
 	var spare := {}  # what a node shows -> the nodes showing it, in child order
 	for node in inventory.get_children():
-		var key := _shows(node.item)
+		var key := shows(node.item)
 		if not spare.has(key):
 			spare[key] = []
 		spare[key].append(node)
 	var nodes := []
 	for entry in entries:
-		var same: Array = spare.get(_shows(entry[0]), [])
+		var same: Array = spare.get(shows(entry[0]), [])
 		nodes.append(same.pop_front() if not same.empty() else null)
 	var left := []
 	for same in spare.values():
@@ -151,7 +158,9 @@ static func sync_inventory(inventory: Node, elements: Array, reverse: bool, firs
 			nodes[i].set_element(item)
 		elif nodes[i] == null:
 			nodes[i] = inventory._spawn_element(item, inventory.display_banned)
-		nodes[i].item = item
+		else:
+			nodes[i].item = item
+			_set_marks(nodes[i])
 		_set_count(nodes[i], entries[i][1])
 	for node in left:
 		inventory.remove_child(node)
@@ -173,7 +182,7 @@ static func sync_inventory(inventory: Node, elements: Array, reverse: bool, firs
 
 
 # What an InventoryElement shows of item (InventoryElement.set_element).
-static func _shows(item) -> String:
+static func shows(item) -> String:
 	var icon = item.get_icon()
 	return "%s %s %s %s %s %s" % [
 		item.my_id,
@@ -183,6 +192,15 @@ static func _shows(item) -> String:
 		item.get("is_mutant"),
 		icon.get_instance_id() if icon != null else 0,
 	]
+
+
+# What set_element shows from the player's run rather than from the item, on a kept element:
+# banned, and recently mutated (the shop's items row shows that).
+static func _set_marks(node: Node) -> void:
+	node.update_banned_item()
+	var mutated = node.get("_recently_mutated")
+	if mutated != null:
+		mutated.visible = node.display_recently_mutated and node._is_recently_mutated()
 
 
 # As add_element_with_count leaves it.

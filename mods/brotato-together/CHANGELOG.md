@@ -10,6 +10,34 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Archaeologist dig sites on a client are where the host has them, and you see them dug: the
+  dirt fills as the host's progress, with the particles, the squash when someone steps in and the
+  digging sound. Before, a client had its own dig sites in other places that never moved.
+- Co-op shop on a client: a menu you have open on your own item or weapon (its buttons, or the
+  player list of brotato:trade) stays open when your gear changes meanwhile, for example when
+  another player trades you something. Before, it closed and threw your cursor out. It only closes
+  when the item it is about is gone. A purchase of yours that the host confirms late no longer
+  pulls your cursor out of an open menu either.
+- Co-op shop on a client: late in a run, buying, combining or recycling (by anyone) no longer
+  makes the shop hitch. Only what changed in that player's gear is redrawn, not all of it.
+- Co-op shop on a client: a weapon's open menu shows Combine as soon as a second copy of that
+  weapon arrives (bought or traded to you), and drops it when the copy goes. Before, you had to
+  close and reopen the menu.
+- Co-op shop and level-up panels: everyone sees the menus the other players have open. A
+  weapon's popup with Combine, Recycle and Upgrade, the meca upgrade's two options and
+  brotato:trade's player lists now show on every screen, not only on the screen of the player who
+  opened them.
+- Online lobby menu opened over the shop or the level-up panels on a client: it keeps its
+  selected button when another player moves or opens a menu. Before, accept did nothing and the
+  next arrow jumped to the first button.
+- The host's log no longer fills with "run state changed without a change of its fingerprint"
+  warnings during the level-up panels when a player has Bot-O-Mine (its pet keeps laying mines
+  there). The new mine count now reaches the clients at once instead of up to a second later.
+- Less data goes to the clients in the shop and on the level-up panels late in a run: a lock or a
+  changed item counter (such as Bot-O-Mine's mines) no longer resends the run's common data, about
+  1 to 2.5 KB less each.
+- Needs everybody on this update (protocol 31).
+
 ## 2026-11-21 21:08 UTC
 
 - A cursed Molotov no longer fills the game's log with `Node not found` errors on every throw.

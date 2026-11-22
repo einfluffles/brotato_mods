@@ -870,7 +870,7 @@ func _container_for(node: Node) -> Node:
 		return _main.get("_births_container")
 	if Puddles.is_puddle(node):
 		return Puddles.container(_main, node)
-	if node is Hole:
+	if node is Hole or node is DigSite:
 		return _main.get("_gpe_container")
 	if node.get_script() != null and node.get_script().resource_path.begins_with("res://items/"):
 		return _main.get("_materials_container")

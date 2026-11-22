@@ -15,6 +15,10 @@ const RunStateCodec := preload(
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
+const GearView := preload("res://mods-unpacked/einfluffles-TogetherTests/gear_view.gd")
+const FocusTargets := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
+)
 const PEER := 4545
 const PISTOL := "weapon_pistol_1"
 const CRATE := "consumable_item_box"
@@ -92,6 +96,7 @@ func _small_run():
 	_test_safety_net()
 	_test_peer_ready()
 	_test_lobby_left()
+	yield(_test_client_popup(), "completed")
 
 
 func _test_idle() -> void:
@@ -119,11 +124,49 @@ func _test_views() -> void:
 	_expect_view("page")
 	_sync.host_apply_focus(_ui, 1, 0, [])
 	_expect_view("page back (UPGRADE_FOCUS)")
+	_test_popup(other)
 	_sync._seq_keys[0] = ""  # the next check bumps player 0's revision, nothing else changes
 	var seq: int = _sync._seqs[0]
 	_expect_view("panel revision")
 	_t._check(_sync._seqs[0] == seq + 1, "upgrades change: the revision did move")
 	_expect_run("gold (RunData.add_gold)", funcref(self, "_add_gold"))
+	_expect_run("a tracked value (RunData.add_tracked_value)", funcref(self, "_add_tracked"))
+	_expect_run("a mine laid by Bot-O-Mine (a pair's second value)", funcref(self, "_add_mine"))
+
+
+# The battle goes on under the panels: an item's counter moves the fingerprint, no miss.
+func _add_tracked() -> void:
+	RunData.add_tracked_value(0, Keys.generate_hash("item_piggy_bank"), 1)
+
+
+func _add_mine() -> void:
+	RunData.add_tracked_value(1, Keys.item_bot_o_mine_hash, 1, 1)  # as bot_o_mine.gd does
+
+
+# Player 1's client has its crate weapon popup open (UPGRADE_FOCUS popup): the host's copy shows
+# it, and the panels' state carries it for the other clients.
+func _test_popup(other) -> void:
+	var element = other.crate_weapons_container._elements.get_child(0)
+	var popup = other.item_popup
+	var view := [FocusTargets.describe(element, _ui, 1), element.item.my_id, 0, [null, null]]
+	var cancel := FocusTargets.describe(popup._cancel_button, _ui, 1)
+	_sync.host_apply_focus(_ui, 1, 0, cancel, view)
+	_t._check(
+		(
+			popup._focused
+			and _ui._popup_manager._elements_pressed[1] == element
+			and other.focus_emulator.focused_control == popup._cancel_button
+		),
+		"upgrades change: a remote player's crate weapon popup opens on the host's copy"
+	)
+	_t._check(
+		var2str(_sync._popups(_ui)[1]) == var2str(view) and _sync._popups(_ui)[0].empty(),
+		"upgrades change: the panels' state names it"
+	)
+	_expect_view("open popup (UPGRADE_FOCUS)")
+	_sync.host_apply_focus(_ui, 1, 0, FocusTargets.describe(element, _ui, 1), [])
+	_t._check(not popup._focused, "upgrades change: and closes with the client's")
+	_expect_view("closed popup (UPGRADE_FOCUS)")
 
 
 # Player 1's crate weapon popup, by intent: combine, recycle, meca upgrade (DLC data only).
@@ -340,6 +383,61 @@ func _test_lobby_left() -> void:
 		sent.size() == 1 and _run_of(sent) == _run,
 		"upgrades change: after lobby_left the next check serializes the same run again"
 	)
+
+
+# A client's copy of the panels (a new battle scene, used as _client_replay uses it) gets player
+# 1's open crate weapon popup from the state: on new panels the rebuilt crate weapons close it
+# first, then it opens on the element at its place; later states open and close it alone.
+func _test_client_popup():
+	yield(_blank_scene(), "completed")
+	_build_run(2, 0)
+	RunData.get_player_effects(1)[Keys.effect_crate_give_weapon_hash] = 1
+	RunData.add_weapon(_t._find_by_id(ItemService.weapons, PISTOL), 1)
+	yield(_enter_battle(), "completed")
+	_show([[_crate(0)], [_crate(1)]], [[], []])
+	yield(_t.get_tree(), "idle_frame")
+	var other = _ui._get_player_container(1)
+	var row: Node = other.crate_weapons_container._elements
+	var element = null
+	for child in row.get_children():
+		if element == null and not child.is_queued_for_deletion():
+			element = child
+	if element == null:
+		_t._check(false, "upgrades change: (player 1 has crate weapons)")
+		return
+	var id: String = element.item.my_id
+	var popup = other.item_popup
+	var view := [FocusTargets.describe(element, _ui, 1), id, 0, [null, null]]
+	_sync.host_apply_focus(_ui, 1, 0, FocusTargets.describe(popup._cancel_button, _ui, 1), view)
+	_t._check(popup._focused, "upgrades change: (player 1's crate weapon popup open on the host)")
+	var opened = bytes2var(var2bytes(_sync.state_body(StateStream.UPGRADES)))
+	_sync.host_apply_focus(_ui, 1, 0, view[0], [])
+	var closed = bytes2var(var2bytes(_sync.state_body(StateStream.UPGRADES)))
+	var client: Node = _together.battle_client
+	var saved_you: int = client._you
+	var saved_store = _sync.run_store
+	client._you = -1
+	_sync.run_store = RunParts.Store.new()
+	_sync._guarded_ui = null
+	_sync._reported_popups = {}  # the host's, which would close the copy every frame here
+	for body in [opened, closed, opened, closed]:
+		yield(_client_apply(body, 2), "completed")
+		var open: bool = body == opened
+		var pressed = _ui._popup_manager._elements_pressed[1]
+		var shown: bool = (
+			popup._focused
+			and is_instance_valid(pressed)
+			and pressed.get_parent() == row
+			and pressed.item.my_id == id
+			and popup._item_data.my_id == id
+		)
+		_t._check(
+			shown == open and (open or not popup._focused),
+			"upgrades change, client: the copy %s with the host's state" % ["opens" if open else "closes"]
+		)
+	_sync._on_battle_left()
+	_sync.run_store = saved_store
+	client._you = saved_you
 
 
 func _late_run(players: int):
@@ -593,7 +691,7 @@ func _client_apply(body: Dictionary, players: int):
 	var views := []
 	for p in players:
 		var container = _ui._get_player_container(p)
-		views.append(_gear_view(container))
+		views.append(GearView.ids(container))
 		container.primary_stats_container.general_stats[0]._value.text = STATS_MARK
 	var made: int = _sync.run_store.items_made
 	var report: Node = _together.client_report
@@ -618,7 +716,7 @@ func _client_apply(body: Dictionary, players: int):
 	}
 	for p in players:
 		var container = _ui._get_player_container(p)
-		var view := _gear_view(container)
+		var view := GearView.ids(container)
 		if view[1] != views[p][1]:
 			done.gear.append(p)
 		for node in view[0]:
@@ -626,43 +724,9 @@ func _client_apply(body: Dictionary, players: int):
 				done.instanced += 1
 		if container.primary_stats_container.general_stats[0]._value.text != STATS_MARK:
 			done.stats.append(p)
-		done.shows_run = done.shows_run and _shows_run(container, p)
+		done.shows_run = done.shows_run and GearView.shows_run(container, p)
 	yield(_t.get_tree(), "idle_frame")
 	return done
-
-
-# [instance ids of the live elements of a panel's gear page, of their items] (weapons, then
-# items).
-static func _gear_view(container: Node) -> Array:
-	var nodes := []
-	var items := []
-	var gear = container.player_gear_container
-	for inventory in [gear.weapons_container._elements, gear.items_container._elements]:
-		for element in inventory.get_children():
-			if not element.is_queued_for_deletion():
-				nodes.append(element.get_instance_id())
-				items.append(element.item.get_instance_id())
-	return [nodes, items]
-
-
-# The gear page shows p's own weapon and item objects, each item counted once.
-static func _shows_run(container: Node, p: int) -> bool:
-	var gear = container.player_gear_container
-	var weapons: Array = RunData.get_player_weapons(p)
-	var items: Array = RunData.get_player_items(p)
-	var shown := 0
-	for element in gear.weapons_container._elements.get_children():
-		if not element.item in weapons:
-			return false
-		shown += 1
-	if shown != weapons.size():
-		return false
-	shown = 0
-	for element in gear.items_container._elements.get_children():
-		if not element.item in items:
-			return false
-		shown += element.current_number
-	return shown == items.size()
 
 
 # The panels' state now, as a client gets it (every part, a copy), for the replay; only when
