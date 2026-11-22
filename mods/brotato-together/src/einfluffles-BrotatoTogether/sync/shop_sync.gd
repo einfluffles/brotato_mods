@@ -33,6 +33,9 @@ const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/syn
 const UpgradesGear := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_gear.gd"
 )
+const ClientReport := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
+)
 const PopupView := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/popup_view.gd")
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
@@ -642,6 +645,7 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 	run_changed = run_changed or _applied.empty()
 	if run_changed:
 		RunStateCodec.apply(state)
+	var started := OS.get_ticks_usec()  # "shop panels" (apply has its own mark)
 	local.guard(shop, _client_shop_id)
 	for p in RunData.get_player_count():
 		# No keys for this player (not in the sent run state): everything counts as new.
@@ -677,6 +681,7 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 		local.on_mecas(_list_at(body.get("mecas"), you))
 	else:
 		local.stop("no own panel in the host's state")
+	ClientReport.mark(ClientReport.Mark.SHOP_PANELS, OS.get_ticks_usec() - started)
 
 
 # The per-player part of BaseShop._ready, re-run with the host's values (no RNG anywhere).
@@ -687,6 +692,8 @@ func _refresh_player(
 ) -> void:
 	if changed.gear:
 		_refresh_gear(shop, p)
+	elif changed.data:
+		_refresh_gear(shop, p, false)
 	if changed.data:
 		shop._update_stats(p)
 		shop._get_gold_label(p).update_value(RunData.get_player_gold(p))
@@ -765,7 +772,9 @@ func _apply_locks(shop: Node, locks) -> void:
 # The rows keep every element that shows the same (UpgradesGear.sync_inventory), so a cursor on
 # one stays, and so does the popup opened from one (its buttons, another mod's menu in it). Only
 # when that element is gone does the popup close; the cursor then goes to the element at its place.
-func _refresh_gear(shop: Node, p: int) -> void:
+# items false: only p's other parts changed, its weapons are new objects of the same weapons (the
+# elements and an open popup are pointed at them, as a shop intent names them).
+func _refresh_gear(shop: Node, p: int, items := true) -> void:
 	var gear = shop._get_gear_container(p)
 	var inventories := [gear.weapons_container._elements, gear.items_container._elements]
 	var emulator = Utils.get_focus_emulator(p, shop)
@@ -776,15 +785,13 @@ func _refresh_gear(shop: Node, p: int) -> void:
 	var element = pressed if in_popup else (emulator.focused_control if emulator != null else null)
 	var place := _gear_place(element, inventories)
 	var old_item = element.item if not place.empty() else null
+	var panel = shop._get_coop_player_container(p)
+	var resume := _gear_place(panel._resume_shop_control_focus, inventories)
 	var weapons: Array = RunData.get_player_weapons(p)
-	if not UpgradesGear.sync_inventory(inventories[0], weapons, false, false):
-		_release_cursor(emulator, inventories[0])
-		gear.weapons_container.set_data("", Category.WEAPON, weapons)
-	gear._on_weapons_changed()  # what set_weapons_data does after it
-	var items: Array = RunData.get_player_items(p)
-	if not UpgradesGear.sync_inventory(inventories[1], items, true, true):
-		_release_cursor(emulator, inventories[1])
-		gear.set_items_data(items)
+	UpgradesGear.sync_gear(gear, emulator, weapons, RunData.get_player_items(p), items)
+	if not resume.empty() and _gear_place(panel._resume_shop_control_focus, inventories).empty():
+		# The game's way back from the stats page names no freed element.
+		panel._resume_shop_control_focus = _live_at(inventories[resume[0]], resume[1])
 	if place.empty():
 		return
 	var now := _gear_place(element, inventories)
@@ -793,6 +800,7 @@ func _refresh_gear(shop: Node, p: int) -> void:
 			# Cancel puts the cursor back on the element holding this object.
 			popup._item_data = element.item
 			local.meca.retarget(old_item, element.item)
+			_refresh_popup_buttons(popup, emulator)
 		elif manager._elements_focused[p] == element:
 			popup.display_element(element)  # what focusing it shows
 		return
@@ -800,15 +808,8 @@ func _refresh_gear(shop: Node, p: int) -> void:
 		# The view half of the game's "close the popup" handler: its item is gone.
 		manager.reset_focus(p)
 		shop._get_coop_player_container(p).on_hide_focused_inventory_popup()
-	var inventory: Node = inventories[place[0]]
-	var live := []
-	for child in inventory.get_children():
-		if not child.is_queued_for_deletion():
-			live.append(child)
-	var target: Control = null
-	if not live.empty():
-		target = live[int(min(place[1], live.size() - 1))]
-	elif local.active and p == local.you:
+	var target: Control = _live_at(inventories[place[0]], place[1])
+	if target == null and local.active and p == local.you:
 		target = shop._get_default_focus_control(p)
 	if emulator != null and target != null and target.is_visible_in_tree():
 		if emulator.focused_control == target:
@@ -829,10 +830,28 @@ static func _gear_place(control, inventories: Array) -> Array:
 	return []
 
 
-# Before the game frees every element of inventory.
-static func _release_cursor(emulator: Node, inventory: Node) -> void:
-	if emulator != null and UpgradesGear.is_child_of(emulator.focused_control, inventory):
-		emulator.focused_control = null
+# A popup kept open on its weapon shows the buttons for the run now (Combine once a second copy
+# came, the recycle value). Not while it lists meca effects or another mod's menu (brotato:trade's
+# player list, PopupView's together_menu): the game's refresh would close those. A cursor on a
+# button that is hidden now goes to Cancel.
+static func _refresh_popup_buttons(popup: Node, emulator) -> void:
+	if popup.is_choosing_meca_upgrade():
+		return
+	if popup.has_method("together_menu") and popup.together_menu() != null:
+		return
+	popup._update_button_visibilities()
+	var control = emulator.focused_control if emulator != null else null
+	if is_instance_valid(control) and popup.is_a_parent_of(control) and not control.visible:
+		emulator.focused_control = popup._cancel_button
+
+
+# The live element at index in inventory (the last one if there are fewer), null when it has none.
+static func _live_at(inventory: Node, index: int):
+	var live := []
+	for child in inventory.get_children():
+		if not child.is_queued_for_deletion():
+			live.append(child)
+	return live[int(min(index, live.size() - 1))] if not live.empty() else null
 
 
 # View state that is not this client's own: the other players' pages, and the "endless" toggle.

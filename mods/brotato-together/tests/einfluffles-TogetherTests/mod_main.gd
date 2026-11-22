@@ -52,6 +52,9 @@ const BulletHellTests := preload(
 const ShopLoopbackTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_loopback_tests.gd"
 )
+const ShopGearChangeTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/shop_gear_change_tests.gd"
+)
 const ShopChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_change_tests.gd"
 )
@@ -149,6 +152,7 @@ const SUITES := [
 	"selection",
 	"state_stream",
 	"shop_change",
+	"shop_gear_change",
 	"run_parts",
 	"battle_start",
 	"cursor_key",
@@ -435,6 +439,12 @@ func _suite_state_stream(together: Node):
 func _suite_shop_change(together: Node):
 	coop_run(2)
 	_suite = ShopChangeTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_shop_gear_change(together: Node):
+	coop_run(2)
+	_suite = ShopGearChangeTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

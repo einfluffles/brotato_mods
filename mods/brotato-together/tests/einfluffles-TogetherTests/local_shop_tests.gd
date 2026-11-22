@@ -130,6 +130,7 @@ func _host_part(together: Node):
 	_capture("remote_changed")  # only the remote player's part differs from "start"
 	RunData.add_weapon(pistol, 0)
 	_capture("own_gear_changed")
+	_gear.host_popup(self)
 	_input.devices.erase(_t.FAKE_PEER)
 
 
@@ -466,6 +467,7 @@ func _client_part(together: Node):
 	_mods.client(self, shop)
 	yield(_client_keyboard_mouse(emulator), "completed")
 	yield(_popup_views.client(self, shop, focus_sync), "completed")
+	yield(_gear.client_popup(self, shop), "completed")
 
 	var local_panel: Node = local.local_panel
 	local.set_paused(true)
