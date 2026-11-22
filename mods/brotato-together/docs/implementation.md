@@ -1298,6 +1298,10 @@ and while choosing there is no cancel.
   (`MecaChoice.show_roll`). A client's gear can show the weapon objects of an older run state
   (gear elements are only rebuilt when the gear changed), so an entry matches by slot and id when
   the popup's object is no longer the player's.
+- **Log.** The game's `coop_item_popup.tscn` connects the two option buttons' signals to
+  `_on_ButtonWithIcon_*` on the popup, which has no such methods: every focus, hover or press of
+  an option logged "Method not found". `extensions/ui/coop_item_popup.gd` defines them empty (the
+  buttons' own scene does the work), since the choice now shows on every machine.
 ### Open popups
 
 `sync/popup_view.gd`, used by the shop and the level-up / crate panels. A player's open menu is
