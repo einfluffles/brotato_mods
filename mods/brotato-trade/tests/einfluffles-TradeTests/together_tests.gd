@@ -340,15 +340,16 @@ func _client():
 	_t.check(_t.ledger() == before, "and still nothing changed here")
 
 	# A reroll changes the own player's data (gold) but not its gear: the client's run keeps its
-	# item objects but gets fresh weapons, the gear rows keep their elements and what those show.
+	# item objects but gets fresh weapons, the gear rows keep their elements and point the weapon
+	# elements at the fresh weapons (ShopSync._refresh_gear).
 	_receive(_states.rerolled)
 	yield(_t.frames(2), "completed")
 	var shown = _element(REMOTE, own).item
 	var shown_weapon = _weapon_element(REMOTE, 1).item
 	_t.check(
 		RunData.get_player_items_ref(REMOTE).has(shown)
-		and not RunData.get_player_weapons_ref(REMOTE).has(shown_weapon),
-		"(after a reroll the weapon row shows an object the run has no more, the items not)"
+		and RunData.get_player_weapons_ref(REMOTE).has(shown_weapon),
+		"(after a reroll the gear rows show the run's own item and weapon objects)"
 	)
 	_t.check(_shop.trade_receivers(shown, REMOTE) == [0], "the old element still offers Trade")
 	_t.check(_shop.trade_receivers(shown_weapon, REMOTE) == [0], "an old weapon element too")
