@@ -11,8 +11,9 @@ upload; three of them are marked where the upload may have differed.
 ## Unreleased
 
 - Magma Boots on a client: another player's trail now shows all of its fire puddles. Before, once
-  the first puddles had burnt out, only one at a time flashed up for a moment. Other acid, petrol
-  and fire puddles that came after earlier ones had gone could stay invisible the same way.
+  the first puddles had burnt out, only one at a time flashed up for a moment.
+- Acid and petrol puddles on a client no longer go invisible. Before, a puddle that came after
+  earlier ones had gone could stay invisible while it still hurt or slowed your character.
 
 ## 2026-11-22 17:57 UTC
 
