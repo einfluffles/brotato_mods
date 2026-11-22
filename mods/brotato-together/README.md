@@ -243,7 +243,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `cleanup_client` | Object counts over one wave replayed several times as a client, with the shop in between. |
 | `cleanup_misc` | Battle starts and shop states that arrive together, and what a late endless wave costs. |
 | `feedback` | Explosions, floating texts, stat icons, picked-up crates, tardigrade charges, the end of the wave, the whip's and flail's lash. |
-| `hit_numbers` | Damage and heal numbers on a client: 80 hits in one tick, a hit in an enemy's spawn tick, a hit on a pet, a hit and a heal in one snapshot, a lost snapshot, burn ticks and hits on a unit with an aim shape. |
+| `hit_numbers` | Damage and heal numbers on a client: 80 hits in one tick, a flood of hits that fills the host's queue, a hit in an enemy's spawn tick, a hit on a pet, a hit and a heal in one snapshot, a lost snapshot, burn ticks and hits on a unit with an aim shape. |
 | `looks` | Charmed, burning, cursed, boosted, meca and mutant looks, puddles, projectile angles. |
 | `damage` | The damage meter: counting, the row in the wave, the pages, the switch. |
 | `damage_run` | The damage meter in real waves: the total against the health lost with Giant Belt, Scared Sausage and Greek Fire, the end of the wave before its panels, the run stats over waves, retries and new runs. |

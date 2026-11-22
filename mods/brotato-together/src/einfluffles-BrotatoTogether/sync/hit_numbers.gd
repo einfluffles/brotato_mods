@@ -4,7 +4,8 @@ extends Reference
 #   a seq (u16 per battle). A number waits up to MAX_DELAY snapshots for room under the event cap
 #   and goes out in COPIES snapshots, so a lost snapshot loses none (at most MAX_COPIES second
 #   copies per snapshot). select_events ranks it: crits and kills over other hits, second copies
-#   last.
+#   last. Numbers waiting for their first copy are capped per kind (MAX_PENDING, MAX_FEEDBACK), so
+#   a flood of plain hits never keeps out a player's number, a heal, a crit or a kill.
 # - Client: a seq it already has is dropped (fresh), the rest is shown through the game's own
 #   handlers.
 # One instance per battle on each side.
@@ -14,7 +15,14 @@ const HITBOX_SCENE := "res://overlap/hitbox.tscn"
 const MAX_DELAY := 3  # snapshots (100 ms) a number may wait for room, its second copy included
 const COPIES := 2
 const MAX_COPIES := 16  # second copies per snapshot: at most 144 B more in a big fight
-const MAX_PENDING := 256  # numbers waiting on the host (5 snapshots full of them); more are dropped
+# Numbers waiting for their first copy, of each kind: plain enemy hits, key enemy hits (crits,
+# kills, ...), player numbers and heals (their rate is bounded by the game: i-frames, 4 players).
+# More of a kind are dropped. Numbers already sent once wait only for their second copy and do
+# not count: they leave the queue within MAX_DELAY + 1 snapshots of being first offered, so at most
+# 4 snapshots' worth of selected numbers (4 * BattleHost.MAX_EVENTS = 192) are among them. Hard
+# bound of the queue: 256 + 256 + 64 + 192 = 768 entries.
+const MAX_PENDING := 256  # per kind of enemy number
+const MAX_FEEDBACK := 64
 const SEEN := 1024  # seqs the client remembers: 16 snapshots full of numbers
 # select_events: lower ranks are kept first.
 const RANK_STATE := 0
@@ -27,7 +35,9 @@ const RANK_COPY := 6  # an enemy number's second copy
 const RANK_STRIDE := 1 << 20
 
 var _seq := 0  # the next number's
-var _pending := []  # [event with its rank last, snapshot first offered in (-1: none), copies sent]
+# [event with its rank last, snapshot first offered in (-1: none), copies sent, rank when added]
+var _pending := []
+var _waiting := [0, 0, 0, 0, 0]  # by rank when added: entries not sent yet
 var _by_seq := {}  # seq -> its _pending entry
 var _seen := {}  # seq -> true
 var _ring := PoolIntArray()  # the seqs in _seen, oldest at _ring_at
@@ -45,6 +55,15 @@ func _init() -> void:
 func damage(
 	unit: Node, target: int, value: int, knockback: Vector2, flags: int, hit_type: int, args
 ) -> void:
+	var rank := RANK_FEEDBACK if target < 0 else RANK_HIT
+	if target >= 0 and (
+		flags & (Snapshot.DAMAGE_CRIT | Snapshot.DAMAGE_ONE_SHOT)
+		or hit_type != HitType.NORMAL
+		or unit.current_stats.health <= 0  # a kill: take_damage left it at 0
+	):
+		rank = RANK_KEY_HIT
+	if not _has_room(rank):
+		return
 	var scale := 1.0
 	var from = null
 	if args != null:
@@ -53,27 +72,24 @@ func damage(
 		# Where the number and the hit effect go on a unit with an aim shape (bosses, dinosaurs).
 		if hitbox != null and hitbox.is_inside_tree() and unit.get("aim_shape") != null:
 			from = hitbox.global_position
-	var rank := RANK_FEEDBACK if target < 0 else RANK_HIT
-	if target >= 0 and (
-		flags & (Snapshot.DAMAGE_CRIT | Snapshot.DAMAGE_ONE_SHOT)
-		or hit_type != HitType.NORMAL
-		or unit.current_stats.health <= 0  # a kill: take_damage left it at 0
-	):
-		rank = RANK_KEY_HIT
 	var event := Snapshot.damage_event(target, value, knockback, flags, hit_type, _seq, scale, from)
 	_add(event + [rank])
 
 
 # Host, from Player.healed (FloatingTextManager._on_player_healed shows "+value").
 func heal(value: int, player_index: int) -> void:
-	if value > 0:
+	if value > 0 and _has_room(RANK_FEEDBACK):
 		_add([Snapshot.EVENT_HEAL, player_index, value, _seq, RANK_FEEDBACK])
 
 
+func _has_room(rank: int) -> bool:
+	return _waiting[rank] < (MAX_FEEDBACK if rank == RANK_FEEDBACK else MAX_PENDING)
+
+
 func _add(event: Array) -> void:
-	if _pending.size() >= MAX_PENDING:
-		return
-	var entry := [event, -1, 0]
+	var rank: int = event[-1]
+	_waiting[rank] += 1
+	var entry := [event, -1, 0, rank]
 	_pending.append(entry)
 	_by_seq[_seq] = entry
 	_seq = (_seq + 1) & Snapshot.SEQ_MASK
@@ -90,6 +106,8 @@ func offer(events: Array, snapshot_count: int) -> void:
 			entry[1] = snapshot_count
 		if entry[2] >= COPIES or snapshot_count - entry[1] > MAX_DELAY:
 			_by_seq.erase(Snapshot.number_seq(event, -1))
+			if entry[2] == 0:
+				_waiting[entry[3]] -= 1
 			continue
 		kept.append(entry)
 		if entry[2] > 0:
@@ -107,6 +125,8 @@ func sent(selected: Array) -> void:
 	for event in selected:
 		var entry = _by_seq.get(Snapshot.number_seq(event, -1))
 		if entry != null:
+			if entry[2] == 0:
+				_waiting[entry[3]] -= 1
 			entry[2] += 1
 
 

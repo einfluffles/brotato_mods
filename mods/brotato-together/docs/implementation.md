@@ -860,12 +860,22 @@ enemies) used to lose most of its numbers to the event cap, and a lost snapshot 
   snapshots, 100 ms, for room under the cap and goes out in two snapshots, the second copy in a
   later one than the first, so a lost snapshot loses none. At most `MAX_COPIES` (16) second copies
   go into one snapshot. Numbers are offered oldest first, so their seqs ascend and travel as a
-  varint difference to the number before (mostly 1 B). More than 256 waiting: new ones are dropped.
+  varint difference to the number before (mostly 1 B).
+- **Queue cap.** Numbers waiting for their first copy are capped per kind: 256 plain enemy hits
+  (`MAX_PENDING`), 256 crits, kills and the like, 64 player numbers and heals (`MAX_FEEDBACK`;
+  i-frames and 4 players bound their rate). More of a kind are dropped before they are ranked, so
+  a flood of hits (400 burning enemies and explosions) keeps out no player's "-N", heal, crit or
+  kill. A number already sent once waits only for its second copy and does not count: it leaves
+  the queue within 4 snapshots of being first offered, and at most 48 numbers go out a snapshot,
+  so the queue holds at most 256 + 256 + 64 + 4 * 48 = 768 entries. The check comes before the
+  event is built.
 - **Rank** (`select_events`): crits, kills (health 0 after the hit), one-shots and gold hits go
   before other enemy hits. The second copy of an enemy number comes after everything else, a
   player number's second copy at the crits' rank. So an 80-hit tick sends its crits and kills with
-  the first snapshot and all of its numbers within 4 snapshots (47, 47, 17, 17 numbers a snapshot);
-  only the first 32 get their second copy in time.
+  the first snapshot and all of its numbers within 4 snapshots. In suite `hit_numbers` (room for
+  47 numbers a snapshot, an enemy's spawn-tick hit in the second) the 80 go out as 47, 46, 16 and
+  16 numbers a snapshot: the first copies in the first two, then 13, 16 and 16 second copies, so
+  45 of the 80 get their second copy in time.
 - **Client.** `fresh` drops a seq it already queued (it remembers the last 1024), before the event
   is queued. A number fires at the time of the snapshot it came in, so one that waited or whose
   first copy was lost shows up to 100 ms late.

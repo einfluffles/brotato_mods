@@ -1,6 +1,7 @@
 extends Reference
 # Suite hit_numbers: damage and heal numbers on a client (sync/hit_numbers.gd). The wire format,
-# the host's queue (carried over, two copies) and the client's dedupe; then a host battle with a
+# the host's queue (carried over, two copies, a flood of hits) and the client's dedupe; then a host
+# battle with a
 # burst of 80 hits in one tick, a hit in an enemy's spawn tick, a hit on a pet, a hit and a heal on
 # a player in one snapshot, a hit in a snapshot the client never gets and hits with an effect
 # scale and a hitbox position, replayed on a client.
@@ -29,14 +30,24 @@ const AIMED_HIT := 888  # from a hitbox beside a unit with an aim shape, effect 
 const BURN_HIT := 999  # a burn tick: no hitbox, effect scale 0.1
 const SCALED_AT := 8
 const HITBOX_OFFSET := Vector2(60, -40)
+const FLOOD := 320  # plain enemy hits in one tick, then FLOOD_RATE before each snapshot
+const FLOOD_RATE := 80
+const FLOOD_KEY_AT := 3  # the snapshot before which a player hit, a heal, a crit and a kill come
 
 var t: Node
+
+
+# What HitNumbers.damage reads of a unit.
+class FakeUnit:
+	extends Node
+	var current_stats := {"health": 10}
 
 
 func run(test_mod: Node, mod: Node):
 	t = test_mod
 	_test_wire()
 	_test_queue()
+	_test_flood()
 	_test_dedupe()
 	var saved: Dictionary = ProgressData.settings.duplicate(true)
 	ProgressData.settings.damage_display = true
@@ -136,12 +147,80 @@ func _test_queue() -> void:
 	t._check(numbers.pending() == 0, "host: a number without room is dropped after 100 ms")
 
 
-# `count` numbers at once (heals: ranked and copied like a player's numbers), then snapshots of 8
-# animations and up to 48 events.
+# A flood of plain enemy hits keeps the queue full of them and of numbers waiting for their second
+# copy; a player hit, a heal, a crit and a kill still go out with the next snapshot.
+func _test_flood() -> void:
+	var numbers = HitNumbers.new()
+	var unit := FakeUnit.new()
+	var knock := Vector2.RIGHT
+	var normal: int = HitType.NORMAL
+	for i in FLOOD:
+		numbers.damage(unit, 3, 1000 + i, knock, 0, normal, null)
+	var full := false
+	var key_out := []
+	var most := 0
+	for k in FLOOD_KEY_AT + 6:
+		if k <= FLOOD_KEY_AT + 1:
+			for i in FLOOD_RATE:
+				numbers.damage(unit, 3, 2000 + i, knock, 0, normal, null)
+		if k == FLOOD_KEY_AT:
+			full = numbers._waiting[HitNumbers.RANK_HIT] == HitNumbers.MAX_PENDING
+			numbers.damage(unit, -1, 7, knock, 0, normal, null)
+			numbers.heal(9, 0)
+			numbers.damage(unit, 4, 4242, knock, Snapshot.DAMAGE_CRIT, normal, null)
+			unit.current_stats.health = 0
+			numbers.damage(unit, 5, 4343, knock, 0, normal, null)
+			unit.current_stats.health = 10
+		most = int(max(most, numbers.pending()))
+		var events := []
+		for i in 8:
+			events.append([Snapshot.EVENT_ANIM, i, "idle", 0.0, 1.0])
+		numbers.offer(events, k)
+		var selected := HitNumbers.select_events(events, 48)
+		numbers.sent(selected)
+		if k == FLOOD_KEY_AT:
+			for event in selected:
+				if event[0] == Snapshot.EVENT_HEAL:
+					key_out.append("+%d" % event[2])
+				elif event[0] == Snapshot.EVENT_DAMAGE and (event[1] < 0 or event[2] > 4000):
+					key_out.append(("-%d" if event[1] < 0 else "%d") % event[2])
+	t._check(
+		full and key_out.size() == 4 and "-7" in key_out and "+9" in key_out,
+		(
+			"host: with the queue full of hits, a player hit, a heal, a crit and a kill go out with"
+			+ " the next snapshot (full %s, out %s)" % [full, key_out]
+		)
+	)
+	print("  info: flood queue at most %d entries" % most)
+	for i in 1000:
+		numbers.damage(unit, 3, 1, knock, 0, normal, null)
+		numbers.damage(unit, 4, 1, knock, Snapshot.DAMAGE_CRIT, normal, null)
+		numbers.damage(unit, -1, 1, knock, 0, normal, null)
+		numbers.heal(1, 0)
+	var bound: int = 2 * HitNumbers.MAX_PENDING + HitNumbers.MAX_FEEDBACK + 4 * 48
+	t._check(
+		numbers.pending() <= bound and numbers.pending() >= 2 * HitNumbers.MAX_PENDING,
+		"host: 4000 numbers in one tick, the queue stays bounded (%d of at most %d)"
+		% [numbers.pending(), bound]
+	)
+	for k in range(20, 20 + MAX_DELAY + 2):
+		var events := []
+		numbers.offer(events, k)
+		numbers.sent(HitNumbers.select_events(events, 48))
+	t._check(
+		numbers.pending() == 0 and numbers._waiting == [0, 0, 0, 0, 0],
+		"host: the queue and its counts empty again (%d, %s)" % [numbers.pending(), numbers._waiting]
+	)
+	unit.free()
+
+
+# `count` enemy hits at once, then snapshots of 8 animations and up to 48 events.
 func _queue_run(count: int) -> Dictionary:
 	var numbers = HitNumbers.new()
+	var unit := FakeUnit.new()
 	for i in count:
-		numbers.heal(1 + i, 0)
+		numbers.damage(unit, 3, 1 + i, Vector2.RIGHT, 0, HitType.NORMAL, null)
+	unit.free()
 	var copies := {}  # seq -> snapshots it went out in
 	var most_copies := 0
 	for k in MAX_DELAY + 3:
@@ -153,9 +232,10 @@ func _queue_run(count: int) -> Dictionary:
 		numbers.sent(selected)
 		var second := 0
 		for event in selected:
-			if event[0] == Snapshot.EVENT_HEAL:
-				second += 1 if copies.has(event[3]) else 0
-				copies[event[3]] = copies.get(event[3], []) + [k]
+			if event[0] == Snapshot.EVENT_DAMAGE:
+				var seq: int = event[6]
+				second += 1 if copies.has(seq) else 0
+				copies[seq] = copies.get(seq, []) + [k]
 		most_copies = int(max(most_copies, second))
 	var result := {"sent": copies.size(), "last_first": 0, "first_copy": 99, "twice": 0}
 	for seq in copies:
@@ -323,7 +403,24 @@ func _check_wire(recorded: Array) -> void:
 			missing.append(100 + i)
 		if (is_crit(i) or is_kill(i)) and not 100 + i in sent[BURST_AT]:
 			first_missing.append(100 + i)
-	print("  info: burst numbers per snapshot %s" % [_sizes(sent)])
+	var times := {}  # burst value -> snapshots it went out in
+	var burst := []  # of them per snapshot
+	for k in range(BURST_AT, BURST_AT + MAX_DELAY + 1):
+		var count := 0
+		for value in sent[k]:
+			if value >= 100 and value < 100 + BURST:
+				times[value] = times.get(value, 0) + 1
+				count += 1
+		burst.append(count)
+	var twice := 0
+	for value in times:
+		twice += 1 if times[value] >= 2 else 0
+	print(
+		(
+			"  info: numbers per snapshot %s, of them the burst's %s, %d of %d sent twice"
+			% [_sizes(sent), burst, twice, BURST]
+		)
+	)
 	t._check(
 		missing.empty(),
 		(
@@ -385,13 +482,13 @@ func _check_client(seen: Dictionary) -> void:
 	var missing := []
 	var twice := []
 	for i in BURST:
-		if not seen.texts.has(str(100 + i)):
+		if seen.queued.get(100 + i, 0) == 0:
 			missing.append(100 + i)
 		if seen.queued.get(100 + i, 0) > 1:
 			twice.append(100 + i)
-	var label := "client shows all %d numbers of one tick (missing %s)" % [BURST, missing]
+	var label := "client queues all %d numbers of one tick (missing %s)" % [BURST, missing]
 	t._check(missing.empty(), label)
-	t._check(twice.empty(), "client shows each number once (twice: %s)" % [twice])
+	t._check(twice.empty(), "client queues each number once (twice: %s)" % [twice])
 	t._check(seen.texts.has(str(SPAWN_HIT)), "client shows the hit of an enemy's spawn tick")
 	t._check(
 		not seen.texts.has(str(PET_HIT)),
