@@ -10,6 +10,11 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Player colours stay picked for as long as you are in the lobby: a new run starts with everyone's
+  colour from the run before, also when you join into another slot, and nobody else can take your
+  colour while you have not joined yet. Leaving the lobby drops your colour, and when the host
+  closes the lobby every colour is back to the game's.
+
 ## 2026-11-22 17:57 UTC
 
 - Co-op shop and level-up panels: the weapon or item another player has selected in their gear is
