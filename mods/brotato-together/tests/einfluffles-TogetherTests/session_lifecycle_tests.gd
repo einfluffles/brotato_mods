@@ -160,6 +160,7 @@ func run(t: Node, together: Node) -> void:
 
 	_test_client_leave_restores_own_run(transport)
 	_test_host_leave(transport, input_sync)
+	_test_lobby_colors(transport, input_sync)
 	_test_leave_confirmation(transport)
 	_test_client_handshake(transport, session)
 	_test_host_handshake(transport, session, input_sync)
@@ -260,6 +261,43 @@ func _test_host_leave(transport: Node, input_sync: Node) -> void:
 			_t._check(input_sync.devices.empty(), "pre-run device mapping dropped")
 	CoopService.listening_for_inputs = false
 	CoopService.connected_players.clear()
+	input_sync.devices = {}
+
+
+# Colour picks belong to the player while the lobby lives (an empty slot list between runs keeps
+# them) and are gone once the host closes it.
+func _test_lobby_colors(transport: Node, input_sync: Node) -> void:
+	var device := VirtualDevices.FIRST + 1
+	var keyboard: int = CoopService.KEYBOARD_REMAPPED_DEVICE_ID
+	var host := [keyboard, CoopService.PlayerType.KEYBOARD_AND_MOUSE]
+	var remote := [device, CoopService.PlayerType.GAMEPAD_XBOX]
+	_steam.lobby_members = [LOCAL]
+	transport._on_lobby_created(transport.RESULT_OK, LOBBY)
+	input_sync.devices = {CLIENT: device}
+	CoopService.connected_players = [host, remote]
+	CoopService.bt_apply_colors()
+	var picked: bool = CoopService.bt_cycle_color(0) and CoopService.bt_cycle_color(1)
+	var picks: Array = CoopService.bt_slot_colors.duplicate()
+	CoopService.clear_coop_players()
+	CoopService.connected_players = [remote, host]
+	CoopService.bt_apply_colors()
+	var slots: Array = CoopService.bt_slot_colors
+	_t._check(
+		picked and slots[0] == picks[1] and slots[1] == picks[0],
+		"lobby colours: the next run keeps both picks, in the players' new slots (%s, %s)"
+		% [picks, slots]
+	)
+	CoopService.clear_coop_players()
+	transport.leave_lobby()
+	input_sync.devices = {CLIENT: device}
+	CoopService.connected_players = [host, remote]
+	CoopService.bt_apply_colors()
+	_t._check(
+		CoopService.bt_slot_colors == [0, 1, 2, 3],
+		"lobby colours: gone once the host closed the lobby (%s)" % [CoopService.bt_slot_colors]
+	)
+	CoopService.connected_players.clear()
+	CoopService.bt_apply_colors()
 	input_sync.devices = {}
 
 

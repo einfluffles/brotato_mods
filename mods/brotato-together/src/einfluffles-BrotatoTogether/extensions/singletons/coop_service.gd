@@ -1,6 +1,7 @@
 extends "res://singletons/coop_service.gd"
 # Player colours: the game reads every colour from player_colors[slot], so that array is
-# rewritten whenever the slots or the players' picks from the palette change. Nothing is saved.
+# rewritten whenever the slots or the players' picks from the palette change. In a lobby a pick
+# belongs to the player until the lobby closes, whatever slot that player takes. Nothing is saved.
 
 signal bt_player_colors_changed
 signal bt_input_types_changed(player_index)  # the type that player's key hints show
@@ -27,7 +28,10 @@ var bt_remote_progress = null
 var bt_device_types := {}
 var bt_slot_types := {}
 var bt_own_slot := -1
-var _bt_picks := {}  # remapped device -> picked palette index
+# Host: who plays on a remapped device (InputSync: steam_id_of); null or -1: a local player.
+var bt_players: Object = null
+var _bt_lobby := false  # picks outlive the player's slot (bt_set_lobby)
+var _bt_picks := {}  # player (_bt_player) -> picked palette index
 var _bt_remote := []  # client of a lobby: the host's slot colours (palette indices)
 
 
@@ -114,46 +118,72 @@ func _bt_on_players_updated(_players) -> void:
 	bt_apply_colors()
 
 
+# Open: picks stay while the player is out of a slot (next run). Closed: every pick is gone; the
+# colours on screen stay until the slots change.
+func bt_set_lobby(open: bool) -> void:
+	_bt_lobby = open
+	if not open:
+		_bt_picks.clear()
+
+
+# A player who left the lobby; as on closing, its slot keeps its colour until the slots change.
+func bt_forget_player(steam_id: int) -> void:
+	_bt_picks.erase("steam:%d" % steam_id)
+
+
+func _bt_player(device: int) -> String:
+	var steam_id: int = bt_players.steam_id_of(device) if bt_players != null else -1
+	return "steam:%d" % steam_id if steam_id >= 0 else "device:%d" % device
+
+
 func bt_cycle_color(player_index: int, step := 1) -> bool:
 	_bt_init_colors()
 	if not _bt_remote.empty() or player_index < 0 or player_index >= connected_players.size():
 		return false
+	var player := _bt_player(connected_players[player_index][0])
 	var taken := []
 	for p in connected_players.size():
 		if p != player_index:
 			taken.append(bt_slot_colors[p])
+	for other in _bt_picks:
+		if other != player:
+			taken.append(_bt_picks[other])
 	var index: int = bt_slot_colors[player_index]
 	for _i in bt_palette.size():
 		index = posmod(index + step, bt_palette.size())
 		if not taken.has(index):
 			break
-	if index == bt_slot_colors[player_index]:
+	if index == bt_slot_colors[player_index] or taken.has(index):
 		return false
-	_bt_picks[connected_players[player_index][0]] = index
+	_bt_picks[player] = index
 	bt_apply_colors()
 	return true
 
 
-# Picks of connected players first (in slot order), then each remaining slot gets its default
-# colour if free, else the first free one: no two slots share a colour.
+# Picks of connected players first (in slot order: a later slot with the same pick loses it), then
+# each remaining slot gets its default colour if free and nobody's pick, else the first such one:
+# no two slots share a colour.
 func bt_apply_colors() -> void:
 	_bt_init_colors()
 	var slots := []
 	if not _bt_remote.empty():
 		slots = _bt_remote.duplicate()
 	else:
-		var devices := []
+		var players := []
 		for player in connected_players:
-			devices.append(player[0])
-		for device in _bt_picks.keys():
-			if not devices.has(device):
-				_bt_picks.erase(device)
+			players.append(_bt_player(player[0]))
+		if not _bt_lobby:
+			for player in _bt_picks.keys():
+				if not players.has(player):
+					_bt_picks.erase(player)
 		for p in player_colors.size():
-			var pick = _bt_picks.get(devices[p], -1) if p < devices.size() else -1
+			var pick = _bt_picks.get(players[p], -1) if p < players.size() else -1
 			slots.append(pick if pick >= 0 and not slots.has(pick) else -1)
+		var picked := _bt_picks.values()
 		for p in slots.size():
 			if slots[p] < 0:
-				slots[p] = p if not slots.has(p) else _bt_first_free(slots)
+				var vacant := not slots.has(p) and not picked.has(p)
+				slots[p] = p if vacant else _bt_first_free(slots, picked)
 	var changed: bool = slots != bt_slot_colors
 	bt_slot_colors = slots
 	for p in slots.size():
@@ -162,10 +192,11 @@ func bt_apply_colors() -> void:
 		emit_signal("bt_player_colors_changed")
 
 
-func _bt_first_free(slots: Array) -> int:
-	for index in bt_palette.size():
-		if not slots.has(index):
-			return index
+func _bt_first_free(slots: Array, picked: Array) -> int:
+	for skip in [picked, []]:
+		for index in bt_palette.size():
+			if not slots.has(index) and not skip.has(index):
+				return index
 	return 0
 
 

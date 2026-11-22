@@ -16,6 +16,8 @@ const OnlineLayoutTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/online_layout_tests.gd"
 )
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
+const PEER_A := 801
+const PEER_B := 802
 # Viewport sizes the colour hint is checked at (16:9 and 16:10).
 const SIZES := [Vector2(1920, 1080), Vector2(2560, 1440), Vector2(1280, 720), Vector2(1920, 1200)]
 
@@ -40,6 +42,7 @@ func run(test_mod: Node, together: Node):
 	var layout := OnlineLayoutTests.new()
 	yield(layout.run(t, scene), "completed")
 	yield(_test_color_picks(scene), "completed")
+	yield(_test_lobby_picks(together.input_sync), "completed")
 	_test_color_mirror(together, scene)
 	yield(_test_locked(scene), "completed")
 	CoopService.listening_for_inputs = false
@@ -239,6 +242,98 @@ func _test_color_picks(scene: Node):
 		CoopService.connected_players.size() == 2 and _distinct(CoopService.bt_slot_colors),
 		"colours: still distinct after a player left (%s)" % [CoopService.bt_slot_colors]
 	)
+
+
+func _join(devices: Array) -> void:
+	CoopService.clear_coop_players()
+	for device in devices:
+		var type: int = CoopService.PlayerType.GAMEPAD_XBOX
+		if device == KEYBOARD:
+			type = CoopService.PlayerType.KEYBOARD_AND_MOUSE
+		CoopService._add_player(device, type)
+
+
+# In a lobby a pick is the player's (steam id; the host's own: its device) until the lobby closes.
+func _test_lobby_picks(input_sync: Node):
+	var saved: Dictionary = input_sync.devices
+	var a := VirtualDevices.FIRST
+	var b := VirtualDevices.FIRST + 1
+	input_sync.devices = {PEER_A: a, PEER_B: b}
+	CoopService.clear_coop_players()  # outside a lobby this drops every pick
+	CoopService.bt_set_lobby(true)
+	_join([a, b, KEYBOARD])
+	yield(_frames(2), "completed")
+	yield(_press_virtual(b), "completed")
+	yield(_press_key(KEY_F), "completed")
+	var b_pick: int = CoopService.bt_slot_colors[1]
+	var host_pick: int = CoopService.bt_slot_colors[2]
+	t._check(
+		b_pick != 1 and host_pick != 2,
+		"lobby colours: B and the host picked (%s)" % [CoopService.bt_slot_colors]
+	)
+	# Next run: another join order, and B got the other virtual device.
+	input_sync.devices = {PEER_A: b, PEER_B: a}
+	_join([KEYBOARD, a, b])
+	yield(_frames(2), "completed")
+	var slots: Array = CoopService.bt_slot_colors
+	t._check(
+		slots[0] == host_pick and slots[1] == b_pick and _distinct(slots),
+		"lobby colours: the next run keeps the picks, in B's and the host's new slots (%s)" % [slots]
+	)
+	t._check(
+		CoopService.player_colors[1] == CoopService.bt_palette[b_pick],
+		"lobby colours: player_colors in B's new slot is its pick"
+	)
+	_join([b])
+	yield(_frames(2), "completed")
+	var reserved := true
+	for _i in CoopService.bt_palette.size():
+		yield(_press_virtual(b), "completed")
+		var color: int = CoopService.bt_slot_colors[0]
+		reserved = reserved and color != b_pick and color != host_pick
+	t._check(reserved, "lobby colours: A never takes the pick of a player not joined yet")
+	var a_pick: int = CoopService.bt_slot_colors[0]
+	_join([a, b, KEYBOARD])
+	yield(_frames(2), "completed")
+	slots = CoopService.bt_slot_colors
+	t._check(
+		slots == [b_pick, a_pick, host_pick, slots[3]] and _distinct(slots),
+		"lobby colours: everyone joined back has its pick (%s)" % [slots]
+	)
+	# Two players with the same pick (picks kept from before they met): the earlier slot keeps it,
+	# the later one gets its default colour if free and nobody's pick, else the first such one.
+	CoopService._bt_picks["steam:%d" % PEER_A] = b_pick
+	CoopService.bt_apply_colors()
+	slots = CoopService.bt_slot_colors
+	t._check(
+		slots[0] == b_pick and slots[1] == 1 and slots[2] == host_pick and _distinct(slots),
+		"lobby colours: a shared pick goes to the earlier slot (%s)" % [slots]
+	)
+	_join([KEYBOARD, b, a])
+	yield(_frames(2), "completed")
+	slots = CoopService.bt_slot_colors
+	t._check(
+		slots[1] == b_pick and slots[2] != b_pick and _distinct(slots),
+		"lobby colours: the earlier slot wins whoever is in it (%s)" % [slots]
+	)
+	input_sync._on_peer_removed(PEER_A)
+	_join([a, b, KEYBOARD])
+	yield(_frames(2), "completed")
+	slots = CoopService.bt_slot_colors
+	t._check(
+		slots[0] == b_pick and slots[1] == 1 and slots[2] == host_pick,
+		"lobby colours: a player who left the lobby has no pick any more (%s)" % [slots]
+	)
+	CoopService.bt_set_lobby(false)
+	_join([a, b, KEYBOARD])
+	yield(_frames(2), "completed")
+	t._check(
+		CoopService.bt_slot_colors == [0, 1, 2, 3],
+		"lobby colours: no pick left once the lobby closed (%s)" % [CoopService.bt_slot_colors]
+	)
+	input_sync.devices = saved
+	_join([a, b])
+	yield(_frames(2), "completed")
 
 
 func _test_color_mirror(together: Node, scene: Node) -> void:

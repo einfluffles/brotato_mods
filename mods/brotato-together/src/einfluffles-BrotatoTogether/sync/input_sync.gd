@@ -85,7 +85,9 @@ func setup(netplay_session: Node) -> void:
 	session.connect("peer_ready", self, "_on_peer_ready")
 	session.connect("peer_removed", self, "_on_peer_removed")
 	session.connect("message", self, "_on_message")
+	session.transport.connect("lobby_ready", self, "_on_lobby_ready")
 	session.transport.connect("lobby_left", self, "_on_lobby_left")
+	CoopService.bt_players = self  # colour picks belong to the steam id
 
 
 func _ready() -> void:
@@ -360,7 +362,15 @@ func _on_peer_ready(steam_id: int) -> void:
 	ModLoaderLog.info("Peer %s -> virtual device %s" % [steam_id, device], LOG_NAME)
 
 
+func steam_id_of(device: int) -> int:
+	for steam_id in devices:
+		if devices[steam_id] == device:
+			return steam_id
+	return -1
+
+
 func _on_peer_removed(steam_id: int) -> void:
+	CoopService.bt_forget_player(steam_id)
 	if not devices.has(steam_id):
 		return
 	var device: int = devices[steam_id]
@@ -374,9 +384,14 @@ func _on_peer_removed(steam_id: int) -> void:
 		CoopService._remove_player(device)
 
 
+func _on_lobby_ready(_lobby_id: int, _is_host: bool) -> void:
+	CoopService.bt_set_lobby(true)
+
+
 # A host leaving mid-run keeps the run: remote players' slots and their steam id -> device
 # mapping stay, so the same friends get their characters back in a new lobby.
 func _on_lobby_left() -> void:
+	CoopService.bt_set_lobby(false)
 	history.clear()
 	_remote.clear()
 	_input_gaps.clear()
