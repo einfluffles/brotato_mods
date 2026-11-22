@@ -82,6 +82,7 @@ func _small_run():
 	)
 	_run = _run_of(sent)
 	_test_idle()
+	_test_tracked()
 	yield(_test_slot_changes(), "completed")
 	yield(_test_weapon_changes(), "completed")
 	_test_view_changes()
@@ -110,6 +111,22 @@ func _test_idle() -> void:
 		_take().empty() and _cache.serialized == serialized + 1 and _cache.missed == 0,
 		"shop change: the safety net serializes once, finds nothing, sends nothing"
 	)
+
+
+# RunData.add_tracked_value (an item's counter, a value of a pair) moves the fingerprint: sent at
+# the next check, not by the safety net.
+func _test_tracked() -> void:
+	_expect_run("a tracked value (RunData.add_tracked_value)", funcref(self, "_add_tracked"))
+	_expect_run("a tracked pair's second value", funcref(self, "_add_tracked_pair"))
+
+
+func _add_tracked() -> void:
+	RunData.add_tracked_value(0, Keys.generate_hash("item_piggy_bank"), 1)
+
+
+# Bot-O-Mine's mine count (bot_o_mine.gd), which its pet adds to under the level-up panels.
+func _add_tracked_pair() -> void:
+	RunData.add_tracked_value(1, Keys.item_bot_o_mine_hash, 1, 1)
 
 
 func _test_slot_changes():

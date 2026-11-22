@@ -155,6 +155,9 @@ func all() -> Dictionary:
 # - weapons by instance (add_weapon, combine_weapon, recycle_weapon, meca_upgrade_weapon)
 # - upgrades_taken (RunData.add_upgrade), banned_items, remaining_ban_token, locked items
 # - wave, endless, bonus gold, retries, health, level, xp, pending mutations
+# - RunData.tracked_item_effects, hashed by content (add_tracked_value): the battle goes on under
+#   the level-up panels, and a pet like Bot-O-Mine counts its mines there (4 dictionaries of
+#   about 93 small values)
 # A stat or effect written alone (the effects' sizes stay) is left to the safety net.
 # save_args: lists of [item, wave value] (the shop's offered items) go in by item instance.
 static func fingerprint(save_args := [], extra := []) -> Array:
@@ -173,6 +176,7 @@ static func fingerprint(save_args := [], extra := []) -> Array:
 		RunData.challenges_completed_this_run.size(),
 		RunData.shop_effects_checked,
 		RunData.locked_shop_items.size(),
+		hash(RunData.tracked_item_effects),
 	]
 	for args in save_args:
 		values.append(args.size())

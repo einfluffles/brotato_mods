@@ -129,6 +129,17 @@ func _test_views() -> void:
 	_expect_view("panel revision")
 	_t._check(_sync._seqs[0] == seq + 1, "upgrades change: the revision did move")
 	_expect_run("gold (RunData.add_gold)", funcref(self, "_add_gold"))
+	_expect_run("a tracked value (RunData.add_tracked_value)", funcref(self, "_add_tracked"))
+	_expect_run("a mine laid by Bot-O-Mine (a pair's second value)", funcref(self, "_add_mine"))
+
+
+# The battle goes on under the panels: an item's counter moves the fingerprint, no miss.
+func _add_tracked() -> void:
+	RunData.add_tracked_value(0, Keys.generate_hash("item_piggy_bank"), 1)
+
+
+func _add_mine() -> void:
+	RunData.add_tracked_value(1, Keys.item_bot_o_mine_hash, 1, 1)  # as bot_o_mine.gd does
 
 
 # Player 1's client has its crate weapon popup open (UPGRADE_FOCUS popup): the host's copy shows

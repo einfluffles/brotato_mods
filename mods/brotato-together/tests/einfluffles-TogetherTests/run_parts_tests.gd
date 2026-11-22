@@ -102,6 +102,8 @@ func _shop(players: int):
 	_change("Go", [])
 	shop._clear_go_button_pressed(0)
 	_change("Go cleared", [])
+	RunData.add_tracked_value(1, Keys.item_bot_o_mine_hash, 1, 1)
+	_change("tracked value", ["c"])
 	var node = tests._offered(0)
 	if node.item_data.is_lockable:
 		node.change_lock_status(true)
@@ -313,6 +315,8 @@ func _panels(players: int):
 	tests._show(crates, levels)
 	_start(StateStream.UPGRADES, provider_node)
 	_first("%d players, panels" % players)
+	RunData.add_tracked_value(0, Keys.item_bot_o_mine_hash, 1, 1)  # a mine laid under the panels
+	_change("tracked value", ["c"])
 	yield(tests._button_delay(), "completed")
 	var p: int = players - 1
 	var container = tests._ui._get_player_container(p)

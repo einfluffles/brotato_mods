@@ -30,6 +30,9 @@ upload; three of them are marked where the upload may have differed.
 - Online lobby menu opened over the shop or the level-up panels on a client: it keeps its
   selected button when another player moves or opens a menu. Before, accept did nothing and the
   next arrow jumped to the first button.
+- The host's log no longer fills with "run state changed without a change of its fingerprint"
+  warnings during the level-up panels when a player has Bot-O-Mine (its pet keeps laying mines
+  there). The new mine count now reaches the clients at once instead of up to a second later.
 - Needs everybody on this update (protocol 31).
 
 ## 2026-11-21 21:08 UTC

@@ -389,8 +389,11 @@ have changed:
   reroll and steal counters, per player gold, meca parts, health, level, xp, ban tokens, item count
   and the last item's instance, weapon instances, the sizes of the other lists (banned items,
   upgrades, mutations, sets, effects), and wave, endless, bonus gold, retries, background and
-  challenges. Each screen adds its own values (`ShopSync.shop_args`; for the panels the option each
-  panel processes, its crate item, rerolls and done).
+  challenges. `RunData.tracked_item_effects` (four dictionaries of about 93 small counters) goes in
+  as its `hash()`, by content: the battle goes on under the level-up panels, and a pet such as
+  Bot-O-Mine's counts its mines there (`add_tracked_value`), which left alone filled the host's log
+  with safety net warnings. Each screen adds its own values (`ShopSync.shop_args`; for the panels
+  the option each panel processes, its crate item, rerolls and done).
 - **Force.** The check after an applied intent (`force()`) and after `peer_ready` serializes in any
   case.
 - **Safety net.** Every second, while a peer is ready, the run is serialized without `JSON.print`
@@ -2109,6 +2112,7 @@ enemies it is the host's game itself that slows down.
 | 2026-11-16 | the same session | 7 fingerprint misses in the shop between waves 18 and 40 | effects' custom args are settled before serializing |
 | 2026-11-21 | two players, 47 waves | a client lags from the crate item to the level-up page (issue #110); one frame of 50 to 64 ms per wave end and shop, its only mark "apply 2" (the store's parse and deserialize and the panels had none) | kept items, gear in place, marks for every section's run and the level-up panels (0d1ccb3) |
 | 2026-11-22 (log read) | two players, endless to wave 38 | a client's shop frames of 50 ms or more track the gear parts sent (`g`): 20 to 34 per shop from wave 33, up to 169 ms at wave 36; states with only `c` and `p` (rerolls, locks) stayed under 50 ms. The shop still rebuilt every gear element of a changed player. | shop gear in place, the "shop panels" mark (d5db093) |
+| 2026-11-22 | two players, endless to wave 38 | 198 fingerprint misses, all on the level-up panels from wave 18 on, all `c.tracked_item_effects[1].item_bot_o_mine`: the Bot-O-Mine pet lays mines while the panels show | the fingerprint covers `tracked_item_effects` |
 | 2026-11-17 or earlier (fix 055222f) | a real session, late endless waves | client frames of 100 to 205 ms during the level-up panels | per-player rebuild |
 | 2026-11-16 or earlier (fix 1ceb422) | online session | a client crashed natively on the level-up gear page after a run change | [Freed controls under a cursor](#freed-controls-under-a-cursor) |
 | 2026-11-17 or earlier (fix ec3c80b) | online endless run, wave 36 | the host crashed natively when the co-op shop opened | [Axolotl crash](#axolotl-crash) |
