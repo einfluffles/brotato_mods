@@ -2,7 +2,7 @@
 
 How the mod works, for a developer who is new to it. The game hooks it builds on are listed in
 [`docs/brotato-hooks.md`](../../../docs/brotato-hooks.md). This document describes the code as of
-2026-11-21 (protocol 31, mod version 0.2.1). File paths are relative to
+2026-11-22 (protocol 32, mod version 0.2.1). File paths are relative to
 `src/einfluffles-BrotatoTogether/`, test suites live in `tests/einfluffles-TogetherTests/`.
 
 Contents: [Overview](#1-overview), [Glossary](#2-glossary), [Session](#3-session),
@@ -312,6 +312,15 @@ example a shop purchase). `mark_dirty` resends without a key change. The optiona
 `state_sent(section, steam_id)` runs right after each send to that peer. The stream does nothing
 while not host, and it runs while the tree is paused.
 
+**Cursors after the gear they name.** `cursors` is checked every 0.05 s, `shop` and `upgrades`
+(`StateStream.BUILDERS`) every 0.1 s, and those two can be held (a flush with hold, or Steam's
+queue, see below). An item that comes in before a resting cursor changes both in one frame, and a
+client resolves the cursor on the rows it has. So when the cursors' key changed, the stream waits a
+frame while a builder is held for deferred game code, and first checks a builder not checked this
+frame yet, ahead of its interval, so that its change goes out first. A peer a builder still owes a
+state (in its dirty set: held by Steam's queue, or marked dirty) gets the cursors with a later
+check. No wire change; the cost is one extra builder key per cursor move.
+
 **Resync order.** On `peer_ready` every section is queued for that peer, in section order, for the
 stream's next step. What the other modules send from their own `peer_ready` handlers
 (`BATTLE_START`, the input device behind `you`) therefore reaches the peer before any `STATE`. The
@@ -351,10 +360,12 @@ right, because the provider builds and records the patch only for peers actually
 Never held: a null body, a light section, a peer that has waited `MAX_HOLD_MSEC` (2 s), and a peer
 Steam has no numbers for. A resync target is held the same way.
 
-A held shop state reaches that peer after lighter sections sent meanwhile (cursors, `pause_shop`).
-That is safe: a cursor on a control that is not built yet stays pending until it resolves, and the
-shop's item controls are the same nodes before and after a shop state. Shop and upgrades never
-overtake each other for a peer, because both go through one `RunParts.Sender` record.
+A held shop state reaches that peer after lighter sections sent meanwhile (`pause_shop`), but not
+after changed cursors: those wait for it (see [State stream](#state-stream)). Even so a cursor is
+named so that the order does not matter for it: a gear element by its item, which resolves to
+nothing (the body stays pending) while the client's rows lack it, and the shop's item controls are
+the same nodes before and after a shop state. Shop and upgrades never overtake each other for a
+peer, because both go through one `RunParts.Sender` record.
 
 When the section closes, the host logs one line per client that was held, for example "Shop state
 held 3 times for X, longest 2001 ms (Steam's queue over 24 KB)".
@@ -1218,7 +1229,10 @@ through `FloatingTextManagerShop.stat_added`, without the sound. Every client ge
 game's combine handler moves the cursor with deferred `grab_focus` calls, one of them onto an
 element it already queued for deletion. The function puts the cursor back on what the client last
 reported (`ShopSync.host_apply_focus` keeps each player's last `SHOP_FOCUS` target) when a cursor
-can rest there, else it leaves the game's place.
+can rest there, else it leaves the game's place. A reported gear element is found by its item on
+the host's rows, which can be newer than the client's ones it was described on. Once its item is
+gone (recycled, combined) it is the live element at its last place, which is where the client's own
+cursor goes when the host's state takes the item (`_refresh_gear`), until the client's next report.
 
 **Client's own panel.** While the own panel runs and the host is not paused, `ShopLocal.process`
 checks every frame that its device is the live one and takes it back if not, with a warning. The
@@ -1499,20 +1513,47 @@ has a mod that adds a control.
 - **Steps** lead from the anchor to the control. A node from a scene file (it has an `owner`) is
   named. A node added by code (generated names differ between machines) is `[script path or class,
   k]`, the k-th such sibling of that type, with nodes queued for deletion not counted.
+- **Gear elements** (protocol 32): an `InventoryElement` that shows an item below `shop_gear`,
+  `up_gear` or `up_weapons` (`FocusTargets.KEYED`) is `[script path, key, copy]` instead. The key is
+  what it shows, the same on every machine (`FocusTargets.item_key`: `my_id`, tier and the cursed,
+  meca and mutant marks; not `UpgradesGear.shows`, which has a local icon's instance id), copy its
+  place among the live siblings that show the same (two alike weapons, two cursed copies). It
+  resolves by key and copy only, never by place: while a run state is on its way the rows of host
+  and client differ (a gift, a purchase or a combine inserts an item before the cursor; ties of
+  tier and name, such as a plain stack and its cursed copy, can sort either way), and a position
+  named another item there. An item the receiver does not have resolves to nothing: `FocusSync`
+  keeps the body pending until the run state brings it, and the host ignores a report naming it.
+  A special (locked or random) element and the grids of the selection screens and the end of run
+  keep `[type, k]`: `MenuSync` builds those in the host's order from the host's entries, which can
+  show an item otherwise than this machine would (locked, another tier).
 - Network data is checked (types, anchor names, player 0 to 3, counts, name lengths). The own-panel
   messages accept only that player's anchors, never `scene`.
 - **Applying.** `apply_state` skips `local_emulators` and returns false until every cursor resolves
   to a visible control, so the stream retries for up to 10 s. A newer body for the next scene
   replaces one still waiting.
+- **Re-applying.** A client's gear refresh of another player (`ShopSync._apply_body`,
+  `UpgradesSync.apply`) can leave that player's cursor on the element at its place, when its own
+  element was freed or now shows another item, and opening a copy of a popup takes it to Cancel.
+  Both then re-apply the last cursors body (`FocusSync.reapply`, which leaves a body still pending
+  to the stream).
 
 **Key.** Describing a cursor is too slow for 20 checks a second, so the key is each cursor's control
 and emulator by instance id and child indices up to the scene, plus the player count and the scene
-instance. `cursor_key_tests.gd` checks that every change the game makes to the description moves the
+instance, and for a gear element its item key (`sync_inventory` can point a kept element at another
+item). `cursor_key_tests.gd` checks that every change the game makes to the description moves the
 key. Known difference: a sibling queued for deletion (`BaseShop._combine_weapon`) moves the key only
 when it is freed, so that cursor goes out one check late. Changes another mod could make without
 moving the key (a rename, a script change, a sibling replaced at the same index) are caught by a
 safety net: while the key stays the same, the cursors are described once a second and compared with
 the last body. A difference is logged as a warning and sent.
+
+**Tests.** Suite `focus_targets` (`focus_target_tests.gd`) checks gear element steps on a row
+ordered otherwise, with an element more or less, with copies and cursed copies, an absent item and
+malformed steps. The race of a cursor body with the run state that inserts an item before it, in
+both orders and with a cursor on the item that comes in: `shop_gear_change_tests.gd` (shop),
+`gear_rebuild_tests.gd` (suite `battle_loopback`, level-up gear page), and brotato:trade's
+`together` suite (a gift). The host's side with a report described on older rows:
+`shop_cursor_tests.gd` (suite `local_shop`). The stream's order: `state_stream_tests.gd`.
 
 ### Scroll positions, wheel and right stick
 
@@ -2143,7 +2184,7 @@ slow-answer lines' `rate` should read 524288 B/s).
 
 ## 13. Known gaps
 
-As of 2026-11-21, protocol 31.
+As of 2026-11-22, protocol 32.
 
 **Not mirrored in a battle**
 

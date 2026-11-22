@@ -10,6 +10,12 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Co-op shop and level-up panels: the weapon or item another player has selected in their gear is
+  now the one you see highlighted. Before, it was sometimes the item next to it, and stayed wrong
+  until that player moved again, for example when an item came into their gear (a purchase, a
+  combine, a trade) while their cursor rested there, on the host's screen and on a client's alike.
+- Needs everybody on this update (protocol 32).
+
 ## 2026-11-22 11:57 UTC
 
 - Archaeologist dig sites on a client are where the host has them, and you see them dug: the
