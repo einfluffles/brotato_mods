@@ -16,6 +16,10 @@ upload; three of them are marked where the upload may have differed.
   mid-run and rejoining keeps your colour. Leaving the lobby before the run drops it. Once the host
   closes the lobby, a colour lasts only while its player keeps their slot: the next run starts with
   the game's colours, unless the host opens a new lobby before it.
+- Magma Boots on a client: another player's trail now shows all of its fire puddles. Before, once
+  the first puddles had burnt out, only one at a time flashed up for a moment.
+- Acid and petrol puddles on a client no longer go invisible. Before, a puddle that came after
+  earlier ones had gone could stay invisible while it still hurt or slowed your character.
 
 ## 2026-11-22 17:57 UTC
 
