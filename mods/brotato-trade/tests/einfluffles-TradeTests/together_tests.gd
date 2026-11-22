@@ -23,6 +23,7 @@ var _plain = null
 var _unique = null
 var _states := {}  # name -> shop state as a client gets it
 var _host_ledger := ""
+var _race := {}  # the gift race: the host's cursor bodies and what the cursor rests on
 
 
 func run(t: Node):
@@ -135,6 +136,7 @@ func _host(input: Node):
 	# Player 1 hands the client's player an item: the state for _client_receive.
 	_t.check(_shop.trade_give(_owned(0, _plain.my_id), 0, REMOTE), "(player 1 gives an item)")
 	_capture("received")
+	_host_gift_race()
 	input.devices.erase(FAKE_PEER)
 
 
@@ -408,6 +410,7 @@ func _client():
 	)
 	yield(_client_receive(popup), "completed")
 	_client_mirror()
+	yield(_client_gift_race(), "completed")
 
 
 # The own give list is open when the host's state brings the own player an item from another.
@@ -595,6 +598,82 @@ func _click(control: Control):
 		event.global_position = at
 		Input.parse_input_event(event)
 		yield(_t.frames(3), "completed")
+
+
+# Player 1 gives the host's player an item while that player's cursor rests on its own gear, on an
+# item the gift sorts before: the cursor's element moves one place on, and the host's cursor body
+# names it there. The bodies before and after and the states before and after go to the client.
+func _host_gift_race() -> void:
+	var owned := {}
+	for item in RunData.get_player_items_ref(0):
+		owned[item.my_id] = true
+	var gift = null
+	var extras := []  # two more items for player 0, of a higher tier than the gift
+	for item in ItemService.items:
+		if owned.has(item.my_id) or item.max_nb != -1 or item.is_cursed:
+			continue
+		if gift == null and item.tier == 0:
+			gift = item
+		elif extras.size() < 2 and item.tier >= 2:
+			extras.append(item)
+	for item in extras:
+		RunData.add_item(item, 0)
+	RunData.add_item(gift, REMOTE)
+	for p in [0, REMOTE]:
+		_shop._get_gear_container(p).set_items_data(RunData.get_player_items(p))
+	_capture("gift_before")
+	var row: Node = _shop._get_gear_container(0).items_container._elements
+	var rest: Node = row.get_child(row.get_child_count() - 2)
+	var focus_sync = load(TOGETHER_DIR + "sync/focus_sync.gd")
+	var emulator = Utils.get_focus_emulator(0, _shop)
+	_race.before = focus_sync.cursor_of(emulator, rest, _shop)
+	var place: int = rest.get_index()
+	var slot: int = RunData.get_player_items_ref(REMOTE).find(gift)
+	_t.check(_apply(ITEM, slot, gift.my_id, 0), "(player 1 gives the host's player an item)")
+	_t.check(
+		_row_has(0, gift) and rest.get_index() == place + 1,
+		"(the gift comes in before the item the host's cursor rests on)"
+	)
+	_race.after = focus_sync.cursor_of(emulator, rest, _shop)
+	_race.rest = rest.item.my_id
+	_race.scene = _shop.filename
+	_capture("gift_after")
+
+
+# The host's cursor body after the gift reaches this client before the state with the gift (the
+# stream sends the cursors on their own timer): that player's cursor here ends on its item.
+func _client_gift_race():
+	if not _race.has("after"):
+		return
+	var stream: Node = _sync.state_stream
+	var cursors: int = load(TOGETHER_DIR + "sync/state_stream.gd").CURSORS
+	var emulator = Utils.get_focus_emulator(0, _shop)
+	_receive(_states.gift_before)
+	yield(_t.frames(2), "completed")
+	for cursor in [_race.before, _race.after]:
+		var revision: int = stream._revs.get(cursors, 0)
+		var body := {"scene": _race.scene, "cursors": [cursor]}
+		stream.receive(_wire([cursors, revision, body]))
+	var early := _under(emulator)
+	_receive(_states.gift_after)
+	yield(_t.frames(2), "completed")
+	_t.check(
+		early == _race.rest and _under(emulator) == _race.rest,
+		(
+			"a gift that comes in before the item the receiver's cursor rests on: with the cursor"
+			+ " body first, the cursor here stays on that item (%s, after the state %s; host %s)"
+		)
+		% [early, _under(emulator), _race.rest]
+	)
+	stream._pending.erase(cursors)
+	emulator.focused_control = null
+
+
+static func _under(emulator) -> String:
+	var control = emulator.focused_control
+	if not is_instance_valid(control) or control.get("item") == null:
+		return "none"
+	return control.item.my_id
 
 
 func _capture(name: String) -> void:
