@@ -6,6 +6,8 @@ changed, newest first. Headings are the time of the release PR in UTC
 
 ## Unreleased
 
+## 2026-11-22 11:57 UTC
+
 - Receiving a trade no longer throws you out of a menu: an item popup you have open (its buttons,
   or your own player list) stays open, with your cursor where it was, when another player gives
   you something or buys something for you. It only closes when the weapon it is about is combined
