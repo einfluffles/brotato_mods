@@ -52,25 +52,26 @@ static func apply(
 		# under a cursor move) counts as open.
 		if not current.empty() or not (popup._focused or _dimmed(panel)):
 			return false
+		var before = _focus_owner(root)
 		_close(root, manager, popup, panel, p)
+		_give_focus_back(root, before)
 		return true
-	# A roll that arrives later makes the meca choice showable.
-	var key := var2str([wanted, rolls if rolls != null else MecaChoice.entries(popup, p)])
+	var element = _element(wanted, root, p)
+	# A roll that arrives later makes the meca choice showable, an element that shows later (its
+	# carousel page, a gear rebuild) the popup.
+	var rolled = rolls if rolls != null else MecaChoice.entries(popup, p)
+	var key := var2str([wanted, rolled, element != null])
 	var last = memo.get(p)
 	if last != null and last == [key, var2str(current)]:
 		return false
-	var element = null
-	if not wanted.empty() and not wanted[0].empty():
-		element = FocusTargets.resolve(wanted[0], root, p)
-		var valid: bool = element is Control and element.is_visible_in_tree()
-		if not valid or element.get("item") == null or element.item.my_id != wanted[1]:
-			element = null
+	var focus_before = _focus_owner(root)
 	var mods: Array = wanted[3] if not wanted.empty() else [null, null]
 	var holders := [popup, panel]
 	var current_mods: Array = current[3] if not current.empty() else [null, null]
 	for i in holders.size():
 		if current_mods[i] != null and var2str(current_mods[i]) != var2str(mods[i]):
-			holders[i].together_show_menu(null)
+			if holders[i].has_method("together_show_menu"):
+				holders[i].together_show_menu(null)
 	var open_on = manager._elements_pressed[p] if popup._focused else null
 	if popup._focused and (element == null or open_on != element):
 		_close(root, manager, popup, panel, p)
@@ -96,6 +97,7 @@ static func apply(
 		if mods[i] != null and var2str(current_mods[i]) != var2str(mods[i]):
 			if holders[i].has_method("together_show_menu"):
 				holders[i].together_show_menu(mods[i])
+	_give_focus_back(root, focus_before)
 	memo[p] = [key, var2str(describe(root, manager, popup, panel, p))]
 	return true
 
@@ -118,6 +120,35 @@ static func parse(view) -> Array:
 	if view[0].empty() and view[3] == [null, null]:
 		return []
 	return view
+
+
+# The gear element the view names, when it shows here with the item the view names; else null.
+static func _element(view: Array, root: Node, p: int):
+	if view.empty() or view[0].empty():
+		return null
+	var element = FocusTargets.resolve(view[0], root, p)
+	if not element is InventoryElement or not element.is_visible_in_tree():
+		return null
+	if element.item == null or element.item.get("my_id") != view[1]:
+		return null
+	return element
+
+
+# The press runs ItemPopup.focus(), whose grab_focus hands Godot's focus to that player's
+# FocusEmulator, which releases it (the meca choice and the mods' menus grab it too). A control
+# that held it before is one no emulator takes, such as the lobby popup's buttons (they move by
+# Godot's focus): it gets the focus back.
+static func _give_focus_back(root: Node, before) -> void:
+	if not is_instance_valid(before) or not before is Control or before.is_queued_for_deletion():
+		return
+	if _focus_owner(root) == before or not before.is_visible_in_tree():
+		return
+	if before.focus_mode != Control.FOCUS_NONE:
+		before.grab_focus()
+
+
+static func _focus_owner(root: Node):
+	return root.get_focus_owner() if root is Control else null
 
 
 # The view half of the game's Cancel without its deferred grab_focus, which would land after the

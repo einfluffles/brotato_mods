@@ -112,6 +112,15 @@ func trade_open_give() -> bool:
 	return _trade_choosing
 
 
+# An open give list marks again who would combine the item, after someone's gear changed.
+func trade_relabel() -> void:
+	if not _trade_choosing or _trade_buy != null or _item_data == null:
+		return
+	for button in _trade_players:
+		if button.visible and button.has_meta(TRADE_TO_META):
+			_trade_label(button, button.get_meta(TRADE_TO_META))
+
+
 # brotato:together shows the list on the other machines' copies of this panel:
 # ["give"] | ["buy", the shop item's slot] | null.
 func together_menu():

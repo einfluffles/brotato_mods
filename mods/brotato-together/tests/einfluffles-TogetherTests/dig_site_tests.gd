@@ -1,7 +1,7 @@
 extends Reference
 # Suite dig_site: archaeologist dig sites. The client shows the host's sites where the host has
 # them (not its own random ones), and the dig as the host digs it: progress sprite, particles,
-# the body_enter squash, dug up.
+# the body_enter squash, the dig sound, dug up. Its own players never dig a site of the host's.
 
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
@@ -101,6 +101,11 @@ func run(together: Node):
 		"client plays the dig: particles and body_enter (%s)" % anim.assigned_animation
 	)
 	t._check(not cother._dig_particles.emitting, "the other site stays still")
+	var audio: AudioStreamPlayer2D = cdug._dig_audio
+	t._check(
+		audio.playing and audio.stream in cdug.dig_sounds and not cother._dig_audio.playing,
+		"client plays the dig sound at the site being dug (%s)" % audio.playing
+	)
 
 	yield(_feed(client, msgs[2], 1000), "completed")
 	var last: Texture = cdug.textures[cdug.textures.size() - 1]
@@ -109,6 +114,16 @@ func run(together: Node):
 		"client shows the site dug up"
 	)
 	t._check(cother.get_progress_ratio() == 0.0 and not cother.dug_up, "the other site is untouched")
+	yield(_stand_on(cmain, cother), "completed")
+	t._check(
+		(
+			cother.get_progress_ratio() == 0.0
+			and not cother._dig_particles.emitting
+			and cother._digging_players.empty()
+			and not cother._dig_audio.playing
+		),
+		"a client player standing on a site of the host's leaves it untouched"
+	)
 	_leave(client, host)
 
 
@@ -123,6 +138,16 @@ func _feed(client: Node, msg: Array, age_msec: int):
 	client._on_snapshot(snap)
 	for _i in 3:
 		yield(t.get_tree(), "idle_frame")
+
+
+# The client's players held on the site for a while: only the host digs.
+func _stand_on(cmain: Node, site: Node):
+	var players: Array = cmain.get("_players")
+	for _i in 15:
+		for player in players:
+			if is_instance_valid(player):
+				player.global_position = site.global_position
+		yield(t.get_tree(), "physics_frame")
 
 
 static func _near(at: Array, position: Vector2) -> int:

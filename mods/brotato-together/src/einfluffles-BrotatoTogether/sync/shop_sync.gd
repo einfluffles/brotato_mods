@@ -183,10 +183,11 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 
 
 # popup: the client's open menu (PopupView), shown on the host's copy before the cursor goes
-# into it.
+# into it. The page first, as on the level-up panels: the popup's element shows only on it.
 func host_apply_focus(shop: Node, p: int, page, target, popup = [], steam_id := 0) -> void:
 	_reported[p] = [shop.get_instance_id(), target]
 	_reported_popups[p] = [shop.get_instance_id(), popup, steam_id]
+	ShopIntents.apply_page(shop, p, page)
 	_apply_popup(shop, p, popup, null)
 	ShopIntents.apply_focus(shop, p, page, target)
 

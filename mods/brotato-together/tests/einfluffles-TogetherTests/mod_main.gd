@@ -62,6 +62,9 @@ const BattleStartTests := preload(
 const UpgradesChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_change_tests.gd"
 )
+const UpgradesPopupTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_popup_tests.gd"
+)
 const SelectionScreenTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/selection_screen_tests.gd"
 )
@@ -150,6 +153,7 @@ const SUITES := [
 	"battle_start",
 	"cursor_key",
 	"upgrades_change",
+	"upgrades_popup",
 	"lobby_menu",
 	"network_stalls",
 	"traffic",
@@ -452,6 +456,11 @@ func _suite_cursor_key(together: Node):
 
 func _suite_upgrades_change(together: Node):
 	_suite = UpgradesChangeTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_upgrades_popup(together: Node):
+	_suite = UpgradesPopupTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

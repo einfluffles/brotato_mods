@@ -167,7 +167,9 @@ As of 2026-11-21:
   receiver's in the same call, through the game's own `RunData` functions, so stats, sets and
   caches follow. Each step is counted before the next: an object that did not leave is not added
   anywhere, and one that did not arrive goes back to the giver. No frame, save or network state
-  sees the object in both lists or in none.
+  sees the object in both lists or in none. A weapon that combines takes `RunData.combine_weapon`'s
+  steps by instance: the game's removes the first weapons equal to the two, which can be another
+  copy than the chosen partner.
 - **UI:** the mod extends five of the game's scripts. `CoopItemPopup` gets the button, the list
   (built from the popup's own *Cancel* button) and the hint (the game's `CoopShopHint` scene with
   the mod's glyphs). `CoopShop` decides who can take what and refreshes both panels afterwards. `CoopUpgradesUIPlayerContainer` gets the crate panel's button
@@ -198,7 +200,10 @@ As of 2026-11-21:
   cursor and an item popup it has open (its buttons or its own player list). A weapon combined
   into the one received leaves the row without the game's `remove_element`, which would move the
   receiver's cursor; when the cursor or the popup is on that weapon, the rows are built again and
-  the popup closes. During a buy for another player the popup stays too, and its cursor comes
+  the popup closes. A popup that stays shows its buttons for the new gear
+  (`_trade_refresh_popups`: Combine once a twin came, none once the twin went, a cursor on a
+  button that went moves to Cancel; not during the meca choice), and every open give list marks
+  again who would combine (`trade_relabel`). During a buy for another player the popup stays too, and its cursor comes
   back after the game's own moves; it closes only when the buy freed its element. The giver's
   rows are built again as before. On a brotato:together client the host's state brings the
   change, and brotato:together keeps the menu the same way.

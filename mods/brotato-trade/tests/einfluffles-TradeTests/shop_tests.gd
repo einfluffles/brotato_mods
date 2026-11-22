@@ -31,6 +31,7 @@ func run(t: Node):
 	yield(_receiver_popup(), "completed")
 	_refusals()
 	yield(_receiver_combine(), "completed")
+	yield(_kept_popup_buttons(), "completed")
 	yield(_other_popup(), "completed")
 	yield(_four_players(), "completed")
 	var buy = load(t.DIR + "buy_tests.gd").new()
@@ -311,6 +312,79 @@ func _receiver_combine():
 		"and its cursor is on the weapon row"
 	)
 	_cursors_valid("after combining under a popup")
+
+
+# A popup the receiver keeps open shows the buttons of the gear it has now: Combine once a twin
+# came, none once the twin was combined away (the cursor on it goes to Cancel). Another player's
+# open give list marks again who would combine.
+func _kept_popup_buttons():
+	var pistol = _t.weapon()
+	var theirs: Array = RunData.get_player_weapons_ref(2)
+	theirs.clear()
+	RunData.add_weapon(pistol, 2)
+	_t.fill_weapons(2, pistol)
+	theirs.pop_back()  # one slot free: the next pistol is added, not combined
+	for p in [0, 1]:
+		RunData.add_weapon(pistol, p)
+	RunData.add_weapon(pistol, 0)
+	for p in [0, 1, 2]:
+		_emulator(p).focused_control = null  # off the elements set_weapons_data frees
+		_shop._get_gear_container(p).set_weapons_data(RunData.get_player_weapons(p))
+	yield(_t.frames(1), "completed")
+	var popup = _popup(2)
+	var first = theirs[0]
+	_emulator(2).focused_control = _shop._get_weapon_element(_row(2, true), first)
+	yield(_t.tap("ui_accept", 2), "completed")
+	_t.check(popup._focused and not popup._combine_button.visible, "(player 3 looks at its pistol)")
+	var list = _popup(1)
+	yield(_open_list(1, RunData.get_player_weapons_ref(1).back()), "completed")
+	var to_third = null
+	for button in list._trade_players:
+		to_third = button if button.visible and _to(button) == 2 else to_third
+	var combine_text: String = tr("MENU_COMBINE")
+	_t.check(
+		to_third != null and not combine_text in to_third.text,
+		"(player 2's give list: player 3 has a free slot, no Combine)"
+	)
+	var mine: Array = RunData.get_player_weapons_ref(0)
+	_t.check(_shop.trade_give(mine[mine.size() - 1], 0, 2), "player 3 is given a twin")
+	yield(_t.frames(2), "completed")
+	_t.check(
+		popup._focused and popup._item_data == first and popup._combine_button.visible,
+		"its popup on the pistol stays open and offers Combine now"
+	)
+	_t.check(
+		list._trade_choosing and to_third.visible and combine_text in to_third.text,
+		"the open give list says player 3 combines it now (%s)" % to_third.text
+	)
+	yield(_t.tap("ui_cancel", 2), "completed")
+
+	var given = mine[mine.size() - 1]
+	var partner = Rules.combine_partner(given, 2)
+	var kept = null
+	for weapon in theirs:
+		if weapon != partner and weapon.my_id == pistol.my_id:
+			kept = weapon
+	_emulator(2).focused_control = _shop._get_weapon_element(_row(2, true), kept)
+	yield(_t.tap("ui_accept", 2), "completed")
+	_emulator(2).focused_control = popup._combine_button
+	_t.check(popup._focused and partner != null, "(player 3, its slots full, looks at one twin)")
+	_t.check(_shop.trade_give(given, 0, 2), "it is given a pistol that combines with the other")
+	yield(_t.frames(2), "completed")
+	_t.check(
+		(
+			popup._focused
+			and popup._item_data == kept
+			and theirs.has(kept)
+			and not popup._combine_button.visible
+		),
+		"its popup stays open on a weapon it owns, without Combine %s" % [_t.ids(theirs)]
+	)
+	_t.check(_emulator(2).focused_control == popup._cancel_button, "the cursor on it went to Cancel")
+	_cursors_valid("after a kept popup's buttons changed")
+	yield(_t.tap("ui_cancel", 2), "completed")
+	for _i in 2:
+		yield(_t.tap("ui_cancel", 1), "completed")
 
 
 func _refusals() -> void:

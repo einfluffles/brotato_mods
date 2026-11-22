@@ -1298,7 +1298,6 @@ and while choosing there is no cancel.
   (`MecaChoice.show_roll`). A client's gear can show the weapon objects of an older run state
   (gear elements are only rebuilt when the gear changed), so an entry matches by slot and id when
   the popup's object is no longer the player's.
-
 ### Open popups
 
 `sync/popup_view.gd`, used by the shop and the level-up / crate panels. A player's open menu is
@@ -1325,8 +1324,13 @@ other mods open in that popup or on the panel.
   a deferred `grab_focus`, which would land after the mirrored cursor. A popup left focused or a
   panel left dimmed with nothing open (the game hid the popup under a cursor move) counts as open
   and is closed by an empty view. An element whose item has another id opens nothing. A view this
-  machine cannot show (no roll yet, a weapon that differs) is not tried again until the view, the
-  rolls or what the panel shows change (`memo`).
+  machine cannot show (no roll yet, a weapon that differs, its element hidden) is not tried again
+  until the view, the rolls, whether the element shows or what the panel shows change (`memo`).
+  The host's shop sets the reported carousel page before it shows the view, as the level-up side
+  does: the element shows only on the gear page.
+- **Godot's focus.** The press runs `ItemPopup.focus()`, whose `grab_focus` goes to that player's
+  FocusEmulator, which releases the focus owner. A control that held the focus before (one no
+  emulator takes, such as the lobby popup's buttons) gets it back at the end of `apply`.
 - **Cursors.** Opening a popup takes that player's cursor to its Cancel button. A client then
   re-applies the last cursors body (`FocusSync.reapply`); a body still pending is retried by the
   stream anyway. The host puts the reported cursor back itself.
@@ -1345,9 +1349,12 @@ other mods open in that popup or on the panel.
 the host's copy, the host's state, a client's copy of another player's popup and its meca choice
 with the host's roll, the cursor going back into the copy, and the own popup's report; also a
 copy left dimmed, a client that leaves, the cursor after a closing state, and gear changing under
-another player's cursor. `upgrades_change_tests.gd` checks a crate weapon popup on the host's copy,
-in the panels' state, and on a client's copy through `UpgradesSync.apply`. brotato:trade's `together` and `together_crate` suites check its lists on both kinds of
-copies.
+another player's cursor; also a report with the gear page and its popup, Godot's focus kept,
+`ShopSync._deactivate` and `FocusSync.reapply` with a body pending. `upgrades_change_tests.gd`
+checks a crate weapon popup on the host's copy, in the panels' state, and on a client's copy
+through `UpgradesSync.apply`; `upgrades_popup_tests.gd` (suite `upgrades_popup`) Godot's focus and
+a client that leaves there. brotato:trade's `together` and `together_crate` suites check its lists
+on both kinds of copies.
 
 ### Keyboard and mouse on the own panel
 
@@ -1718,7 +1725,10 @@ the action state because of the input order.
   root's last child sees key and pad events first, marks them handled and `Input.action_release`s
   what they pressed. After closing it also swallows the releases of keys pressed while open (the
   game pauses and goes back on release).
-- The popup moves the Godot focus and handles the mouse itself (`handle_panel_mouse`).
+- The popup moves the Godot focus and handles the mouse itself (`handle_panel_mouse`). A
+  FocusEmulator that takes a control (another player's mirrored cursor or popup on a co-op screen
+  under the popup) releases that focus: the page gives it back to the button that had it, every
+  frame and before an arrow or accept (`LobbyPage._keep_focus`).
 - `InputService` hides the cursor in co-op, so the popup shows it again every frame.
 - Clients send neutral `INPUT` while it is open (`InputSync.local_input_blocked`).
 

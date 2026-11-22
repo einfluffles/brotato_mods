@@ -84,6 +84,8 @@ func host(s):
 	yield(_host_meca(s, element, cancel), "completed")
 	_host_stray(s, element, cancel)
 	_host_left(s, cancel)
+	_host_page(s, element, cancel)
+	_host_real_focus(s, element)
 	_capture_gear(s)
 
 
@@ -122,6 +124,99 @@ func _host_left(s, cancel: Array) -> void:
 		),
 		"host: a client that leaves takes its open popup off the host's copy"
 	)
+
+
+# A report that brings the gear page and the popup on it together opens the popup (the page
+# first), and a popup tried while its element was hidden opens once the element shows.
+func _host_page(s, element: Control, cancel: Array) -> void:
+	var t: Node = s._t
+	var shop: Node = s._shop
+	var shop_sync: Node = s._sync
+	var popup = shop._get_item_popup(REMOTE)
+	var carousel = shop._get_coop_player_container(REMOTE).carousel
+	if carousel._get_max_index() < 1:
+		print("  info: the shop panel has one page, popup with a page not tested")
+		return
+	var closed := FocusTargets.describe(element, shop, REMOTE)
+	carousel.index = 1
+	t._check(not element.is_visible_in_tree(), "(another page: the weapon is hidden)")
+	shop_sync.host_apply_focus(shop, REMOTE, 0, cancel, _wire(_view))
+	t._check(popup._focused, "host: a report with the gear page and its popup opens the popup")
+	shop_sync.host_apply_focus(shop, REMOTE, 0, closed, [])
+	carousel.index = 1
+	shop_sync._apply_popup(shop, REMOTE, _wire(_view), null)
+	t._check(not popup._focused, "(not while the page hides its weapon)")
+	carousel.index = 0
+	shop_sync._apply_popup(shop, REMOTE, _wire(_view), null)
+	t._check(popup._focused, "host: the same view opens once its element shows")
+	shop_sync.host_apply_focus(shop, REMOTE, 0, closed, [])
+
+
+# A control that holds Godot's focus outside every FocusEmulator (the lobby popup's buttons, which
+# move by it) keeps it while a remote popup opens and closes on the host's copy.
+func _host_real_focus(s, element: Control) -> void:
+	var t: Node = s._t
+	var shop: Node = s._shop
+	var shop_sync: Node = s._sync
+	var popup = shop._get_item_popup(REMOTE)
+	var holder := focus_holder(s._t)
+	var closed := FocusTargets.describe(element, shop, REMOTE)
+	shop_sync._apply_popup(shop, REMOTE, _wire(_view), null)
+	t._check(popup._focused and holder.has_focus(), "host: a copy opening keeps Godot's focus")
+	shop_sync._apply_popup(shop, REMOTE, [], null)
+	t._check(not popup._focused and holder.has_focus(), "host: and closing too")
+	shop_sync.host_apply_focus(shop, REMOTE, 0, closed, [])
+	holder.get_parent().free()
+
+
+# ShopSync._deactivate on a client's copy (a buy the host's state brings late; ShopLocal cuts the
+# game's own call): a cursor on Go or Reroll stays, one on the deactivated item moves off it.
+# The game's move is deferred (Utils.focus_player_control): checked a frame later.
+func _client_deactivate(s, shop: Node):
+	yield(s._frames(1), "completed")
+	var t: Node = s._t
+	var emulator = Utils.get_focus_emulator(REMOTE, shop)
+	var node = null
+	for item in shop._get_shop_items_container(REMOTE)._shop_items:
+		if node == null and item.item_data != null and item.is_visible_in_tree():
+			node = item
+	if node == null:
+		print("  info: no shop item shown to the remote player, deactivate not tested")
+		return
+	var was_active: bool = node.active
+	node.activate()  # the earlier checks bought them all here
+	for control in [shop._get_go_button(REMOTE), shop._get_reroll_button(REMOTE)]:
+		emulator.focused_control = control
+		s._sync._deactivate(shop, REMOTE, node)
+		yield(s._frames(1), "completed")
+		t._check(
+			emulator.focused_control == control,
+			"deactivate: a cursor on %s stays (%s)" % [control.name, emulator.focused_control]
+		)
+		node.activate()
+	emulator.focused_control = node._button
+	s._sync._deactivate(shop, REMOTE, node)
+	yield(s._frames(1), "completed")
+	var cursor = emulator.focused_control
+	t._check(
+		is_instance_valid(cursor) and cursor != node and not node.is_a_parent_of(cursor),
+		"deactivate: a cursor on that item moves off it (%s)" % [cursor]
+	)
+	if was_active:
+		node.activate()
+
+
+# A button on its own layer that holds Godot's focus, as the lobby popup's do.
+static func focus_holder(test_mod: Node) -> Button:
+	var layer := CanvasLayer.new()
+	layer.layer = 128
+	var button := Button.new()
+	button.focus_mode = Control.FOCUS_ALL
+	button.text = "holder"
+	layer.add_child(button)
+	test_mod.get_tree().root.add_child(layer)
+	button.grab_focus()
+	return button
 
 
 # The remote player with its weapon, with another one, and with none (client gear checks).
@@ -235,6 +330,7 @@ func client(s, shop: Node, focus_sync: Node):
 		emulator.focused_control == popup._discard_button,
 		"that player's cursor goes back where the host has it, into the popup"
 	)
+	_client_reapply(s, shop, focus_sync)
 	yield(_client_meca(s, shop), "completed")
 
 	var body: Dictionary = s._states.popup_open.duplicate(true)
@@ -265,7 +361,45 @@ func client(s, shop: Node, focus_sync: Node):
 		emulator.focused_control == reroll,
 		"and that player's cursor stays where the host has it (%s)" % [emulator.focused_control]
 	)
+	yield(_client_deactivate(s, shop), "completed")
+	emulator.focused_control = reroll
 	yield(_client_gear(s, shop), "completed")
+
+
+# FocusSync.reapply puts the cursors back where the last body has them, but leaves a body still
+# pending to the stream (it is newer). The copy opening again keeps Godot's focus where it was
+# (the lobby popup's buttons).
+func _client_reapply(s, shop: Node, focus_sync: Node) -> void:
+	var t: Node = s._t
+	var popup = shop._get_item_popup(REMOTE)
+	var emulator = Utils.get_focus_emulator(REMOTE, shop)
+	var stream: Node = focus_sync.state_stream
+	var saved = stream._pending.get(StateStream.CURSORS)
+	var body = {"scene": shop.filename, "cursors": []}
+	stream._pending[StateStream.CURSORS] = {"body": body, "rev": 0, "msec": OS.get_ticks_msec()}
+	emulator.focused_control = popup._cancel_button
+	focus_sync.reapply()
+	t._check(
+		emulator.focused_control == popup._cancel_button,
+		"client: reapply leaves the cursors alone while a newer cursors body is pending"
+	)
+	stream._pending.erase(StateStream.CURSORS)
+	focus_sync.reapply()
+	t._check(
+		emulator.focused_control == popup._discard_button,
+		"client: with none pending it puts the cursor back where the last body has it"
+	)
+	if saved != null:
+		stream._pending[StateStream.CURSORS] = saved
+
+	var holder := focus_holder(t)
+	s._sync._apply_popup(shop, REMOTE, [], [])
+	s._sync._apply_popup(shop, REMOTE, _wire(_view), [])
+	t._check(
+		popup._focused and holder.has_focus(),
+		"client: another player's popup opening here keeps Godot's focus"
+	)
+	holder.get_parent().free()
 
 
 # Another player's gear changes under its cursor on this client's copy.

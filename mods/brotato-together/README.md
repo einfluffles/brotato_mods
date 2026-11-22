@@ -251,6 +251,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `battle_start` | A wave's start sending only the run parts a client lacks. |
 | `cursor_key` | The change key of the cursors on the co-op shop. |
 | `upgrades_change` | Change detection of the run state of the level-up / crate panels. |
+| `upgrades_popup` | A remote player's open popup on the host's level-up / crate panels: the lobby popup keeps its focus, a client that leaves takes it off. |
 | `lobby_menu` | The lobby in the game's menus on a fake Steam: title screen, kicking, the Co-op row and slot invite of character selection, the client's popup, the pause menu page. |
 | `network_stalls` | The render delay through stalls, the log lines for gaps, the session's path. |
 | `traffic` | The reliable traffic that the log names. |

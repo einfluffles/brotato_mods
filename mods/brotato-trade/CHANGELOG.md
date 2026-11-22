@@ -10,6 +10,10 @@ changed, newest first. Headings are the time of the release PR in UTC
   or your own player list) stays open, with your cursor where it was, when another player gives
   you something or buys something for you. It only closes when the weapon it is about is combined
   into the one you receive. Online, a client needs the latest brotato:together for this.
+- A weapon popup you keep open while you receive a trade shows its buttons for what you have
+  now: Combine appears when you get a second copy of that weapon, and goes away when its twin is
+  combined into the one you receive. An open list of players marks again who would combine the
+  weapon.
 - Online with brotato:together: the list of players someone opened to give, buy for or pass on an
   item shows on everybody's screen, as it does in local co-op.
 

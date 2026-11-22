@@ -63,7 +63,14 @@ static func _give_weapon(weapon, from: int, to: int) -> Dictionary:
 
 	if partner != null:
 		# As when a bought weapon finds no slot (BaseShop.buy_weapon): two become the next tier.
-		received = RunData.combine_weapon(received, partner, to)
+		# RunData.combine_weapon's steps by instance: it removes the first weapons equal to the
+		# two, which can be another copy than the partner (that copy's element would stay in the
+		# receiver's row and a popup open on it would hold a weapon the player no longer owns).
+		var both: int = RunData.remove_weapon_by_index(receiver.find(received), to)
+		both += RunData.remove_weapon_by_index(receiver.find(partner), to)
+		var combined = ItemService.get_combined_weapon(received, partner, to)
+		received = RunData.add_weapon(combined, to)
+		received.tracked_value = both
 		if receiver.size() != sizes[1]:
 			ModLoaderLog.error("weapon count is off after combining %s" % weapon.my_id, LOG_NAME)
 	return {"weapon": true, "received": received, "combined": partner != null, "partner": partner}

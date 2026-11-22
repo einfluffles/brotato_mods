@@ -22,6 +22,9 @@ upload; three of them are marked where the upload may have differed.
   weapon's popup with Combine, Recycle and Upgrade, the meca upgrade's two options and
   brotato:trade's player lists now show on every screen, not only on the screen of the player who
   opened them.
+- Online lobby menu opened over the shop or the level-up panels on a client: it keeps its
+  selected button when another player moves or opens a menu. Before, accept did nothing and the
+  next arrow jumped to the first button.
 - Needs everybody on this update (protocol 31).
 
 ## 2026-11-21 21:08 UTC

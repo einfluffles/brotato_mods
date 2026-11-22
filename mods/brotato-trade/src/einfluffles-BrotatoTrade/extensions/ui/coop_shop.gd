@@ -391,6 +391,30 @@ func _trade_refresh_player(player_index: int, received := {}) -> void:
 	_reroll_discount[player_index] = price[1]
 	set_reroll_button_price(player_index)
 	_refresh_currency_dependent_buttons(player_index)
+	_trade_refresh_popups(player_index)
+
+
+# A popup the gear change left open shows what its buttons offer now: Combine once the player got
+# a twin of its weapon, none once its twin was combined away. The meca choice stays as it is. A
+# cursor on a button that went goes to Cancel, as on the game's focus(). Every open give list
+# marks again who would combine the item.
+func _trade_refresh_popups(player_index: int) -> void:
+	for p in RunData.get_player_count():
+		var popup = _get_item_popup(p)
+		if not popup._focused or not popup.has_method("trade_relabel"):
+			continue
+		if popup._trade_choosing:
+			popup.trade_relabel()
+			continue
+		if p != player_index or popup.is_choosing_meca_upgrade():
+			continue
+		popup._update_button_visibilities()
+		var emulator = Utils.get_focus_emulator(p, self)
+		var cursor = emulator.focused_control if emulator != null else null
+		if not is_instance_valid(cursor) or not popup.is_a_parent_of(cursor):
+			continue
+		if not cursor.is_visible_in_tree() and popup._cancel_button.is_visible_in_tree():
+			emulator.focused_control = popup._cancel_button
 
 
 # The receiver's rows get the new element as a buy adds one (BaseShop.buy_item / buy_weapon):
