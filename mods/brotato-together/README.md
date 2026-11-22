@@ -64,8 +64,9 @@ used like them, with mouse, keyboard or gamepad.
   **Y** (gamepad; Triangle on PlayStation pads). It cycles through 8 colours and skips those that
   other players have. The colour is used wherever the game uses player colours (cursor, panels,
   HUD, player highlight), and clients see the same colours. In a lobby your colour stays yours
-  until you leave it or the host closes it: every new run starts with it, whatever slot you join
-  into, and nobody else can pick it meanwhile. Nothing is saved; a player who does not pick keeps
+  while you are in it: every new run starts with it, whatever slot you join into, and nobody else
+  can pick it meanwhile. A drop mid-run keeps it for your rejoin. Once the host closes the lobby,
+  the next run starts with the game's colours. Nothing is saved; a player who does not pick keeps
   the game's colour.
 - A locked character under a cursor shows how to unlock it, on clients too.
 - **Aiming** follows each player's own manual-aim setting (mouse or right stick).

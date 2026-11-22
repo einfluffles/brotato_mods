@@ -1864,20 +1864,28 @@ the main page.
 
 `extensions/singletons/coop_service.gd`. Every colour use in the game goes through
 `CoopService.player_colors[slot]` / `get_player_color`. The extension keeps a palette (the game's 4
-colours plus 4 pastels) and the picks per player: a remote player by its steam id
-(`InputSync.steam_id_of` its virtual device, through `CoopService.bt_players`), a local one by its
-remapped device. It rewrites `player_colors` on `connected_players_updated` and on every pick:
-picks of the players in a slot first, in slot order (a later slot with the same pick loses it), then
-each other slot its default colour if free and nobody's pick, else the first such one. `ui_info` on
-the character selection cycles to the next colour that neither another slot nor another player's
-pick has (remote players send it as a button), and `CoopSelection` restyles what is on screen.
+colours plus 4 pastels) and the picks per player (`_bt_slot_players`): a remote player by its steam
+id (`InputSync.steam_id_of` its virtual device, through `CoopService.bt_players`), a local one by
+its entry in `_bt_local`, the device each local player last played on. A local device takes its own
+entry, else the first entry no slot has, so the host on another gamepad or a replugged pad keeps its
+pick, and couch players keep theirs by device or else by order. It rewrites `player_colors` on
+`connected_players_updated` and on every pick: picks of the players in a slot first, in slot order
+(a later slot with the same pick loses it), then each other slot its default colour if free and not
+reserved, else the first such one. Reserved are the picks of remote players out of a slot; a local
+entry's pick is not, as fewer local players may come next run. `ui_info` on the character selection
+cycles to the next colour that neither another slot has nor is reserved (remote players send it as
+a button), and `CoopSelection` restyles what is on screen.
 
 Outside a lobby a pick goes with its slot, as `clear_coop_players` at every new character selection
 empties them. From `lobby_ready` until `lobby_left` (`InputSync` calls `bt_set_lobby`) a pick stays
 while its player is out of a slot, so the next run starts with it, in whatever slot the player
-joins. A peer's pick goes when the session removes it (`bt_forget_player`), every pick when the
-lobby is left (the host closing it). Neither recolours a slot: a run the host keeps after leaving
-keeps its colours until the slots change.
+joins. A peer's pick goes (`bt_forget_player`) when it is removed and no slot is kept for its
+rejoin, or when the kept mapping is dropped (`_forget_unassigned_devices`). A peer that drops
+mid-run, or during the weapon or difficulty selection, keeps it. Closing the lobby drops the picks
+of players out of a slot; the others go with their slot, so a run the host keeps after leaving, or
+a switch to local co-op on the character selection, keeps its colours, and the next run starts with
+the game's. Neither recolours a slot by itself.
+
 The hint row is a child of the scene root anchored to its top right corner, outside the game's
 containers, so the screen lays out as without the mod.
 

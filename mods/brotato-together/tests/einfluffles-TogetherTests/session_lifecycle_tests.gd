@@ -125,6 +125,19 @@ class FakeSteam:
 		return lobby_members[index]
 
 
+# Joining someone else's lobby.
+class JoinSteam:
+	extends FakeSteam
+	var lobby_tag := ""
+	var lobby_owner := 0
+
+	func getLobbyData(_lobby_id: int, _key: String) -> String:
+		return lobby_tag
+
+	func getLobbyOwner(_lobby_id: int) -> int:
+		return lobby_owner
+
+
 # getSessionConnectionInfo only, for the session path (net/link_watch.gd).
 class PathSteam:
 	extends Reference
@@ -265,40 +278,72 @@ func _test_host_leave(transport: Node, input_sync: Node) -> void:
 
 
 # Colour picks belong to the player while the lobby lives (an empty slot list between runs keeps
-# them) and are gone once the host closes it.
+# them). Once the host closed it, a player keeps its pick only while it stays in its slot.
 func _test_lobby_colors(transport: Node, input_sync: Node) -> void:
 	var device := VirtualDevices.FIRST + 1
 	var keyboard: int = CoopService.KEYBOARD_REMAPPED_DEVICE_ID
 	var host := [keyboard, CoopService.PlayerType.KEYBOARD_AND_MOUSE]
 	var remote := [device, CoopService.PlayerType.GAMEPAD_XBOX]
-	_steam.lobby_members = [LOCAL]
-	transport._on_lobby_created(transport.RESULT_OK, LOBBY)
-	input_sync.devices = {CLIENT: device}
-	CoopService.connected_players = [host, remote]
-	CoopService.bt_apply_colors()
-	var picked: bool = CoopService.bt_cycle_color(0) and CoopService.bt_cycle_color(1)
-	var picks: Array = CoopService.bt_slot_colors.duplicate()
-	CoopService.clear_coop_players()
-	CoopService.connected_players = [remote, host]
-	CoopService.bt_apply_colors()
-	var slots: Array = CoopService.bt_slot_colors
-	_t._check(
-		picked and slots[0] == picks[1] and slots[1] == picks[0],
-		"lobby colours: the next run keeps both picks, in the players' new slots (%s, %s)"
-		% [picks, slots]
-	)
-	CoopService.clear_coop_players()
-	transport.leave_lobby()
-	input_sync.devices = {CLIENT: device}
-	CoopService.connected_players = [host, remote]
-	CoopService.bt_apply_colors()
-	_t._check(
-		CoopService.bt_slot_colors == [0, 1, 2, 3],
-		"lobby colours: gone once the host closed the lobby (%s)" % [CoopService.bt_slot_colors]
-	)
-	CoopService.connected_players.clear()
-	CoopService.bt_apply_colors()
+	for listening in [false, true]:
+		_steam.lobby_members = [LOCAL]
+		transport._on_lobby_created(transport.RESULT_OK, LOBBY)
+		input_sync.devices = {CLIENT: device}
+		CoopService.listening_for_inputs = listening
+		CoopService.connected_players = [host, remote]
+		CoopService.bt_apply_colors()
+		var picked: bool = CoopService.bt_cycle_color(0) and CoopService.bt_cycle_color(1)
+		var picks: Array = CoopService.bt_slot_colors.duplicate()
+		CoopService.clear_coop_players()
+		CoopService.connected_players = [remote, host]
+		CoopService.bt_apply_colors()
+		var slots: Array = CoopService.bt_slot_colors.duplicate()
+		_t._check(
+			picked and slots[0] == picks[1] and slots[1] == picks[0],
+			"lobby colours: the next run keeps both picks, in the players' new slots (%s, %s)"
+			% [picks, slots]
+		)
+		CoopService.connected_players = [host, remote]
+		CoopService.bt_apply_colors()
+		transport.leave_lobby()
+		CoopService.bt_apply_colors()
+		slots = CoopService.bt_slot_colors
+		if not listening:
+			_t._check(
+				CoopService.connected_players.size() == 2 and slots[0] == picks[0] and slots[1] == picks[1],
+				"lobby colours: the host leaving mid-run keeps both slots' picks (%s)" % [slots]
+			)
+		else:
+			_t._check(
+				CoopService.connected_players.size() == 1 and slots[0] == picks[0],
+				"lobby colours: the host leaving before the run keeps its own pick (%s)" % [slots]
+			)
+		CoopService.clear_coop_players()
+		input_sync.devices = {CLIENT: device}
+		CoopService.connected_players = [host, remote]
+		CoopService.bt_apply_colors()
+		_t._check(
+			CoopService.bt_slot_colors == [0, 1, 2, 3],
+			"lobby colours: the next run after the lobby closed has no pick (%s)"
+			% [CoopService.bt_slot_colors]
+		)
+		CoopService.connected_players.clear()
+		CoopService.bt_apply_colors()
+	CoopService.listening_for_inputs = false
 	input_sync.devices = {}
+	# A client's lobby opens and closes the picks the same way.
+	var steam := JoinSteam.new()
+	steam.lobby_tag = transport._lobby_tag
+	steam.lobby_owner = HOST
+	steam.lobby_members = [LOCAL, HOST]
+	transport.steam = steam
+	transport._on_lobby_joined(LOBBY, 0, false, transport.LOBBY_ENTER_SUCCESS)
+	var opened: bool = transport.is_active() and not transport.is_host() and CoopService._bt_lobby
+	transport.leave_lobby()
+	transport.steam = _steam
+	_t._check(
+		opened and not CoopService._bt_lobby,
+		"lobby colours: a client joining opens them, leaving closes them"
+	)
 
 
 # Wherever the page shows here (the scene's menu or the popup): lobby_menu_tests.gd has the places.

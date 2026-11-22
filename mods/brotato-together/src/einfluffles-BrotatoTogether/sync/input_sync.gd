@@ -370,8 +370,8 @@ func steam_id_of(device: int) -> int:
 
 
 func _on_peer_removed(steam_id: int) -> void:
-	CoopService.bt_forget_player(steam_id)
 	if not devices.has(steam_id):
+		CoopService.bt_forget_player(steam_id)
 		return
 	var device: int = devices[steam_id]
 	VirtualDevices.release_all(device)
@@ -379,8 +379,12 @@ func _on_peer_removed(steam_id: int) -> void:
 	CoopService.bt_device_types.erase(device)
 	_remote.erase(steam_id)
 	_input_gaps.erase(steam_id)
-	# Free the co-op slot only while players can still join; mid-run the slot waits for a rejoin.
-	if CoopService.listening_for_inputs and CoopService.is_device_assigned(device):
+	# Free the co-op slot only while players can still join; mid-run the slot waits for a rejoin,
+	# and so does the player's colour pick.
+	var assigned: bool = CoopService.is_device_assigned(device)
+	if CoopService.listening_for_inputs or not assigned:
+		CoopService.bt_forget_player(steam_id)
+	if CoopService.listening_for_inputs and assigned:
 		CoopService._remove_player(device)
 
 
@@ -669,6 +673,7 @@ func _forget_unassigned_devices() -> void:
 	for steam_id in devices.keys():
 		if not session.peers.has(steam_id) and not CoopService.is_device_assigned(devices[steam_id]):
 			devices.erase(steam_id)
+			CoopService.bt_forget_player(steam_id)
 
 
 func _free_device() -> int:
