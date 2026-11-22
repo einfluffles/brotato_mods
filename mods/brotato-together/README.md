@@ -108,9 +108,12 @@ used like them, with mouse, keyboard or gamepad.
   mirrored screens.
 - **Damage meter:** during a wave, a block at each player's life bar shows that player's damage,
   the damage per second, the strongest sources and the biggest hit. The co-op shop and the end of
-  a co-op run have a **Damage** page per player (LB / RB or the arrows, after the stats pages)
-  for the wave before; the solo shop and the end of a solo run have it as a third tab of the
-  stats panel. In co-op it also shows each player's share of the team's damage. Nobody is held up
+  a co-op run have a **Damage** page per player (LB / RB or the arrows, after the stats pages):
+  the shop's for the wave before, the end of run's for the whole run, with each player's kills and
+  damage taken. The solo shop and the end of a solo run have it as a third tab of the stats panel.
+  The total is the health your hits took; items whose bonus a weapon's row already holds (Giant
+  Belt, Greek Fire, Scared Sausage) show as "included", and an "Other" row holds the rest. In co-op
+  it also shows each player's share of the team's damage. Nobody is held up
   while a player looks at it. It also works offline. **Options, Gameplay, Damage meter** switches
   it on or off for your machine; the choice is kept in the Mod Loader's config, because the game
   has no settings screen for mods. It is modelled on the
@@ -242,6 +245,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `feedback` | Explosions, floating texts, stat icons, picked-up crates, tardigrade charges, the end of the wave, the whip's and flail's lash. |
 | `looks` | Charmed, burning, cursed, boosted, meca and mutant looks, puddles, projectile angles. |
 | `damage` | The damage meter: counting, the row in the wave, the pages, the switch. |
+| `damage_run` | The damage meter in real waves: the total against the health lost with Giant Belt, Scared Sausage and Greek Fire, the end of the wave before its panels, the run stats over waves, retries and new runs. |
 | `battle_scene` | A breaking weapon, the hole layout, a stomped hole, the host's speed in the own-player prediction, walking into holes. |
 | `dead_player` | A player who died stays visible when the next wave starts him at 0 health. |
 | `selection` | The host's selection screens and end of run on a client, colours and join hints, the shared character grid, wheel and right stick. |

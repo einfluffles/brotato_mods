@@ -83,6 +83,7 @@ const ProgressShareTests := preload(
 const DamageMeterTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/damage_meter_tests.gd"
 )
+const DamageRunTests := preload("res://mods-unpacked/einfluffles-TogetherTests/damage_run_tests.gd")
 const BattleSceneTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/battle_scene_tests.gd"
 )
@@ -149,6 +150,7 @@ const SUITES := [
 	"feedback",
 	"looks",
 	"damage",
+	"damage_run",
 	"battle_scene",
 	"dig_site",
 	"dead_player",
@@ -415,6 +417,12 @@ func _suite_looks(together: Node):
 func _suite_damage(together: Node):
 	coop_run(3)
 	_suite = DamageMeterTests.new(self)
+	yield(_suite.run(together), "completed")
+
+
+func _suite_damage_run(together: Node):
+	coop_run(3)
+	_suite = DamageRunTests.new(self)
 	yield(_suite.run(together), "completed")
 
 

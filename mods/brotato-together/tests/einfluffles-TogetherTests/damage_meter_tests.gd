@@ -4,6 +4,9 @@ extends Reference
 
 const DamageMeter := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_meter.gd")
 const DamageViews := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/damage_views.gd")
+const DamageLedger := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_ledger.gd"
+)
 const ShopIntents := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/shop_intents.gd"
 )
@@ -32,10 +35,14 @@ func run(together: Node):
 	var meter: Node = together.damage_meter
 	meter.connect("changed", self, "_on_changed")
 	var item = _test_measure(meter)
+	_test_capped_hits(meter)
+	_test_overlaps(meter)
+	_test_extra_counters(meter)
 	_test_short()
 	_test_board(meter)
+	_test_run_board(meter)
 	yield(_test_hud(meter, item), "completed")
-	yield(_test_shop(item), "completed")
+	yield(_test_shop(meter, item), "completed")
 	yield(_test_coop_end_run(), "completed")
 	yield(_test_crowded_wave(meter), "completed")
 	_test_cost(meter)
@@ -82,6 +89,121 @@ func _test_measure(meter: Node):
 	)
 	_test_strongest()
 	return item
+
+
+# A wave's hits on fresh state.
+static func _clear_hits(meter: Node) -> void:
+	meter._frozen = false
+	meter._hits = []
+	meter._dealt = []
+	meter._kills = []
+	meter._taken = []
+	meter._health = {}
+
+
+static func _hit(meter: Node, unit, value: int, args) -> void:
+	meter.on_hit(unit, value, Vector2.ZERO, false, false, false, false, args, 0, false)
+
+
+# A hit takes its value, a killing hit at most the health that was left: the total is the health
+# the hits took, the biggest hit no more than that either.
+func _test_capped_hits(meter: Node) -> void:
+	_clear_hits(meter)
+	var args := TakeDamageArgs.new(0)
+	var unit := FakeUnit.new(300)
+	unit.current_stats.health = 200
+	_hit(meter, unit, 100, args)
+	unit.current_stats.health = 0
+	_hit(meter, unit, 5000, args)
+	var fresh := FakeUnit.new(300)
+	fresh.current_stats.health = 0
+	_hit(meter, fresh, 9999, args)  # killed by its first hit: it had all its health
+	var healed := FakeUnit.new(300)
+	healed.current_stats.health = 50
+	_hit(meter, healed, 250, args)
+	healed.current_stats.health = 280
+	meter._on_health_set(healed)  # a healer's heal, a buffer's boost
+	healed.current_stats.health = 0
+	_hit(meter, healed, 1000, args)
+	var tree := FakeUnit.new(40, false)
+	tree.current_stats.health = 0
+	_hit(meter, tree, 70, args)
+	var forwarded := TakeDamageArgs.new(0)
+	forwarded.hide_feedback = true  # the brachiosaurus' foot hands its hit on to the boss
+	_hit(meter, FakeUnit.new(300), 60, forwarded)
+	var dealt: int = meter._dealt[0]
+	_t._check(
+		dealt == 100 + 200 + 300 + 250 + 280 + 40,
+		"the total is the health the hits took, not the overkill (%d)" % dealt
+	)
+	_t._check(meter._hits[0][0] == 300, "the biggest hit is capped too %s" % [meter._hits[0]])
+	_t._check(meter._kills[0] == 3, "kills: the enemies only, not the tree (%d)" % meter._kills[0])
+	var hurt := FakeUnit.new(100)
+	hurt.player_index = 1
+	for case in [[30, false, false], [500, true, false], [20, false, true]]:
+		meter._on_hurt(hurt, case[0], Vector2.ZERO, false, case[1], case[2], false, args, 0, false)
+	_t._check(meter._taken[1] == 30, "damage taken: not what was dodged or blocked")
+	_clear_hits(meter)
+
+
+# Giant Belt's bonus is in the weapon's hit: the total holds it once, the belt's row shows it as
+# included.
+func _test_overlaps(meter: Node) -> void:
+	var belt = _t._find_by_id(ItemService.items, "item_giant_belt")
+	_t._check(belt != null and DamageMeter.overlaps("item_giant_belt"), "Giant Belt overlaps")
+	if belt == null:
+		return
+	RunData.add_item(belt, 0)
+	var tracked: Dictionary = RunData.tracked_item_effects[0]
+	if typeof(tracked.get(belt.my_id_hash)) != TYPE_INT:
+		tracked[belt.my_id_hash] = 0
+	var baseline: Dictionary = tracked.duplicate(true)
+	tracked[belt.my_id_hash] += 400
+	var pistols: Array = RunData.get_player_weapons(0)
+	pistols[0].dmg_dealt_last_wave = 1000  # with the belt's 400
+	pistols[1].dmg_dealt_last_wave = 0
+	var got: Array = meter.measure_player(0, baseline, 10, false, 1000)
+	_t._check(
+		got[0] == 1000 and got[1] == [[PISTOL, 2, 1000], ["item_giant_belt", 1, 400]],
+		"the total counts the belt's bonus once, the belt keeps its row %s" % [got]
+	)
+	got = meter.measure_player(0, baseline, 10, false, 0)
+	_t._check(got[0] == 1000, "with no hit seen: what the other rows sum to (%d)" % got[0])
+	RunData.remove_item(belt, 0)
+	pistols[0].dmg_dealt_last_wave = 120
+	pistols[1].dmg_dealt_last_wave = 30
+
+
+# The chef's consumable explosions and the builder's turret count damage without saying so in
+# their item text; each builder turret zeroes its levels' counters when it spawns.
+func _test_extra_counters(meter: Node) -> void:
+	var p := 1
+	var tracked: Dictionary = RunData.tracked_item_effects[p]
+	var keys := []
+	for id in ["item_builder_turret_1", "item_builder_turret_2", "character_chef"]:
+		keys.append(Keys.generate_hash(id))
+	tracked[keys[0]] = 500
+	tracked[keys[1]] = 0
+	tracked[keys[2]] = 40
+	var saved: Array = meter._baseline
+	meter._baseline = RunData.tracked_item_effects.duplicate(true)
+	tracked[keys[0]] = 0  # the turret's set_data, after the wave's start values
+	meter._check_resets()
+	tracked[keys[0]] = 120
+	tracked[keys[1]] = 30
+	tracked[keys[2]] = 100
+	var got: Array = meter.measure_player(p, meter._baseline[p])
+	var sources := {}
+	for source in got[1]:
+		sources[source[0]] = source[2]
+	_t._check(
+		sources.get("item_builder_turret_1") == 150 and not sources.has("item_builder_turret_2"),
+		"the builder's turret: one row for its levels, counted from its reset %s" % [got[1]]
+	)
+	_t._check(sources.get("character_chef") == 60, "the chef's explosions %s" % [got[1]])
+	for key in keys:
+		tracked.erase(key)
+	meter._baseline = saved
 
 
 # The HUD shows 4 sources, 3 with 3 or 4 players; the shop's board (-1) keeps its order.
@@ -190,6 +312,56 @@ func _test_board(meter: Node) -> void:
 		older.get("time") == 0.0 and older.get("hits") == [],
 		"a board without time and hits (an older host's) is still one %s" % [older]
 	)
+	_t._check(not older.has("run"), "a board without the run: no run view")
+
+
+# The board of a wave that is over carries the run so far.
+func _test_run_board(meter: Node) -> void:
+	var saved: Reference = meter.ledger
+	meter.ledger = DamageLedger.new()
+	meter.measure()
+	_t._check(not meter.board.has("run"), "a running wave's board has no run")
+	meter.measure(true)
+	var sent = bytes2var(var2bytes(meter.state_body(StateStream.DAMAGE)), false)
+	var run = sent.get("run", {})
+	_t._check(
+		run.get("waves") == 1 and run.players.size() == 2 and run.players[0][0] == sent.players[0][0],
+		"the wave's last measurement carries the run with it %s" % [run]
+	)
+	_t._check(
+		var2str(DamageMeter.clean(sent)) == var2str(sent),
+		"and passes the client's check, run and all"
+	)
+	meter.ledger = saved
+	var good := {"waves": 2, "time": 40.0, "players": [[90, [[PISTOL, 1, 90]], [30, PISTOL], 5, 7]]}
+	var sources := []
+	for i in 11:
+		sources.append(["weapon_%d" % i, 1, 1])
+	var five := []
+	for _i in 5:
+		five.append(good.players[0])
+	var bad := {
+		"run without waves": {"time": 1.0, "players": []},
+		"run with a negative time": {"waves": 1, "time": -1.0, "players": []},
+		"run with five players": _run(five),
+		"run with eleven sources": _run([[11, sources, [1, ""], 0, 0]]),
+		"run without kills": _run([[90, [], [30, PISTOL], 7]]),
+		"run with negative kills": _run([[90, [], [3, ""], -1, 0]]),
+		"run with a long hit id": _run([[9, [], [3, "x".repeat(200)], 0, 0]]),
+		"run not a dictionary": [1, 2],
+	}
+	for label in bad:
+		var body := {"wave": 3, "players": [], "run": bad[label]}
+		_t._check(DamageMeter.clean(body).empty(), "malformed board rejected: %s" % label)
+	var body := {"wave": 3, "players": [[90, [[PISTOL, 1, 90]]]], "run": good}
+	_t._check(
+		var2str(DamageMeter.clean(body).get("run")) == var2str(good),
+		"a good run passes %s" % [DamageMeter.clean(body)]
+	)
+
+
+static func _run(players: Array) -> Dictionary:
+	return {"waves": 1, "time": 1.0, "players": players}
 
 
 func _test_hud(meter: Node, item):
@@ -260,20 +432,20 @@ func _test_hud(meter: Node, item):
 		"the other player's row shows that player's own, with its share of the team's"
 	)
 	var args := TakeDamageArgs.new(0)
-	meter.on_hit(null, 52345, Vector2.ZERO, true, false, false, false, args, 0, false)
-	meter.on_hit(null, 900, Vector2.ZERO, false, false, false, false, args, 0, false)
+	meter.on_hit(null, 1000, Vector2.ZERO, true, false, false, false, args, 0, false)
+	meter.on_hit(null, 234, Vector2.ZERO, false, false, false, false, args, 0, false)
 	var nobody := TakeDamageArgs.new(-1)
 	meter.on_hit(null, 99999, Vector2.ZERO, false, false, false, false, nobody, 0, false)
 	meter._wave_time = 10.0
 	meter.measure()
 	_t._check(
-		meter.board.hits[0] == [52345, ""] and meter.board.hits[1] == [0, ""],
+		meter.board.hits[0] == [1000, ""] and meter.board.hits[1] == [0, ""],
 		"the biggest hit per player, none for a hit that was no player's %s" % [meter.board.hits]
 	)
 	_t._check(
 		(
 			hit.visible
-			and hit.get_node("Value").text == "52.3K"
+			and hit.get_node("Value").text == "1.00K"
 			and not hit.get_node("Icon/Source").visible
 		),
 		"the row shows it, short, on its own line (%s)" % hit.get_node("Value").text
@@ -282,7 +454,7 @@ func _test_hud(meter: Node, item):
 	_t._check(dps.visible and dps.text == "123/s", "and the damage per second (%s)" % dps.text)
 
 
-func _test_shop(item):
+func _test_shop(meter: Node, item):
 	_t.get_tree().change_scene(RunData.get_shop_scene_path())
 	for _i in 4:
 		yield(_t.get_tree(), "idle_frame")
@@ -335,7 +507,7 @@ func _test_shop(item):
 	for part in ["Total", "Dps", "Hit"]:
 		values.append(stats.get_node(part).text)
 	_t._check(
-		values[0] == "1,234" and values[1] != "-" and values[2] == "52.3K",
+		values[0] == "1,234" and values[1] != "-" and values[2] == "1,000",
 		"one line: the total, damage per second and the biggest hit %s" % [values]
 	)
 	var rows: Node = list.get_node("Sources")
@@ -351,11 +523,41 @@ func _test_shop(item):
 		var theirs: Node = _list(panels[1]).get_node("Sources").get_child(0)
 		var item_icon: Texture = theirs.get_node("Content/Icon").texture
 		_t._check(theirs.visible and item_icon == item.icon, "player 2's page: its own item")
+	_t._check(
+		not rows.get_node(DamageViews.OTHER_ROW).visible and meter.board.has("run"),
+		"the shop shows the wave, though its board has the run; nothing past the rows: no other"
+	)
+	_test_other_row(meter, list)
 	# Online the page index travels like the game's own pages: a client's page on the host.
 	ShopIntents.apply_focus(shop, 0, 3, [])
 	_t._check(panels[0].carousel.index == 3, "a page 3 from the network shows the damage page")
 	ShopIntents.apply_focus(shop, 0, 0, [])
 	yield(_test_switch(shop, panels), "completed")
+
+
+# Shares add up: an overlapping source shows as included, what no row holds is "other".
+func _test_other_row(meter: Node, list: Node) -> void:
+	var saved: Dictionary = meter.board
+	var sources := [[PISTOL, 2, 1000], ["item_giant_belt", 1, 400]]
+	var body := {"wave": 3, "players": [[1500, sources], [0, []]], "time": 10.0, "hits": []}
+	meter.apply_state(StateStream.DAMAGE, body, 1)
+	var rows: Node = list.get_node("Sources")
+	var other: Node = rows.get_node(DamageViews.OTHER_ROW)
+	var shares := []
+	for row in [rows.get_child(0), rows.get_child(1), other]:
+		shares.append(row.get_node("Content/Share").text)
+	_t._check(
+		shares == ["66.67%", DamageViews.INCLUDED, "33.33%"],
+		"the belt's row is included in the weapon's, the rest is other %s" % [shares]
+	)
+	var content: Node = other.get_node("Content")
+	_t._check(
+		other.visible and content.get_node("Amount").text == "500"
+		and content.get_node("Name").text == DamageViews.OTHER_ROW,
+		"the other row: what the total holds past the shown rows"
+	)
+	meter.apply_state(StateStream.DAMAGE, saved, 2)
+	_t._check(var2str(meter.board) == var2str(saved), "a board with the run passes the check")
 
 
 func _page(panel: Node) -> Control:
@@ -431,7 +633,16 @@ func _test_coop_end_run():
 	var total: String = _list(containers[0]).get_node("Head/Stats/Total").text
 	_t._check(
 		containers[0].carousel.index == 3 and _page(containers[0]).visible and total == "1,234",
-		"three pages on: the last wave's board (%s)" % total
+		"three pages on: the run's board, one wave here (%s)" % total
+	)
+	var head: Node = _list(containers[0]).get_node("Head")
+	_t._check(
+		head.get_node("Wave").text == DamageViews.RUN_TITLE_ONE and head.get_node("Extra").visible,
+		"titled with the run's waves, with kills and damage taken (%s)" % head.get_node("Wave").text
+	)
+	_t._check(
+		head.get_node("Extra/Kills").text == DamageViews.KILLS % "0",
+		"kills: %s" % head.get_node("Extra/Kills").text
 	)
 
 
@@ -646,7 +857,7 @@ func _test_solo_shop(meter: Node):
 	meter.set_shown(true)
 	yield(_t.get_tree(), "idle_frame")
 	_t._check(tab.visible, "switched on again: the tab is back")
-	yield(_test_solo_end_run(), "completed")
+	yield(_test_solo_end_run(meter), "completed")
 
 
 func _press_joypad(button: int):
@@ -665,13 +876,28 @@ static func _solo_tab(stats: Node, page: Node) -> String:
 	return "primary" if stats._primary_stats.visible else "secondary"
 
 
-func _test_solo_end_run():
+func _test_solo_end_run(meter: Node):
+	var run := {"waves": 3, "time": 60.0, "players": [[150, [[PISTOL, 1, 120]], [40, PISTOL], 12, 34]]}
+	var body := {"wave": 3, "players": [[50, [[PISTOL, 1, 50]]]], "run": run}
+	meter.apply_state(StateStream.DAMAGE, body, 0)
 	_t.get_tree().change_scene(RunData.get_end_run_scene_path())
 	for _i in 3:
 		yield(_t.get_tree(), "idle_frame")
 	var stats: Node = _t.get_tree().current_scene.get_node("%StatsContainer")
 	var tab = stats._primary_tab.get_parent().get_node_or_null("DamageTab")
 	_t._check(tab is Button and tab.visible, "the solo end of run has the tab too")
+	var list: Node = stats._secondary_stats.get_parent().get_node(DamageViews.PAGE_NAME).get_child(0)
+	var seen := []
+	for part in ["Wave", "Stats/Total", "Stats/Dps", "Stats/Hit", "Extra/Kills", "Extra/Taken"]:
+		seen.append(list.get_node("Head/" + part).text)
+	var expected := [DamageViews.RUN_TITLE % 3, "150", "3/s", "40"]
+	expected += [DamageViews.KILLS % "12", DamageViews.TAKEN % "34"]
+	_t._check(seen == expected, "its tab shows the run %s" % [seen])
+	var other: Node = list.get_node("Sources").get_node(DamageViews.OTHER_ROW)
+	_t._check(
+		other.visible and other.get_node("Content/Amount").text == "30",
+		"with an other row for the 10 sources' rest"
+	)
 	var bare: Node = load("res://ui/menus/shop/stats_container.tscn").instance()
 	_t.get_tree().current_scene.add_child(bare)
 	yield(_t.get_tree(), "idle_frame")
@@ -682,3 +908,17 @@ func _test_solo_end_run():
 		"any other stats panel: two tabs, RB toggles them as the game does"
 	)
 	bare.free()
+
+
+# What on_hit reads off a unit: its health after the hit, its full health, whether it is an enemy.
+class FakeUnit:
+	extends Reference
+	var current_stats := {"health": 0}
+	var max_stats := {"health": 0}
+	var enemy_id = "fake"
+	var player_index = null
+
+	func _init(health: int, enemy := true) -> void:
+		current_stats = {"health": health}
+		max_stats = {"health": health}
+		enemy_id = "fake" if enemy else null

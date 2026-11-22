@@ -14,6 +14,21 @@ upload; three of them are marked where the upload may have differed.
   now the one you see highlighted. Before, it was sometimes the item next to it, and stayed wrong
   until that player moved again, for example when an item came into their gear (a purchase, a
   combine, a trade) while their cursor rested there, on the host's screen and on a client's alike.
+- Damage meter: the end of run shows the whole run instead of the last wave: the total, share,
+  damage per second and biggest hit over all waves, the ten strongest sources (a weapon's tiers
+  as one row), and the kills and the damage each player took. A wave that was retried counts
+  once. The shop still shows the wave before it.
+- Damage meter: the total is now the health your hits took from the enemies. Before, Giant Belt,
+  Greek Fire and Scared Sausage counted their bonus a second time on top of the weapon that dealt
+  it, so a Giant Belt crit build showed far more than it dealt. Those items still have their row,
+  marked "included", and their damage is no longer added to the shares. A killing blow counts
+  only the health that was left, also for the biggest hit.
+- Damage meter: a weapon combined or recycled on the level-up or crate panels keeps the damage it
+  dealt in that wave on the shop's board, and the board after a retry no longer shows zeros. The
+  meter now takes the wave's last measurement when the wave ends, before those panels.
+- Damage meter: the builder's turret and the chef's consumable explosions are counted. An "Other"
+  row holds what the ten rows leave out, so the shares add up to 100%.
+- Damage meter: a run started or resumed later no longer shows the board of the run before.
 - Needs everybody on this update (protocol 32).
 
 ## 2026-11-22 11:57 UTC

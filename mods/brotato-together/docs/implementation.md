@@ -122,8 +122,8 @@ match the host's. A rejection carries a reason, which the client shows like ever
 Consequence for wire changes: a build with another mod version is turned away, so a message does
 not need optional fields for older builds. Builds that share a mod version (0.2.1 has covered many)
 are told apart only by the protocol number, so a change that an older build would misread bumps
-`Protocol.VERSION`. One body is lenient: `DamageMeter.clean` accepts a board without `time` and
-`hits`. Local settings (route, send rate) are not wire changes.
+`Protocol.VERSION`. One body is lenient: `DamageMeter.clean` accepts a board without `time`,
+`hits` and `run`, and older builds ignore `run`. Local settings (route, send rate) are not wire changes.
 
 ### Resync
 
@@ -1868,36 +1868,88 @@ Achievements are set on the client's real Steam account and cannot be taken back
 mod by Oudstand (its README: "Feel free to modify and share") and written anew, because that mod
 reads each machine's own counters, which stand still on a client.
 
-**Numbers.** The meter reads the game's own counters: `WeaponData.dmg_dealt_last_wave`, and for
-items `RunData.tracked_item_effects` where the item's `tracking_text` is `DAMAGE_DEALT` /
-`EXPLOSION_DAMAGE_DEALT`. Item counters run for the whole run, so the wave's part is the difference
-to a copy taken when the battle scene appears. Every tracked key that gained counts, in the
-inventory or not. A list value's first entry is the damage. Equal ids are one source with their
-number.
+**Total.** A player's total is the health that player's hits took. The meter connects to the
+`EntitySpawner` (`enemy_spawned`, `neutral_spawned`, and the units already there when the battle
+scene appears) and through it to each unit's `took_damage`, once per unit (the pools use units
+again). A hit's value is `full_dmg_value`, per player by `TakeDamageArgs.from_player_index`. A hit
+that leaves health takes exactly its value; a killing hit takes at most the health that was left,
+which the meter keeps per unit: the health after its last hit, refreshed by the unit's `healed`
+(healer enemies) and `stats_boosted` (buffers), dropped on `died`, and the unit's whole health for
+a unit not hit since it spawned. Not counted: hits on a unit that is `dead` (a burn goes on after a
+death without a killing hit: a tree's eighth hit, the game's cap on enemies) and the brachiosaurus
+foot's hits that it hands on to the boss (`hide_feedback`, the only hidden hits; the weapon counts
+the foot's). Damage to players is left out. The suite `damage_run` checks the total against the
+health the enemies lost in real waves.
 
+**Sources.** The rows are the game's own counters: `WeaponData.dmg_dealt_last_wave`, and for
+items `RunData.tracked_item_effects` where the item's `tracking_text` is `DAMAGE_DEALT` /
+`EXPLOSION_DAMAGE_DEALT`, plus `EXTRA_IDS` whose text does not say so (the chef's consumable
+explosions and burns under `character_chef`, the builder's turret under `item_builder_turret_0`
+to `_3`, text `[EMPTY]`). Item counters run for the whole run, so the wave's part is the difference
+to a copy taken when the battle scene appears. A counter that falls below that copy was set back
+(each builder turret's `set_data` zeroes its levels' counters, maybe after the copy) and counts
+from 0; the builder keys are checked every frame. Every tracked key that gained counts, in the
+inventory or not. A list value's first entry is the damage. Equal ids are one source with their
+number; the builder's levels are one source, named by the level the player holds.
+
+- **Rows and total.** Some counters hold damage a weapon's counter holds too (`OVERLAPS`): Giant
+  Belt's crit bonus is part of the weapon's hit (`Enemy.get_damage_value`), Greek Fire's bonus part
+  of a burn tick, and burn ticks are credited to the weapon that applied the burn and to Scared
+  Sausage as well (`Unit._on_BurningTimer_timeout`). Summing all counters overcounted (a Giant Belt
+  crit build: 23,080 shown against 13,412 health lost). So the total comes from the hits, the rows
+  stay the counters, and an overlapping row shows "included" in place of its share, with a paler
+  bar. The views add an "Other" row: the total minus the shown rows that overlap nothing. It holds
+  sources past the 10 rows, damage no counter holds (dart traps) and Scared Sausage's own burns,
+  so the shares of the plain rows and Other add up to 100%. The total is never less than what the
+  plain rows sum to (a hit on a unit the meter did not watch). The overlap is a property of the id,
+  so it does not travel.
 - Per player the board holds `[total, sources as [my_id, count, damage]]`. During the wave it holds
-  what the HUD shows: 4 sources, or 3 with 3 or 4 players (`DamageMeter.live_sources`). The
-  measurement taken when the battle scene leaves holds the 10 strongest, for the shop's board.
+  what the HUD shows: 4 sources, or 3 with 3 or 4 players (`DamageMeter.live_sources`). The wave's
+  last measurement holds the 10 strongest, for the shop's board. The HUD has no Other line.
 - During the wave, when the kept sources are all weapons or all of the other kind, the last gives
   way to the strongest of the other kind if that dealt at least 5% of the player's total
   (`OTHER_KIND_SHARE`).
-- **Biggest hit.** The meter connects to the `EntitySpawner` (`enemy_spawned`, `neutral_spawned`)
-  and through it to each unit's `took_damage`, once per unit. The value is `full_dmg_value`, per player by
-  `TakeDamageArgs.from_player_index`. The
+- **Biggest hit.** The biggest of those hits' values, capped like them, per player. The
   source is read off the hitbox: its `from` weapon's tracking key, else that weapon's `my_id`, else
   the hitbox's tracking key, else none. `args.from` is never used: a burn tick reuses the unit's
   args with the hitbox cleared and `from` left as whatever hit the unit last.
 - **Wave time** (for damage per second) is the meter's own count of frame time while `main`'s
   `WaveTimer` runs and the tree is not paused.
+- **Kills and damage taken** (for the run stats): a killing hit on a unit with `enemy_id` counts a
+  kill for the hit's player; a player's `took_damage` that was neither dodged nor blocked counts
+  its value as damage taken.
 - **Who measures.** The machine that runs the wave (the host, or any machine outside a session),
-  every 0.5 s while the battle scene is current and once more when it leaves the tree. A host with
-  peers measures even with its own switch off. The game writes the counters inside the weapon's hit
-  handler, so the numbers do not depend on the frame rate.
+  every 0.5 s while the battle scene is current. A host with peers measures even with its own
+  switch off. The game writes the counters inside the weapon's hit handler, so the numbers do not
+  depend on the frame rate.
+- **The wave's last measurement** (`freeze`) is taken once, when the wave is over: the meter
+  connects to `EndWaveTimer.timeout`, and being older than the battle scene it runs before
+  `main._on_EndWaveTimer_timeout` (signal order), so before `RunData.on_wave_end`, the crate and
+  level-up panels and the retry prompt. Combining a weapon there gives the new one a counter of 0
+  (`RunData.combine_weapon`), recycling takes the counter along, and Retry restores the run state
+  (`retry_wave.gd`); measured later, the shop's board lost that damage or showed zeros. `_process`
+  freezes too once `_end_wave_timer_timedout` is set, and the battle scene's `tree_exiting` does
+  when the wave did not end (the pause menu's end run, restart or quit). After it the board stays
+  as it is.
+
+**Run stats.** `sync/damage_ledger.gd` sums the waves of a run per player: `{sources: {key:
+[my_id, count, damage]}, total, hit, kills, taken}`, with the waves' count and time. The key joins
+a weapon's tiers (`weapon_id`, Pistol I to IV one row) and the builder's levels; `my_id` and count
+are the latest wave's. The wave's last measurement hands the wave over (`hold`, every source, not
+only 10). It counts (`commit`) when the next scene is the shop or an end of run scene, so the last
+wave of a run counts too. A battle that starts drops a held wave (a retry: the failed try never
+reached those scenes), and one at or before the last counted wave starts the ledger anew (a new
+run). Any scene outside a run (title screen, selection screens) clears the ledger and the board,
+so a run started or resumed later does not show the last run's board; a resumed run's stats start
+at the wave it resumes from. Leaving the lobby clears both too.
 
 **Section `damage`.** Sent when the board changed, which is every 0.5 s while a wave runs. The
 client checks the body strictly (`DamageMeter.clean`: at most 4 players, 10 sources, ids up to 96
 characters, no negative numbers) and resolves ids against `ItemService.items / weapons /
-characters`.
+characters`. The wave's last measurement adds `run`: `{waves, time, players: [[total, sources (10
+strongest), [damage, my_id], kills, taken], ...]}`, the ledger with that wave in it, checked the
+same way (a malformed run rejects the board). A board without `run` has no run view. An older build
+of the same protocol ignores the key, so it needed no protocol bump.
 
 **Views.** Numbers are shortened by `DamageViews.short`. Each view drops itself from
 `DamageViews._views` when its panel leaves the tree.
@@ -1916,6 +1968,12 @@ characters`.
   before the game's (multilevel calls) and `update_tab` steps through three tabs. The solo shop is
   told by its methods (`_get_reroll_button` without `_get_coop_player_container`), not by class
   (script load order).
+- **Board.** A title line ("Wave N"), one line with total, share of the team's, damage per second
+  and biggest hit, 10 bars and the Other bar. The shops show the wave board. The end of run views
+  (`add_page(container, true)` from the end of run container, `add_tab(stats, true)` on the solo
+  end of run) show the board's `run` when it has one: "Run, N waves", the same line over the run
+  (damage per second over the waves' time), its 10 sources and Other, and a line with kills and
+  damage taken. Without `run` (an older host) they show the wave.
 
 **Switch.** Options > Gameplay has a "Damage meter" check button (`extensions/ui/menu_options.gd`, a
 copy of the "life bars on bosses" button). It is this machine's. Off: the rows are gone, the
@@ -1925,7 +1983,8 @@ carousels' last page is the one before (`carousel.max_index`), the solo tab is h
 config cannot be written). When the host has it off, it shows a client that is on the damage page
 on the page before and passes that on.
 
-Dart traps are not counted: the game ships them without a tracking key.
+Dart traps have no row: the game ships them without a tracking key. Their damage is in the
+total and so in Other.
 
 ## 10. Game bugs worked around
 
@@ -2237,7 +2296,8 @@ As of 2026-11-22, protocol 32.
 - Kick is in the title screen's frame only.
 - A client's live menu is keyboard and pad only. A spectator has none.
 - Options changed by a client are written to disk only after the session.
-- The "Damage meter" label is English only. With the host's meter off, nobody reaches the damage
+- The "Damage meter" label and the meter's own texts ("Run, N waves", "Other", "included",
+  kills and damage taken) are English only. With the host's meter off, nobody reaches the damage
   page at the end of run. With the host's meter on and a client's off, the host's carousel for that
   client can stand on the damage page while the client shows the page before.
 
