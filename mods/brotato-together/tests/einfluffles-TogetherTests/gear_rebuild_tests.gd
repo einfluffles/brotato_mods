@@ -10,6 +10,10 @@ const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
+const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
+const StateStream := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
+)
 const MARGINS := [MARGIN_LEFT, MARGIN_TOP, MARGIN_RIGHT, MARGIN_BOTTOM]
 
 var _t: Node = null
@@ -170,6 +174,7 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 		"gear: setting a cursor over a freed control works"
 	)
 	mirrored.focused_control = null
+	yield(_cursor_race(panels, main, msg, other), "completed")
 
 	# Back to the run the tests that follow expect (one rebuild puts back the freed elements).
 	RunData.remove_item(coupon, 1, true)
@@ -184,6 +189,94 @@ func run(t: Node, panels: Node, main: Node, msg: Dictionary):
 		and emulator.focused_control.get_parent() == items,
 		"gear: the own cursor is still in the gear"
 	)
+
+
+# The other player's cursor (mirrored) and the run state that adds an item before its element
+# (its element moves one place on), as in the shop (shop_gear_change). The host
+# names the cursor on its rows, which have the item already: the client ends on the host's item
+# whichever comes first, and a cursor on the new item waits for it.
+func _cursor_race(panels: Node, main: Node, msg: Dictionary, other: Node):
+	var focus_sync: Node = panels.focus_sync
+	var mirrored = other.focus_emulator
+	var items = other.player_gear_container.items_container._elements
+	var owned := {}
+	for item in RunData.get_player_items(1):
+		owned[item.my_id] = true
+	var added := []  # two more items of tier 3 and up, then the one that comes in, of tier 1
+	for item in ItemService.items:
+		if added.size() < 2 and item.tier >= 2 and not owned.has(item.my_id) and item.max_nb == -1:
+			added.append(item)
+	for item in ItemService.items:
+		if added.size() < 3 and item.tier == 0 and not owned.has(item.my_id) and item.max_nb == -1:
+			added.append(item)
+	RunData.add_item(added[0], 1)
+	RunData.add_item(added[1], 1)
+	RunData.add_item(added[2], 1)  # the host's rows
+	panels.apply(main, _with_run(msg))
+	yield(_frames(2), "completed")
+	var new_element = _element_of(items, added[2].my_id)
+	var at: int = new_element.get_index()
+	if at + 2 >= items.get_child_count():
+		_t._check(false, "gear: (control) an item after the new one, and one after that")
+		return
+	var rest_id: String = items.get_child(at + 1).item.my_id
+	var after := FocusSync.cursor_of(mirrored, items.get_child(at + 1), main)
+	var on_new := FocusSync.cursor_of(mirrored, new_element, main)
+	yield(_with_item(panels, main, msg, added[2], false), "completed")  # the client's rows
+	var before := FocusSync.cursor_of(mirrored, _element_of(items, rest_id), main)
+	print("  info: gear race: %s at %d, then %d" % [rest_id, at, at + 1])
+
+	focus_sync.apply_state(StateStream.CURSORS, _body(main, before), 0)
+	focus_sync.apply_state(StateStream.CURSORS, _body(main, after), 0)
+	var early := _under(mirrored)
+	yield(_with_item(panels, main, msg, added[2], true), "completed")
+	_t._check(
+		early == rest_id and _under(mirrored) == rest_id,
+		(
+			"gear: the other's cursor body before the run state that adds an item before it: on"
+			+ " the host's item (%s, after the state %s; host %s)"
+		)
+		% [early, _under(mirrored), rest_id]
+	)
+
+	yield(_with_item(panels, main, msg, added[2], false), "completed")
+	focus_sync.apply_state(StateStream.CURSORS, _body(main, before), 0)
+	var waits: bool = not focus_sync.apply_state(StateStream.CURSORS, _body(main, on_new), 0)
+	var meanwhile := _under(mirrored)
+	yield(_with_item(panels, main, msg, added[2], true), "completed")
+	_t._check(
+		waits and meanwhile == rest_id and _under(mirrored) == added[2].my_id,
+		(
+			"gear: the other's cursor on an item not here yet waits, then lands with the run state"
+			+ " (waits %s, meanwhile %s, then %s)"
+		)
+		% [waits, meanwhile, _under(mirrored)]
+	)
+	mirrored.focused_control = null
+	for item in added:
+		RunData.remove_item(item, 1, true)
+	panels.apply(main, _with_run(msg))
+	yield(_frames(2), "completed")
+
+
+func _with_item(panels: Node, main: Node, msg: Dictionary, item, has: bool):
+	if has:
+		RunData.add_item(item, 1)
+	else:
+		RunData.remove_item(item, 1, true)
+	panels.apply(main, _with_run(msg))
+	yield(_frames(2), "completed")
+
+
+static func _body(main: Node, cursor: Array) -> Dictionary:
+	return {"scene": main.filename, "cursors": [cursor]}
+
+
+static func _under(emulator) -> String:
+	var control = emulator.focused_control
+	if not is_instance_valid(control) or control.get("item") == null:
+		return "none"
+	return control.item.my_id
 
 
 # msg with the run as it is now. A part whose JSON text did not change keeps its id: the objects

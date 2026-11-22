@@ -72,12 +72,14 @@ func state_key(_section: int) -> String:
 		var control = emulator.focused_control
 		if control == null or not is_instance_valid(control):
 			continue
+		# The item too: an element kept in place can be pointed at another one (sync_inventory).
 		key.append(
-			"%d %d %s %s" % [
+			"%d %d %s %s %s" % [
 				emulator.player_index,
 				control.get_instance_id(),
 				_tree_position(emulator),
 				_tree_position(control),
+				FocusTargets.item_key(control),
 			]
 		)
 	_key = key.join("|")

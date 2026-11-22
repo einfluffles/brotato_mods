@@ -2,7 +2,7 @@
 
 How the mod works, for a developer who is new to it. The game hooks it builds on are listed in
 [`docs/brotato-hooks.md`](../../../docs/brotato-hooks.md). This document describes the code as of
-2026-11-21 (protocol 31, mod version 0.2.1). File paths are relative to
+2026-11-22 (protocol 32, mod version 0.2.1). File paths are relative to
 `src/einfluffles-BrotatoTogether/`, test suites live in `tests/einfluffles-TogetherTests/`.
 
 Contents: [Overview](#1-overview), [Glossary](#2-glossary), [Session](#3-session),
@@ -122,8 +122,8 @@ match the host's. A rejection carries a reason, which the client shows like ever
 Consequence for wire changes: a build with another mod version is turned away, so a message does
 not need optional fields for older builds. Builds that share a mod version (0.2.1 has covered many)
 are told apart only by the protocol number, so a change that an older build would misread bumps
-`Protocol.VERSION`. One body is lenient: `DamageMeter.clean` accepts a board without `time` and
-`hits`. Local settings (route, send rate) are not wire changes.
+`Protocol.VERSION`. One body is lenient: `DamageMeter.clean` accepts a board without `time`,
+`hits` and `run`, and older builds ignore `run`. Local settings (route, send rate) are not wire changes.
 
 ### Resync
 
@@ -312,6 +312,15 @@ example a shop purchase). `mark_dirty` resends without a key change. The optiona
 `state_sent(section, steam_id)` runs right after each send to that peer. The stream does nothing
 while not host, and it runs while the tree is paused.
 
+**Cursors after the gear they name.** `cursors` is checked every 0.05 s, `shop` and `upgrades`
+(`StateStream.BUILDERS`) every 0.1 s, and those two can be held (a flush with hold, or Steam's
+queue, see below). An item that comes in before a resting cursor changes both in one frame, and a
+client resolves the cursor on the rows it has. So when the cursors' key changed, the stream waits a
+frame while a builder is held for deferred game code, and first checks a builder not checked this
+frame yet, ahead of its interval, so that its change goes out first. A peer a builder still owes a
+state (in its dirty set: held by Steam's queue, or marked dirty) gets the cursors with a later
+check. No wire change; the cost is one extra builder key per cursor move.
+
 **Resync order.** On `peer_ready` every section is queued for that peer, in section order, for the
 stream's next step. What the other modules send from their own `peer_ready` handlers
 (`BATTLE_START`, the input device behind `you`) therefore reaches the peer before any `STATE`. The
@@ -351,10 +360,12 @@ right, because the provider builds and records the patch only for peers actually
 Never held: a null body, a light section, a peer that has waited `MAX_HOLD_MSEC` (2 s), and a peer
 Steam has no numbers for. A resync target is held the same way.
 
-A held shop state reaches that peer after lighter sections sent meanwhile (cursors, `pause_shop`).
-That is safe: a cursor on a control that is not built yet stays pending until it resolves, and the
-shop's item controls are the same nodes before and after a shop state. Shop and upgrades never
-overtake each other for a peer, because both go through one `RunParts.Sender` record.
+A held shop state reaches that peer after lighter sections sent meanwhile (`pause_shop`), but not
+after changed cursors: those wait for it (see [State stream](#state-stream)). Even so a cursor is
+named so that the order does not matter for it: a gear element by its item, which resolves to
+nothing (the body stays pending) while the client's rows lack it, and the shop's item controls are
+the same nodes before and after a shop state. Shop and upgrades never overtake each other for a
+peer, because both go through one `RunParts.Sender` record.
 
 When the section closes, the host logs one line per client that was held, for example "Shop state
 held 3 times for X, longest 2001 ms (Steam's queue over 24 KB)".
@@ -535,8 +546,11 @@ missing part asks for a resync and the start is dropped. A queued start keeps it
   snapshots after a change and in every 10th. `Snapshot.resolve` fills both from earlier snapshots
   and builds the id to index map used for interpolation. A resting entity the client never saw is
   skipped until its refresh.
-- **Events** are capped at 48 per snapshot. `Snapshot.select_events` drops duplicate sounds first,
-  then enemy damage numbers, sounds and player damage, and animations last.
+- **Events** are capped at 48 per snapshot. `HitNumbers.select_events` drops second copies of
+  enemy damage numbers first, then duplicate sounds, enemy damage numbers (normal hits before
+  crits, kills, one-shots and gold hits), sounds, numbers on players, explosions and the like, and
+  animations and the state events last. Damage and heal numbers left out wait for the next
+  snapshots ([Damage and heal numbers](#damage-and-heal-numbers)); everything else left out is lost.
 - A one-shot event that is older than 250 ms when its turn comes (a stall, a scene load) is dropped.
   Animations and the state events are kept.
 
@@ -548,9 +562,10 @@ Mirrored nodes are the entity spawner's lists (`bosses`, `enemies`, `neutrals`, 
 - **Net ids** are u16, wrap, and skip ids alive in the last snapshot. An id is assigned on the
   `EntitySpawner.*_respawned` signals (fired on every spawn, pool reuse included) and kept by the
   entity's first snapshot (`_fresh_ids`), so a hit that lands before that snapshot targets an id the
-  clients will see. A node absent from the last snapshot gets a new id. The id is dropped on
-  `tree_exiting`: the game's pools take nodes out of the tree and are LIFO, so a projectile or gold
-  can be pooled and reused between two snapshots.
+  clients will see. The same signal connects a unit's `took_damage`, so such a hit (one in the
+  spawn tick) has its number. A node absent from the last snapshot gets a new id. The id is
+  dropped on `tree_exiting`: the game's pools take nodes out of the tree and are LIFO, so a
+  projectile or gold can be pooled and reused between two snapshots.
 - **Types.** A type is the node's `filename`, sent once per battle. Some types carry a tag after
   `#` (spawn markers, puddles, see below).
 - **Records.** The host keeps `[net id, type idx, kind bits, node, quantized x / y, still count]`
@@ -785,7 +800,8 @@ instance per battle on each side and keeps no node references.
 
 | Event | Host | Client |
 |---|---|---|
-| `EVENT_DAMAGE` | connects to every mirrored unit's `took_damage` (players as target `-(player_index + 1)`) | calls the handlers `main.gd` uses (`FloatingTextManager._on_unit_took_damage`, `EffectsManager._on_unit_took_damage`) with a hitbox-less `TakeDamageArgs`, plus `Unit.flash()` |
+| `EVENT_DAMAGE` `[target, value, knockback, flags, hit type, seq, effect scale, hitbox position or null]` | connects to the `took_damage` of every unit at its spawn signal (or its first snapshot) and of the players (target `-(player_index + 1)`) | for players, enemies and neutrals the handlers `main.connect_visual_effects` connects (`FloatingTextManager._on_unit_took_damage`, `EffectsManager._on_unit_took_damage`; pets get no number, like in the game), then `Unit.flash()` on every unit. See [Damage and heal numbers](#damage-and-heal-numbers). |
+| `EVENT_HEAL` `[player, value, seq]` | connects to `Player.healed` | `FloatingTextManager._on_player_healed`, which `main` connects to it |
 | `EVENT_SOUND` | see Sounds below | see Sounds below |
 | `EVENT_ANIM` | see [Animations](#flags-poses-and-animations) | |
 | `EVENT_EXPLOSION` `[scene type, position, scale, smoke amount]` (`WeaponService.explode`) | finds new children of `main._explosions` at each snapshot (a node whose "explode" restarted was pooled and reused) | takes a node from main's pool like the game, makes it a puppet (no physics: its first physics frame would play the sound; hitboxes off), sets this player's `explosion_opacity` and plays "explode" from the start. `end_explosion` pools it. Fog waves get their light (`FogViewport._on_spawn_explosion`). |
@@ -807,9 +823,8 @@ the signal.
 - Screen shake (`Screenshaker._on_player_took_damage`, `_on_unit_took_damage`), called with each
   damage event (the host already leaves out `hide_feedback` hits). This client's screenshake option
   applies.
-- Level-up and heal texts, from the host's player stats compared with the previous ones. A heal and
-  a hit within one snapshot show as their sum. These follow the newest snapshot, about 100 ms ahead
-  of the interpolated world.
+- The level-up text, from the host's player level compared with the previous one. It follows the
+  newest snapshot, about 100 ms ahead of the interpolated world.
 - The gold pickup sparkle where a gold puppet vanished from the snapshots (`main.on_gold_picked_up`
   is the only way out of `_active_golds`), not after the wave's end.
 
@@ -835,6 +850,46 @@ players: [[consumable my_id]]}` from the lists' `_elements`. The client makes it
 with their own `add_element` / `remove_element` (a copy per entry, with the zone's sprite as
 `ItemService.get_consumable_for_tier` sets it). Ids it does not know are left out. The level-up
 icons of that row come from `BattleClient._show_level_up`.
+
+### Damage and heal numbers
+
+`sync/hit_numbers.gd`, one instance per battle on each side. A big hit (an explosion over 80
+enemies) used to lose most of its numbers to the event cap, and a lost snapshot lost its numbers.
+
+- **Host.** Every number gets a seq (u16 per battle, wrapping). It waits up to `MAX_DELAY` (3)
+  snapshots, 100 ms, for room under the cap and goes out in two snapshots, the second copy in a
+  later one than the first, so a lost snapshot loses none. At most `MAX_COPIES` (16) second copies
+  go into one snapshot. Numbers are offered oldest first, so their seqs ascend and travel as a
+  varint difference to the number before (mostly 1 B).
+- **Queue cap.** Numbers waiting for their first copy are capped per kind: 256 plain enemy hits
+  (`MAX_PENDING`), 256 crits, kills and the like, 64 player numbers and heals (`MAX_FEEDBACK`;
+  i-frames and 4 players bound their rate). More of a kind are dropped before they are ranked, so
+  a flood of hits (400 burning enemies and explosions) keeps out no player's "-N", heal, crit or
+  kill. A number already sent once waits only for its second copy and does not count: it leaves
+  the queue within 4 snapshots of being first offered, and at most 48 numbers go out a snapshot,
+  so the queue holds at most 256 + 256 + 64 + 4 * 48 = 768 entries. The check comes before the
+  event is built.
+- **Rank** (`select_events`): crits, kills (health 0 after the hit), one-shots and gold hits go
+  before other enemy hits. The second copy of an enemy number comes after everything else, a
+  player number's second copy at the crits' rank. So an 80-hit tick sends its crits and kills with
+  the first snapshot and all of its numbers within 4 snapshots. In suite `hit_numbers` (room for
+  47 numbers a snapshot, an enemy's spawn-tick hit in the second) the 80 go out as 47, 46, 16 and
+  16 numbers a snapshot: the first copies in the first two, then 13, 16 and 16 second copies, so
+  45 of the 80 get their second copy in time.
+- **Client.** `fresh` drops a seq it already queued (it remembers the last 1024), before the event
+  is queued. A number fires at the time of the snapshot it came in, so one that waited or whose
+  first copy was lost shows up to 100 ms late.
+- **Hit effects.** `TakeDamageArgs.get_effect_scale()` (a weapon's `effect_scale`, 0.1 for a burn
+  tick) is sent when it is not 1 (1 B). For a target with an aim shape (in the game only the
+  brachiosaurus) the hitbox's position is sent too (4 B): the client puts a stand-in `Hitbox` there
+  (in the battle scene, not monitoring or monitorable, its shape disabled), so
+  `Unit.get_hit_feedback_position` gives the host's spot for the number and the hit effect.
+- **Bytes.** A damage number is 9 B (8 before the seq), a heal 4 B. Each number goes out twice,
+  which doubles what numbers cost in a fight that does not fill the cap; in a big fight the copies
+  add at most 144 B to a snapshot (4.2 KB/s per client). In the crowded late wave of
+  `late_load_tests.gd` (2026-11-22): 180 enemies 43.2 KB/s per client (43.5 before), 400
+  enemies a median of 24 events and 2808 B per snapshot (14 and 2700 B before), still 2 and 3
+  packets.
 
 ### Snapshot time and render delay
 
@@ -1218,7 +1273,10 @@ through `FloatingTextManagerShop.stat_added`, without the sound. Every client ge
 game's combine handler moves the cursor with deferred `grab_focus` calls, one of them onto an
 element it already queued for deletion. The function puts the cursor back on what the client last
 reported (`ShopSync.host_apply_focus` keeps each player's last `SHOP_FOCUS` target) when a cursor
-can rest there, else it leaves the game's place.
+can rest there, else it leaves the game's place. A reported gear element is found by its item on
+the host's rows, which can be newer than the client's ones it was described on. Once its item is
+gone (recycled, combined) it is the live element at its last place, which is where the client's own
+cursor goes when the host's state takes the item (`_refresh_gear`), until the client's next report.
 
 **Client's own panel.** While the own panel runs and the host is not paused, `ShopLocal.process`
 checks every frame that its device is the live one and takes it back if not, with a warning. The
@@ -1499,20 +1557,47 @@ has a mod that adds a control.
 - **Steps** lead from the anchor to the control. A node from a scene file (it has an `owner`) is
   named. A node added by code (generated names differ between machines) is `[script path or class,
   k]`, the k-th such sibling of that type, with nodes queued for deletion not counted.
+- **Gear elements** (protocol 32): an `InventoryElement` that shows an item below `shop_gear`,
+  `up_gear` or `up_weapons` (`FocusTargets.KEYED`) is `[script path, key, copy]` instead. The key is
+  what it shows, the same on every machine (`FocusTargets.item_key`: `my_id`, tier and the cursed,
+  meca and mutant marks; not `UpgradesGear.shows`, which has a local icon's instance id), copy its
+  place among the live siblings that show the same (two alike weapons, two cursed copies). It
+  resolves by key and copy only, never by place: while a run state is on its way the rows of host
+  and client differ (a gift, a purchase or a combine inserts an item before the cursor; ties of
+  tier and name, such as a plain stack and its cursed copy, can sort either way), and a position
+  named another item there. An item the receiver does not have resolves to nothing: `FocusSync`
+  keeps the body pending until the run state brings it, and the host ignores a report naming it.
+  A special (locked or random) element and the grids of the selection screens and the end of run
+  keep `[type, k]`: `MenuSync` builds those in the host's order from the host's entries, which can
+  show an item otherwise than this machine would (locked, another tier).
 - Network data is checked (types, anchor names, player 0 to 3, counts, name lengths). The own-panel
   messages accept only that player's anchors, never `scene`.
 - **Applying.** `apply_state` skips `local_emulators` and returns false until every cursor resolves
   to a visible control, so the stream retries for up to 10 s. A newer body for the next scene
   replaces one still waiting.
+- **Re-applying.** A client's gear refresh of another player (`ShopSync._apply_body`,
+  `UpgradesSync.apply`) can leave that player's cursor on the element at its place, when its own
+  element was freed or now shows another item, and opening a copy of a popup takes it to Cancel.
+  Both then re-apply the last cursors body (`FocusSync.reapply`, which leaves a body still pending
+  to the stream).
 
 **Key.** Describing a cursor is too slow for 20 checks a second, so the key is each cursor's control
 and emulator by instance id and child indices up to the scene, plus the player count and the scene
-instance. `cursor_key_tests.gd` checks that every change the game makes to the description moves the
+instance, and for a gear element its item key (`sync_inventory` can point a kept element at another
+item). `cursor_key_tests.gd` checks that every change the game makes to the description moves the
 key. Known difference: a sibling queued for deletion (`BaseShop._combine_weapon`) moves the key only
 when it is freed, so that cursor goes out one check late. Changes another mod could make without
 moving the key (a rename, a script change, a sibling replaced at the same index) are caught by a
 safety net: while the key stays the same, the cursors are described once a second and compared with
 the last body. A difference is logged as a warning and sent.
+
+**Tests.** Suite `focus_targets` (`focus_target_tests.gd`) checks gear element steps on a row
+ordered otherwise, with an element more or less, with copies and cursed copies, an absent item and
+malformed steps. The race of a cursor body with the run state that inserts an item before it, in
+both orders and with a cursor on the item that comes in: `shop_gear_change_tests.gd` (shop),
+`gear_rebuild_tests.gd` (suite `battle_loopback`, level-up gear page), and brotato:trade's
+`together` suite (a gift). The host's side with a report described on older rows:
+`shop_cursor_tests.gd` (suite `local_shop`). The stream's order: `state_stream_tests.gd`.
 
 ### Scroll positions, wheel and right stick
 
@@ -1827,36 +1912,88 @@ Achievements are set on the client's real Steam account and cannot be taken back
 mod by Oudstand (its README: "Feel free to modify and share") and written anew, because that mod
 reads each machine's own counters, which stand still on a client.
 
-**Numbers.** The meter reads the game's own counters: `WeaponData.dmg_dealt_last_wave`, and for
-items `RunData.tracked_item_effects` where the item's `tracking_text` is `DAMAGE_DEALT` /
-`EXPLOSION_DAMAGE_DEALT`. Item counters run for the whole run, so the wave's part is the difference
-to a copy taken when the battle scene appears. Every tracked key that gained counts, in the
-inventory or not. A list value's first entry is the damage. Equal ids are one source with their
-number.
+**Total.** A player's total is the health that player's hits took. The meter connects to the
+`EntitySpawner` (`enemy_spawned`, `neutral_spawned`, and the units already there when the battle
+scene appears) and through it to each unit's `took_damage`, once per unit (the pools use units
+again). A hit's value is `full_dmg_value`, per player by `TakeDamageArgs.from_player_index`. A hit
+that leaves health takes exactly its value; a killing hit takes at most the health that was left,
+which the meter keeps per unit: the health after its last hit, refreshed by the unit's `healed`
+(healer enemies) and `stats_boosted` (buffers), dropped on `died`, and the unit's whole health for
+a unit not hit since it spawned. Not counted: hits on a unit that is `dead` (a burn goes on after a
+death without a killing hit: a tree's eighth hit, the game's cap on enemies) and the brachiosaurus
+foot's hits that it hands on to the boss (`hide_feedback`, the only hidden hits; the weapon counts
+the foot's). Damage to players is left out. The suite `damage_run` checks the total against the
+health the enemies lost in real waves.
 
+**Sources.** The rows are the game's own counters: `WeaponData.dmg_dealt_last_wave`, and for
+items `RunData.tracked_item_effects` where the item's `tracking_text` is `DAMAGE_DEALT` /
+`EXPLOSION_DAMAGE_DEALT`, plus `EXTRA_IDS` whose text does not say so (the chef's consumable
+explosions and burns under `character_chef`, the builder's turret under `item_builder_turret_0`
+to `_3`, text `[EMPTY]`). Item counters run for the whole run, so the wave's part is the difference
+to a copy taken when the battle scene appears. A counter that falls below that copy was set back
+(each builder turret's `set_data` zeroes its levels' counters, maybe after the copy) and counts
+from 0; the builder keys are checked every frame. Every tracked key that gained counts, in the
+inventory or not. A list value's first entry is the damage. Equal ids are one source with their
+number; the builder's levels are one source, named by the level the player holds.
+
+- **Rows and total.** Some counters hold damage a weapon's counter holds too (`OVERLAPS`): Giant
+  Belt's crit bonus is part of the weapon's hit (`Enemy.get_damage_value`), Greek Fire's bonus part
+  of a burn tick, and burn ticks are credited to the weapon that applied the burn and to Scared
+  Sausage as well (`Unit._on_BurningTimer_timeout`). Summing all counters overcounted (a Giant Belt
+  crit build: 23,080 shown against 13,412 health lost). So the total comes from the hits, the rows
+  stay the counters, and an overlapping row shows "included" in place of its share, with a paler
+  bar. The views add an "Other" row: the total minus the shown rows that overlap nothing. It holds
+  sources past the 10 rows, damage no counter holds (dart traps) and Scared Sausage's own burns,
+  so the shares of the plain rows and Other add up to 100%. The total is never less than what the
+  plain rows sum to (a hit on a unit the meter did not watch). The overlap is a property of the id,
+  so it does not travel.
 - Per player the board holds `[total, sources as [my_id, count, damage]]`. During the wave it holds
-  what the HUD shows: 4 sources, or 3 with 3 or 4 players (`DamageMeter.live_sources`). The
-  measurement taken when the battle scene leaves holds the 10 strongest, for the shop's board.
+  what the HUD shows: 4 sources, or 3 with 3 or 4 players (`DamageMeter.live_sources`). The wave's
+  last measurement holds the 10 strongest, for the shop's board. The HUD has no Other line.
 - During the wave, when the kept sources are all weapons or all of the other kind, the last gives
   way to the strongest of the other kind if that dealt at least 5% of the player's total
   (`OTHER_KIND_SHARE`).
-- **Biggest hit.** The meter connects to the `EntitySpawner` (`enemy_spawned`, `neutral_spawned`)
-  and through it to each unit's `took_damage`, once per unit. The value is `full_dmg_value`, per player by
-  `TakeDamageArgs.from_player_index`. The
+- **Biggest hit.** The biggest of those hits' values, capped like them, per player. The
   source is read off the hitbox: its `from` weapon's tracking key, else that weapon's `my_id`, else
   the hitbox's tracking key, else none. `args.from` is never used: a burn tick reuses the unit's
   args with the hitbox cleared and `from` left as whatever hit the unit last.
 - **Wave time** (for damage per second) is the meter's own count of frame time while `main`'s
   `WaveTimer` runs and the tree is not paused.
+- **Kills and damage taken** (for the run stats): a killing hit on a unit with `enemy_id` counts a
+  kill for the hit's player; a player's `took_damage` that was neither dodged nor blocked counts
+  its value as damage taken.
 - **Who measures.** The machine that runs the wave (the host, or any machine outside a session),
-  every 0.5 s while the battle scene is current and once more when it leaves the tree. A host with
-  peers measures even with its own switch off. The game writes the counters inside the weapon's hit
-  handler, so the numbers do not depend on the frame rate.
+  every 0.5 s while the battle scene is current. A host with peers measures even with its own
+  switch off. The game writes the counters inside the weapon's hit handler, so the numbers do not
+  depend on the frame rate.
+- **The wave's last measurement** (`freeze`) is taken once, when the wave is over: the meter
+  connects to `EndWaveTimer.timeout`, and being older than the battle scene it runs before
+  `main._on_EndWaveTimer_timeout` (signal order), so before `RunData.on_wave_end`, the crate and
+  level-up panels and the retry prompt. Combining a weapon there gives the new one a counter of 0
+  (`RunData.combine_weapon`), recycling takes the counter along, and Retry restores the run state
+  (`retry_wave.gd`); measured later, the shop's board lost that damage or showed zeros. `_process`
+  freezes too once `_end_wave_timer_timedout` is set, and the battle scene's `tree_exiting` does
+  when the wave did not end (the pause menu's end run, restart or quit). After it the board stays
+  as it is.
+
+**Run stats.** `sync/damage_ledger.gd` sums the waves of a run per player: `{sources: {key:
+[my_id, count, damage]}, total, hit, kills, taken}`, with the waves' count and time. The key joins
+a weapon's tiers (`weapon_id`, Pistol I to IV one row) and the builder's levels; `my_id` and count
+are the latest wave's. The wave's last measurement hands the wave over (`hold`, every source, not
+only 10). It counts (`commit`) when the next scene is the shop or an end of run scene, so the last
+wave of a run counts too. A battle that starts drops a held wave (a retry: the failed try never
+reached those scenes), and one at or before the last counted wave starts the ledger anew (a new
+run). Any scene outside a run (title screen, selection screens) clears the ledger and the board,
+so a run started or resumed later does not show the last run's board; a resumed run's stats start
+at the wave it resumes from. Leaving the lobby clears both too.
 
 **Section `damage`.** Sent when the board changed, which is every 0.5 s while a wave runs. The
 client checks the body strictly (`DamageMeter.clean`: at most 4 players, 10 sources, ids up to 96
 characters, no negative numbers) and resolves ids against `ItemService.items / weapons /
-characters`.
+characters`. The wave's last measurement adds `run`: `{waves, time, players: [[total, sources (10
+strongest), [damage, my_id], kills, taken], ...]}`, the ledger with that wave in it, checked the
+same way (a malformed run rejects the board). A board without `run` has no run view. An older build
+of the same protocol ignores the key, so it needed no protocol bump.
 
 **Views.** Numbers are shortened by `DamageViews.short`. Each view drops itself from
 `DamageViews._views` when its panel leaves the tree.
@@ -1875,6 +2012,12 @@ characters`.
   before the game's (multilevel calls) and `update_tab` steps through three tabs. The solo shop is
   told by its methods (`_get_reroll_button` without `_get_coop_player_container`), not by class
   (script load order).
+- **Board.** A title line ("Wave N"), one line with total, share of the team's, damage per second
+  and biggest hit, 10 bars and the Other bar. The shops show the wave board. The end of run views
+  (`add_page(container, true)` from the end of run container, `add_tab(stats, true)` on the solo
+  end of run) show the board's `run` when it has one: "Run, N waves", the same line over the run
+  (damage per second over the waves' time), its 10 sources and Other, and a line with kills and
+  damage taken. Without `run` (an older host) they show the wave.
 
 **Switch.** Options > Gameplay has a "Damage meter" check button (`extensions/ui/menu_options.gd`, a
 copy of the "life bars on bosses" button). It is this machine's. Off: the rows are gone, the
@@ -1884,7 +2027,8 @@ carousels' last page is the one before (`carousel.max_index`), the solo tab is h
 config cannot be written). When the host has it off, it shows a client that is on the damage page
 on the page before and passes that on.
 
-Dart traps are not counted: the game ships them without a tracking key.
+Dart traps have no row: the game ships them without a tracking key. Their damage is in the
+total and so in Other.
 
 ## 10. Game bugs worked around
 
@@ -2075,6 +2219,7 @@ later changes may have moved it.
 | What | Value | Date, commit | Source |
 |---|---|---|---|
 | Snapshot size with envelope: 45 entities and 8 events / 136 and 11 / 300 and 44 | 452 / 968 / 2184 B | 2026-11-15, 82a0d7e | `snapshot_tests.gd`, `looks_tests.gd` |
+| The same with the damage numbers' seq (4 / 6 / 30 damage events); on main the same day | 460 / 980 / 2220 B; 452 / 972 / 2188 B | 2026-11-22, 5bc2d0e | `snapshot_tests.gd` |
 | Late endless wave (400 enemies, 200 projectiles, 50 gold, 2 players): host per snapshot, client per frame, snapshot size | 3.7 ms, 1.4 ms, 2.7 KB | 2026-11-15, c25808e | `cleanup_tests.gd` |
 | Reading looks on the host, 600 plain entities per snapshot | 0.5 ms | 2026-11-15, 82a0d7e | `looks_tests.gd` |
 | Scene load stall: battle scene; shop scene (small / late 2 / late 4 players) | 0.3 s; 0.2 / 0.5 / 0.8 s | 2026-11-15, c00c55c | `session_lifecycle_tests.gd` |
@@ -2105,6 +2250,7 @@ later changes may have moved it.
 | Damage board update, 4 players with 3 sources each | 968 B | 2026-11-18, 3f5da8f | recorded with the commit |
 | Crowded late wave: 3 players with 6 pistols, a bullet hell, 180 enemies alive (the cap of endless wave 30 for 3 players). Entities, snapshot size, per client, host per snapshot, client mirror per frame, client parse per snapshot | 210, 1.5 KB (2 packets), 43 KB/s, 2.3 ms, 0.9 ms, 0.34 ms | 2026-11-21, e6f9bc2 | `late_load_tests.gd` |
 | The same with 400 enemies alive | 420, 2.7 KB (3 packets), 79 KB/s, 1.4 ms client mirror, 0.66 ms parse; the host's game itself takes 300 to 370 ms a frame | 2026-11-21, e6f9bc2 | `late_load_tests.gd` |
+| The same with the damage numbers carried over and sent twice: 180 / 400 enemies, per client; events per snapshot (median) and snapshot size (median) with 400; the commit before in the same container | 43.2 / 80.3 KB/s, 24 events, 2808 B; 43.5 / 78.7 KB/s, 14 events, 2700 B | 2026-11-22, 5bc2d0e | `late_load_tests.gd` |
 | The same with 180 enemies in a real window on the dev machine: host frames, client frames (mean / max) | 4.3 / 16 ms, 2.8 / 6.7 ms | 2026-11-21, e6f9bc2 | `tools\check-window.ps1 -Suites late_load` |
 
 The purchase is not small on the wire in the test runs because every test player carries nearly
@@ -2143,7 +2289,7 @@ slow-answer lines' `rate` should read 524288 B/s).
 
 ## 13. Known gaps
 
-As of 2026-11-21, protocol 31.
+As of 2026-11-22, protocol 32.
 
 **Not mirrored in a battle**
 
@@ -2155,7 +2301,8 @@ As of 2026-11-21, protocol 31.
 - A projectile's scale (the baryonyx' lasers are 0.55 on the host).
 - Percent-damage-taken outlines (lute, diver) and the one-shot boost particles (`stats_boosted`).
 - The tint of a player standing in acid or petrol (`Player._set_color_modulation`).
-- A one-shot event is lost with its snapshot (for example one whip lash).
+- A one-shot event other than a damage or heal number is lost with its snapshot (for example one
+  whip lash).
 
 **Shop and level-up panels**
 
@@ -2196,7 +2343,8 @@ As of 2026-11-21, protocol 31.
 - Kick is in the title screen's frame only.
 - A client's live menu is keyboard and pad only. A spectator has none.
 - Options changed by a client are written to disk only after the session.
-- The "Damage meter" label is English only. With the host's meter off, nobody reaches the damage
+- The "Damage meter" label and the meter's own texts ("Run, N waves", "Other", "included",
+  kills and damage taken) are English only. With the host's meter off, nobody reaches the damage
   page at the end of run. With the host's meter on and a client's off, the host's carousel for that
   client can stand on the damage page while the client shows the page before.
 

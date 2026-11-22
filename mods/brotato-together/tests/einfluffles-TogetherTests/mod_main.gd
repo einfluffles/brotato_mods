@@ -75,6 +75,9 @@ const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
+const HitNumbersTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/hit_numbers_tests.gd"
+)
 const LooksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/looks_tests.gd")
 const DigSiteTests := preload("res://mods-unpacked/einfluffles-TogetherTests/dig_site_tests.gd")
 const ProgressShareTests := preload(
@@ -83,6 +86,7 @@ const ProgressShareTests := preload(
 const DamageMeterTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/damage_meter_tests.gd"
 )
+const DamageRunTests := preload("res://mods-unpacked/einfluffles-TogetherTests/damage_run_tests.gd")
 const BattleSceneTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/battle_scene_tests.gd"
 )
@@ -91,6 +95,9 @@ const StateStreamTests := preload(
 )
 const CursorKeyTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/cursor_key_tests.gd"
+)
+const FocusTargetTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/focus_target_tests.gd"
 )
 const LocalDeviceTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/local_device_tests.gd"
@@ -144,8 +151,10 @@ const SUITES := [
 	"cleanup_client",
 	"cleanup_misc",
 	"feedback",
+	"hit_numbers",
 	"looks",
 	"damage",
+	"damage_run",
 	"battle_scene",
 	"dig_site",
 	"dead_player",
@@ -156,6 +165,7 @@ const SUITES := [
 	"run_parts",
 	"battle_start",
 	"cursor_key",
+	"focus_targets",
 	"upgrades_change",
 	"upgrades_popup",
 	"lobby_menu",
@@ -402,6 +412,12 @@ func _suite_feedback(together: Node):
 	yield(_suite.run(self, together), "completed")
 
 
+func _suite_hit_numbers(together: Node):
+	coop_run(8)
+	_suite = HitNumbersTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
 func _suite_looks(together: Node):
 	coop_run(8)
 	_suite = LooksTests.new()
@@ -411,6 +427,12 @@ func _suite_looks(together: Node):
 func _suite_damage(together: Node):
 	coop_run(3)
 	_suite = DamageMeterTests.new(self)
+	yield(_suite.run(together), "completed")
+
+
+func _suite_damage_run(together: Node):
+	coop_run(3)
+	_suite = DamageRunTests.new(self)
 	yield(_suite.run(together), "completed")
 
 
@@ -462,6 +484,12 @@ func _suite_cursor_key(together: Node):
 	coop_run(2)
 	_suite = CursorKeyTests.new(self, together)
 	yield(_suite.run_shop(), "completed")
+
+
+func _suite_focus_targets(together: Node):
+	coop_run()
+	_suite = FocusTargetTests.new()
+	yield(_suite.run(self, together), "completed")
 
 
 func _suite_upgrades_change(together: Node):

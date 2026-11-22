@@ -30,7 +30,7 @@ var _bonus := []  # [value, visible] last captured
 var _bonus_since := -STATE_REFRESH
 var _wave_end := -1  # WAVE_* flags last captured, -1 while the wave runs
 var _wave_end_since := -STATE_REFRESH
-var _last_stats := {}  # player index -> [health, max health, level] of the host's last stats
+var _last_levels := {}  # player index -> the host's last level
 var _state_t := {}  # event kind -> host t of the last state event applied
 var _wave_ended := false
 var _label_shown := false
@@ -296,32 +296,18 @@ func _show_wave_end(main: Node, flags: int) -> void:
 		label.hide()
 
 
-# Screenshaker's handlers, connected by main to the players and to every enemy / neutral.
-static func shake(main: Node, target: Node, args: Array) -> void:
-	var shaker = main.get("_screenshaker")
-	if shaker == null:
-		return
-	if target is Player:
-		shaker.callv("_on_player_took_damage", args)
-	elif target is Enemy or target is Neutral:
-		shaker.callv("_on_unit_took_damage", args)
-
-
-# Texts the game shows from RunData.levelled_up and Player.healed, from the host's stats: compared
-# with the host's previous ones (not this client's start values). A heal and a hit inside one
-# snapshot (1/30 s) show as their sum; a heal that also raised max health shows nothing.
+# The text the game shows from RunData.levelled_up, from the host's level compared with its
+# previous one (not this client's start value). Heals come as EVENT_HEAL (sync/hit_numbers.gd).
 func player_stats(main: Node, i: int, entry: Array) -> void:
-	var stats := [entry[PF.HEALTH], entry[PF.MAX_HEALTH], entry[PF.LEVEL]]
-	var last = _last_stats.get(i)
-	if last == stats:
+	var level: int = entry[PF.LEVEL]
+	var last = _last_levels.get(i)
+	if last == level:
 		return
-	_last_stats[i] = stats
+	_last_levels[i] = level
 	var texts = main.get("_floating_text_manager")
 	if last == null or texts == null or i >= texts.players.size():
 		return
-	if stats[0] > last[0] and stats[1] == last[1]:
-		texts._on_player_healed(stats[0] - last[0], i)
-	if stats[2] > last[2]:
+	if level > last:
 		texts.on_levelled_up(i)
 
 

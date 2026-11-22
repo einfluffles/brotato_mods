@@ -1,7 +1,8 @@
 extends Node
 # Where the damage meter shows: a block at each player's life bar in a wave, a carousel page in
-# the co-op shop / end of run, a third stats tab in the solo ones. All of it is gone while the
-# meter is switched off on this machine (DamageMeter.shown).
+# the co-op shop / end of run, a third stats tab in the solo ones. The shop shows the wave before
+# it, the end of run the whole run (the board's "run", else that wave too). All of it is gone
+# while the meter is switched off on this machine (DamageMeter.shown).
 
 const BATTLE_SCENE := "res://main.tscn"
 const SOLO_END_RUN := "res://ui/menus/run/end_run.tscn"
@@ -10,6 +11,12 @@ const PAGE_NAME := "DamagePage"
 const HEADING_NAME := "DamageHeading"
 const LIST_NAME := "DamageList"
 const PAGE_TITLE := "Damage"
+const RUN_TITLE := "Run, %d waves"
+const RUN_TITLE_ONE := "Run, 1 wave"
+const OTHER_ROW := "Other"  # the row of what no shown source holds, and its text
+const INCLUDED := "included"  # an overlapping source's share: its damage is in another row's
+const KILLS := "Kills: %s"
+const TAKEN := "Damage taken: %s"
 const ICON := "res://ui/icons/misc/weapon_icon.png"
 const TOTAL_ICON := "res://items/stats/percent_damage.png"
 const DPS_ICON := "res://items/stats/attack_speed.png"
@@ -41,6 +48,8 @@ const ROW_BORDER := 2
 const ROW_BORDER_COLOR := Color(0, 0, 0, 0.5)
 const ROW_BACK := Color(0, 0, 0, 0.25)
 const ROW_FILL_ALPHA := 0.55
+const INCLUDED_FILL_ALPHA := 0.25
+const OTHER_FILL := Color(0.6, 0.6, 0.6, 0.4)
 const ROW_MARGIN := Vector2(6, 10)  # left (before the icon), right (after the share)
 const ROW_SEPARATION := 10
 const ROW_SHARE_SIZE := 18
@@ -60,7 +69,9 @@ var meter: Node = null
 
 var _scene_id := 0
 var _rows := []  # per player: the HUD row, or null
-var _views := []  # [holder, list]: a carousel container (page) or a StatsContainer (solo tab)
+# [holder, list, run]: a carousel container (page) or a StatsContainer (solo tab); run: an end of
+# run's, which shows the run.
+var _views := []
 var _hud_fonts := {}  # size -> the HUD font at that size
 
 
@@ -81,7 +92,7 @@ func _process(_delta: float) -> void:
 	if scene.filename == BATTLE_SCENE:
 		_build_rows(scene)
 	elif _is_solo_shop(scene) or scene.filename == SOLO_END_RUN:
-		add_tab(scene.get_node_or_null("%StatsContainer"))
+		add_tab(scene.get_node_or_null("%StatsContainer"), scene.filename == SOLO_END_RUN)
 
 
 # Told by what it can do: naming the shop's classes here would load them at mod init.
@@ -289,7 +300,7 @@ func _hud_font(size: int) -> DynamicFont:
 
 # For a co-op player container (shop or end of run), from its own _ready: the page has to exist
 # before a page index from the network is applied to the carousel.
-func add_page(container: Control) -> void:
+func add_page(container: Control, run := false) -> void:
 	var carousel = container.get("carousel")
 	if carousel == null or container.has_meta(PAGE_META):
 		return
@@ -314,11 +325,11 @@ func add_page(container: Control) -> void:
 	content.add_child(page)
 	container.set_meta(PAGE_META, headings.get_child_count() - 1)
 	carousel.index = carousel.index  # the setter: arrows for the new last page
-	_add_view(container, list)
+	_add_view(container, list, run)
 
 
 # The solo stats panel's third tab. The StatsContainer extension is inert until this arms it.
-func add_tab(stats: Node) -> void:
+func add_tab(stats: Node, run := false) -> void:
 	if stats == null or not stats.has_method("bt_add_tab") or stats.bt_has_tab():
 		return
 	var page := MarginContainer.new()
@@ -326,12 +337,12 @@ func add_tab(stats: Node) -> void:
 	page.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	page.add_child(_board_list())
 	stats.bt_add_tab(page, load(ICON))
-	_add_view(stats, page.get_child(0))
+	_add_view(stats, page.get_child(0), run)
 
 
-func _add_view(holder: Control, list: Control) -> void:
+func _add_view(holder: Control, list: Control, run: bool) -> void:
 	_drop_view(holder)
-	_views.append([holder, list])
+	_views.append([holder, list, run])
 	holder.connect("tree_exiting", self, "_drop_view", [holder], CONNECT_ONESHOT)
 	_fill()
 
@@ -345,8 +356,9 @@ func _drop_view(holder: Control) -> void:
 	_views = kept
 
 
-# List > Head (Wave; Stats: TotalIcon, Total, Share, DpsIcon, Dps, HitIcon > Source, Hit), a
-# line, Sources (MAX_SOURCES bars, each with Content > Icon, Name, Amount, Share).
+# List > Head (Wave: the title; Stats: TotalIcon, Total, Share, DpsIcon, Dps, HitIcon > Source,
+# Hit; Extra: Kills, Taken, the run's), a line, Sources (MAX_SOURCES bars and Other, each with
+# Content > Icon, Name, Amount, Share).
 func _board_list() -> VBoxContainer:
 	var font := _hud_font(HUD_MAIN_SIZE)
 	var list := VBoxContainer.new()
@@ -369,6 +381,11 @@ func _board_list() -> VBoxContainer:
 	stats.add_child(_hit_icon(STAT_ICON, STAT_HIT_SOURCE, "HitIcon"))
 	stats.add_child(_label(font, "Hit", HIT_COLOR))
 	head.add_child(stats)
+	var extra := _line("Extra", BoxContainer.ALIGN_BEGIN, STAT_GAP)
+	extra.visible = false
+	extra.add_child(_label(load(HUD_FONT), "Kills", MUTED))
+	extra.add_child(_label(load(HUD_FONT), "Taken", MUTED))
+	head.add_child(extra)
 	list.add_child(head)
 	var line := HSeparator.new()
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -382,8 +399,10 @@ func _board_list() -> VBoxContainer:
 	sources.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sources.add_constant_override("separation", 4)
 	list.add_child(sources)
-	for _i in meter.MAX_SOURCES:
+	for i in meter.MAX_SOURCES + 1:
 		var row := _bar()
+		if i == meter.MAX_SOURCES:
+			row.name = OTHER_ROW
 		var content := _line("Content", BoxContainer.ALIGN_BEGIN, ROW_SEPARATION)
 		content.anchor_right = 1.0
 		content.anchor_bottom = 1.0
@@ -431,18 +450,24 @@ static func _bar() -> ProgressBar:
 	return bar
 
 
-func _fill_board(list: Node, entry: Array, team_share: int, hit: Array) -> void:
-	var wave: int = meter.board.get("wave", 0)
-	list.get_node("Head/Wave").text = Text.text("WAVE", [str(wave)])
+# entry: [total, sources]; shown: {title, time, extra: [kills, damage taken] or []}.
+func _fill_board(list: Node, entry: Array, team_share: int, hit: Array, shown: Dictionary) -> void:
+	list.get_node("Head/Wave").text = shown.title
 	var stats: Node = list.get_node("Head/Stats")
 	stats.get_node("Total").text = short(entry[0])
 	_set_text(stats.get_node("Share"), "%d%%" % team_share if team_share >= 0 else "")
-	var dps := per_second(entry[0], meter.board.get("time", 0.0))
+	var dps := per_second(entry[0], shown.time)
 	stats.get_node("Dps").text = short(dps) + "/s" if dps >= 0 else "-"
 	stats.get_node("Hit").text = short(hit[0]) if hit[0] > 0 else "-"
 	_show_hit_source(stats.get_node("HitIcon"), hit[1])
+	var extra: Node = list.get_node("Head/Extra")
+	extra.visible = not shown.extra.empty()
+	if extra.visible:
+		extra.get_node("Kills").text = KILLS % short(shown.extra[0])
+		extra.get_node("Taken").text = TAKEN % short(shown.extra[1])
 	var sources: Node = list.get_node("Sources")
 	var top: int = entry[1][0][2] if not entry[1].empty() else 1
+	var listed := 0  # what the shown rows that hold no other row's damage dealt
 	for k in meter.MAX_SOURCES:
 		var row: Node = sources.get_child(k)
 		var source = entry[1][k] if k < entry[1].size() else null
@@ -450,15 +475,34 @@ func _fill_board(list: Node, entry: Array, team_share: int, hit: Array) -> void:
 		row.visible = data != null
 		if data == null:
 			continue
+		var included: bool = meter.overlaps(source[0])
+		if not included:
+			listed += source[2]
 		var color: Color = ItemService.get_color_from_tier(data.tier)
+		var alpha := INCLUDED_FILL_ALPHA if included else ROW_FILL_ALPHA
 		var content: Node = row.get_node("Content")
 		content.get_node("Icon").texture = data.icon
 		var name_text: String = tr(data.name) + (" x%d" % source[1] if source[1] > 1 else "")
 		content.get_node("Name").text = name_text
 		row.value = 1000.0 * source[2] / max(1, top)
-		row.get_stylebox("fg").bg_color = Color(color.r, color.g, color.b, ROW_FILL_ALPHA)
+		row.get_stylebox("fg").bg_color = Color(color.r, color.g, color.b, alpha)
 		content.get_node("Amount").text = short(source[2])
-		content.get_node("Share").text = percent(source[2], entry[0])
+		content.get_node("Share").text = INCLUDED if included else percent(source[2], entry[0])
+	_fill_other(sources.get_node(OTHER_ROW), entry[0], entry[0] - listed, top)
+
+
+# Sources past the shown ones and damage no counter holds: with it the shares add up to 100%.
+func _fill_other(row: ProgressBar, total: int, other: int, top: int) -> void:
+	row.visible = other > 0
+	if other <= 0:
+		return
+	var content: Node = row.get_node("Content")
+	content.get_node("Icon").texture = null
+	content.get_node("Name").text = OTHER_ROW
+	row.value = 1000.0 * other / max(1, max(top, other))
+	row.get_stylebox("fg").bg_color = OTHER_FILL
+	content.get_node("Amount").text = short(other)
+	content.get_node("Share").text = percent(other, total)
 
 
 # Switched off, the page stays in the carousel but past its max_index, and a player on it goes
@@ -491,20 +535,44 @@ func _apply_shown(holder: Control) -> void:
 func _fill() -> void:
 	var players: Array = meter.board.get("players", [])
 	var hits: Array = meter.board.get("hits", [])
-	var team := 0
-	for entry in players:
-		team += entry[0]
+	var team := _team(players)
 	for p in _rows.size():
 		if _rows[p] != null and is_instance_valid(_rows[p]):
 			_fill_row(_rows[p], _entry(players, p), _share(players, p, team), _hit(hits, p))
+	var wave := {
+		"title": Text.text("WAVE", [str(meter.board.get("wave", 0))]),
+		"time": meter.board.get("time", 0.0),
+		"extra": [],
+	}
+	var run: Dictionary = meter.board.get("run", {})
+	var run_players: Array = run.get("players", [])
+	var run_team := _team(run_players)
+	var waves: int = run.get("waves", 0)
+	var whole := {
+		"title": RUN_TITLE_ONE if waves == 1 else RUN_TITLE % waves,
+		"time": run.get("time", 0.0),
+	}
 	for view in _views:
 		if not is_instance_valid(view[0]):
 			continue
 		var holder: Control = view[0]
 		var p: int = holder.get("player_index") if holder.get("player_index") != null else 0
 		p = int(max(0, p))
-		_fill_board(view[1], _entry(players, p), _share(players, p, team), _hit(hits, p))
+		if view[2] and not run.empty():
+			var entry: Array = run_players[p] if p < run_players.size() else [0, [], [0, ""], 0, 0]
+			whole["extra"] = [entry[3], entry[4]]
+			var share := _share(run_players, p, run_team)
+			_fill_board(view[1], [entry[0], entry[1]], share, entry[2], whole)
+		else:
+			_fill_board(view[1], _entry(players, p), _share(players, p, team), _hit(hits, p), wave)
 		_apply_shown(holder)
+
+
+static func _team(players: Array) -> int:
+	var team := 0
+	for entry in players:
+		team += entry[0]
+	return team
 
 
 static func _entry(players: Array, p: int) -> Array:

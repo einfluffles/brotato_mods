@@ -3,6 +3,7 @@ extends Reference
 # battle replayed on a client.
 
 const Snapshot := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/snapshot.gd")
+const HitNumbers := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/hit_numbers.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const FeedbackMirror := preload(
@@ -105,12 +106,12 @@ static func _with_event(empty: PoolByteArray, event_bytes: Array) -> PoolByteArr
 func _test_selection() -> void:
 	var events := []
 	for i in 60:
-		events.append([Snapshot.EVENT_DAMAGE, 100 + i, i, Vector2.ZERO, 0, 0])
+		events.append(Snapshot.damage_event(100 + i, i, Vector2.ZERO, 0, 0, i))
 	events.append([Snapshot.EVENT_EXPLOSION, 0, Vector2.ZERO, 1.0, 20])
 	events.append([Snapshot.EVENT_BONUS_GOLD, 5, true])
 	events.append([Snapshot.EVENT_WAVE_END, 0])
 	var kinds := {}
-	for event in Snapshot.select_events(events, 48):
+	for event in HitNumbers.select_events(events, 48):
 		kinds[event[0]] = true
 	t._check(
 		(
@@ -133,7 +134,7 @@ func _test_selection() -> void:
 # The late-wave scenario of snapshot_tests.gd, plus what this slice adds at most per snapshot.
 func _test_sizes(tests) -> void:
 	var view: Dictionary = tests.scenario(4, 150, 90, 50, 10, 30, 6, 8, true)
-	view.events = Snapshot.select_events(view.events, 48)
+	view.events = HitNumbers.select_events(view.events, 48)
 	var before := Protocol.encode(Protocol.Msg.SNAPSHOT, Snapshot.encode(view)).size()
 	var sizes := {}
 	for event in _feedback_events():
@@ -210,7 +211,7 @@ func _test_battle(mod: Node):
 	var shaker: Node = puppet_main._screenshaker
 	shaker._camera_shake_duration = 0.0
 	shaker._camera_shake_intensity = 0.0
-	client._show_damage([Snapshot.EVENT_DAMAGE, -1, 5, Vector2.ZERO, 0, 0])
+	client._show_damage(Snapshot.damage_event(-1, 5, Vector2.ZERO, 0, 0))
 	t._check(shaker._camera_shake_duration > 0.0, "a hit on a player shakes the client's screen")
 	client._leave_battle()
 	Puppet.set_active(false)
@@ -467,7 +468,7 @@ func _check_client(client: Node, puppet_main: Node, seen: Dictionary, host_side:
 		hitbox != null and not hitbox.monitoring and not hitbox.monitorable,
 		"client explosion's hitbox finds nothing and is found by nothing (damage is the host's)"
 	)
-	t._check(seen.texts.has("+%d" % HEAL), "heal text derived from the host's health")
+	t._check(seen.texts.has("+%d" % HEAL), "heal text from the host's Player.healed")
 	t._check(seen.texts.has("LEVEL_UP"), "level-up text derived from the host's level")
 	t._check(seen.texts.has("x2"), "boosted gold pickup shows x2")
 	t._check(

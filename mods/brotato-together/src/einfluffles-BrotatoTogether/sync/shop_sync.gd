@@ -63,7 +63,9 @@ var _seqs := []  # per player: bumped whenever the panel offers something new
 var _seq_keys := []
 var _mod_kinds := {}  # other mods' intent kinds: kind -> [target, method, revision]
 var _view_bytes := 0  # the last body without its run (RunParts.Sender's counters)
-var _reported := {}  # player -> [shop instance id, the last SHOP_FOCUS target of its client]
+# player -> [shop instance id, the last SHOP_FOCUS target of its client, where it was found last:
+# [] or, for a gear element, [its row, its index among the live elements]]
+var _reported := {}
 # player -> [shop instance id, its client's open menu (PopupView), its client's steam id], kept
 # on the host's copy until an intent of that player changes the panel or the client leaves
 var _reported_popups := {}
@@ -188,7 +190,12 @@ func _on_message(steam_id: int, msg_type: int, body) -> void:
 # popup: the client's open menu (PopupView), shown on the host's copy before the cursor goes
 # into it. The page first, as on the level-up panels: the popup's element shows only on it.
 func host_apply_focus(shop: Node, p: int, page, target, popup = [], steam_id := 0) -> void:
-	_reported[p] = [shop.get_instance_id(), target]
+	if not FocusTargets.is_valid(target):
+		target = []  # network data: checked before it is compared (var2str) or kept
+	var old = _reported.get(p)
+	var same: bool = old != null and old[0] == shop.get_instance_id() and _same(old[1], target)
+	_reported[p] = [shop.get_instance_id(), target, old[2] if same else []]
+	_reported_control(shop, p)  # notes where it is
 	_reported_popups[p] = [shop.get_instance_id(), popup, steam_id]
 	ShopIntents.apply_page(shop, p, page)
 	_apply_popup(shop, p, popup, null)
@@ -415,12 +422,19 @@ func _settle_host_cursor(shop: Node, p: int) -> void:
 
 
 # What player p's client last reported its cursor on, if a cursor can rest there now (not a
-# slot just bought, not a weapon just recycled).
+# slot just bought). A gear element is found by its item wherever it is now (the client's rows
+# can be older than these). Once that item is gone (recycled, combined) it is the element at its
+# last place, where the client's own cursor goes when the host's state takes the item there
+# (_refresh_gear).
 func _reported_control(shop: Node, p: int) -> Control:
 	var reported = _reported.get(p)
 	if reported == null or reported[0] != shop.get_instance_id():
 		return null
 	var control = FocusTargets.resolve(reported[1], shop, p)
+	if control != null and FocusTargets.item_key(control) != "":
+		reported[2] = [control.get_parent(), _live_index(control)]
+	elif control == null and not reported[2].empty() and is_instance_valid(reported[2][0]):
+		control = _live_at(reported[2][0], reported[2][1])
 	if not (control is Control) or not control.is_visible_in_tree():
 		return null
 	if control.focus_mode != Control.FOCUS_ALL or (control is BaseButton and control.disabled):
@@ -650,6 +664,8 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 		RunStateCodec.apply(state)
 	var started := OS.get_ticks_usec()  # "shop panels" (apply has its own mark)
 	local.guard(shop, _client_shop_id)
+	var you: int = body.you if typeof(body.get("you")) == TYPE_INT else -1
+	var gear_refreshed := false  # another player's
 	for p in RunData.get_player_count():
 		# No keys for this player (not in the sent run state): everything counts as new.
 		var keyed: bool = p < keys.size()
@@ -667,6 +683,7 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 			# Same content: the objects this panel already shows stay (gear, popup, cursor).
 			RunData.players_data[p] = shown[p]
 		_refresh_player(shop, state, p, changed, body)
+		gear_refreshed = gear_refreshed or (changed.data and p != you)
 		_applied[p] = fresh if keyed else {}
 	_apply_locks(shop, body.get("locks"))
 	_host_kinds = []
@@ -675,9 +692,13 @@ func _apply_body(shop: Node, body: Dictionary, run_changed: bool) -> void:
 		if typeof(kind) == TYPE_STRING:
 			_host_kinds.append(kind)
 	shop.update_go_next_button_text()
-	var you: int = body.you if typeof(body.get("you")) == TYPE_INT else -1
 	_mirror_view(shop, you, body.get("pages"))
-	_mirror_popups(shop, you, body)
+	var popups_changed := _mirror_popups(shop, you, body)
+	# The other players' cursors back where the host has them: opening a copy of a popup takes
+	# one to its Cancel button, and a gear refresh leaves one on the element at its place when its
+	# own was freed or shows another item now (the cursor body can come before the run state).
+	if (popups_changed or gear_refreshed) and focus_sync != null:
+		focus_sync.reapply()
 	if you >= 0 and you < RunData.get_player_count():
 		local.take_over(you)
 		local.on_state(_int_at(body.get("seqs"), you), shop._player_pressed_go_button[you])
@@ -848,6 +869,16 @@ static func _refresh_popup_buttons(popup: Node, emulator) -> void:
 		emulator.focused_control = popup._cancel_button
 
 
+static func _live_index(control: Node) -> int:
+	var index := 0
+	for sibling in control.get_parent().get_children():
+		if sibling == control:
+			break
+		if not sibling.is_queued_for_deletion():
+			index += 1
+	return index
+
+
 # The live element at index in inventory (the last one if there are fewer), null when it has none.
 static func _live_at(inventory: Node, index: int):
 	var live := []
@@ -871,16 +902,15 @@ func _mirror_view(shop: Node, you: int, pages) -> void:
 			endless.set_pressed_no_signal(RunData.is_endless_run)
 
 
-# The other players' open menus. Their cursors go back where the host has them: opening a popup
-# moves the game's cursor to Cancel.
-func _mirror_popups(shop: Node, you: int, body: Dictionary) -> void:
+# The other players' open menus. Returns whether one changed (opening a popup moves the game's
+# cursor to Cancel: the caller puts it back where the host has it).
+func _mirror_popups(shop: Node, you: int, body: Dictionary) -> bool:
 	var changed := false
 	for p in RunData.get_player_count():
 		if p != you:
 			var view = _at(body.get("popups"), p)
 			changed = _apply_popup(shop, p, view, _list_at(body.get("mecas"), p)) or changed
-	if changed and focus_sync != null:
-		focus_sync.reapply()
+	return changed
 
 
 func _on_lobby_left() -> void:
@@ -899,6 +929,11 @@ func _on_lobby_left() -> void:
 	_host_kinds = []
 	_reported_popups = {}
 	_popup_memo = {}
+
+
+# Network data, compared by value (Dictionaries compare by reference in Godot 3).
+static func _same(a, b) -> bool:
+	return typeof(a) == typeof(b) and var2str(a) == var2str(b)
 
 
 # values[index] when values is a list that long, else null (network data).

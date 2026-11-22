@@ -3,7 +3,8 @@ extends Reference
 # 250 items each). The gear rows are updated in place (UpgradesGear.sync_gear): a purchase
 # instances one element, a reroll none. The old way (set_weapons_data / set_items_data: every
 # element of that player freed and instanced again) is timed in the same shop. The client report's
-# "shop panels" mark holds what applying a state costs after the run's own marks.
+# "shop panels" mark holds what applying a state costs after the run's own marks. Then the race of
+# another player's cursor with the state that changes its gear (_cursor_race).
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -18,8 +19,10 @@ const ShopStreamTests := preload(
 const ShopChangeTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_change_tests.gd"
 )
+const FocusSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/focus_sync.gd")
 const BUYER := 1  # the player whose gear changes (another player's panel on this client)
 const KINDS := ["purchase", "reroll", "weapon"]
+const RACE_ITEMS := 40
 
 var _t: Node = null
 var _together: Node = null
@@ -37,6 +40,7 @@ func run(t: Node, together: Node):
 	var saved_players: Array = CoopService.connected_players.duplicate(true)
 	for players in [2, 4]:
 		yield(_late_run(players), "completed")
+	yield(_cursor_race(), "completed")
 	Puppet.set_active(false)
 	_sync._host_shop = null
 	CoopService.connected_players = saved_players
@@ -193,3 +197,130 @@ static func _shows_run(shop: Node, p: int) -> bool:
 func _frames(count: int):
 	for _i in count:
 		yield(_t.get_tree(), "idle_frame")
+
+
+# The host's cursor rests on BUYER's next to last item (a high tier) while an item comes in before
+# it (a purchase, a trade): its element moves one place on, where the client's row still has
+# another item, and the cursor body names it there.
+# The body and the run state reach the client in either order (the stream sends the cursors on
+# their own timer), and the client ends on the host's item. A cursor on the item that came in
+# waits for the run state that brings it.
+func _cursor_race():
+	_change._build_run(2, RACE_ITEMS)
+	yield(_change._enter_shop(), "completed")
+	var host_shop: Node = _change._shop
+	var host_row: Node = host_shop._get_gear_container(BUYER).items_container._elements
+	var host_emulator = Utils.get_focus_emulator(BUYER, host_shop)
+	var states := {"start": _capture()}
+	var rest: Control = host_row.get_child(host_row.get_child_count() - 2)
+	var rest_key := _key(rest)
+	var bought = _new_item(BUYER)
+	var before: Array = FocusSync.cursor_of(host_emulator, rest, host_shop)
+	RunData.add_item(bought, BUYER)
+	host_row.add_element(bought, true)  # as BaseShop.buy_item and brotato:trade's gift do
+	var after: Array = FocusSync.cursor_of(host_emulator, rest, host_shop)
+	var on_new: Array = []
+	for element in host_row.get_children():
+		if element.item == bought:
+			on_new = FocusSync.cursor_of(host_emulator, element, host_shop)
+	states.purchase = _capture()
+	var bought_key := "%s %d 000" % [bought.my_id, bought.tier]
+	print(
+		"  info: cursor race: %s at %d, then %d after %s came in"
+		% [rest_key, rest.get_index() - 1, rest.get_index(), bought.my_id]
+	)
+	var scene: String = host_shop.filename
+
+	_sync._client_shop_id = 0
+	ShopStreamTests.deliver(_sync.state_stream, StateStream.RUN_SHOP, states.start)
+	yield(_sync, "shop_entered")
+	yield(_frames(2), "completed")
+	var shop: Node = _sync._client_shop
+	var stream: Node = _sync.state_stream
+	var emulator = Utils.get_focus_emulator(BUYER, shop)
+	_cursors(stream, scene, before)
+	var at_start := _under(emulator)
+	_cursors(stream, scene, after)  # first: the client's row is the old one
+	var early := _under(emulator)
+	ShopStreamTests.deliver(stream, StateStream.RUN_SHOP, states.purchase)
+	yield(_frames(1), "completed")
+	_t._check(
+		at_start == rest_key and early == rest_key and _under(emulator) == rest_key,
+		(
+			"cursor race, client: the cursor body before the run state: on the host's item"
+			+ " (%s, then %s, after the state %s; host %s)"
+		)
+		% [at_start, early, _under(emulator), rest_key]
+	)
+
+	yield(_restart(stream, scene, states.start, before), "completed")
+	ShopStreamTests.deliver(stream, StateStream.RUN_SHOP, states.purchase)
+	yield(_frames(1), "completed")
+	var between := _under(emulator)
+	_cursors(stream, scene, after)
+	_t._check(
+		between == rest_key and _under(emulator) == rest_key,
+		"cursor race, client: the run state first, then the body: on the host's item (%s, %s)"
+		% [between, _under(emulator)]
+	)
+
+	yield(_restart(stream, scene, states.start, before), "completed")
+	_cursors(stream, scene, on_new)
+	var waiting: bool = stream.is_pending(StateStream.CURSORS)
+	var meanwhile := _under(emulator)
+	ShopStreamTests.deliver(stream, StateStream.RUN_SHOP, states.purchase)
+	yield(_frames(1), "completed")
+	_t._check(
+		(
+			waiting
+			and meanwhile == rest_key
+			and not stream.is_pending(StateStream.CURSORS)
+			and _under(emulator) == bought_key
+		),
+		(
+			"cursor race, client: a cursor on an item not here yet waits, then lands with the run"
+			+ " state (pending %s, meanwhile %s, then %s)"
+		)
+		% [waiting, meanwhile, _under(emulator)]
+	)
+	stream._pending.erase(StateStream.CURSORS)
+	emulator.focused_control = null
+
+
+# Back to the start (the row before the item came in) with the cursor where the host had it.
+func _restart(stream: Node, scene: String, start: Dictionary, cursor: Array):
+	ShopStreamTests.deliver(stream, StateStream.RUN_SHOP, start)
+	yield(_frames(1), "completed")
+	_cursors(stream, scene, cursor)
+
+
+# A cursors body through the client's stream, as the host sends it.
+static func _cursors(stream: Node, scene: String, cursor: Array) -> void:
+	ShopStreamTests.deliver(stream, StateStream.CURSORS, {"scene": scene, "cursors": [cursor]})
+
+
+# What the cursor's element shows, "none" off the gear.
+static func _under(emulator) -> String:
+	var control = emulator.focused_control
+	if not is_instance_valid(control):
+		return "none"
+	return _key(control) if control is InventoryElement else str(control.name)
+
+
+# As FocusTargets.item_key.
+static func _key(element: Node) -> String:
+	var item = element.item
+	return "%s %d %d%d%d" % [
+		item.my_id, item.tier, int(item.is_cursed), int(item.is_meca), int(item.is_mutant)
+	]
+
+
+# A tier 1 item p does not have yet.
+static func _new_item(p: int):
+	var owned := {}
+	for item in RunData.get_player_items(p):
+		owned[item.my_id] = true
+	for item in ItemService.items:
+		if item.tier == 0 and not owned.has(item.my_id) and not item.is_cursed:
+			return item
+	return null

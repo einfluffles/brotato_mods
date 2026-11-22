@@ -363,7 +363,7 @@ func client(s, shop: Node, focus_sync: Node):
 	)
 	yield(_client_deactivate(s, shop), "completed")
 	emulator.focused_control = reroll
-	yield(_client_gear(s, shop), "completed")
+	yield(_client_gear(s, shop, focus_sync), "completed")
 
 
 # FocusSync.reapply puts the cursors back where the last body has them, but leaves a body still
@@ -402,8 +402,9 @@ func _client_reapply(s, shop: Node, focus_sync: Node) -> void:
 	holder.get_parent().free()
 
 
-# Another player's gear changes under its cursor on this client's copy.
-func _client_gear(s, shop: Node):
+# Another player's gear changes under its cursor on this client's copy. The host's cursor body
+# names the weapon that goes: FocusSync.reapply finds nothing, the cursor stays at its place.
+func _client_gear(s, shop: Node, focus_sync: Node):
 	yield(s._frames(1), "completed")
 	if not s._states.has("remote_armed"):
 		return
@@ -412,7 +413,10 @@ func _client_gear(s, shop: Node):
 	var emulator = Utils.get_focus_emulator(REMOTE, shop)
 	var row: Node = shop._get_gear_container(REMOTE).weapons_container._elements
 	s._receive(s._states.remote_armed)
-	emulator.focused_control = row.get_child(0)
+	var cursors := {
+		"scene": shop.filename, "cursors": [FocusSync.cursor_of(emulator, row.get_child(0), shop)]
+	}
+	focus_sync.apply_state(StateStream.CURSORS, cursors, 0)
 	t._check(popup.visible and popup._item_data == row.get_child(0).item, "(its weapon's details)")
 	s._receive(s._states.remote_rearmed)
 	var cursor = emulator.focused_control

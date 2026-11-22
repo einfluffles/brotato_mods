@@ -9,7 +9,7 @@ const INPUT_TYPES := "/root/ModLoader/einfluffles-BrotatoTogether/InputTypes"
 func _ready() -> void:
 	var views = get_node_or_null(VIEWS)
 	if views != null:
-		views.add_page(self)
+		views.add_page(self, true)  # the run, not the last wave
 	var input_types = get_node_or_null(INPUT_TYPES)
 	if input_types != null:
 		input_types.adopt(self)

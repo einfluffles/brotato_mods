@@ -4,7 +4,7 @@ Online co-op for [Brotato](https://store.steampowered.com/app/1942280/Brotato/) 
 networking, in place of Steam Remote Play's video stream. Every player runs the game on their own
 machine, and their own character and menus react at once.
 
-**Status (2026-11-21, protocol 31):** early development. Sessions over Steam with friends work;
+**Status (2026-11-22, protocol 32):** early development. Sessions over Steam with friends work;
 the sessions measured in the implementation notes were played on 2026-11-16. Expect rough edges
 and please report them (see [Reporting problems](#reporting-problems)).
 
@@ -108,9 +108,12 @@ used like them, with mouse, keyboard or gamepad.
   mirrored screens.
 - **Damage meter:** during a wave, a block at each player's life bar shows that player's damage,
   the damage per second, the strongest sources and the biggest hit. The co-op shop and the end of
-  a co-op run have a **Damage** page per player (LB / RB or the arrows, after the stats pages)
-  for the wave before; the solo shop and the end of a solo run have it as a third tab of the
-  stats panel. In co-op it also shows each player's share of the team's damage. Nobody is held up
+  a co-op run have a **Damage** page per player (LB / RB or the arrows, after the stats pages):
+  the shop's for the wave before, the end of run's for the whole run, with each player's kills and
+  damage taken. The solo shop and the end of a solo run have it as a third tab of the stats panel.
+  The total is the health your hits took; items whose bonus a weapon's row already holds (Giant
+  Belt, Greek Fire, Scared Sausage) show as "included", and an "Other" row holds the rest. In co-op
+  it also shows each player's share of the team's damage. Nobody is held up
   while a player looks at it. It also works offline. **Options, Gameplay, Damage meter** switches
   it on or off for your machine; the choice is kept in the Mod Loader's config, because the game
   has no settings screen for mods. It is modelled on the
@@ -165,7 +168,7 @@ To change it, set a launch option in Steam (right-click *Brotato*, *Properties*,
 
 ## Limitations
 
-As of 2026-11-21 (protocol 31):
+As of 2026-11-22 (protocol 32):
 
 - Not shared with clients yet: the species challenges of Primal Dread (trophy hunter, clever
   girl, egg hunt) and the codex's kill counts.
@@ -240,8 +243,10 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `cleanup_client` | Object counts over one wave replayed several times as a client, with the shop in between. |
 | `cleanup_misc` | Battle starts and shop states that arrive together, and what a late endless wave costs. |
 | `feedback` | Explosions, floating texts, stat icons, picked-up crates, tardigrade charges, the end of the wave, the whip's and flail's lash. |
+| `hit_numbers` | Damage and heal numbers on a client: 80 hits in one tick, a flood of hits that fills the host's queue, a hit in an enemy's spawn tick, a hit on a pet, a hit and a heal in one snapshot, a lost snapshot, burn ticks and hits on a unit with an aim shape. |
 | `looks` | Charmed, burning, cursed, boosted, meca and mutant looks, puddles, projectile angles. |
 | `damage` | The damage meter: counting, the row in the wave, the pages, the switch. |
+| `damage_run` | The damage meter in real waves: the total against the health lost with Giant Belt, Scared Sausage and Greek Fire, the end of the wave before its panels, the run stats over waves, retries and new runs. |
 | `battle_scene` | A breaking weapon, the hole layout, a stomped hole, the host's speed in the own-player prediction, walking into holes. |
 | `dead_player` | A player who died stays visible when the next wave starts him at 0 health. |
 | `selection` | The host's selection screens and end of run on a client, colours and join hints, the shared character grid, wheel and right stick. |
@@ -250,6 +255,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `run_parts` | The run state in parts: which parts each change sends, the client building the same run, resyncs. |
 | `battle_start` | A wave's start sending only the run parts a client lacks. |
 | `cursor_key` | The change key of the cursors on the co-op shop. |
+| `focus_targets` | A cursor's gear element named by the item it shows: found again on a row ordered otherwise or with an element more or less, cursed copies and alike weapons told apart, nothing when the item is gone, locked elements and grids by place, malformed targets from the network rejected. |
 | `upgrades_change` | Change detection of the run state of the level-up / crate panels. |
 | `upgrades_popup` | A remote player's open popup on the host's level-up / crate panels: the lobby popup keeps its focus, a client that leaves takes it off. |
 | `lobby_menu` | The lobby in the game's menus on a fake Steam: title screen, kicking, the Co-op row and slot invite of character selection, the client's popup, the pause menu page. |

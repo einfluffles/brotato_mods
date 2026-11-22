@@ -188,20 +188,21 @@ func _shop_player_count(shop: Node, e1: Node) -> void:
 	_expect("player count 1 -> 2", _settle(0), ["sent"])
 
 
-# [type, k] steps in a list built by code (player 0's weapons, InventoryElement): siblings before
-# the cursor's element added, removed, queued for deletion, of another kind, re-scripted, owned.
+# [type, key, copy] steps in a list built by code (player 0's weapons, InventoryElement): siblings
+# before the cursor's element that show the same weapon added, removed, queued for deletion, of
+# another kind, re-scripted, owned.
 func _shop_inventory(shop: Node, e0: Node):
 	var elements = shop._get_gear_container(0).weapons_container._elements
 	var element: Node = elements.get_child(elements.get_child_count() - 1)
 	e0.focused_control = element
 	_settle(0)
-	var added: Node = _add_element(elements)
+	var added: Node = _add_element(elements, element.item)
 	_expect("a like element added by code before it", _settle(0), ["sent"])
 	elements.remove_child(added)
 	added.free()
 	_expect("that element removed (and freed)", _settle(0), ["sent"])
 
-	var queued: Node = _add_element(elements)
+	var queued: Node = _add_element(elements, element.item)
 	_baseline()
 	queued.queue_free()
 	var verdict = yield(_settle(1), "completed")
@@ -217,7 +218,7 @@ func _shop_inventory(shop: Node, e0: Node):
 
 	# Queued (late at the first check), freed at the end of the frame, and before the next check
 	# a node of another kind takes its child index: the key is back where it was sent.
-	queued = _add_element(elements)
+	queued = _add_element(elements, element.item)
 	_baseline()
 	queued.queue_free()
 	var late := _check_now()
@@ -232,7 +233,7 @@ func _shop_inventory(shop: Node, e0: Node):
 	button.free()
 	_settle(0)
 	# The same without a queue: one removed and one of another kind added in one check interval.
-	var removed: Node = _add_element(elements)
+	var removed: Node = _add_element(elements, element.item)
 	_baseline()
 	elements.remove_child(removed)
 	removed.free()
@@ -244,7 +245,7 @@ func _shop_inventory(shop: Node, e0: Node):
 	button.free()
 	_settle(0)
 
-	var changed: Node = _add_element(elements)
+	var changed: Node = _add_element(elements, element.item)
 	_baseline()
 	changed.set_script(null)  # now a plain Button: not counted as an InventoryElement
 	_expect_net("a like element before it loses its script", _settle(0))
@@ -253,7 +254,7 @@ func _shop_inventory(shop: Node, e0: Node):
 	_settle(0)
 
 	# An owner alone keeps a generated "@" name unnamed; with a plain name it is named, not counted.
-	var owned: Node = _add_element(elements)
+	var owned: Node = _add_element(elements, element.item)
 	_baseline()
 	owned.owner = shop
 	_expect("a like element (generated name) before it gets an owner", _settle(0), ["same"])
@@ -267,11 +268,30 @@ func _shop_inventory(shop: Node, e0: Node):
 	owned.free()
 	_settle(0)
 
+	# Another weapon before it moves its index only. The element itself pointed at another weapon
+	# (sync_inventory keeps elements in place) changes what it shows: the key has the item too.
+	var weapon = element.item
+	var other_weapon = null
+	for candidate in ItemService.weapons:
+		if other_weapon == null and candidate.my_id != weapon.my_id:
+			other_weapon = candidate
+	var other: Node = _add_element(elements, other_weapon)
+	_expect("an element of another weapon added before it", _settle(0), ["extra"])
+	elements.remove_child(other)
+	other.free()
+	_settle(0)
+	element.item = other_weapon
+	_expect("its element pointed at another weapon", _settle(0), ["sent"])
+	element.item = weapon
+	_settle(0)
 
-# A like element (the game's own add_special_element, unsorted) as the first child.
-func _add_element(elements: Node) -> Node:
-	elements.add_special_element(elements.locked_icon, false, 1.0, null, false)
+
+# A like element as the first child: one that shows item (the game's own add_special_element,
+# unsorted, made a plain element).
+func _add_element(elements: Node, item: Resource) -> Node:
+	elements.add_special_element(elements.locked_icon, false, 1.0, item, false)
 	var added: Node = elements.get_child(elements.get_child_count() - 1)
+	added.is_special = false
 	elements.move_child(added, 0)
 	return added
 

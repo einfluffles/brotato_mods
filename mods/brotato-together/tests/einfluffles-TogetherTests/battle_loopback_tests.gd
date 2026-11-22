@@ -260,7 +260,7 @@ func run(together: Node):
 		t._check(victim.dead and victim.is_inside_tree(), "death animation playing")
 		var texts: Node = puppet_main.get_node("%FloatingTexts")
 		var texts_before := texts.get_child_count()
-		client._show_damage([Snapshot.EVENT_DAMAGE, victim_id, 12, Vector2.ZERO, 0, 0])
+		client._show_damage(Snapshot.damage_event(victim_id, 12, Vector2.ZERO, 0, 0))
 		t._check(texts.get_child_count() > texts_before, "killing blow shows its damage number")
 		yield(t.get_tree().create_timer(2.0), "timeout")
 		t._check(puppet_main.is_in_pool(victim), "dead puppet returned to pool")
