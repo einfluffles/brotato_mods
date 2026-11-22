@@ -2065,7 +2065,7 @@ later changes may have moved it.
 | Late endless wave (400 enemies, 200 projectiles, 50 gold, 2 players): host per snapshot, client per frame, snapshot size | 3.7 ms, 1.4 ms, 2.7 KB | 2026-11-15, c25808e | `cleanup_tests.gd` |
 | Reading looks on the host, 600 plain entities per snapshot | 0.5 ms | 2026-11-15, 82a0d7e | `looks_tests.gd` |
 | Scene load stall: battle scene; shop scene (small / late 2 / late 4 players) | 0.3 s; 0.2 / 0.5 / 0.8 s | 2026-11-15, c00c55c | `session_lifecycle_tests.gd` |
-| Shop fingerprint check (small / late 2 / late 4) | 45 / 51 / 92 us | 2026-11-15, 4364835 | `shop_change_tests.gd` |
+| Shop fingerprint check (small / late 2 / late 4), with `tracked_item_effects` (without it in the same runs: 45 to 51 / 51 to 53 / 90 us) | 45 to 50 / 53 to 56 / 95 to 101 us | 2026-11-22, 294abf7 | `shop_change_tests.gd` |
 | Run cache safety net, per second (small / late 2 / late 4) | 1.2 / 8 / 15 ms | 2026-11-15, 4364835 | `shop_change_tests.gd` |
 | Level-up key check (late 2 / 4) | 0.16 / 0.32 ms | 2026-11-15, 4b1ca91 | `upgrades_change_tests.gd` |
 | Cursor key / cursor description, two-player shop | about 16 us / 380 us | 2026-11-15, 826b3f9 | `cursor_key_tests.gd` |
