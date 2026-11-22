@@ -2088,6 +2088,9 @@ later changes may have moved it.
 | Purchase: same columns | 30.4 / 31.9 KB, 28 / 33 ms, 39 / 56 ms | 2026-11-17, 65d6baa | `run_parts_tests.gd` |
 | Level-up choice: same columns | 7.1 / 7.6 KB, 10 / 25 ms, 30 / 29 ms | 2026-11-17, 65d6baa | `run_parts_tests.gd` |
 | `BATTLE_START` per client after a shop (late 2 / 4) | 3.1 / 3.3 KB, of which run 1.5 / 1.6 KB | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
+| With `s` and `t` split off from `c`, bytes per client (late 2 / 4): lock, paid reroll, purchase; in two runs each of the commit before | 3.1 / 4.4, 10.2 to 10.6 / 11.3 to 11.8, 30.4 to 31.2 / 31.6 to 32.0 KB; before 4.1 / 5.5, 10.8 / 12.0, 30.8 to 31.1 / 32.2 to 32.4 KB | 2026-11-22, 7ecced4 | `run_parts_tests.gd` |
+| The same: a tracked value alone in the shop, under the level-up panels | 1.5 / 1.9, 1.5 / 2.1 KB; before 4.1 / 5.5, 2.1 / 2.6 KB | 2026-11-22, 7ecced4 | `run_parts_tests.gd` |
+| The same: `BATTLE_START` after a shop | 2.6 to 2.7 / 2.8 to 3.0 KB, of which run 1.0 / 1.2 KB; before 3.0 to 3.1 / 3.4 KB, run 1.5 / 1.6 KB | 2026-11-22, 7ecced4 | `battle_start_tests.gd` |
 | Client, `_on_battle_start` up to `change_scene` (late 2 / 4) | 87 / 95 ms | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
 | Host, run packed in parts as the battle scene enters (late 2 / 4) | 31 to 36 / 60 to 86 ms | 2026-11-17, d188ad5 | `battle_start_tests.gd` |
 | Client time per applied level-up state: choice, reroll, crate item, new panels (late 2 players) | 40 to 45, 40 to 52, 94 to 149, 171 to 264 ms | 2026-11-17, 055222f | `upgrades_change_tests.gd` |
@@ -2107,6 +2110,10 @@ later changes may have moved it.
 The purchase is not small on the wire in the test runs because every test player carries nearly
 the same 250 items, so a whole run compresses across players while one `g` part alone does not. What
 remains on a client after a change is mostly the changed player's `PlayerRunData.deserialize`.
+
+Splitting `s` off `c` saves little on a reroll or purchase: `s` holds every player's offered
+items, which were most of the old `c`. A part per player (`s<p>`) would carry only the rerolling
+player's items; not done yet.
 
 In the crowded wave the mirror stays small: the snapshots use a twelfth of the send rate, and the
 client's mirror about 1 ms of a 16.7 ms frame. Every snapshot is two packets, so a lost
