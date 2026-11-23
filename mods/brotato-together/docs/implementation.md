@@ -1961,11 +1961,16 @@ again). A hit's value is `full_dmg_value`, per player by `TakeDamageArgs.from_pl
 that leaves health takes exactly its value; a killing hit takes at most the health that was left,
 which the meter keeps per unit: the health after its last hit, refreshed by the unit's `healed`
 (healer enemies) and `stats_boosted` (buffers), dropped on `died`, and the unit's whole health for
-a unit not hit since it spawned. Not counted: hits on a unit that is `dead` (a burn goes on after a
-death without a killing hit: a tree's eighth hit, the game's cap on enemies) and the brachiosaurus
-foot's hits that it hands on to the boss (`hide_feedback`, the only hidden hits; the weapon counts
-the foot's). Damage to players is left out. The suite `damage_run` checks the total against the
-health the enemies lost in real waves.
+a unit not hit since it spawned. A unit that died without a killing hit (the game's cap on enemies
+removes some with `die()` in `EntitySpawner.on_group_spawn_timing_reached`; a tree's eighth hit)
+keeps the health it had left, and hits on it go on: a bullet that entered it in the physics step
+the cap removed it in lands afterwards (`_physics_process` runs between the area signals and the
+deferred `Unit.hurt_area_entered_deferred`, which checks `_pending_die` but not `dead`), and a burn
+goes on. Such a hit takes what the unit had left (kept per unit from `died`), and the weapon's
+counter counts the same (`dmg_taken[1]`). Not counted: the brachiosaurus foot's hits that it hands
+on to the boss (`hide_feedback`, the only hidden hits; the weapon counts the foot's). Damage to
+players is left out. The suite `damage_run` checks the total against the health the units lost in
+real waves, a crowded one past the cap included, and a hit on a removed enemy step by step.
 
 **Sources.** The rows are the game's own counters: `WeaponData.dmg_dealt_last_wave`, and for
 items `RunData.tracked_item_effects` where the item's `tracking_text` is `DAMAGE_DEALT` /
@@ -1987,8 +1992,10 @@ number; the builder's levels are one source, named by the level the player holds
   bar. The views add an "Other" row: the total minus the shown rows that overlap nothing. It holds
   sources past the 10 rows, damage no counter holds (dart traps) and Scared Sausage's own burns,
   so the shares of the plain rows and Other add up to 100%. The total is never less than what the
-  plain rows sum to (a hit on a unit the meter did not watch). The overlap is a property of the id,
-  so it does not travel.
+  plain rows sum to (a hit on a unit the meter did not watch). Hits on a removed enemy once were
+  not counted while its weapon's counter counted them: the counters then sat above the hits and
+  the total jumped to them (the crowded wave in `damage_run`, 320 against 318 health lost). The
+  overlap is a property of the id, so it does not travel.
 - Per player the board holds `[total, sources as [my_id, count, damage]]`. During the wave it holds
   what the HUD shows: 4 sources, or 3 with 3 or 4 players (`DamageMeter.live_sources`). The wave's
   last measurement holds the 10 strongest, for the shop's board. The HUD has no Other line.
@@ -2024,11 +2031,12 @@ number; the builder's levels are one source, named by the level the player holds
 - **The wave's log line** (`wave_line`): at that last measurement the measuring machine logs one
   info line under `einfluffles-BrotatoTogether:DamageMeter`, to check the meter against a count
   of its own:
-  `Wave 12 damage: total 15,234, health lost 15,234 (by no player 0, hidden 0); p0 9,100 (rows
-  8,900 + 1,200 included, biggest hit 1,204 weapon_smg_3, 50 kills), p1 ...; 87 kills`. "total"
-  sums the board's totals; "health lost" is what every shown hit on an enemy or tree took
-  (capped like the totals) whoever dealt it, "by no player" the part of it from hits with no
-  player index (they are in no total), "hidden" what the hidden hits took (in neither). Per
+  `Wave 12 damage: total 15,234, health lost 15,234 (by no player 0, after death 2, hidden 0); p0
+  9,100 (rows 8,900 + 1,200 included, biggest hit 1,204 weapon_smg_3, 50 kills), p1 ...; 87
+  kills`. "total" sums the board's totals; "health lost" is what every shown hit on an enemy or
+  tree took (capped like the totals) whoever dealt it, "by no player" the part of it from hits
+  with no player index (they are in no total), "after death" the part from hits on units that
+  died without a killing hit (in the totals), "hidden" what the hidden hits took (in neither). Per
   player: the board's total, the rows that overlap nothing and what the overlapping ones hold
   ("included"), the biggest hit with its source ("unknown" without one, "no hit" without a hit),
   the kills. Last the enemies killed by anyone. The suites `damage` and `damage_run` check it.

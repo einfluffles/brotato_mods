@@ -14,6 +14,10 @@ upload; three of them are marked where the upload may have differed.
   blow's whole damage. Before, a killing blow counted only the health that was left, so a crit
   of 300 on an enemy with 50 health left showed as 50. The total still counts only the health
   your hits took.
+- Damage meter: in a crowded wave the game removes enemies to keep their number down, and a
+  bullet already on its way can still hit one. That hit now counts the health the enemy had left,
+  as the game's own damage count for the weapon does. Before, such a hit could make the total jump
+  to the weapons' counts.
 - Damage meter: the host's log has a line per wave with each player's total, rows, biggest hit
   and kills next to the health all enemies lost, to check the meter against.
 

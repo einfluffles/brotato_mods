@@ -253,7 +253,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `hit_numbers` | Damage and heal numbers on a client: 80 hits in one tick, a flood of hits that fills the host's queue, a hit in an enemy's spawn tick, a hit on a pet, a hit and a heal in one snapshot, a lost snapshot, burn ticks and hits on a unit with an aim shape. |
 | `looks` | Charmed, burning, cursed, boosted, meca and mutant looks, puddles, projectile angles. |
 | `damage` | The damage meter: counting, the row in the wave, the pages, the switch. |
-| `damage_run` | The damage meter in real waves: the total against the health lost with Giant Belt, Scared Sausage and Greek Fire, the end of the wave before its panels, the run stats over waves, retries and new runs. |
+| `damage_run` | The damage meter in real waves: the total against the health lost with Giant Belt, Scared Sausage and Greek Fire, in a crowded wave past the game's cap on enemies and for a hit on an enemy the cap removed, the end of the wave before its panels, the run stats over waves, retries and new runs. |
 | `battle_scene` | A breaking weapon, the hole layout, a stomped hole, the host's speed in the own-player prediction, walking into holes. |
 | `puddle_reuse` | Trails of fire (another player's magma boots), acid and petrol puddles on a client, also once the puddle puppets come back from the pool. |
 | `dead_player` | A player who died stays visible when the next wave starts him at 0 health. |

@@ -87,10 +87,13 @@ var _dealt := []  # per player: the health the wave's hits took
 var _kills := []  # per player: enemies killed this wave
 var _taken := []  # per player: damage the player took this wave
 var _health := {}  # unit instance id -> its health after its last hit
+var _gone := {}  # unit instance id -> the health it had left at its death, less what hits took
 # For the wave's log line, whoever hit: the health the shown hits took, of it what no player's hits
-# took, what the hidden hits took, the enemies killed.
+# took and what hits on units after their death took, what the hidden hits took, the enemies
+# killed.
 var _lost := 0
 var _unowned := 0
+var _after_death := 0
 var _hidden := 0
 var _all_kills := 0
 var _builder_keys := []  # the builder turret levels' counter keys
@@ -166,8 +169,10 @@ func _start_battle(scene: Node) -> void:
 	_kills = []
 	_taken = []
 	_health = {}
+	_gone = {}
 	_lost = 0
 	_unowned = 0
+	_after_death = 0
 	_hidden = 0
 	_all_kills = 0
 	ledger.start_wave(RunData.current_wave)
@@ -277,13 +282,19 @@ func on_hit(unit, value: int, _kb, crit, _dodge, _protected, _armor, args, _type
 		return
 	var dealt := value
 	var killed := false
+	var after_death := false
 	if unit != null and is_instance_valid(unit) and unit.get("current_stats") != null:
-		# A burn goes on after a death without a killing hit (a tree's last hit, the game's cap
-		# on enemies): no health of a unit that is gone counts.
-		if unit.get("dead") == true:
-			return
 		var id: int = unit.get_instance_id()
-		if unit.current_stats.health <= 0:
+		if unit.get("dead") == true:
+			# A unit that died without a killing hit (the game's cap on enemies, a tree's last
+			# hit) can still be hit: a bullet that entered it in the physics step the game
+			# removed it in (Unit.hurt_area_entered_deferred checks _pending_die, not dead), a
+			# burn. The hit takes what it had left, as the weapon's counter counts it.
+			var left: int = _gone.get(id, 0)
+			dealt = int(clamp(left - unit.current_stats.health, 0, value))
+			_gone[id] = left - dealt
+			after_death = true
+		elif unit.current_stats.health <= 0:
 			# Not seen hit since it (re)spawned: it had all its health.
 			dealt = int(min(value, _health.get(id, unit.max_stats.health)))
 			killed = true
@@ -302,6 +313,8 @@ func on_hit(unit, value: int, _kb, crit, _dodge, _protected, _armor, args, _type
 		_lost += dealt
 		if not owned:
 			_unowned += dealt
+		if after_death:
+			_after_death += dealt
 	if not owned:
 		return
 	_grow(p)
@@ -328,6 +341,7 @@ func _on_hurt(unit, value: int, _kb, _crit, dodge, protected, _armor, _args, _ty
 
 func _on_unit_gone(unit, _args) -> void:
 	_health.erase(unit.get_instance_id())
+	_gone[unit.get_instance_id()] = int(max(0, unit.current_stats.health))
 
 
 func _on_health_set(unit) -> void:
@@ -361,11 +375,13 @@ static func source_of(args, p: int) -> String:
 
 
 # The host's check of the meter, logged when the wave is over: the totals on the board against
-# the health the shown hits took whoever dealt them (of it what no player's hits took; the hidden
-# hits apart, which no total holds), per player the plain rows and what the overlapping ones hold
-# besides, the biggest hit with its source and the kills, and the enemies killed.
-#   Wave 12 damage: total 15,234, health lost 15,234 (by no player 0, hidden 0); p0 9,100 (rows
-#   8,900 + 1,200 included, biggest hit 1,204 weapon_smg_3, 50 kills), p1 ...; 87 kills
+# the health the shown hits took whoever dealt them (of it what no player's hits took and what
+# hits on units after their death took; the hidden hits apart, which no total holds), per player
+# the plain rows and what the overlapping ones hold besides, the biggest hit with its source and
+# the kills, and the enemies killed.
+#   Wave 12 damage: total 15,234, health lost 15,234 (by no player 0, after death 2, hidden 0);
+#   p0 9,100 (rows 8,900 + 1,200 included, biggest hit 1,204 weapon_smg_3, 50 kills), p1 ...;
+#   87 kills
 func wave_line() -> String:
 	var players: Array = board.get("players", [])
 	var hits: Array = board.get("hits", [])
@@ -388,12 +404,16 @@ func wave_line() -> String:
 			part += ", no hit"
 		parts.append(part + ", %d kills)" % (_kills[p] if p < _kills.size() else 0))
 	return (
-		"Wave %d damage: total %s, health lost %s (by no player %s, hidden %s); %s; %d kills"
+		(
+			"Wave %d damage: total %s, health lost %s (by no player %s, after death %s, hidden %s);"
+			+ " %s; %d kills"
+		)
 		% [
 			board.get("wave", RunData.current_wave),
 			_number(team),
 			_number(_lost),
 			_number(_unowned),
+			_number(_after_death),
 			_number(_hidden),
 			PoolStringArray(parts).join(", "),
 			_all_kills,
