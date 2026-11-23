@@ -115,9 +115,11 @@ func _is_loading() -> bool:
 func _enter(kind: String, state: Dictionary) -> bool:
 	var grids: Dictionary = state.grids
 	var run := {}
+	var keep := false  # the client's own run state stands in for one it could not read
 	if kind in MenuSync.RUN_KINDS:
 		run = RunStateCodec.decode(grids.get("run"))
-		if run.empty():
+		keep = run.empty() and _keeps_run(kind, grids.get("run"), _count(state))
+		if run.empty() and not keep:
 			ModLoaderLog.error("No run state for the host's %s" % kind, LOG_NAME)
 			forget()
 			return false
@@ -129,7 +131,9 @@ func _enter(kind: String, state: Dictionary) -> bool:
 	Puppet.set_active(true)
 	var count := _count(state)
 	VirtualDevices.fill_puppet_slots(count)
-	if run.empty():
+	if keep:
+		RunData.run_won = grids.get("won") == true
+	elif run.empty():
 		RunData.reset()
 		RunData.set_player_count(count)
 	else:
@@ -241,6 +245,17 @@ func _apply(scene: Node, state: Dictionary) -> void:
 	elif _kind == RESUME:
 		_apply_join(scene, state.get("join"))
 		_apply_shown(scene, state.get("shown"))
+
+
+# The end of a run whose run state came but could not be read (RunStateCodec logged why) shows
+# this client's own run state, as of the last wave, when it has the host's players.
+static func _keeps_run(kind: String, payload, count: int) -> bool:
+	if kind != END_RUN or not RunStateCodec.is_payload(payload) or count == 0:
+		return false
+	if RunData.get_player_count() != count:
+		return false
+	ModLoaderLog.warning("End of run: shows this client's own run state", LOG_NAME)
+	return true
 
 
 static func _count(state: Dictionary) -> int:

@@ -289,9 +289,11 @@ class Store:
 	const KEEP := 2  # versions per key: a body still pending in one section while another moved on
 	var misses := 0  # bodies that named a part neither stored nor delivered
 	var parsed := 0  # parts decompressed and parsed
+	var unreadable := 0  # parts whose JSON did not parse (each logged once, never parsed again)
 	var items_made := 0  # gear items deserialized (not kept from the last state)
 	var session: Object = null  # ask_resync on a missing part (session/session.gd)
-	var _parts := {}  # key -> [{id, size, data, raw (parsed, or null)}], newest first
+	# key -> [{id, size, data, raw (parsed, or null), bad (its JSON did not parse)}], newest first
+	var _parts := {}
 	var _ids := {}  # the ids of the last state_for
 	var _last_ids := {}  # the ids of the last run ingested (a run without ids names them)
 	var _players := []  # its PlayerRunData objects
@@ -366,6 +368,18 @@ class Store:
 			if _find(key, ids[key]).empty():
 				return false
 		return true
+
+	# Whether a part of ids is stored but unreadable (its JSON does not parse). Unlike a missing
+	# part, a resync would not help: the host sends the same text again. A reader keeps the run
+	# state it has, as if the run had not changed.
+	func has_unreadable(ids) -> bool:
+		if typeof(ids) != TYPE_DICTIONARY:
+			return false
+		for key in ids:
+			var found := _find(key, ids[key])
+			if not found.empty() and _raw(key, ids[key]) == null and found.bad:
+				return true
+		return false
 
 	# key -> the parsed part (null when missing or unreadable). Parts stay as parsed here: never
 	# hand them to the game's code, which writes into what it reads.
@@ -551,10 +565,20 @@ class Store:
 		var found := _find(key, id)
 		if found.empty():
 			return null
-		if found.raw == null:
+		if found.raw == null and not found.bad:
 			var text: PoolByteArray = found.data.decompress(found.size, File.COMPRESSION_ZSTD)
 			var result := JSON.parse(text.get_string_from_utf8())
 			if result.error != OK:
+				found.bad = true
+				unreadable += 1
+				var error := (
+					"%s (JSON error %d at line %d)"
+					% [result.error_string, result.error, result.error_line]
+				)
+				ModLoaderLog.warning(
+					"Run part %s %s is not readable: %s; the run state stays as it was" % [key, id, error],
+					LOG_NAME
+				)
 				return null
 			found.raw = result.result
 			parsed += 1
@@ -573,7 +597,9 @@ class Store:
 		var versions: Array = _parts.get(key, [])
 		var stored := _find(key, id)
 		if stored.empty():
-			stored = {"id": id.duplicate(), "size": part.size, "data": part.data, "raw": null}
+			stored = {
+				"id": id.duplicate(), "size": part.size, "data": part.data, "raw": null, "bad": false
+			}
 		else:
 			versions.erase(stored)
 		versions.push_front(stored)
