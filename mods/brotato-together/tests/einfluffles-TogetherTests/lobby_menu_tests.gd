@@ -405,7 +405,11 @@ func _test_client_title():
 	var input_sync: Node = together.input_sync
 	var stream: Node = together.state_stream
 	var title_state := {"kind": "title_screen", "screen": 1, "count": 0, "selected": [], "grids": {}}
-	var resume_state := {"kind": "coop_resume", "screen": 2, "count": 0, "selected": [], "grids": {}}
+	# A host choosing for a solo run: its screen has no copy here.
+	var solo_state := {
+		"kind": "character_selection", "screen": 2, "count": 0, "selected": [], "grids": {},
+		"coop": false,
+	}
 
 	_join_as_client()
 	yield(_frames(2), "completed")
@@ -464,13 +468,13 @@ func _test_client_title():
 	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.RUN_SHOP, 2, null])
 	session.emit_signal("host_message", Protocol.Msg.UI_SOUNDS, {})
 	t._check(together._own_menus, "client: the host's main menu state keeps it there")
-	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.MENU, 3, resume_state])
+	session.emit_signal("host_message", Protocol.Msg.STATE, [stream.MENU, 3, solo_state])
 	t._check(
 		not together._own_menus and not input_sync.local_input_blocked
 		and not session.borrow_parked and not together.ui_sounds.silent,
 		"client: the host's next screen takes input, DLC and sounds back"
 	)
-	together._on_menu_state(resume_state)
+	together._on_menu_state(solo_state)
 	yield(_frames(2), "completed")
 	var view := _tree().current_scene
 	t._check(

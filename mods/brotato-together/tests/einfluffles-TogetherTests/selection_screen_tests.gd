@@ -474,15 +474,34 @@ func _client_resume(host: Dictionary):
 		"resume: the copy shows the host's join progress (%s)" % scene._progress_bar.value
 	)
 	t._check(not scene.is_processing_input(), "resume: cancel on the copy is the host's")
-	# Every saved player joined on the host: the copy waits for the host's next screen.
+	t._check(
+		not CoopService.is_connected(
+			"connected_players_updated", scene, "_on_connected_players_updated"
+		),
+		"resume: the copy's join handler is cut"
+	)
+	# The copy still has saved player 2 to join: one join would only show it again, a second one
+	# would load the shop. Count 1 to 2 to 1 gives it both.
 	var joined: Dictionary = host.duplicate(true)
 	joined["count"] = 2
 	joined.erase("join")
 	t._check(_menus.show(joined), "resume: the state with everybody in")
 	yield(_frames(3), "completed")
+	t._check(_menus.show(host.duplicate(true)), "resume: the state with player 2 gone again")
+	yield(_frames(3), "completed")
+	var shop: bool = _tree().current_scene.filename == "res://ui/menus/shop/coop_shop.tscn"
 	t._check(
-		_menus.current() == scene and scene._player_label.player_index == 1,
-		"resume: the copy does not move on by itself when players join"
+		not shop and _menus.current() == scene and is_instance_valid(scene),
+		"resume: the copy does not move on by itself when players join or leave"
+	)
+	t._check(
+		is_instance_valid(scene) and scene._players_to_join.size() == 1,
+		"resume: the copy still has saved player 2 to join (%s)"
+		% (scene._players_to_join if is_instance_valid(scene) else "freed")
+	)
+	t._check(
+		is_instance_valid(scene) and scene._player_label.player_index == 1,
+		"resume: the copy still shows saved player 2"
 	)
 	_tree().change_scene(MenuData.title_screen_scene)
 	yield(_frames(2), "completed")
