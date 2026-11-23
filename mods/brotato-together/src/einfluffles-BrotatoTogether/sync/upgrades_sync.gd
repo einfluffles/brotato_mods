@@ -25,6 +25,7 @@ const StateStream := preload(
 )
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
+const FiniteJson := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/finite_json.gd")
 const UpgradesGear := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_gear.gd"
 )
@@ -290,7 +291,8 @@ static func capture(ui: Node) -> Array:
 			players.append(["upgrades", ids, container._level, container._reroll_price])
 		elif container._items_container.visible and container._item_data != null:
 			var item = container._item_data
-			players.append(["item", JSON.print(item.serialize()), item.my_id])
+			var json := FiniteJson.to_text(item.serialize(), "crate item %s" % item.my_id)
+			players.append(["item", json, item.my_id])
 		else:
 			players.append(["none"])
 	return players

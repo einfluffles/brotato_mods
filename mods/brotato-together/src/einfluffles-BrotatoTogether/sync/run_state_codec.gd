@@ -7,6 +7,7 @@ const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
 )
 const EffectArgs := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/effect_args.gd")
+const FiniteJson := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/finite_json.gd")
 const MAX_UNCOMPRESSED_SIZE := 8 * 1024 * 1024
 
 
@@ -17,7 +18,7 @@ static func encode(shop_args := []) -> Dictionary:
 
 
 static func encode_json(shop_args := []) -> String:
-	return JSON.print(serialize(shop_args))
+	return FiniteJson.to_text(serialize(shop_args))
 
 
 # The run state as the save file has it before JSON.print. Every effect in it carries its custom

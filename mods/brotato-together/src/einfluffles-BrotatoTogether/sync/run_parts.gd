@@ -20,6 +20,7 @@ const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
 )
 const EffectArgs := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/effect_args.gd")
+const FiniteJson := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/finite_json.gd")
 const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
@@ -94,7 +95,7 @@ static func join(parts: Dictionary) -> Dictionary:
 # text: its JSON when already printed).
 static func entry(part, part_hash: int, text := "") -> Dictionary:
 	if text == "":
-		text = JSON.print(part)
+		text = FiniteJson.to_text(part)
 	var packed := RunStateCodec.pack(text)
 	return {
 		"hash": part_hash,
@@ -110,7 +111,7 @@ static func pack_all(data: Dictionary) -> Dictionary:
 	var parts := split(data)
 	var run := {"ids": {}, "parts": {}}
 	for key in parts:
-		var packed := entry(parts[key], hash(parts[key]))
+		var packed := entry(parts[key], hash(parts[key]), FiniteJson.to_text(parts[key], key))
 		run.ids[key] = packed.id
 		run.parts[key] = {"size": packed.size, "data": packed.data}
 	return run
@@ -151,13 +152,9 @@ static func _changed_paths(old, new, path: String, depth: int, paths: Array) -> 
 	paths.append(path)
 
 
-# A key the game hashed (Keys.generate_hash: effects, tracked item effects; a string of digits
-# once parsed from JSON) by its name.
+# A key the game hashed by its name (FiniteJson's paths name them the same way).
 static func _path(path: String, key) -> String:
-	var name := str(key)
-	if name.is_valid_integer() and Keys.hash_to_string.has(int(name)):
-		name = Keys.hash_to_string[int(name)]
-	return name if path == "" else "%s.%s" % [path, name]
+	return FiniteJson._path(path, key)
 
 
 # Same keys and ids (dictionaries compare by reference in Godot 3).
