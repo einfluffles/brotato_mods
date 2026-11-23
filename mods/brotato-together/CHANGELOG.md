@@ -18,6 +18,11 @@ upload; three of them are marked where the upload may have differed.
   shop opens only once every saved character has a player, each on the character they took.
   Before, a leave skipped a saved character (nobody could take it any more) or opened the shop
   with players missing. The same goes for a local pad unplugged on that screen.
+- Online co-op: a client's level-up could stay empty when the run had a number the game had made
+  invalid (NaN or infinite, for example from a stat divided by 0). The host now sends such a
+  number as 0 and names it in its log, and its own run keeps the value. A client that still gets
+  a run state it cannot read keeps the one it has: the level-up panels, the shop and the end of
+  run screen still show, and its log says which part it could not read.
 - Needs everybody on this update (protocol 33).
 
 ## 2026-11-23 19:30 UTC

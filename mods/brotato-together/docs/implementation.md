@@ -377,8 +377,19 @@ held 3 times for X, longest 2001 ms (Steam's queue over 24 KB)".
 The client calls `JSON.parse`, `deserialize_run_state` and `RunData.resume_from_state`. The JSON
 step is required: the game's deserializers expect string keys and float numbers.
 
-Two things the game does not do by itself:
+Three things the game does not do by itself:
 
+- **NaN and infinite numbers** (`sync/finite_json.gd`). Godot's `JSON.print` writes them as `nan`,
+  `inf` and `-inf`, which `JSON.parse` rejects (error 43), so the client loses the whole text. The
+  game can make them (a stat divided by a stat gain of 0, for example), and its own save file has
+  the same problem. Every JSON text the host sends goes through `FiniteJson.to_text`: the run
+  parts (`RunCache.refresh`, `RunParts.entry`), `RunStateCodec.encode_json` (battle start, menus)
+  and a crate item's JSON. It looks for such a value in the printed text with two `find` calls (a
+  bare token after `:`, `,` or `[`; one inside a string such as "banana" is none). Only on a hit
+  it walks the value, replaces each NaN or infinite float with 0 in a copy, logs a warning per
+  path (`p1.effects.stat_luck`, at most once a minute per path) and prints the copy. `RunData`
+  keeps its values. The check costs about 0.5 ms on the parts of a late test run (334 KB of JSON),
+  against 10 ms for their `JSON.print`, and only parts whose hash changed are printed at all.
 - `RunStateCodec.apply` resets `RunData`'s item-count caches before `resume_from_state`. The game
   only refreshes them when an item is added or removed, and `LinkedStats` reads them.
 - **Effects' custom args** (`sync/effect_args.gd`). `Effect.get_text` adds an effect's custom args
@@ -404,7 +415,8 @@ have changed:
   as its `hash()`, by content: the battle goes on under the level-up panels, and a pet such as
   Bot-O-Mine's counts its mines there (`add_tracked_value`), which left alone filled the host's log
   with safety net warnings. Each screen adds its own values (`ShopSync.shop_args`; for the panels
-  the option each panel processes, its crate item, rerolls and done).
+  the option each panel processes, its crate item, rerolls and done). Fingerprints compare with
+  a NaN equal to a NaN (`RunCache.same_values`): a NaN xp would else make every check serialize.
 - **Force.** The check after an applied intent (`force()`) and after `peer_ready` serializes in any
   case.
 - **Safety net.** Every second, while a peer is ready, the run is serialized without `JSON.print`
@@ -450,6 +462,14 @@ that lack them.
   its input) whose `players_data` holds only the players whose parts changed, and puts the
   previous `PlayerRunData` objects back for the others. `changed_players()` and `gear_changed(p)`
   name what moved.
+- **Unreadable part.** A stored part whose JSON does not parse (a host without `FiniteJson`) is
+  marked as such: one warning with its key, id and the parse error, and it is never parsed again.
+  A resync would not help (the host sends the same text), so the sections keep the run they have,
+  as if it had not changed (`Store.has_unreadable`): the level-up panels and an open shop apply
+  the rest of the body. A shop that is still to be entered has no run to keep and drops the body
+  as before. An end-of-run screen whose run (`RunStateCodec`) does not parse shows the client's
+  own run state when it has the host's players (`MenuPuppet._keeps_run`). Until 2026-11-23 the
+  panels then showed nothing at all.
 - **Kept items** (`Store._kept_items`, issue #110). A changed player keeps the item objects of its
   previous `PlayerRunData` whose dictionary in the `g` part hashes the same (all of them when only
   `p<p>` moved); only the others go through `deserialize_run_state`. A crate item then deserializes
@@ -2301,6 +2321,8 @@ All of this is for the log only. Every line has a rate limit (log memory, see
 | "Input from ...: N missing input(s) filled in ..." | `InputSync` | after a client's gap, at most one per 5 s per client | inputs filled in from redundancy, steps caught up, steps dropped and how many of them moved |
 | "Shop state held ...", "Shop 40: 28 states ..." | state stream, `RunParts.Sender` | when the screen closes | see [State stream](#5-state-stream-and-run-state) |
 | "... run state changed without a change of its fingerprint ..." | `RunCache` | a safety net hit | a gap in the fingerprint, with the paths |
+| "nan at p1.effects.stat_luck sent as 0 ..." | `sync/finite_json.gd` | host: a NaN or infinite number in a sent text, at most once a minute per path | which value of the run state the game made non-finite, see [Run state serialization](#run-state-serialization) |
+| "Run part p1 [...] is not readable: ..." | `RunParts.Store` | client: once per stored part | a part whose JSON does not parse; the run state stays as it was |
 | "Client X entered ...", "Client X frames ...", "Client X corrections ..." | `sync/client_report.gd` | see below | a client's timings in the host's log |
 | "Wave N damage: total ..." | `DamageMeter` | once per wave, at the wave's last measurement, on the machine that runs the wave | the meter's totals against the health the enemies lost, per player rows, biggest hit and kills, see [Damage meter](#damage-meter) |
 
