@@ -61,7 +61,8 @@ used like them, with mouse, keyboard or gamepad.
   (Space / Enter / A) to join, like local players. The host joins first: a remote player's hold
   counts only once a player of the host's machine is in, so the host's player starts in slot 1.
   The co-op resume screen is not held back, since there the slots decide who gets which saved
-  character. Every free slot shows "Player N" and the game's hold-to-join hint, on the host and on
+  character. A player who leaves the resume screen gives their saved character back for the next
+  one to join, and the shop opens only once every saved character has a player. Every free slot shows "Player N" and the game's hold-to-join hint, on the host and on
   clients.
 - **Locking in:** once you have picked your character (or weapon), your cursor stays on it until
   you cancel or everybody is ready and the game goes on. A player who leaves character selection

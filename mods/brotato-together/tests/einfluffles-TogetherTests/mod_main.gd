@@ -78,6 +78,9 @@ const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
 const HostFirstTests := preload("res://mods-unpacked/einfluffles-TogetherTests/host_first_tests.gd")
+const ResumeLeaveTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/resume_leave_tests.gd"
+)
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
 const HitNumbersTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/hit_numbers_tests.gd"
@@ -595,6 +598,8 @@ func _suite_selection(together: Node):
 	_suite = MenuPuppetTests.new()
 	yield(_suite.run(self, together), "completed")
 	_suite = HostFirstTests.new()
+	yield(_suite.run(self, together), "completed")
+	_suite = ResumeLeaveTests.new()
 	yield(_suite.run(self, together), "completed")
 	_suite = SelectionScreenTests.new()
 	yield(_suite.run(self, together), "completed")

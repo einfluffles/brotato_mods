@@ -1891,6 +1891,20 @@ host's player is in. This is about the order of joining only: when the host's pa
 the game moves the remote players up. The co-op resume screen is not held back, because its slot
 order decides who gets which saved character. Suite `selection` checks it (`host_first_tests.gd`).
 
+**Co-op resume screen, a player who leaves.** The game's `CoopResume` shows one saved player at a
+time and steps to the next on every `connected_players_updated`, a leave too: InputSync frees a
+remote player's slot when its peer leaves while the game listens for joins, and an unplugged pad
+does the same. A leave skipped a saved player, and the last step loaded the shop with fewer players
+than the run has (none, in a run of two). The `CoopResume` extension (`extensions/ui/coop_resume.gd`)
+steps on a join only: it keeps which saved player each device took (`_bt_taken`) and the saved
+players nobody has (`_bt_free`, lowest first, the first is the one shown). A device that leaves
+gives its saved player back, and the screen shows the lowest free one again. The shop loads once
+every saved player is taken. The game gives saved player i to `connected_players[i]`, and after a
+leave the players who joined later have moved up, so the extension first puts `connected_players`
+in the order of the saved players taken and emits the signal once more (colours follow their
+devices). No protocol change: it runs on the host only; a client's copy of the screen does not
+step (`Puppet.is_active`). Suite `selection` checks it (`resume_leave_tests.gd`).
+
 ### Popup
 
 `ui/lobby_popup.gd` shows the same page in a panel on the dimmed screen, for a client on a screen
