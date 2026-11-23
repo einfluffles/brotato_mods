@@ -77,6 +77,7 @@ const SelectionScreenTests := preload(
 const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
+const HostFirstTests := preload("res://mods-unpacked/einfluffles-TogetherTests/host_first_tests.gd")
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
 const HitNumbersTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/hit_numbers_tests.gd"
@@ -593,6 +594,8 @@ func _suite_selection(together: Node):
 	yield(_suite.run(self, together), "completed")
 	_suite = MenuPuppetTests.new()
 	yield(_suite.run(self, together), "completed")
+	_suite = HostFirstTests.new()
+	yield(_suite.run(self, together), "completed")
 	_suite = SelectionScreenTests.new()
 	yield(_suite.run(self, together), "completed")
 
@@ -618,20 +621,7 @@ func _suite_core(together: Node):
 	CoopService.set_process_input(true)
 	input_sync.devices[FAKE_PEER] = DEVICE
 	_send(input_sync, Vector2.ZERO, Vector2.ZERO, 0)  # first packet: nothing held
-	# A hold as long as joining takes, before the host's own player is in.
-	for _i in 10:  # until the press (buffered) has started the hold
-		_send(input_sync, Vector2(0.5, 0.0), Vector2(0.0, -1.0), BIT_ACCEPT)
-		yield(get_tree(), "idle_frame")
-		if CoopService._hold_timers.has(DEVICE):
-			break
-	CoopService._hold_timers[DEVICE] = CoopService.HOLD_DURATION
-	for _i in 3:
-		_send(input_sync, Vector2(0.5, 0.0), Vector2(0.0, -1.0), BIT_ACCEPT)
-		yield(get_tree(), "idle_frame")
-	_check(
-		not CoopService.is_device_assigned(DEVICE),
-		"a remote player's hold does not count before a local player joined"
-	)
+	# The host's player first, as in character selection (host_first_tests.gd).
 	CoopService._add_player(
 		CoopService.KEYBOARD_REMAPPED_DEVICE_ID, CoopService.PlayerType.KEYBOARD_AND_MOUSE
 	)
