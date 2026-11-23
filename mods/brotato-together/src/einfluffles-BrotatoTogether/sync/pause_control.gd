@@ -36,7 +36,7 @@ var _held_device := -1
 var _scene_id := 0  # instance id of the scene whose pause menu is watched
 
 var _pause_armed := false  # client: own pause went down while the buttons were the game's
-var _inert_shop: Node = null  # client: its shop, while its own menu is open there
+var _inert_shop_id := 0  # client: instance id of its shop while its own menu is open there
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -271,6 +271,8 @@ func _update_live_menu() -> void:
 		return
 	input_sync.blocked_by.erase(BLOCK_KEY)
 	_hold_player(null)
+	if _inert_shop_id != 0 and instance_from_id(_inert_shop_id) == null:
+		_inert_shop_id = 0  # it went with the menu open; ShopLocal.leave let go of its panel
 	if main != null and is_client_battle(main):
 		client_update(main, battle_client._you)
 		return
@@ -280,7 +282,7 @@ func _update_live_menu() -> void:
 		return
 	input_sync.set_local_menu(-1)
 	_pause_armed = false
-	if _inert_shop != null:
+	if _inert_shop_id != 0:
 		_set_shop_inert(null, false)
 	# No session any more, or a client's battle or shop that is over and still on screen.
 	var menu = scene.get("_pause_menu") if scene != null else null
@@ -374,12 +376,13 @@ func client_shop_update(shop: Node, you: int) -> void:
 # (lock, ban, page triggers, the cursors): they get nothing while it is open. The game hides the
 # shop's content meanwhile (on_paused), so other players' cursors are put back afterwards.
 func _set_shop_inert(shop: Node, inert: bool) -> void:
-	var target: Node = shop if inert else null
-	if target == _inert_shop:
+	var target_id: int = shop.get_instance_id() if inert else 0
+	if target_id == _inert_shop_id:
 		return
-	if is_instance_valid(_inert_shop):
-		_take_shop_input(_inert_shop, true)
-	_inert_shop = target
+	var before = instance_from_id(_inert_shop_id)  # null: none, or freed
+	if before != null:
+		_take_shop_input(before, true)
+	_inert_shop_id = target_id
 	if inert:
 		_take_shop_input(shop, false)
 	shop_sync.local.set_menu_open(inert)
@@ -434,7 +437,8 @@ func _on_client_quit(_menu: Node) -> void:
 
 
 # The current scene's pause menu, opened for this machine's player if it is closed (live during
-# an online wave, a pause otherwise); null if there is none or it does not open.
+# an online wave and for a client in the shop, a pause otherwise); null if there is none or it does
+# not open.
 func open_menu() -> Node:
 	var scene := get_tree().current_scene
 	var menu = scene.get("_pause_menu") if scene != null else null
@@ -443,6 +447,15 @@ func open_menu() -> Node:
 	if not menu.visible:
 		if not session.is_client():
 			menu.pause(int(max(local_player_index(), 0)))
-		elif menu.live and is_client_battle(scene) and battle_client._you >= 0:
-			menu.open_live(battle_client._you)
+		elif menu.live and _live_player(scene) >= 0:
+			menu.open_live(_live_player(scene))
 	return menu if menu.visible else null
+
+
+# Client: the own slot whose live menu the scene has (-1: none).
+func _live_player(scene: Node) -> int:
+	if is_client_battle(scene):
+		return battle_client._you
+	if _client_shop(scene) != null:
+		return shop_sync.own_player()
+	return -1

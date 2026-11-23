@@ -62,6 +62,7 @@ var _gear = ShopGearTests.new()
 var _popups = ShopPopupMouseTests.new()
 var _cursors = ShopCursorTests.new()
 var _popup_views = ShopPopupViewTests.new()
+var _menu = ShopMenuTests.new()
 
 
 func run(t: Node, together: Node):
@@ -477,7 +478,7 @@ func _client_part(together: Node):
 	local.set_paused(false)
 	_t._check(_input._local_buttons != null, "and back on afterwards")
 	_t._check(local_panel.has_own(), "the mouse too")
-	yield(ShopMenuTests.new().client(self, together, shop, emulator), "completed")
+	yield(_menu.client(self, together, shop, emulator), "completed")
 	local.take_over(REMOTE)
 	_t._check(
 		local_panel._own == shop._get_coop_player_container(REMOTE) and local_panel.has_own(),
@@ -490,6 +491,7 @@ func _client_part(together: Node):
 		"local control ends with the shop"
 	)
 	_t._check(not local_panel.has_own(), "and LocalPanel lets go of the own panel")
+	yield(_menu.client_leave(self, together, shop), "completed")
 
 
 func _client_ban(node: Node, before: String):
