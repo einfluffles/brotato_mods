@@ -27,6 +27,7 @@ func run(test_mod: Node, together: Node):
 	CoopService.listening_for_inputs = true
 	CoopService.set_process_input(true)
 	_input.devices[t.FAKE_PEER] = t.DEVICE
+	_input._remote.erase(t.FAKE_PEER)  # other suites' sequence numbers would make ours stale
 	_hold(false)  # a first packet with nothing held
 	yield(tree, "idle_frame")
 	for _i in 10:  # until the press (buffered) has started the hold
