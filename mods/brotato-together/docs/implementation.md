@@ -387,8 +387,8 @@ Three things the game does not do by itself:
   and a crate item's JSON. It looks for such a value in the printed text with two `find` calls (a
   bare token after `:`, `,` or `[`; one inside a string such as "banana" is none). Only on a hit
   it walks the value, replaces each NaN or infinite float with 0 in a copy, logs a warning per
-  path (`p1.effects.stat_luck`, at most once a minute per path) and prints the copy. `RunData`
-  keeps its values. The check costs about 0.5 ms on the parts of a late test run (334 KB of JSON),
+  path (`p1.effects.stat_luck`, at most once a minute per path, at most 3 lines and a summary
+  line per print, at most 256 paths remembered) and prints the copy. `RunData` keeps its values. The check costs about 0.5 ms on the parts of a late test run (334 KB of JSON),
   against 10 ms for their `JSON.print`, and only parts whose hash changed are printed at all.
 - `RunStateCodec.apply` resets `RunData`'s item-count caches before `resume_from_state`. The game
   only refreshes them when an item is added or removed, and `LinkedStats` reads them.
@@ -2321,7 +2321,7 @@ All of this is for the log only. Every line has a rate limit (log memory, see
 | "Input from ...: N missing input(s) filled in ..." | `InputSync` | after a client's gap, at most one per 5 s per client | inputs filled in from redundancy, steps caught up, steps dropped and how many of them moved |
 | "Shop state held ...", "Shop 40: 28 states ..." | state stream, `RunParts.Sender` | when the screen closes | see [State stream](#5-state-stream-and-run-state) |
 | "... run state changed without a change of its fingerprint ..." | `RunCache` | a safety net hit | a gap in the fingerprint, with the paths |
-| "nan at p1.effects.stat_luck sent as 0 ..." | `sync/finite_json.gd` | host: a NaN or infinite number in a sent text, at most once a minute per path | which value of the run state the game made non-finite, see [Run state serialization](#run-state-serialization) |
+| "nan at p1.effects.stat_luck sent as 0 ..." | `sync/finite_json.gd` | host: a NaN or infinite number in a sent text, at most once a minute per path, 3 lines and a summary per print | which value of the run state the game made non-finite, see [Run state serialization](#run-state-serialization) |
 | "Run part p1 [...] is not readable: ..." | `RunParts.Store` | client: once per stored part | a part whose JSON does not parse; the run state stays as it was |
 | "Client X entered ...", "Client X frames ...", "Client X corrections ..." | `sync/client_report.gd` | see below | a client's timings in the host's log |
 | "Wave N damage: total ..." | `DamageMeter` | once per wave, at the wave's last measurement, on the machine that runs the wave | the meter's totals against the health the enemies lost, per player rows, biggest hit and kills, see [Damage meter](#damage-meter) |

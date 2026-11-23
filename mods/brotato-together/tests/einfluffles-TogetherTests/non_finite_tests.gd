@@ -107,6 +107,42 @@ func _test_to_text() -> void:
 		and FiniteJson.replaced_count() == count + 10,
 		"non-finite: a text without such a number is JSON.print's, also on a false hit"
 	)
+	_test_warn_limits(warnings)
+
+
+# Many paths in one print: MAX_LINES lines and one summary; the remembered paths stay bounded.
+func _test_warn_limits(warnings: Dictionary) -> void:
+	var many := []
+	for i in 40:
+		many.append(NAN)
+	var lines: int = warnings.lines
+	FiniteJson.to_text(many, "many")
+	_t._check(
+		warnings.lines == lines + FiniteJson.MAX_LINES + 1 and warnings.logged.has("many[39]"),
+		"non-finite: 40 paths at once give %d lines and a summary (%d)"
+		% [FiniteJson.MAX_LINES, warnings.lines - lines]
+	)
+	var old := OS.get_ticks_msec() - FiniteJson.WARN_INTERVAL_MSEC - 1
+	for i in FiniteJson.MAX_PATHS:
+		warnings.logged["old %d" % i] = old
+		warnings.unlogged["old %d" % i] = 1
+	FiniteJson.to_text({"x": INF}, "fresh")
+	_t._check(
+		warnings.logged.size() <= FiniteJson.MAX_PATHS
+		and not warnings.logged.has("old 0")
+		and not warnings.unlogged.has("old 0")
+		and warnings.logged.has("fresh.x")
+		and warnings.logged.has("many[39]"),
+		"non-finite: past %d paths the expired ones are dropped (%d left)"
+		% [FiniteJson.MAX_PATHS, warnings.logged.size()]
+	)
+	for i in FiniteJson.MAX_PATHS + 1:
+		warnings.logged["recent %d" % i] = OS.get_ticks_msec()
+	FiniteJson.to_text({"y": NAN}, "full")
+	_t._check(
+		warnings.logged.empty() and warnings.unlogged.empty(),
+		"non-finite: still too many: all are dropped (%d left)" % warnings.logged.size()
+	)
 
 
 # The host's run parts: valid JSON, the value as 0 under its path, RunData untouched.

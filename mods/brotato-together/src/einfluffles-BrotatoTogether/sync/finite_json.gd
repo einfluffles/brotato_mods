@@ -4,11 +4,16 @@ extends Reference
 # such values (a stat divided by a stat gain of 0, say) and its own save has the same problem.
 # to_text() checks the printed text for such a value (two finds on it, see has_non_finite); only
 # on a hit it prints a copy again with each of them as 0, and warns with their paths (once per path
-# per WARN_INTERVAL_MSEC). The data itself (the game's RunData) is never changed.
+# per WARN_INTERVAL_MSEC, at most MAX_LINES lines and a summary per call, at most MAX_PATHS paths
+# remembered). The data itself (the game's RunData) is never changed.
 
 const LOG_NAME := "einfluffles-BrotatoTogether:FiniteJson"
-const META_KEY := "bt_non_finite_json"  # Engine meta: {count, logged {path: msec}, unlogged}
+# Engine meta: {count, lines (warning lines logged), logged {path: msec}, unlogged {path: count}}
+const META_KEY := "bt_non_finite_json"
 const WARN_INTERVAL_MSEC := 60000
+const MAX_LINES := 3  # warning lines per call; the other paths share one more line
+const SUMMARY_PATHS := 5  # paths named in that line
+const MAX_PATHS := 256
 const TOKENS := ["nan", "inf"]  # "-inf" is "inf" after a "-"
 const BEFORE := ":,["  # what JSON.print puts before a value (no spaces without an indent)
 const AFTER := ",]}"
@@ -113,22 +118,53 @@ static func replaced_count() -> int:
 
 static func _warn(found: Array) -> void:
 	if not Engine.has_meta(META_KEY):
-		Engine.set_meta(META_KEY, {"count": 0, "logged": {}, "unlogged": {}})
+		Engine.set_meta(META_KEY, {"count": 0, "lines": 0, "logged": {}, "unlogged": {}})
 	var warnings: Dictionary = Engine.get_meta(META_KEY)
 	var now := OS.get_ticks_msec()
 	warnings.count += found.size()
+	var lines := 0
+	var summed := []  # paths past MAX_LINES in this call: one line for all of them
 	for entry in found:
 		var path: String = entry[0] if entry[0] != "" else "(the whole value)"
 		if warnings.logged.has(path) and now - warnings.logged[path] < WARN_INTERVAL_MSEC:
 			warnings.unlogged[path] = warnings.unlogged.get(path, 0) + 1
 			continue
+		warnings.logged[path] = now
+		var more: int = warnings.unlogged.get(path, 0)
+		warnings.unlogged.erase(path)
+		if lines >= MAX_LINES:
+			summed.append(path)
+			continue
 		var text := (
 			"%s at %s sent as 0: JSON has no such number (the game's own value stays)"
 			% [entry[1], path]
 		)
-		var more: int = warnings.unlogged.get(path, 0)
 		if more > 0:
 			text += " (%d more times since the last warning)" % more
-		ModLoaderLog.warning(text, LOG_NAME)
-		warnings.logged[path] = now
-		warnings.unlogged.erase(path)
+		_log(warnings, text)
+		lines += 1
+	if not summed.empty():
+		var named := PoolStringArray(summed.slice(0, SUMMARY_PATHS - 1)).join(", ")
+		if summed.size() > SUMMARY_PATHS:
+			named += ", ..."
+		_log(warnings, "%d more values sent as 0, at %s" % [summed.size(), named])
+	_prune(warnings, now)
+
+
+static func _log(warnings: Dictionary, text: String) -> void:
+	ModLoaderLog.warning(text, LOG_NAME)
+	warnings.lines = warnings.get("lines", 0) + 1
+
+
+# Past MAX_PATHS remembered paths, those whose interval is over go; if that is not enough, all go
+# (a path then warns again at most once, within MAX_LINES per call).
+static func _prune(warnings: Dictionary, now: int) -> void:
+	if warnings.logged.size() <= MAX_PATHS:
+		return
+	for path in warnings.logged.keys():
+		if now - warnings.logged[path] >= WARN_INTERVAL_MSEC:
+			warnings.logged.erase(path)
+			warnings.unlogged.erase(path)
+	if warnings.logged.size() > MAX_PATHS:
+		warnings.logged.clear()
+		warnings.unlogged.clear()
