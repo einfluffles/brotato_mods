@@ -24,12 +24,14 @@ const LOG_NAME := "einfluffles-BrotatoTogether:MenuPuppet"
 const CHARACTERS := "character_selection"
 const WEAPONS := "weapon_selection"
 const END_RUN := "coop_end_run"
+const RESUME := MenuSync.RESUME
 # The host names its screen by kind only; the scene is this machine's own.
 const SCENES := {
 	CHARACTERS: "res://ui/menus/run/character_selection.tscn",
 	WEAPONS: "res://ui/menus/run/weapon_selection.tscn",
 	"difficulty_selection": "res://ui/menus/run/difficulty_selection/difficulty_selection.tscn",
 	END_RUN: "res://ui/menus/run/coop_end_run.tscn",
+	RESUME: "res://ui/menus/shop/coop_resume.tscn",
 }
 const GLASS := "BrotatoTogetherGlass"
 const END_RUN_MOUSE := "BrotatoTogetherEndRunMouse"
@@ -113,9 +115,11 @@ func _is_loading() -> bool:
 func _enter(kind: String, state: Dictionary) -> bool:
 	var grids: Dictionary = state.grids
 	var run := {}
+	var keep := false  # the client's own run state stands in for one it could not read
 	if kind in MenuSync.RUN_KINDS:
 		run = RunStateCodec.decode(grids.get("run"))
-		if run.empty():
+		keep = run.empty() and _keeps_run(kind, grids.get("run"), _count(state))
+		if run.empty() and not keep:
 			ModLoaderLog.error("No run state for the host's %s" % kind, LOG_NAME)
 			forget()
 			return false
@@ -127,7 +131,9 @@ func _enter(kind: String, state: Dictionary) -> bool:
 	Puppet.set_active(true)
 	var count := _count(state)
 	VirtualDevices.fill_puppet_slots(count)
-	if run.empty():
+	if keep:
+		RunData.run_won = grids.get("won") == true
+	elif run.empty():
 		RunData.reset()
 		RunData.set_player_count(count)
 	else:
@@ -188,6 +194,11 @@ func _on_scene_ready(scene: Node) -> void:
 		scene.add_child(glass)
 	if scene.get("_button_pressed") == false:
 		scene._button_pressed = true  # BaseEndRun: restart / new run / exit are the host's
+	if _kind == RESUME:
+		# CoopResume steps to the next saved player on every join and then loads the shop, and
+		# goes to the title screen on cancel: the host's state decides both here.
+		CoopService.disconnect("connected_players_updated", scene, "_on_connected_players_updated")
+		scene.set_process_input(false)
 	_apply(scene, _state)
 	if state_stream != null:
 		state_stream.retry()  # the cursors that waited for this scene
@@ -197,7 +208,7 @@ func _process(delta: float) -> void:
 	var scene := current()
 	if scene == null or _state.empty():
 		return
-	if _kind == CHARACTERS:
+	if _kind == CHARACTERS or _kind == RESUME:
 		_advance_join(delta)
 	# The scene's own handlers (a cursor arriving, its deferred first focus) clear selections
 	# and turn the join listening back on; the host's state stands.
@@ -231,6 +242,20 @@ func _apply(scene: Node, state: Dictionary) -> void:
 		_apply_character_shown(scene, state.get("character_shown"))
 	elif _kind == END_RUN:
 		_apply_pages(scene, state.get("pages"))
+	elif _kind == RESUME:
+		_apply_join(scene, state.get("join"))
+		_apply_shown(scene, state.get("shown"))
+
+
+# The end of a run whose run state came but could not be read (RunStateCodec logged why) shows
+# this client's own run state, as of the last wave, when it has the host's players.
+static func _keeps_run(kind: String, payload, count: int) -> bool:
+	if kind != END_RUN or not RunStateCodec.is_payload(payload) or count == 0:
+		return false
+	if RunData.get_player_count() != count:
+		return false
+	ModLoaderLog.warning("End of run: shows this client's own run state", LOG_NAME)
+	return true
 
 
 static func _count(state: Dictionary) -> int:
@@ -468,6 +493,14 @@ func _advance_join(delta: float) -> void:
 	for i in shown.size():
 		shown[i] = min(shown[i] + delta / CoopService.HOLD_DURATION, 1.0)
 	CoopService._update_connection_progress()
+
+
+# CoopResume: the saved player the host's screen shows (the next one to join).
+static func _apply_shown(scene: Node, shown) -> void:
+	if typeof(shown) != TYPE_INT or shown < 0 or shown >= RunData.get_player_count():
+		return
+	if scene._player_label.player_index != shown:
+		scene._update_player_index(shown)
 
 
 # WeaponSelection: the "x2" on an element a player picked more than once.

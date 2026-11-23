@@ -20,8 +20,8 @@ const BT_EXTRA_COLORS := [
 
 var bt_palette := []  # game defaults + BT_EXTRA_COLORS
 var bt_slot_colors := []  # slot -> palette index currently in player_colors
-# Client's copy of the host's character selection: the host's hold-to-join progress (null:
-# this machine's own).
+# Client's copy of the host's character selection or co-op resume screen: the host's
+# hold-to-join progress (null: this machine's own).
 var bt_remote_progress = null
 # The type a player's key hints show (get_player_input_type) where it is not the slot's own,
 # which aim goes by (bt_slot_uses_gamepad). Host: remote device -> the type its client reports.

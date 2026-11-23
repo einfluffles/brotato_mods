@@ -13,6 +13,9 @@ const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
 )
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
+const RunStateCodec := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
+)
 const ShopStreamTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_stream_tests.gd"
 )
@@ -80,6 +83,8 @@ func _late_run(players: int):
 			)
 			% [label, kind, done[kind].instanced, most[kind]]
 		)
+	if players == 2:
+		yield(_unreadable_part(shop, states.weapon, players), "completed")
 	var old: int = yield(_old_gear(shop), "completed")
 	var marks: Array = done.purchase.marks
 	var panels: int = marks[ClientReport.Mark.SHOP_PANELS]
@@ -110,6 +115,25 @@ func _late_run(players: int):
 			+ " (%d usec, the old way %d)"
 		)
 		% [label, panels, old]
+	)
+
+
+# A later state with a part the client cannot read (a NaN as a host without FiniteJson printed
+# it): the shop keeps its run and applies the rest of the body (ShopSync.apply_state).
+func _unreadable_part(shop: Node, body: Dictionary, players: int):
+	var broken: Dictionary = body.duplicate(true)
+	var bad := RunStateCodec.pack('{"a":nan}')
+	broken.run.ids["p%d" % BUYER] = [1, bad.size]
+	broken.run.parts["p%d" % BUYER] = {"size": bad.size, "data": bad.data}
+	var run_ids = _sync._run_ids
+	var unreadable: int = _sync.run_store.unreadable
+	var done: Dictionary = yield(_client_apply(shop, broken, players), "completed")
+	_t._check(
+		done.marks[ClientReport.Mark.SHOP_PANELS] > 0
+		and _sync._run_ids == run_ids  # the same dictionary: the run was kept
+		and _sync.run_store.unreadable == unreadable + 1
+		and _sync._client_shop == shop,
+		"client: a shop state with an unreadable run part keeps the run and applies the rest"
 	)
 
 

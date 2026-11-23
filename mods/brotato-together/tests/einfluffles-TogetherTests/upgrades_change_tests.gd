@@ -16,6 +16,9 @@ const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
 const MecaChoice := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/meca_choice.gd")
 const GearView := preload("res://mods-unpacked/einfluffles-TogetherTests/gear_view.gd")
+const NonFiniteTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/non_finite_tests.gd"
+)
 const FocusTargets := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/focus_targets.gd"
 )
@@ -97,6 +100,7 @@ func _small_run():
 	_test_peer_ready()
 	_test_lobby_left()
 	yield(_test_client_popup(), "completed")
+	NonFiniteTests.new(_t).client_panels(self)
 
 
 func _test_idle() -> void:

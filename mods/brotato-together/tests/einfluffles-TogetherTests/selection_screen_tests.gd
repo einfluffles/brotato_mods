@@ -22,6 +22,8 @@ const WheelScrollTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/wheel_scroll_tests.gd"
 )
 const KEYBOARD := 7  # CoopService.KEYBOARD_REMAPPED_DEVICE_ID
+const COOP_RESUME := "res://ui/menus/shop/coop_resume.tscn"
+const RESUME_GOLD := 37
 const INFO := "ui_info"  # CoopShowCharacterHint.UI_ACTION
 
 var t: Node = null
@@ -52,6 +54,10 @@ func run(test_mod: Node, together: Node):
 	var weapons: Dictionary = yield(_host_weapons(), "completed")
 	if not weapons.empty():
 		yield(_client_weapons(weapons), "completed")
+	_forget()
+	var resume: Dictionary = yield(_host_resume(), "completed")
+	if not resume.empty():
+		yield(_client_resume(resume), "completed")
 	_forget()
 	CoopService.connected_players = players
 	RunData.reset()
@@ -407,3 +413,95 @@ func _client_weapons(host: Dictionary):
 		not MenuSync.shows_character(panels[0], characters[0]) and panels[0].selected,
 		"show character: released, P1's weapon again and still selected"
 	)
+
+
+# The co-op resume screen of a saved two-player run, after the first saved player was taken.
+func _host_resume():
+	RunData.reset()
+	RunData.set_coop_run(true)
+	RunData.play_mode = RunData.PlayMode.COOP
+	RunData.set_player_count(2)
+	for i in 2:
+		RunData.add_character(ItemService.characters[i], i)
+	RunData.add_weapon(ItemService.weapons[0], 1)
+	RunData.players_data[1].gold = RESUME_GOLD
+	CoopService.clear_coop_players()
+	_tree().change_scene(COOP_RESUME)
+	yield(_frames(2), "completed")
+	var scene: Node = _tree().current_scene
+	CoopService._add_player(VirtualDevices.FIRST, CoopService.PlayerType.GAMEPAD_XBOX)
+	yield(_frames(1), "completed")
+	t._check(
+		scene._player_label.player_index == 1, "resume: the host's screen shows saved player 2"
+	)
+	CoopService.connection_progress = [0.42]
+	var state := _capture(scene, 1)
+	CoopService.connection_progress = []
+	CoopService.listening_for_inputs = false
+	t._check(
+		state.kind == "coop_resume" and state.get("shown") == 1 and state.get("join") == [0.4],
+		"resume: the host's state names the shown player and the join progress (%s, %s)"
+		% [state.get("shown"), state.get("join")]
+	)
+	t._check(state.grids.get("run") != null, "resume: the saved run travels with the state")
+	if state.grids.get("run") == null:
+		return {}
+	RunData.reset()  # the copy has the run from the state only
+	_tree().change_scene(MenuData.title_screen_scene)
+	yield(_frames(2), "completed")
+	return state
+
+
+func _client_resume(host: Dictionary):
+	var scene: Node = yield(_show(host.duplicate(true)), "completed")
+	if scene == null:
+		return
+	t._check(
+		scene.filename == COOP_RESUME and RunData.get_player_count() == 2,
+		"resume: the client shows the game's resume screen with the saved run"
+	)
+	t._check(
+		scene._player_label.player_index == 1 and scene._gold_label.text == str(RESUME_GOLD),
+		"resume: the copy shows saved player 2 with its gold (%s)" % scene._gold_label.text
+	)
+	var weapons: Array = RunData.get_player_weapons(1)
+	t._check(
+		weapons.size() == 1 and weapons[0].my_id == ItemService.weapons[0].my_id,
+		"resume: saved player 2's weapon came with the run"
+	)
+	t._check(
+		scene._progress_bar.modulate.a == 1.0 and scene._progress_bar.value >= 0.4,
+		"resume: the copy shows the host's join progress (%s)" % scene._progress_bar.value
+	)
+	t._check(not scene.is_processing_input(), "resume: cancel on the copy is the host's")
+	t._check(
+		not CoopService.is_connected(
+			"connected_players_updated", scene, "_on_connected_players_updated"
+		),
+		"resume: the copy's join handler is cut"
+	)
+	# The copy still has saved player 2 to join: one join would only show it again, a second one
+	# would load the shop. Count 1 to 2 to 1 gives it both.
+	var joined: Dictionary = host.duplicate(true)
+	joined["count"] = 2
+	joined.erase("join")
+	t._check(_menus.show(joined), "resume: the state with everybody in")
+	yield(_frames(3), "completed")
+	t._check(_menus.show(host.duplicate(true)), "resume: the state with player 2 gone again")
+	yield(_frames(3), "completed")
+	var shop: bool = _tree().current_scene.filename == "res://ui/menus/shop/coop_shop.tscn"
+	t._check(
+		not shop and _menus.current() == scene and is_instance_valid(scene),
+		"resume: the copy does not move on by itself when players join or leave"
+	)
+	t._check(
+		is_instance_valid(scene) and scene._players_to_join.size() == 1,
+		"resume: the copy still has saved player 2 to join (%s)"
+		% (scene._players_to_join if is_instance_valid(scene) else "freed")
+	)
+	t._check(
+		is_instance_valid(scene) and scene._player_label.player_index == 1,
+		"resume: the copy still shows saved player 2"
+	)
+	_tree().change_scene(MenuData.title_screen_scene)
+	yield(_frames(2), "completed")

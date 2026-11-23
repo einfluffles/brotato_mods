@@ -13,7 +13,8 @@ const FLAG_RANDOM := 1
 const FLAG_SPECIAL := 2  # shown greyed out / with a lock (locked, needs an item set)
 const FLAG_LOCKED := 4
 # Screens built from the run (the players' characters, weapons, items): it travels with the grids.
-const RUN_KINDS := ["weapon_selection", "difficulty_selection", "coop_end_run"]
+const RESUME := "coop_resume"
+const RUN_KINDS := ["weapon_selection", "difficulty_selection", "coop_end_run", RESUME]
 const MIRRORED_ELSEWHERE := ["res://main.tscn", "res://ui/menus/shop/coop_shop.tscn"]
 
 var session: Node = null
@@ -71,7 +72,8 @@ func state_patch(section: int, steam_id: int) -> Dictionary:
 # selection: zone [id, random], endless, and while joining is open join (hold progress of the
 # joining players); weapon selection: picks (per player the indices of its picked elements),
 # character_shown (per player: its panel shows the player's character, ui_info held); end of
-# run: pages (per player its carousel page). `you` comes with the per-peer patch.
+# run: pages (per player its carousel page); co-op resume screen: shown (the saved player it
+# shows) and join. `you` comes with the per-peer patch.
 func _state() -> Dictionary:
 	var count: int = CoopService.connected_players.size()
 	var chosen = _scene.get("_has_player_selected")
@@ -87,15 +89,19 @@ func _state() -> Dictionary:
 		"colors": CoopService.bt_slot_colors.duplicate(),
 		"max": CoopService.get_max_players(),
 	}
+	var resume: bool = state.kind == RESUME
 	if _scene.has_method("_get_coop_join_panels"):
 		state["zone"] = [RunData.current_zone, bool(ProgressData.settings.zone_is_random)]
 		state["endless"] = RunData.is_endless_run
-		# While players can join: hold progress of those joining right now.
-		if RunData.is_coop_run and CoopService.listening_for_inputs:
-			var joining := []
-			for progress in CoopService.connection_progress:
-				joining.append(stepify(progress, 0.1))
-			state["join"] = joining
+	if resume:
+		state["shown"] = _scene._player_label.player_index
+	# While players can join: hold progress of those joining right now.
+	var joins: bool = resume or _scene.has_method("_get_coop_join_panels")
+	if joins and RunData.is_coop_run and CoopService.listening_for_inputs:
+		var joining := []
+		for progress in CoopService.connection_progress:
+			joining.append(stepify(progress, 0.1))
+		state["join"] = joining
 	var picked = _scene.get("_picked_elements")
 	if picked is Array:
 		state["picks"] = _picks(picked)

@@ -25,6 +25,7 @@ const StateStream := preload(
 )
 const RunCache := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_cache.gd")
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
+const FiniteJson := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/finite_json.gd")
 const UpgradesGear := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_gear.gd"
 )
@@ -290,7 +291,8 @@ static func capture(ui: Node) -> Array:
 			players.append(["upgrades", ids, container._level, container._reroll_price])
 		elif container._items_container.visible and container._item_data != null:
 			var item = container._item_data
-			players.append(["item", JSON.print(item.serialize()), item.my_id])
+			var json := FiniteJson.to_text(item.serialize(), "crate item %s" % item.my_id)
+			players.append(["item", json, item.my_id])
 		else:
 			players.append(["none"])
 	return players
@@ -616,7 +618,7 @@ func apply(main: Node, msg: Dictionary) -> void:
 			_host_kinds.append(kind)
 	var changed = _apply_run(msg.get("run"))
 	if changed == null:
-		return  # a run part is missing: nothing applied, the host resyncs this client
+		return  # a part missing (accept_state asked for a resync) or a malformed run: nothing applied
 	var started := OS.get_ticks_usec()
 	ui.show()
 	var seqs = msg.get("seqs")
@@ -730,14 +732,15 @@ func _show_entry(container, p: int, entry: Array) -> void:
 
 # The run state is only re-applied when its part ids changed. Returns player -> whether its gear
 # changed for each player the change touched (UpgradesGear.changed_players), {} when the ids did
-# not change, null when a part is missing or the run malformed.
+# not change or a part is unreadable (the run stays as it was), null when a part is missing or
+# the run malformed.
 func _apply_run(run):
 	var ids = run_store.ids_for(run)
 	if RunParts.same_ids(ids, _run_key):
 		return {}
 	var state: Dictionary = run_store.timed_state(ids)
 	if state.empty():
-		return null
+		return {} if run_store.has_unreadable(ids) else null
 	RunStateCodec.apply(state)
 	var changed := UpgradesGear.changed_players(run_store, _run_key, ids)
 	_run_key = ids

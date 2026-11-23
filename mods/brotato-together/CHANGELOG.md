@@ -10,6 +10,21 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Online co-op: when the host continues a saved co-op run, clients now see the resume screen with
+  the saved player to take, their gear and gold, and the hold progress. Before, they only saw the
+  waiting screen.
+- Online co-op: continuing a saved co-op run, a player who leaves the resume screen no longer
+  counts as joining. Their saved character is shown again for the next player to join, and the
+  shop opens only once every saved character has a player, each on the character they took.
+  Before, a leave skipped a saved character (nobody could take it any more) or opened the shop
+  with players missing. The same goes for a local pad unplugged on that screen.
+- Online co-op: a client's level-up could stay empty when the run had a number the game had made
+  invalid (NaN or infinite, for example from a stat divided by 0). The host now sends such a
+  number as 0 and names it in its log, and its own run keeps the value. A client that still gets
+  a run state it cannot read keeps the one it has: the level-up panels, the shop and the end of
+  run screen still show, and its log says which part it could not read.
+- Needs everybody on this update (protocol 33).
+
 ## 2026-11-23 19:30 UTC
 
 - Online co-op: the host joins first in character selection. A remote player's hold to join counts

@@ -2,7 +2,7 @@
 
 How the mod works, for a developer who is new to it. The game hooks it builds on are listed in
 [`docs/brotato-hooks.md`](../../../docs/brotato-hooks.md). This document describes the code as of
-2026-11-22 (protocol 32, mod version 0.2.1). File paths are relative to
+2026-11-23 (protocol 33, mod version 0.2.1). File paths are relative to
 `src/einfluffles-BrotatoTogether/`, test suites live in `tests/einfluffles-TogetherTests/`.
 
 Contents: [Overview](#1-overview), [Glossary](#2-glossary), [Session](#3-session),
@@ -377,8 +377,19 @@ held 3 times for X, longest 2001 ms (Steam's queue over 24 KB)".
 The client calls `JSON.parse`, `deserialize_run_state` and `RunData.resume_from_state`. The JSON
 step is required: the game's deserializers expect string keys and float numbers.
 
-Two things the game does not do by itself:
+Three things the game does not do by itself:
 
+- **NaN and infinite numbers** (`sync/finite_json.gd`). Godot's `JSON.print` writes them as `nan`,
+  `inf` and `-inf`, which `JSON.parse` rejects (error 43), so the client loses the whole text. The
+  game can make them (a stat divided by a stat gain of 0, for example), and its own save file has
+  the same problem. Every JSON text the host sends goes through `FiniteJson.to_text`: the run
+  parts (`RunCache.refresh`, `RunParts.entry`), `RunStateCodec.encode_json` (battle start, menus)
+  and a crate item's JSON. It looks for such a value in the printed text with two `find` calls (a
+  bare token after `:`, `,` or `[`; one inside a string such as "banana" is none). Only on a hit
+  it walks the value, replaces each NaN or infinite float with 0 in a copy, logs a warning per
+  path (`p1.effects.stat_luck`, at most once a minute per path, at most 3 lines and a summary
+  line per print, at most 256 paths remembered) and prints the copy. `RunData` keeps its values. The check costs about 0.5 ms on the parts of a late test run (334 KB of JSON),
+  against 10 ms for their `JSON.print`, and only parts whose hash changed are printed at all.
 - `RunStateCodec.apply` resets `RunData`'s item-count caches before `resume_from_state`. The game
   only refreshes them when an item is added or removed, and `LinkedStats` reads them.
 - **Effects' custom args** (`sync/effect_args.gd`). `Effect.get_text` adds an effect's custom args
@@ -404,7 +415,8 @@ have changed:
   as its `hash()`, by content: the battle goes on under the level-up panels, and a pet such as
   Bot-O-Mine's counts its mines there (`add_tracked_value`), which left alone filled the host's log
   with safety net warnings. Each screen adds its own values (`ShopSync.shop_args`; for the panels
-  the option each panel processes, its crate item, rerolls and done).
+  the option each panel processes, its crate item, rerolls and done). Fingerprints compare with
+  a NaN equal to a NaN (`RunCache.same_values`): a NaN xp would else make every check serialize.
 - **Force.** The check after an applied intent (`force()`) and after `peer_ready` serializes in any
   case.
 - **Safety net.** Every second, while a peer is ready, the run is serialized without `JSON.print`
@@ -450,6 +462,14 @@ that lack them.
   its input) whose `players_data` holds only the players whose parts changed, and puts the
   previous `PlayerRunData` objects back for the others. `changed_players()` and `gear_changed(p)`
   name what moved.
+- **Unreadable part.** A stored part whose JSON does not parse (a host without `FiniteJson`) is
+  marked as such: one warning with its key, id and the parse error, and it is never parsed again.
+  A resync would not help (the host sends the same text), so the sections keep the run they have,
+  as if it had not changed (`Store.has_unreadable`): the level-up panels and an open shop apply
+  the rest of the body. A shop that is still to be entered has no run to keep and drops the body
+  as before. An end-of-run screen whose run (`RunStateCodec`) does not parse shows the client's
+  own run state when it has the host's players (`MenuPuppet._keeps_run`). Until 2026-11-23 the
+  panels then showed nothing at all.
 - **Kept items** (`Store._kept_items`, issue #110). A changed player keeps the item objects of its
   previous `PlayerRunData` whose dictionary in the `g` part hashes the same (all of them when only
   `p<p>` moved); only the others go through `deserialize_run_state`. A crate item then deserializes
@@ -1681,17 +1701,18 @@ the state's `you`. While no player of this machine has joined, every cursor coun
 
 `sync/menu_sync.gd`, `sync/menu_puppet.gd`, `session/puppet_menu.gd`. The client runs the game's own
 scenes (`character_selection.tscn`, `weapon_selection.tscn`, `difficulty_selection.tscn`,
-`coop_end_run.tscn`) as copies that decide nothing.
+`coop_end_run.tscn`, `coop_resume.tscn`) as copies that decide nothing.
 
 **Host state.**
 
 - `menu`: kind, `screen` (the host scene's instance id), player count, `coop`, who selected,
   colours, and `you` as the per-peer patch. Character selection adds the zone `[id, random]`,
   endless and `join` (hold progress while joining is open). Weapon selection adds `picks` and
-  `character_shown`. End of run adds `pages`.
+  `character_shown`. End of run adds `pages`. The co-op resume screen adds `shown` (the saved
+  player it shows, `_player_label.player_index`) and `join`.
 - `menu_grids`: per visible grid every element `[my_id, flags, tier]` in the host's order. For
-  weapon and difficulty selection and the end of run it also carries the run state, packed once per
-  screen, and `won`.
+  weapon and difficulty selection, the end of run and the co-op resume screen it also carries the
+  run state, packed once per screen, and `won`.
 
 **Entering** (`MenuPuppet._enter`, when a state names another `screen`): puppet mode, one puppet
 slot per host player, `RunData.reset()` for the character selection or the host's run for the
@@ -1712,7 +1733,9 @@ because `CharacterSelectionInventory.update_elements_color` reads this machine's
 `CoopService.listening_for_inputs` is kept off (nobody joins on a client). At the end of run,
 `BaseEndRun._button_pressed = true` spends its three buttons. On the selection screens a full-rect
 control on top of the copy takes the mouse (the end of run: see below). A control of the copy that
-gets the keyboard focus loses it in the same frame.
+gets the keyboard focus loses it in the same frame. On the co-op resume screen the copy's
+`_on_connected_players_updated` is disconnected (it would step to the next saved player and load
+the shop by itself) and its `_input` is off (cancel loads the title screen).
 
 **Mouse at the end of run** (`sync/end_run_mouse.gd`). A node added as the copy's last child (after
 `FocusEmulator1..4`, so its `_input` runs first) is the mouse for looking, as on the host:
@@ -1746,6 +1769,7 @@ gets the keyboard focus loses it in the same frame.
   `_set_selected_element`, which ends the screen.
 - Zone, background and endless, without the scene's handlers.
 - The join progress, through the `CoopService` extension (`bt_remote_progress`).
+- The saved player the co-op resume screen shows (`CoopResume._update_player_index`).
 - Pick counts and end-of-run carousel pages (a page changes only when the host's page does, see
   above).
 - `character_shown`: `WeaponSelection._input` switches a panel to the player's character while
@@ -1768,7 +1792,7 @@ resume screen), so their slots do not change there. Suite `selection` checks bot
 **Locked characters.** The game's `LockedPanel` shows on the copy through the same code, locked
 where the host has it locked. The text is this machine's, so it is localised.
 
-**Screens without a copy** (the co-op resume screen, a host choosing for or playing a solo run) show
+**Screens without a copy** (a host choosing for or playing a solo run) show
 the waiting screen, `ui/client_view.gd` (key art, connection line, where the host is). The host's
 title screen is not one of them (see
 [Client in its own main menu](#client-in-its-own-main-menu)).
@@ -1886,6 +1910,20 @@ it at 0 even after one long frame. A remote player who holds early joins a full 
 host's player is in. This is about the order of joining only: when the host's pad disconnects,
 the game moves the remote players up. The co-op resume screen is not held back, because its slot
 order decides who gets which saved character. Suite `selection` checks it (`host_first_tests.gd`).
+
+**Co-op resume screen, a player who leaves.** The game's `CoopResume` shows one saved player at a
+time and steps to the next on every `connected_players_updated`, a leave too: InputSync frees a
+remote player's slot when its peer leaves while the game listens for joins, and an unplugged pad
+does the same. A leave skipped a saved player, and the last step loaded the shop with fewer players
+than the run has (none, in a run of two). The `CoopResume` extension (`extensions/ui/coop_resume.gd`)
+steps on a join only: it keeps which saved player each device took (`_bt_taken`) and the saved
+players nobody has (`_bt_free`, lowest first, the first is the one shown). A device that leaves
+gives its saved player back, and the screen shows the lowest free one again. The shop loads once
+every saved player is taken. The game gives saved player i to `connected_players[i]`, and after a
+leave the players who joined later have moved up, so the extension first puts `connected_players`
+in the order of the saved players taken and emits the signal once more (colours follow their
+devices). No protocol change: it runs on the host only; a client's copy of the screen does not
+step (`Puppet.is_active`). Suite `selection` checks it (`resume_leave_tests.gd`).
 
 ### Popup
 
@@ -2283,6 +2321,8 @@ All of this is for the log only. Every line has a rate limit (log memory, see
 | "Input from ...: N missing input(s) filled in ..." | `InputSync` | after a client's gap, at most one per 5 s per client | inputs filled in from redundancy, steps caught up, steps dropped and how many of them moved |
 | "Shop state held ...", "Shop 40: 28 states ..." | state stream, `RunParts.Sender` | when the screen closes | see [State stream](#5-state-stream-and-run-state) |
 | "... run state changed without a change of its fingerprint ..." | `RunCache` | a safety net hit | a gap in the fingerprint, with the paths |
+| "nan at p1.effects.stat_luck sent as 0 ..." | `sync/finite_json.gd` | host: a NaN or infinite number in a sent text, at most once a minute per path, 3 lines and a summary per print | which value of the run state the game made non-finite, see [Run state serialization](#run-state-serialization) |
+| "Run part p1 [...] is not readable: ..." | `RunParts.Store` | client: once per stored part | a part whose JSON does not parse; the run state stays as it was |
 | "Client X entered ...", "Client X frames ...", "Client X corrections ..." | `sync/client_report.gd` | see below | a client's timings in the host's log |
 | "Wave N damage: total ..." | `DamageMeter` | once per wave, at the wave's last measurement, on the machine that runs the wave | the meter's totals against the health the enemies lost, per player rows, biggest hit and kills, see [Damage meter](#damage-meter) |
 
@@ -2414,7 +2454,7 @@ slow-answer lines' `rate` should read 524288 B/s).
 
 ## 13. Known gaps
 
-As of 2026-11-22, protocol 32.
+As of 2026-11-23, protocol 33.
 
 **Not mirrored in a battle**
 

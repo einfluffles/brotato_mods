@@ -533,13 +533,16 @@ func apply_state(section: int, body, _revision: int) -> bool:
 	var run_changed: bool = entering or _state.empty() or not RunParts.same_ids(ids, _run_ids)
 	if run_changed:
 		var state: Dictionary = run_store.timed_state(ids)
-		if state.empty() or not state.get("has_run_state", false):
+		if not state.empty() and state.get("has_run_state", false):
+			_state = state
+			_run_ids = ids
+			var raws: Dictionary = run_store.raws({"c": ids.get("c"), "s": ids.get("s")})
+			_state_keys = player_keys(ids, raws.c, raws.s)
+		elif not entering and not _state.empty() and run_store.has_unreadable(ids):
+			run_changed = false  # an unreadable part (logged by the store): the shop's run stays
+		else:
 			ModLoaderLog.warning("Shop state without a complete run state; dropped", LOG_NAME)
 			return true
-		_state = state
-		_run_ids = ids
-		var raws: Dictionary = run_store.raws({"c": ids.get("c"), "s": ids.get("s")})
-		_state_keys = player_keys(ids, raws.c, raws.s)
 	if entering:
 		_client_shop_id = body.shop_id
 		_enter_shop(_state)

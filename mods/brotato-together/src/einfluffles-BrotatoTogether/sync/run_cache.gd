@@ -7,6 +7,7 @@ const RunStateCodec := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
 )
 const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_parts.gd")
+const FiniteJson := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/finite_json.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:RunCache"
 # What the fingerprint cannot see (a stat or effect written directly) is at most this late.
 const SAFETY_NET_MSEC := 1000
@@ -58,7 +59,7 @@ func refresh(screen: Object, save_args := [], extra := []) -> bool:
 	var frame := Engine.get_idle_frames()
 	var forced: bool = _force_frame >= 0 and frame >= _force_frame
 	var now := OS.get_ticks_msec()
-	var unchanged: bool = same_screen and fingerprint == _fingerprint
+	var unchanged: bool = same_screen and same_values(fingerprint, _fingerprint)
 	if unchanged and not forced and now - _checked_msec < SAFETY_NET_MSEC:
 		return false
 	if not same_screen:
@@ -79,7 +80,7 @@ func refresh(screen: Object, save_args := [], extra := []) -> bool:
 		if old != null and old.hash == part_hash:
 			fresh[key] = old
 			continue
-		var text := JSON.print(split[key])
+		var text := FiniteJson.to_text(split[key], key)
 		if old != null and text == old.text:
 			old.hash = part_hash  # a value's type or last bits moved, not its text: same id
 			fresh[key] = old
@@ -100,6 +101,21 @@ func refresh(screen: Object, save_args := [], extra := []) -> bool:
 		)
 		ModLoaderLog.warning(last_miss, LOG_NAME)
 	rev += 1
+	return true
+
+
+# a == b, with a NaN equal to a NaN (a player's current_xp can be one, and NaN != NaN would make
+# every check serialize). The loop only runs when == finds a difference.
+static func same_values(a: Array, b: Array) -> bool:
+	if a == b:
+		return true
+	if a.size() != b.size():
+		return false
+	for i in a.size():
+		if typeof(a[i]) != typeof(b[i]):
+			return false
+		if a[i] != b[i] and not (typeof(a[i]) == TYPE_REAL and is_nan(a[i]) and is_nan(b[i])):
+			return false
 	return true
 
 

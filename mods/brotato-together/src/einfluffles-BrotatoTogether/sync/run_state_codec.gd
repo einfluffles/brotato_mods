@@ -7,7 +7,9 @@ const ClientReport := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/client_report.gd"
 )
 const EffectArgs := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/effect_args.gd")
+const FiniteJson := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/finite_json.gd")
 const MAX_UNCOMPRESSED_SIZE := 8 * 1024 * 1024
+const LOG_NAME := "einfluffles-BrotatoTogether:RunStateCodec"
 
 
 # Returns {"size": int, "data": PoolByteArray}: plain data, safe for var2bytes. shop_args: the
@@ -17,7 +19,7 @@ static func encode(shop_args := []) -> Dictionary:
 
 
 static func encode_json(shop_args := []) -> String:
-	return JSON.print(serialize(shop_args))
+	return FiniteJson.to_text(serialize(shop_args))
 
 
 # The run state as the save file has it before JSON.print. Every effect in it carries its custom
@@ -39,24 +41,38 @@ static func decode(payload) -> Dictionary:
 
 
 # The run state as it was sent (JSON-shaped: string keys, serialized items), or {} if the
-# payload is invalid.
+# payload is invalid (an unreadable text is logged).
 static func parse(payload) -> Dictionary:
 	var started := OS.get_ticks_usec()
-	if (
-		typeof(payload) != TYPE_DICTIONARY
-		or typeof(payload.get("size")) != TYPE_INT
-		or typeof(payload.get("data")) != TYPE_RAW_ARRAY
-		or payload.size <= 0
-		or payload.size > MAX_UNCOMPRESSED_SIZE
-	):
+	if not is_payload(payload):
 		return {}
 	var raw: PoolByteArray = payload.data.decompress(payload.size, File.COMPRESSION_ZSTD)
 	var text := raw.get_string_from_utf8()
 	var parsed := JSON.parse(text)
 	ClientReport.mark(ClientReport.Mark.PARSE, OS.get_ticks_usec() - started)
-	if parsed.error != OK or typeof(parsed.result) != TYPE_DICTIONARY:
+	if parsed.error != OK:
+		ModLoaderLog.warning(
+			(
+				"Run state not readable: %s (JSON error %d at line %d)"
+				% [parsed.error_string, parsed.error, parsed.error_line]
+			),
+			LOG_NAME
+		)
+		return {}
+	if typeof(parsed.result) != TYPE_DICTIONARY:
 		return {}
 	return parsed.result
+
+
+# A payload of encode's shape (sent, whether its text is readable or not).
+static func is_payload(payload) -> bool:
+	return (
+		typeof(payload) == TYPE_DICTIONARY
+		and typeof(payload.get("size")) == TYPE_INT
+		and typeof(payload.get("data")) == TYPE_RAW_ARRAY
+		and payload.size > 0
+		and payload.size <= MAX_UNCOMPRESSED_SIZE
+	)
 
 
 static func deserialize(raw: Dictionary) -> Dictionary:
