@@ -2418,7 +2418,7 @@ slow-answer lines' `rate` should read 524288 B/s).
 
 ## 13. Known gaps
 
-As of 2026-11-22, protocol 32.
+As of 2026-11-23, protocol 33.
 
 **Not mirrored in a battle**
 
