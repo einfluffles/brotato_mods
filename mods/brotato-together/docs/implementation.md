@@ -1878,7 +1878,9 @@ its slot, so it does not move to another entry when other devices join or leave 
 unplugged. When the lender joins, the borrower gets a new entry of its own. So nobody keeps another
 local player's entry for good: a new pad that joins before the host shows the host's colour, keeps
 it while it stays in its slot (the host joining after it gets a free colour), and from the next run
-the host has its pick again. A borrower that picks gets its own entry first.
+the host has its pick again. The same holds the other way round, as the two cannot be told apart:
+the host on a pad keeps its keyboard colour when a couch player joins on the keyboard, and from the
+next run that colour is the keyboard's. A borrower that picks gets its own entry first.
 
 It rewrites `player_colors` on `connected_players_updated` and on every pick. A device that stays in
 its slot keeps the colour it shows (`_bt_shown`, by device), whoever joins or leaves; only its own
