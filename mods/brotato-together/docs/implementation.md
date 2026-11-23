@@ -1872,24 +1872,30 @@ id (`InputSync.steam_id_of` its virtual device, through `CoopService.bt_players`
 its entry in `_bt_local`, the device each local player last played on. A local device takes its own
 entry. A device without one takes over the first spare entry whose device is gone (a pad no longer
 in `Input.get_connected_joypads()`: a replugged pad), else borrows the first spare entry whose
-device is there but not in a slot (the host on another gamepad; keyboards are always there) until
-that device joins, else gets a new entry. So nobody keeps another local player's entry for good: a
-new pad that joins before the host gets the host's colour only until the host joins, then an entry
-of its own. A borrower that picks gets its own entry first.
+device is there but not in a slot (the host on another gamepad; keyboards are always there), else
+gets a new entry. The borrow is kept in `_bt_borrow` (device -> entry) while the borrower stays in
+its slot, so it does not move to another entry when other devices join or leave or a waiting pad is
+unplugged. When the lender joins, the borrower gets a new entry of its own. So nobody keeps another
+local player's entry for good: a new pad that joins before the host shows the host's colour, keeps
+it while it stays in its slot (the host joining after it gets a free colour), and from the next run
+the host has its pick again. A borrower that picks gets its own entry first.
 
-Known behaviour: a host who switched device and then picks leaves the old entry's pick reserved, so
-that colour is blocked for everyone until the host joins on the old device again or the lobby
-closes. The other way round, the host on a pad that borrows its keyboard entry loses that colour to
-a couch player who joins on the keyboard, whose entry it is.
-
-It rewrites `player_colors` on `connected_players_updated` and on every pick: picks of the players
-in a slot first, in slot order (a later slot with the same pick loses it), then each other slot its
-default colour if free and not reserved, else the first such one. Reserved are the picks of players
-out of a slot: local entries' and those of remote players still in the session
-(`InputSync.has_peer`), so a peer gone for good, kicks included, reserves nothing and a rejoin
-brings its pick back. `ui_info` on the character selection cycles to the next colour that neither
-another slot has nor is reserved (remote players send it as a button), and `CoopSelection` restyles
-what is on screen.
+It rewrites `player_colors` on `connected_players_updated` and on every pick. A device that stays in
+its slot keeps the colour it shows (`_bt_shown`, by device), whoever joins or leaves; only its own
+pick changes it. A device that comes into a slot gets its player's pick if no other slot shows it
+(newcomers in slot order), else, like every empty slot, its default colour if free and not
+reserved, else the first such one. A pick a newcomer finds taken is kept for a later run. Reserved
+are the picks of players out of a slot: local entries' and those of remote players still in the
+session (`InputSync.has_peer`), so a peer gone for good, kicks included, reserves nothing and a
+rejoin brings its pick back. A peer is in the session from its Steam lobby join, so its pick is
+reserved before it has a slot, but that moves no colour already on screen. `ui_info` on the
+character selection cycles to the next colour that no other slot has and that is not reserved
+(remote players send it as a button), and `CoopSelection` restyles what is on screen. A local
+player's cycle passes over local reservations (only remote players' block it): the host who picked
+on the keyboard and recolours on a pad can go back to its keyboard colour. Remote players and the
+defaults still skip that colour while the keyboard has not joined, as the system cannot tell the
+host from a couch player on the keyboard. Two local entries can so end up with the same pick; the
+one that joins first in a run shows it.
 
 Outside a lobby a pick goes with its slot, as `clear_coop_players` at every new character selection
 empties them. From `lobby_ready` until `lobby_left` (`InputSync` calls `bt_set_lobby`) a pick stays

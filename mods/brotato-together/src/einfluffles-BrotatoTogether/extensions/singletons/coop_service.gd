@@ -1,7 +1,8 @@
 extends "res://singletons/coop_service.gd"
 # Player colours: the game reads every colour from player_colors[slot], so that array is
-# rewritten whenever the slots or the players' picks from the palette change. In a lobby a pick
-# belongs to the player while it is in the lobby, whatever slot it takes. Nothing is saved.
+# rewritten whenever the slots or the players' picks from the palette change. A player in a slot
+# keeps the colour it shows until it picks another. In a lobby a pick belongs to the player while
+# it is in the lobby, whatever slot it takes. Nothing is saved.
 
 signal bt_player_colors_changed
 signal bt_input_types_changed(player_index)  # the type that player's key hints show
@@ -33,6 +34,8 @@ var bt_players: Object = null
 var _bt_lobby := false  # picks outlive the player's slot (bt_set_lobby)
 var _bt_picks := {}  # player (_bt_slot_players) -> picked palette index
 var _bt_local := []  # device of the i-th local player ("local:i"), kept across runs
+var _bt_borrow := {}  # local device in a slot without an entry -> the waiting entry it borrows
+var _bt_shown := {}  # device in a slot -> the palette index it shows
 var _bt_remote := []  # client of a lobby: the host's slot colours (palette indices)
 
 
@@ -127,16 +130,16 @@ func bt_set_lobby(open: bool) -> void:
 		_bt_prune(_bt_slot_players())
 
 
-# A remote player who is gone (no slot kept for a rejoin); its slot colour stays until the slots
-# change.
+# A remote player who is gone (no slot kept for a rejoin); a slot it still has keeps its colour.
 func bt_forget_player(steam_id: int) -> void:
 	_bt_picks.erase("steam:%d" % steam_id)
 
 
 # Who plays in each slot: "steam:<id>" for a remote player, "local:<i>" for a local one. A local
-# device has its own entry. A new one takes the entry of a device that is gone (a replugged pad),
-# else borrows the entry of one that has not joined (the host on another pad) until that device
-# joins, else gets a new entry.
+# device has its own entry. One that joins without one takes the entry of a device that is gone (a
+# replugged pad), else borrows the entry of one that has not joined (the host on another pad),
+# else gets a new entry. A borrow lasts while the borrower stays in its slot and the lender has not
+# joined; once the lender joins, the borrower gets a new entry.
 func _bt_slot_players() -> Array:
 	var players := []
 	var unbound := []
@@ -155,6 +158,15 @@ func _bt_slot_players() -> Array:
 		else:
 			unbound.append(players.size())
 			players.append("")
+	var borrows := {}
+	for p in unbound:
+		var device: int = connected_players[p][0]
+		var entry: int = _bt_borrow.get(device, -1)
+		if spare.has(entry):
+			spare.erase(entry)
+			borrows[device] = entry
+			players[p] = "local:%d" % entry
+	_bt_borrow = borrows
 	var gone := []
 	var waiting := []
 	for entry in spare:
@@ -163,15 +175,19 @@ func _bt_slot_players() -> Array:
 		else:
 			gone.append(entry)
 	for p in unbound:
+		if not players[p].empty():
+			continue
+		var device: int = connected_players[p][0]
 		var entry: int
 		if not gone.empty():
 			entry = gone.pop_front()
-			_bt_local[entry] = connected_players[p][0]
+			_bt_local[entry] = device
 		elif not waiting.empty():
 			entry = waiting.pop_front()
+			_bt_borrow[device] = entry
 		else:
 			entry = _bt_local.size()
-			_bt_local.append(connected_players[p][0])
+			_bt_local.append(device)
 		players[p] = "local:%d" % entry
 	return players
 
@@ -190,29 +206,34 @@ func _bt_prune(players: Array) -> void:
 			_bt_picks.erase(player)
 
 
-# Picks kept for players out of a slot: local players' and those of peers still in the session (a
-# peer gone for good reserves nothing; a rejoin brings its pick back).
-func _bt_reserved(players: Array) -> Array:
+# Picks kept for players out of a slot: local players' (with local) and those of peers still in the
+# session (a peer gone for good reserves nothing; a rejoin brings its pick back).
+func _bt_reserved(players: Array, local := true) -> Array:
 	var reserved := []
 	for player in _bt_picks:
 		if players.has(player):
 			continue
-		var steam: bool = player.begins_with("steam:")
-		if player.begins_with("local:") or (steam and bt_players.has_peer(int(player.substr(6)))):
+		if player.begins_with("local:"):
+			if local:
+				reserved.append(_bt_picks[player])
+		elif player.begins_with("steam:") and bt_players.has_peer(int(player.substr(6))):
 			reserved.append(_bt_picks[player])
 	return reserved
 
 
+# The next colour no other slot shows and nobody out of a slot has reserved. A local player passes
+# over local reservations: they may be its own pick from another device (the host on a pad).
 func bt_cycle_color(player_index: int, step := 1) -> bool:
 	_bt_init_colors()
 	if not _bt_remote.empty() or player_index < 0 or player_index >= connected_players.size():
 		return false
 	var device: int = connected_players[player_index][0]
 	var players := _bt_slot_players()
-	if players[player_index].begins_with("local:") and not _bt_local.has(device):
+	var local: bool = players[player_index].begins_with("local:")
+	if local and not _bt_local.has(device):
 		_bt_local.append(device)  # a borrowed entry stays its device's
 		players = _bt_slot_players()
-	var taken := _bt_reserved(players)
+	var taken := _bt_reserved(players, not local)
 	for p in connected_players.size():
 		if p != player_index:
 			taken.append(bt_slot_colors[p])
@@ -224,36 +245,56 @@ func bt_cycle_color(player_index: int, step := 1) -> bool:
 	if index == bt_slot_colors[player_index] or taken.has(index):
 		return false
 	_bt_picks[players[player_index]] = index
+	_bt_shown[device] = index
 	bt_apply_colors()
 	return true
 
 
-# Picks of connected players first (in slot order: a later slot with the same pick loses it), then
-# each remaining slot gets its default colour if free and not reserved, else the first such one:
-# no two slots share a colour.
+# A device that stays in its slot keeps the colour it shows, whoever joins or leaves. One that
+# comes into a slot gets its player's pick unless another slot has it (the pick is kept for later),
+# then each remaining slot, empty ones too, its default colour if free and not reserved, else the
+# first such one: no two slots share a colour.
 func bt_apply_colors() -> void:
 	_bt_init_colors()
 	var slots := []
 	if not _bt_remote.empty():
 		slots = _bt_remote.duplicate()
+		_bt_shown.clear()
 	else:
 		var players := _bt_slot_players()
 		if not _bt_lobby:
 			_bt_prune(players)
-		for p in player_colors.size():
-			var pick = _bt_picks.get(players[p], -1) if p < players.size() else -1
-			slots.append(pick if pick >= 0 and not slots.has(pick) else -1)
-		var reserved := _bt_reserved(players)
-		for p in slots.size():
-			if slots[p] < 0:
-				var vacant := not slots.has(p) and not reserved.has(p)
-				slots[p] = p if vacant else _bt_first_free(slots, reserved)
+		slots = _bt_assign(players)
 	var changed: bool = slots != bt_slot_colors
 	bt_slot_colors = slots
 	for p in slots.size():
 		player_colors[p] = bt_palette[slots[p]]
 	if changed:
 		emit_signal("bt_player_colors_changed")
+
+
+func _bt_assign(players: Array) -> Array:
+	var slots := []
+	for _p in player_colors.size():
+		slots.append(-1)
+	var count: int = int(min(players.size(), slots.size()))
+	for p in count:
+		var shown: int = _bt_shown.get(connected_players[p][0], -1)
+		if shown >= 0 and not slots.has(shown):
+			slots[p] = shown
+	for p in count:
+		var pick: int = _bt_picks.get(players[p], -1)
+		if slots[p] < 0 and pick >= 0 and not slots.has(pick):
+			slots[p] = pick
+	var reserved := _bt_reserved(players)
+	for p in slots.size():
+		if slots[p] < 0:
+			var vacant := not slots.has(p) and not reserved.has(p)
+			slots[p] = p if vacant else _bt_first_free(slots, reserved)
+	_bt_shown.clear()
+	for p in count:
+		_bt_shown[connected_players[p][0]] = slots[p]
+	return slots
 
 
 func _bt_first_free(slots: Array, reserved: Array) -> int:

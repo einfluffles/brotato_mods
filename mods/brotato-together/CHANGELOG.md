@@ -16,6 +16,12 @@ upload; three of them are marked where the upload may have differed.
   mid-run and rejoining keeps your colour. Leaving the lobby before the run drops it. Once the host
   closes the lobby, a colour lasts only while its player keeps their slot: the next run starts with
   the game's colours, unless the host opens a new lobby before it.
+- Player colours on the character selection no longer change because someone else joins or
+  leaves: when a player who picked a colour comes back into the lobby, the others keep theirs and
+  the returning player gets their colour if it is free, else a free one. A couch player who joined
+  before the host keeps the colour they see when the host joins (the host gets theirs back next
+  run), and a host who picked on the keyboard and changes colour on a gamepad can now go back to
+  the keyboard colour.
 - Magma Boots on a client: another player's trail now shows all of its fire puddles. Before, once
   the first puddles had burnt out, only one at a time flashed up for a moment.
 - Acid and petrol puddles on a client no longer go invisible. Before, a puddle that came after

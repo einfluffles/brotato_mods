@@ -65,10 +65,12 @@ used like them, with mouse, keyboard or gamepad.
   other players have. The colour is used wherever the game uses player colours (cursor, panels,
   HUD, player highlight), and clients see the same colours. In a lobby your colour stays yours
   while you are in it: every new run starts with it, whatever slot you join into, and nobody else
-  can pick it meanwhile. A drop mid-run keeps it for your rejoin. Once the host closes the lobby,
-  a colour lasts only while its player keeps their slot: the next run starts with the game's
-  colours, unless the host opens a new lobby before it. Nothing is saved; a player who does not
-  pick keeps the game's colour.
+  online can pick it meanwhile (players on the same machine can, so the host can switch device).
+  A drop mid-run keeps it for your rejoin. Once the host closes the lobby, a colour lasts only
+  while its player keeps their slot: the next run starts with the game's colours, unless the host
+  opens a new lobby before it. Nothing is saved; a player who does not pick gets the game's
+  colour, or a free one. A player's colour does not change while they keep their slot, whoever
+  joins or leaves.
 - A locked character under a cursor shows how to unlock it, on clients too.
 - **Aiming** follows each player's own manual-aim setting (mouse or right stick).
 - **A player who drops:** if they do not come back within 20 s, the host makes their level-up,
