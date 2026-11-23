@@ -99,15 +99,29 @@ static func _clear_hits(meter: Node) -> void:
 	meter._kills = []
 	meter._taken = []
 	meter._health = {}
+	meter._lost = 0
+	meter._unowned = 0
+	meter._hidden = 0
+	meter._all_kills = 0
 
 
-static func _hit(meter: Node, unit, value: int, args) -> void:
-	meter.on_hit(unit, value, Vector2.ZERO, false, false, false, false, args, 0, false)
+static func _hit(meter: Node, unit, value: int, args, crit := false, one_shot := false) -> void:
+	meter.on_hit(unit, value, Vector2.ZERO, crit, false, false, false, args, 0, one_shot)
 
 
 # A hit takes its value, a killing hit at most the health that was left: the total is the health
-# the hits took, the biggest hit no more than that either.
+# the hits took. The biggest hit is the biggest number shown above a unit: a killing hit's whole
+# value.
 func _test_capped_hits(meter: Node) -> void:
+	_clear_hits(meter)
+	var weak := FakeUnit.new(9)
+	weak.current_stats.health = 0
+	_hit(meter, weak, 504, TakeDamageArgs.new(0))
+	_t._check(
+		meter._dealt[0] == 9 and meter._hits[0][0] == 504,
+		"an overkill hit: the total counts 9, the biggest hit is the 504 shown (%d, %s)"
+		% [meter._dealt[0], meter._hits[0]]
+	)
 	_clear_hits(meter)
 	var args := TakeDamageArgs.new(0)
 	var unit := FakeUnit.new(300)
@@ -130,14 +144,48 @@ func _test_capped_hits(meter: Node) -> void:
 	_hit(meter, tree, 70, args)
 	var forwarded := TakeDamageArgs.new(0)
 	forwarded.hide_feedback = true  # the brachiosaurus' foot hands its hit on to the boss
-	_hit(meter, FakeUnit.new(300), 60, forwarded)
+	_hit(meter, FakeUnit.new(300), 60000, forwarded)
+	var one_shot := FakeUnit.new(400)
+	one_shot.current_stats.health = 0
+	_hit(meter, one_shot, 20000, args, false, true)  # shows "ONE_SHOT", no number
+	var crit_shot := FakeUnit.new(500)
+	crit_shot.current_stats.health = 0
+	_hit(meter, crit_shot, 12000, args, true, true)  # a crit shows its number
+	var nobody := FakeUnit.new(30)
+	nobody.current_stats.health = 0
+	_hit(meter, nobody, 90, TakeDamageArgs.new(-1))  # no player's
 	var dealt: int = meter._dealt[0]
+	var expected := 100 + 200 + 300 + 250 + 280 + 40 + 400 + 500
 	_t._check(
-		dealt == 100 + 200 + 300 + 250 + 280 + 40,
-		"the total is the health the hits took, not the overkill (%d)" % dealt
+		dealt == expected, "the total is the health the hits took, not the overkill (%d)" % dealt
 	)
-	_t._check(meter._hits[0][0] == 300, "the biggest hit is capped too %s" % [meter._hits[0]])
-	_t._check(meter._kills[0] == 3, "kills: the enemies only, not the tree (%d)" % meter._kills[0])
+	_t._check(
+		meter._hits[0][0] == 12000,
+		"the biggest hit is the biggest number shown, not a hidden hit or a one-shot's %s"
+		% [meter._hits[0]]
+	)
+	_t._check(meter._kills[0] == 5, "kills: the enemies only, not the tree (%d)" % meter._kills[0])
+	var own := [meter._lost, meter._unowned, meter._hidden, meter._all_kills]
+	_t._check(
+		own == [expected + 30, 30, 60000, 6],
+		"the wave's own count: health lost whoever hit, no player's, hidden, kills %s" % [own]
+	)
+	meter.measure()
+	var team := 0
+	for entry in meter.board.players:
+		team += entry[0]
+	var line: String = meter.wave_line()
+	print("  info: %s" % line)
+	var head := "damage: total %s, health lost 2,100 (by no player 30, hidden 60,000); p0 2,070 ("
+	head = head % Text.get_formatted_number(team)
+	_t._check(
+		(
+			head in line
+			and "biggest hit 12,000 unknown, 5 kills)" in line
+			and line.ends_with("; 6 kills")
+		),
+		"the wave's log line: totals, health lost, per player rows, biggest hit, kills (%s)" % line
+	)
 	var hurt := FakeUnit.new(100)
 	hurt.player_index = 1
 	for case in [[30, false, false], [500, true, false], [20, false, true]]:

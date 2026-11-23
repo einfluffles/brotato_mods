@@ -3,11 +3,13 @@ extends Node
 # the wave before it), and at the end of a wave the run so far (sync/damage_ledger.gd).
 #
 # The total is the health the player's hits took, from every unit's took_damage: a hit takes its
-# value, a killing hit at most the health the unit had. The sources are the game's own counters:
-# WeaponData.dmg_dealt_last_wave (per wave) and RunData.tracked_item_effects (per run: the wave's
-# part is the difference to the values at the wave's start). Some counters count damage that a
-# weapon's counter holds too (OVERLAPS: a bonus inside the weapon's hit or burn); the views show
-# those as included and leave them out of the shares, and what no shown source holds is "other".
+# value, a killing hit at most the health the unit had. The biggest hit is the biggest number the
+# player's hits showed above a unit, a killing hit's whole value. The sources are the game's own
+# counters: WeaponData.dmg_dealt_last_wave (per wave) and RunData.tracked_item_effects (per run:
+# the wave's part is the difference to the values at the wave's start). Some counters count damage
+# that a weapon's counter holds too (OVERLAPS: a bonus inside the weapon's hit or burn); the views
+# show those as included and leave them out of the shares, and what no shown source holds is
+# "other".
 #
 # The host's board is section DAMAGE of the state stream:
 #   {wave, players: [[total, [[my_id, count, damage], ...]], ...], time: seconds,
@@ -32,6 +34,7 @@ const RUN_SCENES := [
 	"res://ui/menus/run/end_run.tscn",
 	"res://ui/menus/run/coop_end_run.tscn",
 ]
+const LOG_NAME := "einfluffles-BrotatoTogether:DamageMeter"
 const DAMAGE_TEXTS := ["DAMAGE_DEALT", "EXPLOSION_DAMAGE_DEALT"]
 # Damage counters whose item text does not say so: the chef's consumable explosions and burns,
 # the builder's turret (one key per level).
@@ -79,11 +82,17 @@ var _keys := []  # per player: [[counter key, my_id], ...] of the damage counter
 var _key_counts := []  # per player: how many counters there were when _keys was read
 var _wave_time := 0.0  # seconds the wave timer ran in the battle being measured
 var _frozen := false  # the wave's last measurement is taken
-var _hits := []  # per player: [damage, my_id] of the wave's biggest hit
+var _hits := []  # per player: [value, my_id] of the wave's biggest number above a unit
 var _dealt := []  # per player: the health the wave's hits took
 var _kills := []  # per player: enemies killed this wave
 var _taken := []  # per player: damage the player took this wave
 var _health := {}  # unit instance id -> its health after its last hit
+# For the wave's log line, whoever hit: the health the shown hits took, of it what no player's hits
+# took, what the hidden hits took, the enemies killed.
+var _lost := 0
+var _unowned := 0
+var _hidden := 0
+var _all_kills := 0
 var _builder_keys := []  # the builder turret levels' counter keys
 
 
@@ -157,6 +166,10 @@ func _start_battle(scene: Node) -> void:
 	_kills = []
 	_taken = []
 	_health = {}
+	_lost = 0
+	_unowned = 0
+	_hidden = 0
+	_all_kills = 0
 	ledger.start_wave(RunData.current_wave)
 	_watch_hits(scene)
 	# Left without the end of the wave (the pause menu's end run, restart or quit).
@@ -171,6 +184,7 @@ func freeze() -> void:
 		return
 	_frozen = true
 	measure(true)
+	ModLoaderLog.info(wave_line(), LOG_NAME)
 
 
 func measure(final := false) -> void:
@@ -258,7 +272,7 @@ func _watch_unit(unit: Node) -> void:
 # Unit.took_damage: unit, value (what the floating text shows), knockback, crit, dodge,
 # protected, armor, args (TakeDamageArgs), hit type, one shot. value is the hit's full damage,
 # above the health that was left on a killing hit.
-func on_hit(unit, value: int, _kb, _crit, _dodge, _protected, _armor, args, _type, _one) -> void:
+func on_hit(unit, value: int, _kb, crit, _dodge, _protected, _armor, args, _type, one) -> void:
 	if args == null or value <= 0 or _frozen:
 		return
 	var dealt := value
@@ -277,17 +291,29 @@ func on_hit(unit, value: int, _kb, _crit, _dodge, _protected, _armor, args, _typ
 		else:
 			_health[id] = int(unit.current_stats.health)
 	var p: int = args.from_player_index
-	if p < 0 or p >= MAX_PLAYERS:
+	var owned := p >= 0 and p < MAX_PLAYERS
+	var enemy_killed: bool = killed and unit.get("enemy_id") != null
+	if enemy_killed:
+		_all_kills += 1
+	# The brachiosaurus' foot hands its hits on to the boss, hidden: the weapon counts the foot's.
+	if args.hide_feedback:
+		_hidden += dealt
+	else:
+		_lost += dealt
+		if not owned:
+			_unowned += dealt
+	if not owned:
 		return
 	_grow(p)
-	if killed and unit.get("enemy_id") != null:
+	if enemy_killed:
 		_kills[p] += 1
-	# The brachiosaurus' foot hands its hits on to the boss, hidden: the weapon counts the foot's.
 	if args.hide_feedback:
 		return
 	_dealt[p] += dealt
-	if dealt > _hits[p][0]:
-		_hits[p] = [dealt, source_of(args, p)]
+	# The number above the unit (FloatingTextManager._on_unit_took_damage): the whole value, but a
+	# one-shot that is no crit shows "ONE_SHOT" in its place.
+	if value > _hits[p][0] and (crit or not one):
+		_hits[p] = [value, source_of(args, p)]
 
 
 # A player's took_damage, same arguments.
@@ -332,6 +358,51 @@ static func source_of(args, p: int) -> String:
 	if key == Keys.empty_hash and hitbox != null:
 		key = hitbox.damage_tracking_key_hash
 	return Keys.hash_to_string.get(key, "") if key != Keys.empty_hash else ""
+
+
+# The host's check of the meter, logged when the wave is over: the totals on the board against
+# the health the shown hits took whoever dealt them (of it what no player's hits took; the hidden
+# hits apart, which no total holds), per player the plain rows and what the overlapping ones hold
+# besides, the biggest hit with its source and the kills, and the enemies killed.
+#   Wave 12 damage: total 15,234, health lost 15,234 (by no player 0, hidden 0); p0 9,100 (rows
+#   8,900 + 1,200 included, biggest hit 1,204 weapon_smg_3, 50 kills), p1 ...; 87 kills
+func wave_line() -> String:
+	var players: Array = board.get("players", [])
+	var hits: Array = board.get("hits", [])
+	var team := 0
+	var parts := []
+	for p in players.size():
+		team += players[p][0]
+		var rows := [0, 0]  # plain, overlapping
+		var baseline: Dictionary = _baseline[p] if p < _baseline.size() else {}
+		for source in wave_sources(p, baseline)[0]:
+			rows[1 if overlaps(source[0]) else 0] += source[2]
+		var hit: Array = hits[p] if p < hits.size() else [0, ""]
+		var part := "p%d %s (rows %s" % [p, _number(players[p][0]), _number(rows[0])]
+		if rows[1] > 0:
+			part += " + %s included" % _number(rows[1])
+		if hit[0] > 0:
+			var source: String = hit[1] if hit[1] != "" else "unknown"
+			part += ", biggest hit %s %s" % [_number(hit[0]), source]
+		else:
+			part += ", no hit"
+		parts.append(part + ", %d kills)" % (_kills[p] if p < _kills.size() else 0))
+	return (
+		"Wave %d damage: total %s, health lost %s (by no player %s, hidden %s); %s; %d kills"
+		% [
+			board.get("wave", RunData.current_wave),
+			_number(team),
+			_number(_lost),
+			_number(_unowned),
+			_number(_hidden),
+			PoolStringArray(parts).join(", "),
+			_all_kills,
+		]
+	)
+
+
+static func _number(value: int) -> String:
+	return Text.get_formatted_number(value)
 
 
 # [total, [[my_id, count, damage], ...]], strongest first. Equal weapons and items are one source

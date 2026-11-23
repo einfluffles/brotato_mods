@@ -10,6 +10,13 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Damage meter: the biggest hit is now the biggest number you saw above an enemy, a killing
+  blow's whole damage. Before, a killing blow counted only the health that was left, so a crit
+  of 300 on an enemy with 50 health left showed as 50. The total still counts only the health
+  your hits took.
+- Damage meter: the host's log has a line per wave with each player's total, rows, biggest hit
+  and kills next to the health all enemies lost, to check the meter against.
+
 - Player colours stay picked for as long as you are in the lobby: a new run starts with everyone's
   colour from the run before, also when you join into another slot or the host plays on another
   controller, and nobody else can take your colour while you have not joined yet. Dropping out

@@ -19,6 +19,7 @@ var _t: Node
 var _lost := 0  # health the units that are gone had lost
 var _kills := 0  # by player 0
 var _taken := 0  # by the players
+var _biggest := 0  # the biggest number player 0's hits showed above a unit
 
 
 func _init(test_mod: Node) -> void:
@@ -37,6 +38,10 @@ func run(together: Node):
 	yield(_test_retry(meter), "completed")
 	yield(_test_new_run(meter), "completed")
 	meter.clear_state(StateStream.DAMAGE)
+
+
+static func _number(value: int) -> String:
+	return Text.get_formatted_number(value)
 
 
 static func _wave(sources: Dictionary, total: int, hit: Array, kills: int, taken: int) -> Array:
@@ -86,6 +91,15 @@ func _on_unit_died(unit, args) -> void:
 func _on_unit_spawned(unit) -> void:
 	if not unit.is_connected("died", self, "_on_unit_died"):
 		unit.connect("died", self, "_on_unit_died")
+		unit.connect("took_damage", self, "_on_unit_hit")
+
+
+# What FloatingTextManager._on_unit_took_damage shows: the value, unless the hit is hidden or a
+# one-shot that is no crit ("ONE_SHOT"). Not on a unit that is gone (a burn after its death).
+func _on_unit_hit(unit, value: int, _kb, crit, _dodge, _protected, _armor, args, _type, one):
+	if unit.dead or args.from_player_index != 0 or args.hide_feedback or (one and not crit):
+		return
+	_biggest = int(max(_biggest, value))
 
 
 func _on_player_hurt(_unit, value: int, _kb, _crit, dodge, protected, _armor, _args, _type, _one):
@@ -123,6 +137,7 @@ func _test_battle(meter: Node, title: String, items: Array, crit: int, health: i
 	_lost = 0
 	_kills = 0
 	_taken = 0
+	_biggest = 0
 	for signal_name in ["enemy_respawned", "neutral_respawned"]:
 		spawner.connect(signal_name, self, "_on_unit_spawned")
 	for unit in spawner.enemies + spawner.neutrals:  # the wave's own, from its first frames
@@ -166,8 +181,22 @@ func _test_battle(meter: Node, title: String, items: Array, crit: int, health: i
 	_t._check(_kills > 0 and team == lost, "%s: the totals are the health lost" % title)
 	var hit: Array = meter.board.hits[0]
 	_t._check(
-		hit[0] > 0 and hit[0] <= max_health and hit[1] == PISTOL,
-		"%s: the biggest hit, no more than an enemy's health (%d) %s" % [title, max_health, hit]
+		hit[0] > 0 and hit[0] == _biggest and hit[1] == PISTOL,
+		"%s: the biggest hit is the biggest number shown (%d) %s" % [title, _biggest, hit]
+	)
+	if damage > 0:
+		_t._check(
+			hit[0] > max_health,
+			"%s: with overkill above an enemy's health (%d) %s" % [title, max_health, hit]
+		)
+	var line: String = meter.wave_line()
+	print("  info: %s" % line)
+	var head := "total %s, health lost %s (by no player 0, hidden 0); p0 %s (rows "
+	head = head % [_number(team), _number(lost), _number(entry[0])]
+	var tail := "biggest hit %s %s, %d kills)" % [_number(hit[0]), PISTOL, _kills]
+	_t._check(
+		head in line and tail in line,
+		"%s: the wave's log line: totals, health lost, biggest hit (%s)" % [title, line]
 	)
 	var kills: int = meter._kills[0] if meter._kills.size() > 0 else 0
 	var taken := 0

@@ -117,7 +117,8 @@ used like them, with mouse, keyboard or gamepad.
   a co-op run have a **Damage** page per player (LB / RB or the arrows, after the stats pages):
   the shop's for the wave before, the end of run's for the whole run, with each player's kills and
   damage taken. The solo shop and the end of a solo run have it as a third tab of the stats panel.
-  The total is the health your hits took; items whose bonus a weapon's row already holds (Giant
+  The total is the health your hits took, the biggest hit the biggest number your hits showed
+  above an enemy (a killing blow's whole damage); items whose bonus a weapon's row already holds (Giant
   Belt, Greek Fire, Scared Sausage) show as "included", and an "Other" row holds the rest. In co-op
   it also shows each player's share of the team's damage. Nobody is held up
   while a player looks at it. It also works offline. **Options, Gameplay, Damage meter** switches

@@ -1995,8 +1995,12 @@ number; the builder's levels are one source, named by the level the player holds
 - During the wave, when the kept sources are all weapons or all of the other kind, the last gives
   way to the strongest of the other kind if that dealt at least 5% of the player's total
   (`OTHER_KIND_SHARE`).
-- **Biggest hit.** The biggest of those hits' values, capped like them, per player. The
-  source is read off the hitbox: its `from` weapon's tracking key, else that weapon's `my_id`, else
+- **Biggest hit.** The biggest number those hits showed above a unit, per player: the hit's whole
+  value (`took_damage`'s `value`, the `full_dmg_value` that `FloatingTextManager` shows, after
+  crit, armor and the bonuses), not capped, so a killing blow counts its overkill here while the
+  total counts the health that was left. Hidden hits show no number and a one-shot that is no crit
+  shows "ONE_SHOT" in its place, so neither counts; a crit one-shot shows its number. The source
+  is read off the hitbox: its `from` weapon's tracking key, else that weapon's `my_id`, else
   the hitbox's tracking key, else none. `args.from` is never used: a burn tick reuses the unit's
   args with the hitbox cleared and `from` left as whatever hit the unit last.
 - **Wave time** (for damage per second) is the meter's own count of frame time while `main`'s
@@ -2017,6 +2021,17 @@ number; the builder's levels are one source, named by the level the player holds
   freezes too once `_end_wave_timer_timedout` is set, and the battle scene's `tree_exiting` does
   when the wave did not end (the pause menu's end run, restart or quit). After it the board stays
   as it is.
+- **The wave's log line** (`wave_line`): at that last measurement the measuring machine logs one
+  info line under `einfluffles-BrotatoTogether:DamageMeter`, to check the meter against a count
+  of its own:
+  `Wave 12 damage: total 15,234, health lost 15,234 (by no player 0, hidden 0); p0 9,100 (rows
+  8,900 + 1,200 included, biggest hit 1,204 weapon_smg_3, 50 kills), p1 ...; 87 kills`. "total"
+  sums the board's totals; "health lost" is what every shown hit on an enemy or tree took
+  (capped like the totals) whoever dealt it, "by no player" the part of it from hits with no
+  player index (they are in no total), "hidden" what the hidden hits took (in neither). Per
+  player: the board's total, the rows that overlap nothing and what the overlapping ones hold
+  ("included"), the biggest hit with its source ("unknown" without one, "no hit" without a hit),
+  the kills. Last the enemies killed by anyone. The suites `damage` and `damage_run` check it.
 
 **Run stats.** `sync/damage_ledger.gd` sums the waves of a run per player: `{sources: {key:
 [my_id, count, damage]}, total, hit, kills, taken}`, with the waves' count and time. The key joins
@@ -2202,6 +2217,7 @@ All of this is for the log only. Every line has a rate limit (log memory, see
 | "Shop state held ...", "Shop 40: 28 states ..." | state stream, `RunParts.Sender` | when the screen closes | see [State stream](#5-state-stream-and-run-state) |
 | "... run state changed without a change of its fingerprint ..." | `RunCache` | a safety net hit | a gap in the fingerprint, with the paths |
 | "Client X entered ...", "Client X frames ...", "Client X corrections ..." | `sync/client_report.gd` | see below | a client's timings in the host's log |
+| "Wave N damage: total ..." | `DamageMeter` | once per wave, at the wave's last measurement, on the machine that runs the wave | the meter's totals against the health the enemies lost, per player rows, biggest hit and kills, see [Damage meter](#damage-meter) |
 
 **Traffic.** `Session.send_reliable` notes every message with its encoded size, per peer. Steam's
 queue is asked after every message of 4 KB or more, and after smaller ones at most once per 250 ms
