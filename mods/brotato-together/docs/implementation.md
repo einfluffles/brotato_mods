@@ -1290,8 +1290,9 @@ on its way, and the cursor rests on Go, mouse hover leaves the cursor there
 
 ### Level-up and crate panels
 
-`sync/upgrades_sync.gd`, `sync/upgrades_gear.gd`. Each `CoopUpgradesUIPlayerContainer` is a
-`Carousel` with pages (upgrades, gear, stats) and a per-player item popup toggle.
+`sync/upgrades_sync.gd`, `sync/upgrades_gear.gd`, `sync/upgrade_options.gd`. Each
+`CoopUpgradesUIPlayerContainer` is a `Carousel` with pages (upgrades, gear, stats) and a
+per-player item popup toggle.
 
 **State** (section `upgrades`). The provider is inactive unless the host's battle shows the panels.
 The key is the run cache's `rev` plus the text of the panels (`capture` from `_old_upgrades`,
@@ -1304,6 +1305,18 @@ ready. `battle_entered` calls `retry()`. The client re-implements `show_upgrades
 `ItemService.get_upgrades` and uses `show_item` for crates (the item rebuilt from the `ItemService`
 base and `deserialize_and_merge`). A null body stops the own panel's input. The puppet's panels stay
 shown until its scene goes.
+
+- **Option ids** (`sync/upgrade_options.gd`). The host sends each panel's options as `my_id`s, and
+  `UpgradeOptions.resolve` turns them back into what `get_upgrades` returned: an element of
+  `ItemService.upgrades`, copied with its effects scaled like `get_upgrade_data` does when the
+  player has `level_upgrades_modifications` (Captain, Barnacle; the run state is applied before the
+  panels), or `ItemService.weapon_slot_upgrade_data`, which is not in that list. `get_upgrades`
+  returns only the latter while a character has weapon slots to gain (Baby: one slot,
+  `weapon_slot_upgrades`). An id that resolves to nothing is logged and left out. Before, only
+  `ItemService.upgrades` was searched: Baby's panel showed no option and no reroll on a client,
+  and a client playing Baby had its cursor on a hidden button that takes no accept, so the host
+  waited for its choice until it left. `level_up_options_tests.gd` (suite `level_up_options`)
+  checks Baby as a client, next to a spectator and as the host, and the scaled options.
 
 - The own panel needs `Utils.set_process_input_where_defined(ui, true)`, which
   `main._on_EndWaveTimer_timeout` does on the host and which never runs on a puppet.

@@ -68,6 +68,9 @@ const UpgradesChangeTests := preload(
 const UpgradesPopupTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/upgrades_popup_tests.gd"
 )
+const LevelUpOptionsTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/level_up_options_tests.gd"
+)
 const SelectionScreenTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/selection_screen_tests.gd"
 )
@@ -184,6 +187,7 @@ const SUITES := [
 	"input_hints",
 	"cursed_weapon",
 	"gear_links",
+	"level_up_options",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -509,6 +513,11 @@ func _suite_upgrades_change(together: Node):
 
 func _suite_upgrades_popup(together: Node):
 	_suite = UpgradesPopupTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
+func _suite_level_up_options(together: Node):
+	_suite = LevelUpOptionsTests.new()
 	yield(_suite.run(self, together), "completed")
 
 

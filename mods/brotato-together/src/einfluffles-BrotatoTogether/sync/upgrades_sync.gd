@@ -28,6 +28,9 @@ const RunParts := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/
 const UpgradesGear := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrades_gear.gd"
 )
+const UpgradeOptions := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/upgrade_options.gd"
+)
 const CHECK_INTERVAL := 0.1
 const PENDING_TIMEOUT_SEC := 30.0
 const ITEM_KINDS := ["take", "discard", "ban"]
@@ -910,7 +913,7 @@ func _send(msg_type: int, message: Dictionary) -> void:
 static func _show_upgrades(container, p: int, ids: Array, level: int, price: int) -> void:
 	var upgrades := []
 	for id in ids:
-		var upgrade = _find(ItemService.upgrades, id)
+		var upgrade = UpgradeOptions.resolve(str(id), p)  # Baby's weapon slot option too
 		if upgrade != null:
 			upgrades.append(upgrade)
 	container._level = level

@@ -20,6 +20,12 @@ upload; three of them are marked where the upload may have differed.
   to the weapons' counts.
 - Damage meter: the host's log has a line per wave with each player's total, rows, biggest hit
   and kills next to the health all enemies lost, to check the meter against.
+- Playing Baby online: the level-up screen now shows Baby's weapon slot option on every client.
+  Before, a client saw Baby's level-up panel empty, and a client playing Baby could not choose
+  anything there, so the run stayed on the level-up screen until that player left.
+- Captain and Barnacle online: a client's level-up panels now show the bigger values these give to
+  level-up options. Before, a client showed the normal values for that player's options, although
+  the bigger ones were applied.
 - Player colours stay picked for as long as you are in the lobby: a new run starts with everyone's
   colour from the run before, also when you join into another slot or the host plays on another
   controller, and nobody else can take your colour while you have not joined yet. Dropping out
