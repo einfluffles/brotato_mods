@@ -10,6 +10,8 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+## 2026-11-23 17:30 UTC
+
 - Damage meter: the biggest hit is now the biggest number you saw above an enemy, a killing
   blow's whole damage. Before, a killing blow counted only the health that was left, so a crit
   of 300 on an enemy with 50 health left showed as 50. The total still counts only the health
