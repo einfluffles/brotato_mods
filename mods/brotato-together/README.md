@@ -4,7 +4,7 @@ Online co-op for [Brotato](https://store.steampowered.com/app/1942280/Brotato/) 
 networking, in place of Steam Remote Play's video stream. Every player runs the game on their own
 machine, and their own character and menus react at once.
 
-**Status (2026-11-22, protocol 32):** early development. Sessions over Steam with friends work;
+**Status (2026-11-23, protocol 33):** early development. Sessions over Steam with friends work;
 the sessions measured in the implementation notes were played on 2026-11-16. Expect rough edges
 and please report them (see [Reporting problems](#reporting-problems)).
 
@@ -49,8 +49,8 @@ used like them, with mouse, keyboard or gamepad.
 - **Pause menu, Online co-op** (host and client, during a run) is a page with *Host lobby*,
   *Invite friends*, *Leave lobby* and the connection details: your role, every player with state
   and ping, players who are away, and the last error. Leaving in the middle of a run asks first.
-- **A client on the host's screens outside a wave** (the selection screens, waiting for the host
-  to resume a run) has no pause menu. **Esc / Start** opens the same page as a popup. While it is
+- **A client on the host's screens outside a wave** (the selection screens, the co-op resume
+  screen) has no pause menu. **Esc / Start** opens the same page as a popup. While it is
   open, the game gets none of your keyboard or gamepad input.
 - If a lobby fails (not created, join refused, host gone), the reason shows in the main menu's
   error line and on the page.
@@ -182,7 +182,7 @@ To change it, set a launch option in Steam (right-click *Brotato*, *Properties*,
 
 ## Limitations
 
-As of 2026-11-22 (protocol 32):
+As of 2026-11-23 (protocol 33):
 
 - Not shared with clients yet: the species challenges of Primal Dread (trophy hunter, clever
   girl, egg hunt) and the codex's kill counts.
@@ -264,7 +264,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `battle_scene` | A breaking weapon, the hole layout, a stomped hole, the host's speed in the own-player prediction, walking into holes. |
 | `puddle_reuse` | Trails of fire (another player's magma boots), acid and petrol puddles on a client, also once the puddle puppets come back from the pool. |
 | `dead_player` | A player who died stays visible when the next wave starts him at 0 health. |
-| `selection` | The host's selection screens and end of run on a client, colours and join hints, the shared character grid, wheel and right stick, a locked-in cursor and a player who leaves after the pick, the host's player joining first. |
+| `selection` | The host's selection screens, end of run and co-op resume screen on a client, colours and join hints, the shared character grid, wheel and right stick, a locked-in cursor and a player who leaves after the pick, the host's player joining first. |
 | `state_stream` | The state stream on a fake session: change keys, resyncs, states held for a full send queue, malformed messages. |
 | `shop_change` | Change detection of the shop's run state and what a check costs. |
 | `run_parts` | The run state in parts: which parts each change sends, the client building the same run, resyncs. |

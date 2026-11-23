@@ -2,7 +2,7 @@
 
 How the mod works, for a developer who is new to it. The game hooks it builds on are listed in
 [`docs/brotato-hooks.md`](../../../docs/brotato-hooks.md). This document describes the code as of
-2026-11-22 (protocol 32, mod version 0.2.1). File paths are relative to
+2026-11-23 (protocol 33, mod version 0.2.1). File paths are relative to
 `src/einfluffles-BrotatoTogether/`, test suites live in `tests/einfluffles-TogetherTests/`.
 
 Contents: [Overview](#1-overview), [Glossary](#2-glossary), [Session](#3-session),
@@ -1681,17 +1681,18 @@ the state's `you`. While no player of this machine has joined, every cursor coun
 
 `sync/menu_sync.gd`, `sync/menu_puppet.gd`, `session/puppet_menu.gd`. The client runs the game's own
 scenes (`character_selection.tscn`, `weapon_selection.tscn`, `difficulty_selection.tscn`,
-`coop_end_run.tscn`) as copies that decide nothing.
+`coop_end_run.tscn`, `coop_resume.tscn`) as copies that decide nothing.
 
 **Host state.**
 
 - `menu`: kind, `screen` (the host scene's instance id), player count, `coop`, who selected,
   colours, and `you` as the per-peer patch. Character selection adds the zone `[id, random]`,
   endless and `join` (hold progress while joining is open). Weapon selection adds `picks` and
-  `character_shown`. End of run adds `pages`.
+  `character_shown`. End of run adds `pages`. The co-op resume screen adds `shown` (the saved
+  player it shows, `_player_label.player_index`) and `join`.
 - `menu_grids`: per visible grid every element `[my_id, flags, tier]` in the host's order. For
-  weapon and difficulty selection and the end of run it also carries the run state, packed once per
-  screen, and `won`.
+  weapon and difficulty selection, the end of run and the co-op resume screen it also carries the
+  run state, packed once per screen, and `won`.
 
 **Entering** (`MenuPuppet._enter`, when a state names another `screen`): puppet mode, one puppet
 slot per host player, `RunData.reset()` for the character selection or the host's run for the
@@ -1712,7 +1713,9 @@ because `CharacterSelectionInventory.update_elements_color` reads this machine's
 `CoopService.listening_for_inputs` is kept off (nobody joins on a client). At the end of run,
 `BaseEndRun._button_pressed = true` spends its three buttons. On the selection screens a full-rect
 control on top of the copy takes the mouse (the end of run: see below). A control of the copy that
-gets the keyboard focus loses it in the same frame.
+gets the keyboard focus loses it in the same frame. On the co-op resume screen the copy's
+`_on_connected_players_updated` is disconnected (it would step to the next saved player and load
+the shop by itself) and its `_input` is off (cancel loads the title screen).
 
 **Mouse at the end of run** (`sync/end_run_mouse.gd`). A node added as the copy's last child (after
 `FocusEmulator1..4`, so its `_input` runs first) is the mouse for looking, as on the host:
@@ -1746,6 +1749,7 @@ gets the keyboard focus loses it in the same frame.
   `_set_selected_element`, which ends the screen.
 - Zone, background and endless, without the scene's handlers.
 - The join progress, through the `CoopService` extension (`bt_remote_progress`).
+- The saved player the co-op resume screen shows (`CoopResume._update_player_index`).
 - Pick counts and end-of-run carousel pages (a page changes only when the host's page does, see
   above).
 - `character_shown`: `WeaponSelection._input` switches a panel to the player's character while
@@ -1768,7 +1772,7 @@ resume screen), so their slots do not change there. Suite `selection` checks bot
 **Locked characters.** The game's `LockedPanel` shows on the copy through the same code, locked
 where the host has it locked. The text is this machine's, so it is localised.
 
-**Screens without a copy** (the co-op resume screen, a host choosing for or playing a solo run) show
+**Screens without a copy** (a host choosing for or playing a solo run) show
 the waiting screen, `ui/client_view.gd` (key art, connection line, where the host is). The host's
 title screen is not one of them (see
 [Client in its own main menu](#client-in-its-own-main-menu)).

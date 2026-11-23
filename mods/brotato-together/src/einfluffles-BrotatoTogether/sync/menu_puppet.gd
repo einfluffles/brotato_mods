@@ -24,12 +24,14 @@ const LOG_NAME := "einfluffles-BrotatoTogether:MenuPuppet"
 const CHARACTERS := "character_selection"
 const WEAPONS := "weapon_selection"
 const END_RUN := "coop_end_run"
+const RESUME := MenuSync.RESUME
 # The host names its screen by kind only; the scene is this machine's own.
 const SCENES := {
 	CHARACTERS: "res://ui/menus/run/character_selection.tscn",
 	WEAPONS: "res://ui/menus/run/weapon_selection.tscn",
 	"difficulty_selection": "res://ui/menus/run/difficulty_selection/difficulty_selection.tscn",
 	END_RUN: "res://ui/menus/run/coop_end_run.tscn",
+	RESUME: "res://ui/menus/shop/coop_resume.tscn",
 }
 const GLASS := "BrotatoTogetherGlass"
 const END_RUN_MOUSE := "BrotatoTogetherEndRunMouse"
@@ -188,6 +190,11 @@ func _on_scene_ready(scene: Node) -> void:
 		scene.add_child(glass)
 	if scene.get("_button_pressed") == false:
 		scene._button_pressed = true  # BaseEndRun: restart / new run / exit are the host's
+	if _kind == RESUME:
+		# CoopResume steps to the next saved player on every join and then loads the shop, and
+		# goes to the title screen on cancel: the host's state decides both here.
+		CoopService.disconnect("connected_players_updated", scene, "_on_connected_players_updated")
+		scene.set_process_input(false)
 	_apply(scene, _state)
 	if state_stream != null:
 		state_stream.retry()  # the cursors that waited for this scene
@@ -197,7 +204,7 @@ func _process(delta: float) -> void:
 	var scene := current()
 	if scene == null or _state.empty():
 		return
-	if _kind == CHARACTERS:
+	if _kind == CHARACTERS or _kind == RESUME:
 		_advance_join(delta)
 	# The scene's own handlers (a cursor arriving, its deferred first focus) clear selections
 	# and turn the join listening back on; the host's state stands.
@@ -231,6 +238,9 @@ func _apply(scene: Node, state: Dictionary) -> void:
 		_apply_character_shown(scene, state.get("character_shown"))
 	elif _kind == END_RUN:
 		_apply_pages(scene, state.get("pages"))
+	elif _kind == RESUME:
+		_apply_join(scene, state.get("join"))
+		_apply_shown(scene, state.get("shown"))
 
 
 static func _count(state: Dictionary) -> int:
@@ -468,6 +478,14 @@ func _advance_join(delta: float) -> void:
 	for i in shown.size():
 		shown[i] = min(shown[i] + delta / CoopService.HOLD_DURATION, 1.0)
 	CoopService._update_connection_progress()
+
+
+# CoopResume: the saved player the host's screen shows (the next one to join).
+static func _apply_shown(scene: Node, shown) -> void:
+	if typeof(shown) != TYPE_INT or shown < 0 or shown >= RunData.get_player_count():
+		return
+	if scene._player_label.player_index != shown:
+		scene._update_player_index(shown)
 
 
 # WeaponSelection: the "x2" on an element a player picked more than once.

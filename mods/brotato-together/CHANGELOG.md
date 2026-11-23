@@ -10,6 +10,11 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Online co-op: when the host continues a saved co-op run, clients now see the resume screen with
+  the saved player to take, their gear and gold, and the hold progress. Before, they only saw the
+  waiting screen.
+- Needs everybody on this update (protocol 33).
+
 ## 2026-11-23 19:30 UTC
 
 - Online co-op: the host joins first in character selection. A remote player's hold to join counts
