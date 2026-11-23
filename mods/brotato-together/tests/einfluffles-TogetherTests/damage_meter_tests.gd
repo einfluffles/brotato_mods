@@ -1,6 +1,7 @@
 extends Reference
 # Damage meter (sync/damage_meter.gd, ui/damage_views.gd): the measurement, the board on the state
-# stream, the HUD row, and the damage page / tab in the shop and end of run screens.
+# stream, the HUD row, and the damage page / tab in the shop and end of run screens. The crowded
+# wave is in damage_run_tests.gd.
 
 const DamageMeter := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_meter.gd")
 const DamageViews := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/damage_views.gd")
@@ -18,13 +19,9 @@ const MenuOptionsButton := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/extensions/ui/menu_options.gd"
 )
 const PISTOL := "weapon_pistol_1"
-const CROWD := 350  # enemies in the crowded wave
-const STALL_MSEC := 60  # added to every frame of it: a machine that cannot keep up
 
 var _t: Node
 var _changes := 0
-var _killed := 0  # health the enemies that are gone had lost, in the crowded wave
-var _kills := 0
 
 
 func _init(test_mod: Node) -> void:
@@ -44,7 +41,6 @@ func run(together: Node):
 	yield(_test_hud(meter, item), "completed")
 	yield(_test_shop(meter, item), "completed")
 	yield(_test_coop_end_run(), "completed")
-	yield(_test_crowded_wave(meter), "completed")
 	_test_cost(meter)
 	yield(_test_solo_shop(meter), "completed")
 	meter.disconnect("changed", self, "_on_changed")
@@ -99,15 +95,31 @@ static func _clear_hits(meter: Node) -> void:
 	meter._kills = []
 	meter._taken = []
 	meter._health = {}
+	meter._gone = {}
+	meter._lost = 0
+	meter._unowned = 0
+	meter._after_death = 0
+	meter._hidden = 0
+	meter._all_kills = 0
 
 
-static func _hit(meter: Node, unit, value: int, args) -> void:
-	meter.on_hit(unit, value, Vector2.ZERO, false, false, false, false, args, 0, false)
+static func _hit(meter: Node, unit, value: int, args, crit := false, one_shot := false) -> void:
+	meter.on_hit(unit, value, Vector2.ZERO, crit, false, false, false, args, 0, one_shot)
 
 
 # A hit takes its value, a killing hit at most the health that was left: the total is the health
-# the hits took, the biggest hit no more than that either.
+# the hits took. The biggest hit is the biggest number shown above a unit: a killing hit's whole
+# value.
 func _test_capped_hits(meter: Node) -> void:
+	_clear_hits(meter)
+	var weak := FakeUnit.new(9)
+	weak.current_stats.health = 0
+	_hit(meter, weak, 504, TakeDamageArgs.new(0))
+	_t._check(
+		meter._dealt[0] == 9 and meter._hits[0][0] == 504,
+		"an overkill hit: the total counts 9, the biggest hit is the 504 shown (%d, %s)"
+		% [meter._dealt[0], meter._hits[0]]
+	)
 	_clear_hits(meter)
 	var args := TakeDamageArgs.new(0)
 	var unit := FakeUnit.new(300)
@@ -130,14 +142,59 @@ func _test_capped_hits(meter: Node) -> void:
 	_hit(meter, tree, 70, args)
 	var forwarded := TakeDamageArgs.new(0)
 	forwarded.hide_feedback = true  # the brachiosaurus' foot hands its hit on to the boss
-	_hit(meter, FakeUnit.new(300), 60, forwarded)
+	_hit(meter, FakeUnit.new(300), 60000, forwarded)
+	var one_shot := FakeUnit.new(400)
+	one_shot.current_stats.health = 0
+	_hit(meter, one_shot, 20000, args, false, true)  # shows "ONE_SHOT", no number
+	var crit_shot := FakeUnit.new(500)
+	crit_shot.current_stats.health = 0
+	_hit(meter, crit_shot, 12000, args, true, true)  # a crit shows its number
+	var nobody := FakeUnit.new(30)
+	nobody.current_stats.health = 0
+	_hit(meter, nobody, 90, TakeDamageArgs.new(-1))  # no player's
+	# Removed by the game's cap on enemies (died without a hit), then hit by a bullet that was
+	# on its way: that hit takes the 25 it had left, as the weapon's counter counts it.
+	var removed := FakeUnit.new(60)
+	removed.current_stats.health = 25
+	_hit(meter, removed, 35, args)
+	removed.dead = true
+	meter._on_unit_gone(removed, null)
+	removed.current_stats.health = 0
+	_hit(meter, removed, 40, args)
+	_hit(meter, removed, 40, args)  # nothing left
 	var dealt: int = meter._dealt[0]
+	var expected := 100 + 200 + 300 + 250 + 280 + 40 + 400 + 500 + 35 + 25
 	_t._check(
-		dealt == 100 + 200 + 300 + 250 + 280 + 40,
-		"the total is the health the hits took, not the overkill (%d)" % dealt
+		dealt == expected, "the total is the health the hits took, not the overkill (%d)" % dealt
 	)
-	_t._check(meter._hits[0][0] == 300, "the biggest hit is capped too %s" % [meter._hits[0]])
-	_t._check(meter._kills[0] == 3, "kills: the enemies only, not the tree (%d)" % meter._kills[0])
+	_t._check(
+		meter._hits[0][0] == 12000,
+		"the biggest hit is the biggest number shown, not a hidden hit or a one-shot's %s"
+		% [meter._hits[0]]
+	)
+	_t._check(meter._kills[0] == 5, "kills: the enemies only, not the tree (%d)" % meter._kills[0])
+	var own := [meter._lost, meter._unowned, meter._after_death, meter._hidden, meter._all_kills]
+	_t._check(
+		own == [expected + 30, 30, 25, 60000, 6],
+		"the wave's own count: health lost whoever hit, no player's, after death, hidden, kills %s"
+		% [own]
+	)
+	meter.measure()
+	var team := 0
+	for entry in meter.board.players:
+		team += entry[0]
+	var line: String = meter.wave_line()
+	print("  info: %s" % line)
+	var head := "damage: total %s, health lost 2,160 (by no player 30, after death 25, hidden"
+	head = (head + " 60,000); p0 2,130 (") % Text.get_formatted_number(team)
+	_t._check(
+		(
+			head in line
+			and "biggest hit 12,000 unknown, 5 kills)" in line
+			and line.ends_with("; 6 kills")
+		),
+		"the wave's log line: totals, health lost, per player rows, biggest hit, kills (%s)" % line
+	)
 	var hurt := FakeUnit.new(100)
 	hurt.player_index = 1
 	for case in [[30, false, false], [500, true, false], [20, false, true]]:
@@ -646,88 +703,6 @@ func _test_coop_end_run():
 	)
 
 
-# A kill took all of the enemy's health; one the game removed (its cap on enemies) had lost what
-# it had lost.
-func _on_enemy_died(enemy, args) -> void:
-	var health: int = enemy.max_stats.health
-	if args.killed_by_player_index >= 0:
-		_killed += health
-		_kills += 1
-	else:
-		_killed += health - int(clamp(enemy.current_stats.health, 0, health))
-
-
-# A crowded wave on a machine that cannot keep up: the meter's total is the health the enemies lost.
-func _test_crowded_wave(meter: Node):
-	_t.coop_run(3)
-	var pistol = _t._find_by_id(ItemService.weapons, PISTOL)
-	for p in 2:
-		while RunData.get_player_weapons(p).size() < 6:
-			RunData.add_weapon(pistol, p)
-		RunData.add_stat(Keys.stat_attack_speed_hash, 400, p)
-		RunData.add_stat(Keys.stat_max_hp_hash, 500, p)
-	_t.get_tree().change_scene("res://main.tscn")
-	for _i in 3:
-		yield(_t.get_tree(), "idle_frame")
-	var main := _t.get_tree().current_scene
-	var spawner = main.get("_entity_spawner")
-	var players: Array = main.get("_players")
-	var enemy := "res://entities/units/enemies/crash_zone/basic/baby_alien/baby_alien.tscn"
-	_killed = 0
-	_kills = 0
-	var totals := []
-	var t0 := OS.get_ticks_msec()
-	var next_spawn := 0
-	var frames := 0
-	while OS.get_ticks_msec() - t0 < 5000:
-		yield(_t.get_tree(), "idle_frame")
-		OS.delay_msec(STALL_MSEC)
-		frames += 1
-		var now := OS.get_ticks_msec() - t0
-		for player in players:
-			player.current_stats.health = player.max_stats.health
-		if now >= next_spawn and spawner.enemies.size() < CROWD:
-			next_spawn = now + 200
-			for k in 60:
-				var at: Vector2 = players[k % 2].global_position + Vector2(260, 0).rotated(k * 0.7)
-				var unit = _t._spawn_on_host(spawner, enemy, EntityType.ENEMY, at)
-				if unit != null and not unit.is_connected("died", self, "_on_enemy_died"):
-					unit.connect("died", self, "_on_enemy_died")
-		if now >= 1000 * (totals.size() + 1):
-			totals.append(_total(meter))
-	var lost := _killed
-	var alive := 0
-	for unit in spawner.enemies:
-		if not unit.dead:
-			alive += 1
-			lost += int(unit.max_stats.health - unit.current_stats.health)
-	var total := _total(meter)
-	# At a few frames a second, a second can pass without a hit: never less, and more at the end.
-	var rising: bool = totals.size() >= 3 and totals[-1] > totals[0]
-	for i in range(1, totals.size()):
-		rising = rising and totals[i] >= totals[i - 1]
-	print(
-		"  info: crowded wave: %d frames in 5 s, %d enemies alive, %d kills, meter per second %s"
-		% [frames, alive, _kills, totals]
-	)
-	_t._check(rising, "the meter counts on through a crowded wave %s" % [totals])
-	_t._check(_kills > 0 and total == lost, "to the point: %d dealt, %d health lost" % [total, lost])
-	var hits: Array = meter.board.hits
-	_t._check(
-		hits.size() == 2 and hits[0][0] > 0 and hits[0][1] == PISTOL and hits[1][1] == PISTOL,
-		"the biggest hit of a real wave, with the weapon that dealt it %s" % [hits]
-	)
-	_t._check(meter.board.time > 0.0, "and the wave's time (%.1f s)" % meter.board.time)
-
-
-func _total(meter: Node) -> int:
-	meter.measure()
-	var total := 0
-	for entry in meter.board.players:
-		total += entry[0]
-	return total
-
-
 # A late endless run, four players with 6 weapons and 250 items each, every counter gaining:
 # what a measurement costs and what the board weighs on the wire.
 func _test_cost(meter: Node) -> void:
@@ -917,6 +892,7 @@ class FakeUnit:
 	var max_stats := {"health": 0}
 	var enemy_id = "fake"
 	var player_index = null
+	var dead := false
 
 	func _init(health: int, enemy := true) -> void:
 		current_stats = {"health": health}

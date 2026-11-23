@@ -1290,8 +1290,9 @@ on its way, and the cursor rests on Go, mouse hover leaves the cursor there
 
 ### Level-up and crate panels
 
-`sync/upgrades_sync.gd`, `sync/upgrades_gear.gd`. Each `CoopUpgradesUIPlayerContainer` is a
-`Carousel` with pages (upgrades, gear, stats) and a per-player item popup toggle.
+`sync/upgrades_sync.gd`, `sync/upgrades_gear.gd`, `sync/upgrade_options.gd`. Each
+`CoopUpgradesUIPlayerContainer` is a `Carousel` with pages (upgrades, gear, stats) and a
+per-player item popup toggle.
 
 **State** (section `upgrades`). The provider is inactive unless the host's battle shows the panels.
 The key is the run cache's `rev` plus the text of the panels (`capture` from `_old_upgrades`,
@@ -1304,6 +1305,18 @@ ready. `battle_entered` calls `retry()`. The client re-implements `show_upgrades
 `ItemService.get_upgrades` and uses `show_item` for crates (the item rebuilt from the `ItemService`
 base and `deserialize_and_merge`). A null body stops the own panel's input. The puppet's panels stay
 shown until its scene goes.
+
+- **Option ids** (`sync/upgrade_options.gd`). The host sends each panel's options as `my_id`s, and
+  `UpgradeOptions.resolve` turns them back into what `get_upgrades` returned: an element of
+  `ItemService.upgrades`, copied with its effects scaled like `get_upgrade_data` does when the
+  player has `level_upgrades_modifications` (Captain, Barnacle; the run state is applied before the
+  panels), or `ItemService.weapon_slot_upgrade_data`, which is not in that list. `get_upgrades`
+  returns only the latter while a character has weapon slots to gain (Baby: one slot,
+  `weapon_slot_upgrades`). An id that resolves to nothing is logged and left out. Before, only
+  `ItemService.upgrades` was searched: Baby's panel showed no option and no reroll on a client,
+  and a client playing Baby had its cursor on a hidden button that takes no accept, so the host
+  waited for its choice until it left. `level_up_options_tests.gd` (suite `level_up_options`)
+  checks Baby as a client, next to a spectator and as the host, and the scaled options.
 
 - The own panel needs `Utils.set_process_input_where_defined(ui, true)`, which
   `main._on_EndWaveTimer_timeout` does on the host and which never runs on a puppet.
@@ -1872,24 +1885,32 @@ id (`InputSync.steam_id_of` its virtual device, through `CoopService.bt_players`
 its entry in `_bt_local`, the device each local player last played on. A local device takes its own
 entry. A device without one takes over the first spare entry whose device is gone (a pad no longer
 in `Input.get_connected_joypads()`: a replugged pad), else borrows the first spare entry whose
-device is there but not in a slot (the host on another gamepad; keyboards are always there) until
-that device joins, else gets a new entry. So nobody keeps another local player's entry for good: a
-new pad that joins before the host gets the host's colour only until the host joins, then an entry
-of its own. A borrower that picks gets its own entry first.
+device is there but not in a slot (the host on another gamepad; keyboards are always there), else
+gets a new entry. The borrow is kept in `_bt_borrow` (device -> entry) while the borrower stays in
+its slot, so it does not move to another entry when other devices join or leave or a waiting pad is
+unplugged. When the lender joins, the borrower gets a new entry of its own. So nobody keeps another
+local player's entry for good: a new pad that joins before the host shows the host's colour, keeps
+it while it stays in its slot (the host joining after it gets a free colour), and from the next run
+the host has its pick again. The same holds the other way round, as the two cannot be told apart:
+the host on a pad keeps its keyboard colour when a couch player joins on the keyboard, and from the
+next run that colour is the keyboard's. A borrower that picks gets its own entry first.
 
-Known behaviour: a host who switched device and then picks leaves the old entry's pick reserved, so
-that colour is blocked for everyone until the host joins on the old device again or the lobby
-closes. The other way round, the host on a pad that borrows its keyboard entry loses that colour to
-a couch player who joins on the keyboard, whose entry it is.
-
-It rewrites `player_colors` on `connected_players_updated` and on every pick: picks of the players
-in a slot first, in slot order (a later slot with the same pick loses it), then each other slot its
-default colour if free and not reserved, else the first such one. Reserved are the picks of players
-out of a slot: local entries' and those of remote players still in the session
-(`InputSync.has_peer`), so a peer gone for good, kicks included, reserves nothing and a rejoin
-brings its pick back. `ui_info` on the character selection cycles to the next colour that neither
-another slot has nor is reserved (remote players send it as a button), and `CoopSelection` restyles
-what is on screen.
+It rewrites `player_colors` on `connected_players_updated` and on every pick. A device that stays in
+its slot keeps the colour it shows (`_bt_shown`, by device), whoever joins or leaves; only its own
+pick changes it. A device that comes into a slot gets its player's pick if no other slot shows it
+(newcomers in slot order), else, like every empty slot, its default colour if free and not
+reserved, else the first such one. A pick a newcomer finds taken is kept for a later run. Reserved
+are the picks of players out of a slot: local entries' and those of remote players still in the
+session (`InputSync.has_peer`), so a peer gone for good, kicks included, reserves nothing and a
+rejoin brings its pick back. A peer is in the session from its Steam lobby join, so its pick is
+reserved before it has a slot, but that moves no colour already on screen. `ui_info` on the
+character selection cycles to the next colour that no other slot has and that is not reserved
+(remote players send it as a button), and `CoopSelection` restyles what is on screen. A local
+player's cycle passes over local reservations (only remote players' block it): the host who picked
+on the keyboard and recolours on a pad can go back to its keyboard colour. Remote players and the
+defaults still skip that colour while the keyboard has not joined, as the system cannot tell the
+host from a couch player on the keyboard. Two local entries can so end up with the same pick; the
+one that joins first in a run shows it.
 
 Outside a lobby a pick goes with its slot, as `clear_coop_players` at every new character selection
 empties them. From `lobby_ready` until `lobby_left` (`InputSync` calls `bt_set_lobby`) a pick stays
@@ -1953,11 +1974,16 @@ again). A hit's value is `full_dmg_value`, per player by `TakeDamageArgs.from_pl
 that leaves health takes exactly its value; a killing hit takes at most the health that was left,
 which the meter keeps per unit: the health after its last hit, refreshed by the unit's `healed`
 (healer enemies) and `stats_boosted` (buffers), dropped on `died`, and the unit's whole health for
-a unit not hit since it spawned. Not counted: hits on a unit that is `dead` (a burn goes on after a
-death without a killing hit: a tree's eighth hit, the game's cap on enemies) and the brachiosaurus
-foot's hits that it hands on to the boss (`hide_feedback`, the only hidden hits; the weapon counts
-the foot's). Damage to players is left out. The suite `damage_run` checks the total against the
-health the enemies lost in real waves.
+a unit not hit since it spawned. A unit that died without a killing hit (the game's cap on enemies
+removes some with `die()` in `EntitySpawner.on_group_spawn_timing_reached`; a tree's eighth hit)
+keeps the health it had left, and hits on it go on: a bullet that entered it in the physics step
+the cap removed it in lands afterwards (`_physics_process` runs between the area signals and the
+deferred `Unit.hurt_area_entered_deferred`, which checks `_pending_die` but not `dead`), and a burn
+goes on. Such a hit takes what the unit had left (kept per unit from `died`), and the weapon's
+counter counts the same (`dmg_taken[1]`). Not counted: the brachiosaurus foot's hits that it hands
+on to the boss (`hide_feedback`, the only hidden hits; the weapon counts the foot's). Damage to
+players is left out. The suite `damage_run` checks the total against the health the units lost in
+real waves, a crowded one past the cap included, and a hit on a removed enemy step by step.
 
 **Sources.** The rows are the game's own counters: `WeaponData.dmg_dealt_last_wave`, and for
 items `RunData.tracked_item_effects` where the item's `tracking_text` is `DAMAGE_DEALT` /
@@ -1979,16 +2005,22 @@ number; the builder's levels are one source, named by the level the player holds
   bar. The views add an "Other" row: the total minus the shown rows that overlap nothing. It holds
   sources past the 10 rows, damage no counter holds (dart traps) and Scared Sausage's own burns,
   so the shares of the plain rows and Other add up to 100%. The total is never less than what the
-  plain rows sum to (a hit on a unit the meter did not watch). The overlap is a property of the id,
-  so it does not travel.
+  plain rows sum to (a hit on a unit the meter did not watch). Hits on a removed enemy once were
+  not counted while its weapon's counter counted them: the counters then sat above the hits and
+  the total jumped to them (the crowded wave in `damage_run`, 320 against 318 health lost). The
+  overlap is a property of the id, so it does not travel.
 - Per player the board holds `[total, sources as [my_id, count, damage]]`. During the wave it holds
   what the HUD shows: 4 sources, or 3 with 3 or 4 players (`DamageMeter.live_sources`). The wave's
   last measurement holds the 10 strongest, for the shop's board. The HUD has no Other line.
 - During the wave, when the kept sources are all weapons or all of the other kind, the last gives
   way to the strongest of the other kind if that dealt at least 5% of the player's total
   (`OTHER_KIND_SHARE`).
-- **Biggest hit.** The biggest of those hits' values, capped like them, per player. The
-  source is read off the hitbox: its `from` weapon's tracking key, else that weapon's `my_id`, else
+- **Biggest hit.** The biggest number those hits showed above a unit, per player: the hit's whole
+  value (`took_damage`'s `value`, the `full_dmg_value` that `FloatingTextManager` shows, after
+  crit, armor and the bonuses), not capped, so a killing blow counts its overkill here while the
+  total counts the health that was left. Hidden hits show no number and a one-shot that is no crit
+  shows "ONE_SHOT" in its place, so neither counts; a crit one-shot shows its number. The source
+  is read off the hitbox: its `from` weapon's tracking key, else that weapon's `my_id`, else
   the hitbox's tracking key, else none. `args.from` is never used: a burn tick reuses the unit's
   args with the hitbox cleared and `from` left as whatever hit the unit last.
 - **Wave time** (for damage per second) is the meter's own count of frame time while `main`'s
@@ -2009,6 +2041,18 @@ number; the builder's levels are one source, named by the level the player holds
   freezes too once `_end_wave_timer_timedout` is set, and the battle scene's `tree_exiting` does
   when the wave did not end (the pause menu's end run, restart or quit). After it the board stays
   as it is.
+- **The wave's log line** (`wave_line`): at that last measurement the measuring machine logs one
+  info line under `einfluffles-BrotatoTogether:DamageMeter`, to check the meter against a count
+  of its own:
+  `Wave 12 damage: total 15,234, health lost 15,234 (by no player 0, after death 2, hidden 0); p0
+  9,100 (rows 8,900 + 1,200 included, biggest hit 1,204 weapon_smg_3, 50 kills), p1 ...; 87
+  kills`. "total" sums the board's totals; "health lost" is what every shown hit on an enemy or
+  tree took (capped like the totals) whoever dealt it, "by no player" the part of it from hits
+  with no player index (they are in no total), "after death" the part from hits on units that
+  died without a killing hit (in the totals), "hidden" what the hidden hits took (in neither). Per
+  player: the board's total, the rows that overlap nothing and what the overlapping ones hold
+  ("included"), the biggest hit with its source ("unknown" without one, "no hit" without a hit),
+  the kills. Last the enemies killed by anyone. The suites `damage` and `damage_run` check it.
 
 **Run stats.** `sync/damage_ledger.gd` sums the waves of a run per player: `{sources: {key:
 [my_id, count, damage]}, total, hit, kills, taken}`, with the waves' count and time. The key joins
@@ -2194,6 +2238,7 @@ All of this is for the log only. Every line has a rate limit (log memory, see
 | "Shop state held ...", "Shop 40: 28 states ..." | state stream, `RunParts.Sender` | when the screen closes | see [State stream](#5-state-stream-and-run-state) |
 | "... run state changed without a change of its fingerprint ..." | `RunCache` | a safety net hit | a gap in the fingerprint, with the paths |
 | "Client X entered ...", "Client X frames ...", "Client X corrections ..." | `sync/client_report.gd` | see below | a client's timings in the host's log |
+| "Wave N damage: total ..." | `DamageMeter` | once per wave, at the wave's last measurement, on the machine that runs the wave | the meter's totals against the health the enemies lost, per player rows, biggest hit and kills, see [Damage meter](#damage-meter) |
 
 **Traffic.** `Session.send_reliable` notes every message with its encoded size, per peer. Steam's
 queue is asked after every message of 4 KB or more, and after smaller ones at most once per 250 ms

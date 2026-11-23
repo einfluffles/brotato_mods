@@ -65,10 +65,12 @@ used like them, with mouse, keyboard or gamepad.
   other players have. The colour is used wherever the game uses player colours (cursor, panels,
   HUD, player highlight), and clients see the same colours. In a lobby your colour stays yours
   while you are in it: every new run starts with it, whatever slot you join into, and nobody else
-  can pick it meanwhile. A drop mid-run keeps it for your rejoin. Once the host closes the lobby,
-  a colour lasts only while its player keeps their slot: the next run starts with the game's
-  colours, unless the host opens a new lobby before it. Nothing is saved; a player who does not
-  pick keeps the game's colour.
+  online can pick it meanwhile (players on the same machine can, so the host can switch device).
+  A drop mid-run keeps it for your rejoin. Once the host closes the lobby, a colour lasts only
+  while its player keeps their slot: the next run starts with the game's colours, unless the host
+  opens a new lobby before it. Nothing is saved; a player who does not pick gets the game's
+  colour, or a free one. A player's colour does not change while they keep their slot, whoever
+  joins or leaves.
 - A locked character under a cursor shows how to unlock it, on clients too.
 - **Aiming** follows each player's own manual-aim setting (mouse or right stick).
 - **A player who drops:** if they do not come back within 20 s, the host makes their level-up,
@@ -115,7 +117,8 @@ used like them, with mouse, keyboard or gamepad.
   a co-op run have a **Damage** page per player (LB / RB or the arrows, after the stats pages):
   the shop's for the wave before, the end of run's for the whole run, with each player's kills and
   damage taken. The solo shop and the end of a solo run have it as a third tab of the stats panel.
-  The total is the health your hits took; items whose bonus a weapon's row already holds (Giant
+  The total is the health your hits took, the biggest hit the biggest number your hits showed
+  above an enemy (a killing blow's whole damage); items whose bonus a weapon's row already holds (Giant
   Belt, Greek Fire, Scared Sausage) show as "included", and an "Other" row holds the rest. In co-op
   it also shows each player's share of the team's damage. Nobody is held up
   while a player looks at it. It also works offline. **Options, Gameplay, Damage meter** switches
@@ -250,7 +253,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `hit_numbers` | Damage and heal numbers on a client: 80 hits in one tick, a flood of hits that fills the host's queue, a hit in an enemy's spawn tick, a hit on a pet, a hit and a heal in one snapshot, a lost snapshot, burn ticks and hits on a unit with an aim shape. |
 | `looks` | Charmed, burning, cursed, boosted, meca and mutant looks, puddles, projectile angles. |
 | `damage` | The damage meter: counting, the row in the wave, the pages, the switch. |
-| `damage_run` | The damage meter in real waves: the total against the health lost with Giant Belt, Scared Sausage and Greek Fire, the end of the wave before its panels, the run stats over waves, retries and new runs. |
+| `damage_run` | The damage meter in real waves: the total against the health lost with Giant Belt, Scared Sausage and Greek Fire, in a crowded wave past the game's cap on enemies and for a hit on an enemy the cap removed, the end of the wave before its panels, the run stats over waves, retries and new runs. |
 | `battle_scene` | A breaking weapon, the hole layout, a stomped hole, the host's speed in the own-player prediction, walking into holes. |
 | `puddle_reuse` | Trails of fire (another player's magma boots), acid and petrol puddles on a client, also once the puddle puppets come back from the pool. |
 | `dead_player` | A player who died stays visible when the next wave starts him at 0 health. |

@@ -1,7 +1,8 @@
 extends Reference
 # Damage meter in real waves (sync/damage_meter.gd, sync/damage_ledger.gd): the total against the
-# health the enemies lost with items whose counters overlap the weapons', the wave's last
-# measurement before the end of wave panels, and the run stats over waves, retries and new runs.
+# health the enemies lost with items whose counters overlap the weapons', a hit on an enemy the
+# game removed, a crowded wave, the wave's last measurement before the end of wave panels, and the
+# run stats over waves, retries and new runs.
 
 const DamageLedger := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_ledger.gd"
@@ -14,11 +15,15 @@ const PISTOL := "weapon_pistol_1"
 const ENEMY := "res://entities/units/enemies/crash_zone/basic/baby_alien/baby_alien.tscn"
 const BATTLE_MSEC := 4000
 const SPAWN_MSEC := 3000  # then the last ones are fought down
+const CROWD := 350  # enemies in the crowded wave
+const STALL_MSEC := 60  # added to every frame of it: a machine that cannot keep up
 
 var _t: Node
 var _lost := 0  # health the units that are gone had lost
 var _kills := 0  # by player 0
 var _taken := 0  # by the players
+var _biggest := 0  # the biggest number player 0's hits showed above a unit
+var _corpses := {}  # a unit gone without a kill -> the health it had left
 
 
 func _init(test_mod: Node) -> void:
@@ -33,10 +38,16 @@ func run(together: Node):
 	burn.append("item_greek_fire")
 	yield(_test_battle(meter, "scared sausage x3, greek fire", burn, 0, 120, 0), "completed")
 	yield(_test_battle(meter, "overkill, +2000% damage", [], 0, 0, 2000), "completed")
+	yield(_test_corpse_hit(meter), "completed")
+	yield(_test_crowded_wave(meter), "completed")
 	yield(_test_waves(meter), "completed")
 	yield(_test_retry(meter), "completed")
 	yield(_test_new_run(meter), "completed")
 	meter.clear_state(StateStream.DAMAGE)
+
+
+static func _number(value: int) -> String:
+	return Text.get_formatted_number(value)
 
 
 static func _wave(sources: Dictionary, total: int, hit: Array, kills: int, taken: int) -> Array:
@@ -73,6 +84,8 @@ func _test_ledger() -> void:
 	_t._check(ledger.is_empty() and ledger.wire(10).waves == 0, "a battle at wave 1: a new run")
 
 
+# A kill took all of the unit's health; one the game removed (its cap on enemies) or a tree's last
+# hit had lost what it had lost, and loses what hits on it take after (see _settle_corpses).
 func _on_unit_died(unit, args) -> void:
 	var health: int = unit.max_stats.health
 	if args.killed_by_player_index >= 0:
@@ -80,12 +93,36 @@ func _on_unit_died(unit, args) -> void:
 		if args.killed_by_player_index == 0 and unit.get("enemy_id") != null:
 			_kills += 1
 	else:
-		_lost += health - int(clamp(unit.current_stats.health, 0, health))
+		var left := int(clamp(unit.current_stats.health, 0, health))
+		_lost += health - left
+		_corpses[unit] = left
+
+
+# What the units gone without a kill lost since: a bullet that entered one in the physics step
+# the game removed it in (Unit.hurt_area_entered_deferred checks _pending_die, not dead), a burn.
+# Until the unit is used again, after its death animation.
+func _settle_corpses() -> void:
+	for unit in _corpses.keys():
+		if not unit.dead:
+			_corpses.erase(unit)
+			continue
+		var left := int(clamp(unit.current_stats.health, 0, unit.max_stats.health))
+		_lost += _corpses[unit] - left
+		_corpses[unit] = left
 
 
 func _on_unit_spawned(unit) -> void:
 	if not unit.is_connected("died", self, "_on_unit_died"):
 		unit.connect("died", self, "_on_unit_died")
+		unit.connect("took_damage", self, "_on_unit_hit")
+
+
+# What FloatingTextManager._on_unit_took_damage shows: the value, unless the hit is hidden or a
+# one-shot that is no crit ("ONE_SHOT").
+func _on_unit_hit(_unit, value: int, _kb, crit, _dodge, _protected, _armor, args, _type, one):
+	if args.from_player_index != 0 or args.hide_feedback or (one and not crit):
+		return
+	_biggest = int(max(_biggest, value))
 
 
 func _on_player_hurt(_unit, value: int, _kb, _crit, dodge, protected, _armor, _args, _type, _one):
@@ -123,6 +160,8 @@ func _test_battle(meter: Node, title: String, items: Array, crit: int, health: i
 	_lost = 0
 	_kills = 0
 	_taken = 0
+	_biggest = 0
+	_corpses = {}
 	for signal_name in ["enemy_respawned", "neutral_respawned"]:
 		spawner.connect(signal_name, self, "_on_unit_spawned")
 	for unit in spawner.enemies + spawner.neutrals:  # the wave's own, from its first frames
@@ -135,6 +174,7 @@ func _test_battle(meter: Node, title: String, items: Array, crit: int, health: i
 	while OS.get_ticks_msec() - started < BATTLE_MSEC:
 		yield(_t.get_tree(), "idle_frame")
 		var now := OS.get_ticks_msec() - started
+		_settle_corpses()
 		for player in players:
 			player.current_stats.health = player.max_stats.health
 		if now >= next_spawn and now < SPAWN_MSEC and spawner.enemies.size() < 120:
@@ -147,6 +187,7 @@ func _test_battle(meter: Node, title: String, items: Array, crit: int, health: i
 					unit.current_stats.health = health
 				if unit != null:
 					max_health = int(max(max_health, unit.max_stats.health))
+	_settle_corpses()
 	var lost := _lost
 	for unit in spawner.enemies + spawner.neutrals:
 		if not unit.dead:
@@ -166,8 +207,22 @@ func _test_battle(meter: Node, title: String, items: Array, crit: int, health: i
 	_t._check(_kills > 0 and team == lost, "%s: the totals are the health lost" % title)
 	var hit: Array = meter.board.hits[0]
 	_t._check(
-		hit[0] > 0 and hit[0] <= max_health and hit[1] == PISTOL,
-		"%s: the biggest hit, no more than an enemy's health (%d) %s" % [title, max_health, hit]
+		hit[0] > 0 and hit[0] == _biggest and hit[1] == PISTOL,
+		"%s: the biggest hit is the biggest number shown (%d) %s" % [title, _biggest, hit]
+	)
+	if damage > 0:
+		_t._check(
+			hit[0] > max_health,
+			"%s: with overkill above an enemy's health (%d) %s" % [title, max_health, hit]
+		)
+	var line: String = meter.wave_line()
+	print("  info: %s" % line)
+	var head := "total %s, health lost %s (by no player 0, after death 0, hidden 0); p0 %s (rows "
+	head = head % [_number(team), _number(lost), _number(entry[0])]
+	var tail := "biggest hit %s %s, %d kills)" % [_number(hit[0]), PISTOL, _kills]
+	_t._check(
+		head in line and tail in line,
+		"%s: the wave's log line: totals, health lost, biggest hit (%s)" % [title, line]
 	)
 	var kills: int = meter._kills[0] if meter._kills.size() > 0 else 0
 	var taken := 0
@@ -188,6 +243,136 @@ func _test_battle(meter: Node, title: String, items: Array, crit: int, health: i
 		)
 	for player in players:
 		player.disconnect("took_damage", self, "_on_player_hurt")
+
+
+# The game's cap on enemies removes some in its _physics_process (EntitySpawner
+# .on_group_spawn_timing_reached: die() without a hit), between the physics step that saw a
+# bullet enter one of them and the deferred hit (Unit.hurt_area_entered_deferred, which checks
+# _pending_die but not dead). That hit takes what the removed enemy had left, and the weapon's
+# counter counts it. The meter counts it too, so its total stays the health the hits took and the
+# weapon's row no more than it.
+func _test_corpse_hit(meter: Node):
+	_t.coop_run(3)
+	var main: Node = yield(_enter_battle(3), "completed")
+	var players: Array = main.get("_players")
+	var spawner = main.get("_entity_spawner")
+	var at: Vector2 = players[0].global_position + Vector2(900, 0)
+	var unit = _t._spawn_on_host(spawner, ENEMY, EntityType.ENEMY, at)
+	unit.max_stats.health = 50
+	unit.current_stats.health = 50
+	var weapon = players[0].current_weapons[0]
+	var hitbox = weapon._hitbox
+	hitbox.crit_chance = 0.0
+	hitbox.damage = 30
+	var data: WeaponData = RunData.get_player_weapons(0)[weapon.weapon_pos]
+	var counted := data.dmg_dealt_last_wave
+	var dealt: int = meter._dealt[0] if meter._dealt.size() > 0 else 0
+	var lost: int = meter._lost
+	var kills: int = meter._kills[0] if meter._kills.size() > 0 else 0
+	unit.hurt_area_entered_deferred(hitbox)  # alive
+	var left: int = unit.current_stats.health
+	unit.can_drop_loot = false
+	unit.die()  # the cap's removal
+	hitbox.ignored_objects.clear()
+	unit.hurt_area_entered_deferred(hitbox)  # the bullet that was on its way
+	counted = data.dmg_dealt_last_wave - counted
+	dealt = meter._dealt[0] - dealt
+	_t._check(
+		left > 0 and unit.current_stats.health == 0 and counted == 50,
+		"a removed enemy's last hit: the game counts what it had left (%d of 50)" % counted
+	)
+	_t._check(
+		dealt == 50 and meter._lost - lost == 50 and meter._kills[0] == kills,
+		"the meter counts it too, no kill (%d, %d)" % [dealt, meter._lost - lost]
+	)
+	meter.measure()
+	var entry: Array = meter.board.players[0]
+	_t._check(
+		entry[0] == meter._dealt[0] and entry[1][0][2] <= entry[0],
+		"the total is the health the hits took, the weapon's row no more %s" % [entry]
+	)
+	yield(_t.get_tree(), "idle_frame")
+
+
+# A crowded wave on a machine that cannot keep up: the meter's total is the health the units lost,
+# the wave's own and those the game removed (its cap on enemies) included.
+func _test_crowded_wave(meter: Node):
+	_t.coop_run(3)
+	var pistol = _t._find_by_id(ItemService.weapons, PISTOL)
+	for p in 2:
+		while RunData.get_player_weapons(p).size() < 6:
+			RunData.add_weapon(pistol, p)
+		RunData.add_stat(Keys.stat_attack_speed_hash, 400, p)
+		RunData.add_stat(Keys.stat_max_hp_hash, 500, p)
+	_t.get_tree().change_scene("res://main.tscn")
+	# One frame: the test watches the units from the same frame as the meter.
+	yield(_t.get_tree(), "idle_frame")
+	var main := _t.get_tree().current_scene
+	var spawner = main.get("_entity_spawner")
+	var players: Array = main.get("_players")
+	_lost = 0
+	_kills = 0
+	_corpses = {}
+	for signal_name in ["enemy_respawned", "neutral_respawned"]:
+		spawner.connect(signal_name, self, "_on_unit_spawned")
+	for unit in spawner.enemies + spawner.neutrals:
+		_on_unit_spawned(unit)
+	var totals := []
+	var t0 := OS.get_ticks_msec()
+	var next_spawn := 0
+	var frames := 0
+	while OS.get_ticks_msec() - t0 < 5000:
+		yield(_t.get_tree(), "idle_frame")
+		OS.delay_msec(STALL_MSEC)
+		frames += 1
+		var now := OS.get_ticks_msec() - t0
+		_settle_corpses()
+		for player in players:
+			player.current_stats.health = player.max_stats.health
+		if now >= next_spawn and spawner.enemies.size() < CROWD:
+			next_spawn = now + 200
+			for k in 60:
+				var at: Vector2 = players[k % 2].global_position + Vector2(260, 0).rotated(k * 0.7)
+				_t._spawn_on_host(spawner, ENEMY, EntityType.ENEMY, at)
+		if now >= 1000 * (totals.size() + 1):
+			totals.append(_total(meter))
+	_settle_corpses()
+	var lost := _lost
+	var alive := 0
+	for unit in spawner.enemies + spawner.neutrals:
+		if not unit.dead:
+			alive += 1
+			lost += int(unit.max_stats.health - unit.current_stats.health)
+	var total := _total(meter)
+	# At a few frames a second, a second can pass without a hit: never less, and more at the end.
+	var rising: bool = totals.size() >= 3 and totals[-1] > totals[0]
+	for i in range(1, totals.size()):
+		rising = rising and totals[i] >= totals[i - 1]
+	print(
+		"  info: crowded wave: %d frames in 5 s, %d enemies alive, %d kills, meter per second %s"
+		% [frames, alive, _kills, totals]
+	)
+	_t._check(rising, "the meter counts on through a crowded wave %s" % [totals])
+	_t._check(_kills > 0 and total == lost, "to the point: %d dealt, %d health lost" % [total, lost])
+	_t._check(
+		meter._lost == lost and meter._unowned == 0,
+		"the wave's log line has it too: %d health lost (%d after death)"
+		% [meter._lost, meter._after_death]
+	)
+	var hits: Array = meter.board.hits
+	_t._check(
+		hits.size() == 2 and hits[0][0] > 0 and hits[0][1] == PISTOL and hits[1][1] == PISTOL,
+		"the biggest hit of a real wave, with the weapon that dealt it %s" % [hits]
+	)
+	_t._check(meter.board.time > 0.0, "and the wave's time (%.1f s)" % meter.board.time)
+
+
+func _total(meter: Node) -> int:
+	meter.measure()
+	var total := 0
+	for entry in meter.board.players:
+		total += entry[0]
+	return total
 
 
 func _enter_battle(wave: int):

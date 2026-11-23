@@ -10,12 +10,34 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Damage meter: the biggest hit is now the biggest number you saw above an enemy, a killing
+  blow's whole damage. Before, a killing blow counted only the health that was left, so a crit
+  of 300 on an enemy with 50 health left showed as 50. The total still counts only the health
+  your hits took.
+- Damage meter: in a crowded wave the game removes enemies to keep their number down, and a
+  bullet already on its way can still hit one. That hit now counts the health the enemy had left,
+  as the game's own damage count for the weapon does. Before, such a hit could make the total jump
+  to the weapons' counts.
+- Damage meter: the host's log has a line per wave with each player's total, rows, biggest hit
+  and kills next to the health all enemies lost, to check the meter against.
+- Playing Baby online: the level-up screen now shows Baby's weapon slot option on every client.
+  Before, a client saw Baby's level-up panel empty, and a client playing Baby could not choose
+  anything there, so the run stayed on the level-up screen until that player left.
+- Captain and Barnacle online: a client's level-up panels now show the bigger values these give to
+  level-up options. Before, a client showed the normal values for that player's options, although
+  the bigger ones were applied.
 - Player colours stay picked for as long as you are in the lobby: a new run starts with everyone's
   colour from the run before, also when you join into another slot or the host plays on another
   controller, and nobody else can take your colour while you have not joined yet. Dropping out
   mid-run and rejoining keeps your colour. Leaving the lobby before the run drops it. Once the host
   closes the lobby, a colour lasts only while its player keeps their slot: the next run starts with
   the game's colours, unless the host opens a new lobby before it.
+- Player colours on the character selection no longer change because someone else joins or
+  leaves: when a player who picked a colour comes back into the lobby, the others keep theirs and
+  the returning player gets their colour if it is free, else a free one. A couch player who joined
+  before the host keeps the colour they see when the host joins (the host gets theirs back next
+  run), and a host who picked on the keyboard and changes colour on a gamepad can now go back to
+  the keyboard colour.
 - Magma Boots on a client: another player's trail now shows all of its fire puddles. Before, once
   the first puddles had burnt out, only one at a time flashed up for a moment.
 - Acid and petrol puddles on a client no longer go invisible. Before, a puddle that came after
