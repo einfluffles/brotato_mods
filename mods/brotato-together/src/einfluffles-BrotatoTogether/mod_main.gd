@@ -226,6 +226,7 @@ func _add_player_control() -> void:
 	pause_control.state_stream = state_stream
 	pause_control.setup(session, input_sync)
 	pause_control.battle_client = battle_client
+	pause_control.shop_sync = shop_sync
 	battle_host.pause_control = pause_control
 	absent_players = _add("sync/absent_players.gd", "AbsentPlayers")
 	absent_players.setup(session, input_sync, battle_host)

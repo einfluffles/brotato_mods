@@ -1008,10 +1008,15 @@ Prediction is off, and the player stands at the host's position, in these cases:
 - The newest snapshot is older than 600 ms (`Protocol.STALL_LIMIT_MSEC`). Shorter snapshot stalls
   are ridden out, because the host still gets the inputs during a stall of the snapshots alone, so
   the prediction is right.
-- The wave has ended. `main.clean_up_room` stops the host's players (`Player.on_room_cleanup` sets
-  `_can_move` false) in the call that sets `_cleaning_up`, so the snapshots carry `EVENT_WAVE_END`
-  from then on (a repeated state event). The client takes it on arrival (`_note_wave_end`), not at render time.
 - The player is dead.
+
+**Wave end.** `main.clean_up_room` stops the host's players (`Player.on_room_cleanup` sets
+`_can_move` false) in the call that sets `_cleaning_up`, so the snapshots carry `EVENT_WAVE_END`
+from then on (a repeated state event). The client takes it on arrival (`_note_wave_end`), not at
+render time. Prediction stops, and the own player stays where it was last drawn
+(`BattleClient._stand_own`). The host's player stands a few steps behind it: the inputs the client
+predicted before it heard of the wave's end. Blending back to the host's position looked like a
+step back (`input_ack_tests.gd`, `_test_wave_end`).
 
 Nothing else stops a player mid-wave (`_move_locked` is used by enemies only).
 
@@ -1062,8 +1067,10 @@ newest snapshot has them:
 means resumed. `pause_battle` is flushed by `BattleHost._physics_process` on the change, `pause_shop`
 on the menu's paused / unpaused.
 
-- In the host's shop, a remote player's pause hands the menu to the first local player. The player
-  who paused resumes with pause (main page only).
+- In the host's shop, remote buttons are blocked, pause included (`ShopSync._block_remote_buttons`):
+  a client's pause opens its own menu (see the live menu below). A pause the host's menu gets for
+  a remote player (focus loss names player 0) goes to the first local player; the player who paused
+  resumes with pause (main page only).
 - On a client, a host pause shows a banner over the scene ("PAUSE", "Paused by ...") on the pause
   menu's own backdrop. While the host is paused the client's own panel takes no input, every press
   except pause is dropped (`InputSync.held_while_paused_mask`), and a button held through the pause
@@ -1092,6 +1099,20 @@ opens without pausing.
   disabled. Quit switches the menu to its lobby page with the leave question.
 - The menu closes when the wave ends on that machine (level-up panels, retry prompt,
   `BATTLE_END`).
+- Client in the shop (`PauseControl.client_shop_update`): the same menu over its copy of the shop,
+  live while it has an own panel and the host is not paused (the host's pause closes it). The
+  menu's buttons reach the own slot's device, which the shop's own handlers read too (lock, steal,
+  ban, page triggers, the cursors), so while it is open the shop node and its `FocusEmulator1..4`
+  take no input, `ShopLocal.set_menu_open` takes the own panel's device and mouse, and the game's
+  `on_paused` hides the shop's content. Closing puts the other players' cursors back
+  (`FocusSync.reapply`): they could not apply to hidden controls. `PauseControl` keeps that shop
+  by instance id (`_inert_shop_id`) and forgets it once it is freed. `open_menu` (a lobby
+  question from outside the menu) opens this menu too. Tested in `shop_menu_tests.gd` (suite
+  `local_shop`), also through `_update_live_menu`.
+- A menu freed with its scene while open (the host starts the wave while a client's menu is open
+  in the shop) drops the codex first (the extension's `_exit_tree`): the codex sets itself as
+  `Utils._popup` and clears that only in its own close path, and `FocusEmulator` asks
+  `Utils._popup` on every cursor move, which crashes a release build once it is freed.
 
 ### End of battle and wave lifetime
 
@@ -1731,6 +1752,19 @@ gets the keyboard focus loses it in the same frame.
   `ui_info` is held. The copy makes the same calls when the state differs from what its panel
   shows. The host reads the value off its panels (`MenuSync.shows_character`).
 
+**Locked in.** The game lets a co-op player's cursor wander after the pick, and accept on another
+character replaces the pick. The `FocusEmulator` extension
+(`_locked_in`) spends a selected player's moves and accepts, and ignores the Godot focus for it,
+on every `BaseSelection` screen (character, weapon, difficulty) while `_has_player_selected` holds:
+until cancel clears it or the screen moves on. On a client's copy the flags are the host's, so its
+cursors stay too. A player who leaves character selection takes the pick along: the game keeps
+`_has_player_selected` and `_player_characters` per slot, so the next player in that slot (a
+rejoin, a player moving up) would start locked in on the old character. The `CharacterSelection`
+extension's `_on_connected_players_updated` clears every slot from the first one whose device
+changed (`_bt_slot_devices`), on the host only. Weapon and difficulty selection need nothing:
+players join and leave only while the game listens for joins (character selection, the co-op
+resume screen), so their slots do not change there. Suite `selection` checks both.
+
 **Locked characters.** The game's `LockedPanel` shows on the copy through the same code, locked
 where the host has it locked. The text is this machine's, so it is localised.
 
@@ -1843,6 +1877,15 @@ free, non-connecting slot while `CoopService.listening_for_inputs` (the game sho
 hint, `COOP_HOLD_TO_JOIN`, only in the next free slot), and adds a "Player N" label (`COOP_PLAYER`) in the slot colour at the top of the
 slot. The label's vertical size flags are 0, because a Label's default would centre it over the
 hint.
+
+**Host first.** In character selection the host's player joins first: the `CoopService`
+extension's `_process`, which runs before the game's, holds back every remote (virtual) device's
+hold timer while no device of this machine is in `connected_players` (`bt_holds_wait`,
+`bt_local_joined`). It sets the timer to minus the frame's delta, so the game's `+= delta` leaves
+it at 0 even after one long frame. A remote player who holds early joins a full hold after the
+host's player is in. This is about the order of joining only: when the host's pad disconnects,
+the game moves the remote players up. The co-op resume screen is not held back, because its slot
+order decides who gets which saved character. Suite `selection` checks it (`host_first_tests.gd`).
 
 ### Popup
 
@@ -2102,8 +2145,11 @@ copy of the "life bars on bosses" button). It is this machine's. Off: the rows a
 carousels' last page is the one before (`carousel.max_index`), the solo tab is hidden. Stored by
 `session/settings.gd` in the Mod Loader's config (`config_schema` in `manifest.json`, default on;
 `user://mod_configs/einfluffles-BrotatoTogether/settings.json`, because the loader's "default"
-config cannot be written). When the host has it off, it shows a client that is on the damage page
-on the page before and passes that on.
+config cannot be written). It governs the panels of this machine's players only
+(`DamageMeter.shown_for`: on the host the slots on a local device, on a client its own slot): the
+panel of a player on another machine keeps the damage page, so a host with the meter off neither
+clamps a client's page nor passes a clamped one on. The views re-apply this every frame, because
+slots and a client's own slot can change after a page was added.
 
 Dart traps have no row: the game ships them without a tracking key. Their damage is in the
 total and so in Other.
@@ -2423,9 +2469,9 @@ As of 2026-11-22, protocol 32.
 - A client's live menu is keyboard and pad only. A spectator has none.
 - Options changed by a client are written to disk only after the session.
 - The "Damage meter" label and the meter's own texts ("Run, N waves", "Other", "included",
-  kills and damage taken) are English only. With the host's meter off, nobody reaches the damage
-  page at the end of run. With the host's meter on and a client's off, the host's carousel for that
-  client can stand on the damage page while the client shows the page before.
+  kills and damage taken) are English only. With a client's meter off, the host's carousel for
+  that client at the end of run can stand on the damage page while the client shows the page
+  before (the host does not know the client's switch).
 
 **Progress for clients**
 

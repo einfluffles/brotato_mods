@@ -43,6 +43,33 @@ func _ready() -> void:
 	_bt_init_colors()
 
 
+# In character selection a remote player's hold to join counts only once a player of this machine
+# is in, so the host's player joins first. Runs before the game's _process (both levels are
+# called), which adds delta: from -delta even one long frame cannot reach HOLD_DURATION.
+func _process(delta: float) -> void:
+	if not bt_holds_wait(get_tree().current_scene):
+		return
+	for device in _hold_timers:
+		if VirtualDevices.is_virtual(device):
+			_hold_timers[device] = -delta
+
+
+# Not on the co-op resume screen: its slot order decides who gets which saved character.
+func bt_holds_wait(scene: Node) -> bool:
+	return (
+		scene != null
+		and scene.filename == MenuData.character_selection_scene
+		and not bt_local_joined()
+	)
+
+
+func bt_local_joined() -> bool:
+	for player in connected_players:
+		if not VirtualDevices.is_virtual(player[0]):
+			return true
+	return false
+
+
 # The game would type a remote player's virtual device as keyboard (no joypad name); as a
 # gamepad, stick aim applies. Its key hints follow bt_device_types.
 func _add_player(device: int, player_type: int) -> void:

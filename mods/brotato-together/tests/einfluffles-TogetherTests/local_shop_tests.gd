@@ -33,6 +33,7 @@ const ShopModIntentTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_mod_intent_tests.gd"
 )
 const ShopGearTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_gear_tests.gd")
+const ShopMenuTests := preload("res://mods-unpacked/einfluffles-TogetherTests/shop_menu_tests.gd")
 const PISTOL := "weapon_pistol_1"
 const ShopPopupMouseTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/shop_popup_mouse_tests.gd"
@@ -61,6 +62,7 @@ var _gear = ShopGearTests.new()
 var _popups = ShopPopupMouseTests.new()
 var _cursors = ShopCursorTests.new()
 var _popup_views = ShopPopupViewTests.new()
+var _menu = ShopMenuTests.new()
 
 
 func run(t: Node, together: Node):
@@ -140,8 +142,8 @@ func _host_blocked_buttons(together: Node):
 	_sync._block_remote_buttons(true)
 	var pause_bit: int = 1 << VirtualDevices.PAUSE_INDEX
 	_t._check(
-		_input.blocked_mask() & BIT_ACCEPT != 0 and _input.blocked_mask() & pause_bit == 0,
-		"shop blocks remote buttons on the host, except pause"
+		_input.blocked_mask() & BIT_ACCEPT != 0 and _input.blocked_mask() & pause_bit != 0,
+		"shop blocks remote buttons on the host, pause too (a client's pause is its own menu)"
 	)
 	together.upgrades_sync._block_remote_buttons(false)  # what it does every frame in a shop
 	_t._check(_input.blocked_mask() & BIT_ACCEPT != 0, "the level-up panels don't lift the block")
@@ -476,6 +478,7 @@ func _client_part(together: Node):
 	local.set_paused(false)
 	_t._check(_input._local_buttons != null, "and back on afterwards")
 	_t._check(local_panel.has_own(), "the mouse too")
+	yield(_menu.client(self, together, shop, emulator), "completed")
 	local.take_over(REMOTE)
 	_t._check(
 		local_panel._own == shop._get_coop_player_container(REMOTE) and local_panel.has_own(),
@@ -488,6 +491,7 @@ func _client_part(together: Node):
 		"local control ends with the shop"
 	)
 	_t._check(not local_panel.has_own(), "and LocalPanel lets go of the own panel")
+	yield(_menu.client_leave(self, together, shop), "completed")
 
 
 func _client_ban(node: Node, before: String):

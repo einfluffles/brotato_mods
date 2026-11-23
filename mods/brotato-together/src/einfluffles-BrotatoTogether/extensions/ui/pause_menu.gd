@@ -102,6 +102,15 @@ func _drop_codex() -> void:
 	codex_is_opened = false
 
 
+# Freed with its scene while open (a client's menu in the shop when the host starts the wave): the
+# codex sets itself as Utils._popup and clears that only in its own close path, and the game's
+# cursors ask Utils._popup on every move (a release build crashes on a freed one).
+func _exit_tree() -> void:
+	_drop_codex()
+	if Utils._popup == _menus._codex:  # closing: the rest of its close path waits on a timer
+		Utils._popup = null
+
+
 # Nothing to pause in live mode: the game runs on for the others.
 func on_game_lost_focus() -> void:
 	if live and not get_tree().paused:

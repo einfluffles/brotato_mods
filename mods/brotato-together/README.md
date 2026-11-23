@@ -58,8 +58,14 @@ used like them, with mouse, keyboard or gamepad.
 ### In a run
 
 - **Joining the run:** the host opens co-op character selection. Remote players hold *accept*
-  (Space / Enter / A) to join, like local players. Every free slot shows "Player N" and the
-  game's hold-to-join hint, on the host and on clients.
+  (Space / Enter / A) to join, like local players. The host joins first: a remote player's hold
+  counts only once a player of the host's machine is in, so the host's player starts in slot 1.
+  The co-op resume screen is not held back, since there the slots decide who gets which saved
+  character. Every free slot shows "Player N" and the game's hold-to-join hint, on the host and on
+  clients.
+- **Locking in:** once you have picked your character (or weapon), your cursor stays on it until
+  you cancel or everybody is ready and the game goes on. A player who leaves character selection
+  takes the pick along: whoever gets that slot next starts free.
 - **Colours:** in character selection each player changes their colour with **F** (keyboard) or
   **Y** (gamepad; Triangle on PlayStation pads). It cycles through 8 colours and skips those that
   other players have. The colour is used wherever the game uses player colours (cursor, panels,
@@ -81,7 +87,7 @@ used like them, with mouse, keyboard or gamepad.
 | Where | What happens |
 |---|---|
 | Wave, with friends connected | Nothing pauses, also not when a window loses focus. Esc opens the menu over the running wave. The host gets the game's menu, and its character stands still meanwhile. A client gets its own copy for the options and the codex. Restart and end run stay with the host, and a client's *Quit* asks to leave the lobby. |
-| Shop | Anyone can pause. The host operates the pause menu, and whoever paused can resume with pause again. |
+| Shop | The host's pause pauses everyone, and clients see who paused. A client's Esc opens its own menu over its shop (options, codex, *Online co-op*), as in a wave: nothing pauses, and its panel waits while the menu is open. |
 | Level-up / crate panels | Only the host's own players can pause. A client's own panel keeps running, and a choice made there waits until the host resumes. |
 | Host with nobody connected | The game pauses as always. |
 
@@ -122,7 +128,8 @@ used like them, with mouse, keyboard or gamepad.
   Belt, Greek Fire, Scared Sausage) show as "included", and an "Other" row holds the rest. In co-op
   it also shows each player's share of the team's damage. Nobody is held up
   while a player looks at it. It also works offline. **Options, Gameplay, Damage meter** switches
-  it on or off for your machine; the choice is kept in the Mod Loader's config, because the game
+  it on or off for your machine: your HUD and your own panel's page. Other players' panels show
+  what those players see. The choice is kept in the Mod Loader's config, because the game
   has no settings screen for mods. It is modelled on the
   [Damage Meter](https://steamcommunity.com/sharedfiles/filedetails/?id=3578347192) mod by
   Oudstand, which is not needed next to this mod (with both, each shows its own). That mod's
@@ -234,7 +241,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 |---|---|
 | `core` | Virtual input devices and remote input reaching the game, the snapshot wire format, the session lifecycle on a fake Steam, a client borrowing the host's DLC, the run-state round trip. |
 | `battle_loopback` | A real host battle replayed on a client, the own-player prediction, the level-up / crate panels (mirrored, the own panel with pad, keyboard and mouse, decisions checked by the host), a 400 ms snapshot gap. |
-| `input_ack` | A remote player moved one step per acknowledged input against the client's prediction, with jitter, lost packets and gaps. |
+| `input_ack` | A remote player moved one step per acknowledged input against the client's prediction, with jitter, lost packets and gaps; the own player standing still at the wave's end. |
 | `pose_mirror` | Parts the game turns in physics code (a bullet ring, a gun's aim, a dino's heading), facing and hidden flags. |
 | `anim_mirror` | Animations the game starts from physics code (a turret, a catling gun, a spitter), played on puppets without their side effects. |
 | `runtime_parts` | Parts the game adds, frees or shows during a wave. |
@@ -242,7 +249,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `bullet_hell_left`, `bullet_hell_top`, `bullet_hell_bottom` | Every visible enemy bullet of a bullet-hell wave is in the snapshot and mirrored (one suite per variant). |
 | `menu_ux` | The wave-failed prompt and its cursor on clients, the change from the battle to the next screen. |
 | `shop_loopback` | The host's real co-op shop and a purchase mirrored on a client with cursor and sounds, the weapons row (Anvil at shop entry, a new weapon slot). |
-| `local_shop` | The own shop panel on a client, decisions applied or refused by the host, locks, the meca upgrade, the reroll's stat text, another mod's decision, the mouse on the item popup, the own popup kept open through a gear change, the wheel. |
+| `local_shop` | The own shop panel on a client, decisions applied or refused by the host, locks, the meca upgrade, the reroll's stat text, another mod's decision, the mouse on the item popup, the own popup kept open through a gear change, the wheel, the client's own pause menu (also when the shop goes with it open). |
 | `local_device` | Which screen drives a client's own input from the level-up panels to the shop, with a host pause across the change. |
 | `pause_input` | Remote button presses, timeouts and pause, menu echo, the own aim setting, who owns the pause menu, absent players. |
 | `live_menu` | The Esc menu over a running online wave, on the host and on a client. |
@@ -252,12 +259,12 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `feedback` | Explosions, floating texts, stat icons, picked-up crates, tardigrade charges, the end of the wave, the whip's and flail's lash. |
 | `hit_numbers` | Damage and heal numbers on a client: 80 hits in one tick, a flood of hits that fills the host's queue, a hit in an enemy's spawn tick, a hit on a pet, a hit and a heal in one snapshot, a lost snapshot, burn ticks and hits on a unit with an aim shape. |
 | `looks` | Charmed, burning, cursed, boosted, meca and mutant looks, puddles, projectile angles. |
-| `damage` | The damage meter: counting, the row in the wave, the pages, the switch. |
+| `damage` | The damage meter: counting, the row in the wave, the pages, the switch (this machine's players only). |
 | `damage_run` | The damage meter in real waves: the total against the health lost with Giant Belt, Scared Sausage and Greek Fire, in a crowded wave past the game's cap on enemies and for a hit on an enemy the cap removed, the end of the wave before its panels, the run stats over waves, retries and new runs. |
 | `battle_scene` | A breaking weapon, the hole layout, a stomped hole, the host's speed in the own-player prediction, walking into holes. |
 | `puddle_reuse` | Trails of fire (another player's magma boots), acid and petrol puddles on a client, also once the puddle puppets come back from the pool. |
 | `dead_player` | A player who died stays visible when the next wave starts him at 0 health. |
-| `selection` | The host's selection screens and end of run on a client, colours and join hints, the shared character grid, wheel and right stick. |
+| `selection` | The host's selection screens and end of run on a client, colours and join hints, the shared character grid, wheel and right stick, a locked-in cursor and a player who leaves after the pick, the host's player joining first. |
 | `state_stream` | The state stream on a fake session: change keys, resyncs, states held for a full send queue, malformed messages. |
 | `shop_change` | Change detection of the shop's run state and what a check costs. |
 | `run_parts` | The run state in parts: which parts each change sends, the client building the same run, resyncs. |

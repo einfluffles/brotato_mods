@@ -1,7 +1,8 @@
 extends Node
 # Who may pause and who operates the pause menu. During a wave of an online session the menu is
-# live (extensions/ui/pause_menu.gd): the game runs on behind it. Everything else is a real pause;
-# a remote player cannot see the host's menu, so it goes to the host's first local player.
+# live (extensions/ui/pause_menu.gd): the game runs on behind it. A client's Esc in the shop opens
+# its own menu the same way, over its copy of the shop. Everything else is a real pause; a remote
+# player cannot see the host's menu, so it goes to the host's first local player.
 
 const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
@@ -24,6 +25,7 @@ var session: Node = null
 var state_stream: Node = null
 var input_sync: Node = null
 var battle_client: Node = null
+var shop_sync: Node = null  # client: the copy of the shop and its own panel there
 var lobby_menu: Node = null  # client: Quit asks there
 
 var _menu: Node = null  # PauseMenu that is open
@@ -34,6 +36,7 @@ var _held_device := -1
 var _scene_id := 0  # instance id of the scene whose pause menu is watched
 
 var _pause_armed := false  # client: own pause went down while the buttons were the game's
+var _inert_shop_id := 0  # client: instance id of its shop while its own menu is open there
 
 
 func setup(netplay_session: Node, remote_input: Node) -> void:
@@ -268,14 +271,22 @@ func _update_live_menu() -> void:
 		return
 	input_sync.blocked_by.erase(BLOCK_KEY)
 	_hold_player(null)
+	if _inert_shop_id != 0 and instance_from_id(_inert_shop_id) == null:
+		_inert_shop_id = 0  # it went with the menu open; ShopLocal.leave let go of its panel
 	if main != null and is_client_battle(main):
 		client_update(main, battle_client._you)
 		return
+	var shop: Node = _client_shop(scene)
+	if shop != null:
+		client_shop_update(shop, shop_sync.own_player())
+		return
 	input_sync.set_local_menu(-1)
 	_pause_armed = false
-	# No session any more, or a client's battle that is over and still on screen.
-	var menu = main.get("_pause_menu") if main != null else null
-	if menu != null and menu.live:
+	if _inert_shop_id != 0:
+		_set_shop_inert(null, false)
+	# No session any more, or a client's battle or shop that is over and still on screen.
+	var menu = scene.get("_pause_menu") if scene != null else null
+	if menu is PauseMenu and menu.live:
 		menu.live = false
 		if menu.live_open:
 			menu.unpause()
@@ -331,8 +342,65 @@ func client_update(main: Node, you: int) -> void:
 	menu.live = wave_on
 	if menu.live_open and not wave_on:
 		menu.unpause()
-	# Released like the game's own check, but only after a press that was the game's: the lobby
-	# popup releases the actions of the keys it takes.
+	_poll_client_pause(menu, you)
+	var device: int = CoopService.get_remapped_player_device(you) if menu.live_open else -1
+	input_sync.set_local_menu(device)
+
+
+# The client's puppet shop, when it is the current scene.
+func _client_shop(scene: Node) -> Node:
+	if shop_sync == null or not session.is_client() or not shop_sync.is_in_shop():
+		return null
+	return scene if scene == shop_sync._client_shop else null
+
+
+# you: the client's own panel (-1: none). The host's pause closes the menu: its banner shows.
+func client_shop_update(shop: Node, you: int) -> void:
+	var menu = shop.get("_pause_menu")
+	if not (menu is PauseMenu):
+		return
+	_prepare_client_menu(menu)
+	menu.live = you >= 0 and not input_sync.is_host_paused()
+	if menu.live_open and not menu.live:
+		menu.unpause()
+	_poll_client_pause(menu, you)
+	if menu.live_open:
+		_set_shop_inert(shop, true)
+		input_sync.set_local_menu(CoopService.get_remapped_player_device(you))
+	else:
+		input_sync.set_local_menu(-1)
+		_set_shop_inert(shop, false)
+
+
+# The menu's buttons reach the own slot's device, which the shop's own handlers read too
+# (lock, ban, page triggers, the cursors): they get nothing while it is open. The game hides the
+# shop's content meanwhile (on_paused), so other players' cursors are put back afterwards.
+func _set_shop_inert(shop: Node, inert: bool) -> void:
+	var target_id: int = shop.get_instance_id() if inert else 0
+	if target_id == _inert_shop_id:
+		return
+	var before = instance_from_id(_inert_shop_id)  # null: none, or freed
+	if before != null:
+		_take_shop_input(before, true)
+	_inert_shop_id = target_id
+	if inert:
+		_take_shop_input(shop, false)
+	shop_sync.local.set_menu_open(inert)
+	if not inert and shop_sync.focus_sync != null:
+		shop_sync.focus_sync.reapply()
+
+
+static func _take_shop_input(shop: Node, on: bool) -> void:
+	shop.set_process_input(on)
+	for p in RunData.get_player_count():
+		var emulator = Utils.get_focus_emulator(p, shop)
+		if emulator != null:
+			emulator.set_process_input(on)
+
+
+# Released like the game's own check, but only after a press that was the game's: the lobby
+# popup releases the actions of the keys it takes.
+func _poll_client_pause(menu: Node, you: int) -> void:
 	var blocked: bool = input_sync.local_input_blocked
 	if Input.is_action_just_pressed("ui_pause"):
 		_pause_armed = not blocked
@@ -340,8 +408,6 @@ func client_update(main: Node, you: int) -> void:
 		if _pause_armed and not blocked:
 			toggle_client_menu(menu, you)
 		_pause_armed = false
-	var device: int = CoopService.get_remapped_player_device(you) if menu.live_open else -1
-	input_sync.set_local_menu(device)
 
 
 func toggle_client_menu(menu: Node, you: int) -> void:
@@ -371,7 +437,8 @@ func _on_client_quit(_menu: Node) -> void:
 
 
 # The current scene's pause menu, opened for this machine's player if it is closed (live during
-# an online wave, a pause otherwise); null if there is none or it does not open.
+# an online wave and for a client in the shop, a pause otherwise); null if there is none or it does
+# not open.
 func open_menu() -> Node:
 	var scene := get_tree().current_scene
 	var menu = scene.get("_pause_menu") if scene != null else null
@@ -380,6 +447,15 @@ func open_menu() -> Node:
 	if not menu.visible:
 		if not session.is_client():
 			menu.pause(int(max(local_player_index(), 0)))
-		elif menu.live and is_client_battle(scene) and battle_client._you >= 0:
-			menu.open_live(battle_client._you)
+		elif menu.live and _live_player(scene) >= 0:
+			menu.open_live(_live_player(scene))
 	return menu if menu.visible else null
+
+
+# Client: the own slot whose live menu the scene has (-1: none).
+func _live_player(scene: Node) -> int:
+	if is_client_battle(scene):
+		return battle_client._you
+	if _client_shop(scene) != null:
+		return shop_sync.own_player()
+	return -1

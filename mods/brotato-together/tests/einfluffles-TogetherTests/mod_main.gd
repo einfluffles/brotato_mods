@@ -77,6 +77,7 @@ const SelectionScreenTests := preload(
 const CoopSelectionTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/coop_selection_tests.gd"
 )
+const HostFirstTests := preload("res://mods-unpacked/einfluffles-TogetherTests/host_first_tests.gd")
 const FeedbackTests := preload("res://mods-unpacked/einfluffles-TogetherTests/feedback_tests.gd")
 const HitNumbersTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/hit_numbers_tests.gd"
@@ -593,6 +594,8 @@ func _suite_selection(together: Node):
 	yield(_suite.run(self, together), "completed")
 	_suite = MenuPuppetTests.new()
 	yield(_suite.run(self, together), "completed")
+	_suite = HostFirstTests.new()
+	yield(_suite.run(self, together), "completed")
 	_suite = SelectionScreenTests.new()
 	yield(_suite.run(self, together), "completed")
 
@@ -618,18 +621,26 @@ func _suite_core(together: Node):
 	CoopService.set_process_input(true)
 	input_sync.devices[FAKE_PEER] = DEVICE
 	_send(input_sync, Vector2.ZERO, Vector2.ZERO, 0)  # first packet: nothing held
+	# The host's player first, as in character selection (host_first_tests.gd).
+	CoopService._add_player(
+		CoopService.KEYBOARD_REMAPPED_DEVICE_ID, CoopService.PlayerType.KEYBOARD_AND_MOUSE
+	)
 	# Hold accept for longer than CoopService.HOLD_DURATION (time-based: headless frames are uncapped).
 	var hold_until := OS.get_ticks_msec() + int(CoopService.HOLD_DURATION * 1000) + 300
 	while OS.get_ticks_msec() < hold_until:
 		_send(input_sync, Vector2(0.5, 0.0), Vector2(0.0, -1.0), BIT_ACCEPT)
 		yield(get_tree(), "idle_frame")
 	_check(CoopService.is_device_assigned(DEVICE), "virtual device joined co-op")
+	_check(
+		CoopService.get_remapped_player_device(0) == CoopService.KEYBOARD_REMAPPED_DEVICE_ID,
+		"the host's player keeps the first slot"
+	)
 	if CoopService.is_device_assigned(DEVICE):
 		_check(
-			CoopService.get_player_input_type(0) == CoopService.PlayerType.GAMEPAD_XBOX,
+			CoopService.get_player_input_type(1) == CoopService.PlayerType.GAMEPAD_XBOX,
 			"virtual player typed as gamepad"
 		)
-		_check(Utils.get_player_rjoy_vector(0).is_equal_approx(Vector2(0, -1)), "aim reaches game")
+		_check(Utils.get_player_rjoy_vector(1).is_equal_approx(Vector2(0, -1)), "aim reaches game")
 
 	var move := Input.get_vector(
 		"analog_move_left_%s" % DEVICE,

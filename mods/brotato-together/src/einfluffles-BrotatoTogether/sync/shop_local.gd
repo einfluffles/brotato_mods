@@ -43,6 +43,7 @@ var _shop: Node = null  # the puppet shop whose handlers are cut
 var _shop_id := 0
 var _own := []  # [source, signal, method]: this file's handlers on the own panel
 var _paused := false  # the host paused: the pause menu is the host's, nothing runs here
+var _menu_open := false  # this client's own pause menu is open over the shop (PauseControl)
 var _host_ready := false  # the own Go flag as the host has it
 var _unready_sent := false
 var _go_sent := false  # "go 1" left and the host's ready flag is not here yet
@@ -126,6 +127,7 @@ func stop(reason := "stopped") -> void:
 
 func leave(shop: Node) -> void:
 	if shop == _shop:
+		_menu_open = false
 		stop("shop left")
 		_shop = null
 		local_panel = null  # freed with the shop
@@ -154,10 +156,25 @@ func set_paused(paused: bool) -> void:
 	_apply_local_panel()
 
 
+# The own pause menu takes the local buttons and the mouse meanwhile.
+func set_menu_open(open: bool) -> void:
+	if open == _menu_open:
+		return
+	_menu_open = open
+	_apply_device("own menu opened" if open else "own menu closed")
+	_apply_local_panel()
+
+
+func is_menu_open() -> bool:
+	return _menu_open
+
+
 func process() -> void:
 	if is_instance_valid(local_panel):
 		# Also while nothing is local: LocalPanel stops mouse events over the panels otherwise.
-		local_panel.blocked = input_sync != null and input_sync.local_input_blocked
+		local_panel.blocked = (
+			_menu_open or input_sync != null and input_sync.local_input_blocked
+		)
 	if not active:
 		return
 	if not is_instance_valid(_shop) or not _shop.is_inside_tree():
@@ -223,7 +240,11 @@ static func _disconnect(source: Object, signal_name: String, target: Object, met
 
 
 func _wanted_device() -> int:
-	return CoopService.get_remapped_player_device(you) if active and not _paused else -1
+	return CoopService.get_remapped_player_device(you) if _runs_here() else -1
+
+
+func _runs_here() -> bool:
+	return active and not _paused and not _menu_open
 
 
 func _apply_device(reason: String) -> void:
@@ -263,7 +284,7 @@ func _add_local_panel() -> void:
 func _apply_local_panel() -> void:
 	if not is_instance_valid(local_panel):
 		return
-	var player := you if active and not _paused else -1
+	var player := you if _runs_here() else -1
 	if player == _panel_player:
 		return
 	_panel_player = player

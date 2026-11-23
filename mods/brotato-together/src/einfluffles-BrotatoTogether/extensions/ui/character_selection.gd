@@ -7,6 +7,30 @@ const PuppetMenu := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet_menu.gd"
 )
 
+var _bt_slot_devices := []  # device per slot at the last change of the players
+
+
+# A player who leaves takes its pick along. The game keeps a slot's pick (_has_player_selected,
+# _player_characters), so whoever takes the slot next (a rejoin, a player moving up) would start
+# locked in on it, with that character. Cleared from the first slot that changed on; a client's
+# copy shows the host's picks.
+func _on_connected_players_updated(connected_players: Array, initialize: bool) -> void:
+	var devices := []
+	for player in connected_players:
+		devices.append(player[0])
+	if not initialize and not PuppetMenu.Puppet.is_active():
+		var first := 0
+		while (
+			first < devices.size()
+			and first < _bt_slot_devices.size()
+			and devices[first] == _bt_slot_devices[first]
+		):
+			first += 1
+		for p in range(first, min(_bt_slot_devices.size(), _has_player_selected.size())):
+			_clear_selected_element(p)
+	_bt_slot_devices = devices
+	._on_connected_players_updated(connected_players, initialize)
+
 
 func _get_all_possible_elements(player_index: int) -> Array:
 	var elements = PuppetMenu.elements(player_index)

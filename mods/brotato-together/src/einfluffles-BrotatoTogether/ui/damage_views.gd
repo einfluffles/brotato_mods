@@ -2,7 +2,8 @@ extends Node
 # Where the damage meter shows: a block at each player's life bar in a wave, a carousel page in
 # the co-op shop / end of run, a third stats tab in the solo ones. The shop shows the wave before
 # it, the end of run the whole run (the board's "run", else that wave too). All of it is gone
-# while the meter is switched off on this machine (DamageMeter.shown).
+# while the meter is switched off on this machine (DamageMeter.shown), except the pages of players
+# on other machines.
 
 const BATTLE_SCENE := "res://main.tscn"
 const SOLO_END_RUN := "res://ui/menus/run/end_run.tscn"
@@ -81,6 +82,9 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	for view in _views:  # who plays a panel here can change (slots, the client's own one)
+		if is_instance_valid(view[0]):
+			_apply_shown(view[0])
 	var scene := get_tree().current_scene
 	var scene_id := scene.get_instance_id() if scene != null else 0
 	if scene_id == _scene_id:
@@ -506,18 +510,20 @@ func _fill_other(row: ProgressBar, total: int, other: int, top: int) -> void:
 
 
 # Switched off, the page stays in the carousel but past its max_index, and a player on it goes
-# back one page. The solo tab is hidden.
+# back one page. The solo tab is hidden. Another machine's player keeps the page (shown_for).
 func _apply_shown(holder: Control) -> void:
 	if holder.has_method("bt_set_tab_enabled"):
 		holder.bt_set_tab_enabled(meter.shown)
 		return
 	var carousel = holder.carousel
 	var page: int = holder.get_meta(PAGE_META)
-	var limit := -1 if meter.shown else page - 1
+	var p = holder.get("player_index")
+	var shown: bool = meter.shown_for(p if p != null else -1)
+	var limit := -1 if shown else page - 1
 	if carousel.max_index == limit:
 		return
 	carousel.max_index = limit
-	if not meter.shown and carousel.index >= page:
+	if not shown and carousel.index >= page:
 		carousel.index = page - 1
 		holder._on_Carousel_index_changed(carousel.index)
 	else:

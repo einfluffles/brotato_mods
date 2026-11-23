@@ -247,7 +247,7 @@ func _test_long_gap():
 
 
 # The wave ends with the stick held: the host's player stands (Player.on_room_cleanup) and the
-# client stops predicting at EVENT_WAVE_END.
+# client's own player stays where it was shown, ahead of the host's, without gliding back.
 func _test_wave_end():
 	var wave_end := 20
 	var moves := _moves([[40, -direction], [20, Vector2.ZERO]])
@@ -256,24 +256,20 @@ func _test_wave_end():
 	var before: Array = records[wave_end - 2]
 	var at_end: Array = records[wave_end - 1]
 	t._check(
-		before[7].distance_to(before[2]) > step / 2.0,
+		before[3].distance_to(before[2]) > step / 2.0,
 		(
 			"wave end: the client ran ahead of the host before it (%.1f px)"
-			% before[7].distance_to(before[2])
+			% before[3].distance_to(before[2])
 		)
 	)
 	var host_moved := 0.0
-	var target_off := 0.0  # px between the client's target and the host's position
-	var grew := 0.0  # px the display moved away from the host's position in one tick
+	var own_moved := 0.0  # px the shown own player moved from where it was before the wave end
 	var walking := false
 	for k in range(wave_end - 1, records.size()):
 		var record: Array = records[k]
 		host_moved = max(host_moved, record[2].distance_to(at_end[2]))
-		target_off = max(target_off, record[7].distance_to(record[2]))
+		own_moved = max(own_moved, record[3].distance_to(before[3]))
 		walking = walking or record[8] != Vector2.ZERO
-		if k > wave_end - 1:
-			var apart: float = record[3].distance_to(record[2])
-			grew = max(grew, apart - records[k - 1][3].distance_to(records[k - 1][2]))
 	t._check(host_moved < EPSILON, "wave end: the host's player stands (moved %.2f px)" % host_moved)
 	var ack: int = records[-1][1]
 	t._check(
@@ -281,22 +277,10 @@ func _test_wave_end():
 		"wave end: the host still acks every input (ack %d of %d)" % [ack, moves.size()]
 	)
 	t._check(
-		target_off < EPSILON,
-		"wave end: the client predicts nothing, its target is the host's (%.2f px)" % target_off
+		own_moved < EPSILON,
+		"wave end: the own player stays where it was shown, no glide back (%.2f px)" % own_moved
 	)
-	var blend := 1.0 - exp(-BattleClient.PREDICTION_ERROR_DECAY / Engine.iterations_per_second)
-	var jump: float = at_end[3].distance_to(before[3])
-	t._check(
-		jump <= blend * before[3].distance_to(at_end[2]) + EPSILON,
-		"wave end: the run-ahead blends back, no snap (%.2f px in the first tick)" % jump
-	)
-	t._check(grew < EPSILON, "wave end: no snapshot corrects the player again (%.2f px)" % grew)
 	t._check(not walking, "wave end: the own player stops walking with the host's")
-	var last_apart: float = records[-1][3].distance_to(records[-1][2])
-	t._check(
-		last_apart < EPSILON,
-		"wave end: the client shows the host's position (%.2f px apart)" % last_apart
-	)
 
 
 # Feeds the bodies of moves as they arrive, on a fresh remote player state and client copy.

@@ -23,6 +23,9 @@ signal changed
 
 const StateStream := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd")
 const Settings := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/settings.gd")
+const VirtualDevices := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
+)
 const DamageLedger := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_ledger.gd"
 )
@@ -117,6 +120,21 @@ func set_shown(on: bool) -> void:
 	shown = on
 	Settings.write(SETTING, on)
 	emit_signal("changed")
+
+
+# The switch is this machine's: the panel of a player on another machine shows what that player
+# sees, so it never loses the damage page here (nor passes a clamped page on).
+func shown_for(player_index: int) -> bool:
+	return shown or not _plays_here(player_index)
+
+
+func _plays_here(player_index: int) -> bool:
+	if session != null and session.is_client():
+		return player_index == CoopService.bt_own_slot
+	var players: Array = CoopService.connected_players
+	if player_index < 0 or player_index >= players.size():
+		return true
+	return not VirtualDevices.is_virtual(players[player_index][0])
 
 
 func _process(delta: float) -> void:
