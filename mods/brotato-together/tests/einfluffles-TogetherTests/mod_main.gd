@@ -618,18 +618,39 @@ func _suite_core(together: Node):
 	CoopService.set_process_input(true)
 	input_sync.devices[FAKE_PEER] = DEVICE
 	_send(input_sync, Vector2.ZERO, Vector2.ZERO, 0)  # first packet: nothing held
+	# A hold as long as joining takes, before the host's own player is in.
+	for _i in 10:  # until the press (buffered) has started the hold
+		_send(input_sync, Vector2(0.5, 0.0), Vector2(0.0, -1.0), BIT_ACCEPT)
+		yield(get_tree(), "idle_frame")
+		if CoopService._hold_timers.has(DEVICE):
+			break
+	CoopService._hold_timers[DEVICE] = CoopService.HOLD_DURATION
+	for _i in 3:
+		_send(input_sync, Vector2(0.5, 0.0), Vector2(0.0, -1.0), BIT_ACCEPT)
+		yield(get_tree(), "idle_frame")
+	_check(
+		not CoopService.is_device_assigned(DEVICE),
+		"a remote player's hold does not count before a local player joined"
+	)
+	CoopService._add_player(
+		CoopService.KEYBOARD_REMAPPED_DEVICE_ID, CoopService.PlayerType.KEYBOARD_AND_MOUSE
+	)
 	# Hold accept for longer than CoopService.HOLD_DURATION (time-based: headless frames are uncapped).
 	var hold_until := OS.get_ticks_msec() + int(CoopService.HOLD_DURATION * 1000) + 300
 	while OS.get_ticks_msec() < hold_until:
 		_send(input_sync, Vector2(0.5, 0.0), Vector2(0.0, -1.0), BIT_ACCEPT)
 		yield(get_tree(), "idle_frame")
 	_check(CoopService.is_device_assigned(DEVICE), "virtual device joined co-op")
+	_check(
+		CoopService.get_remapped_player_device(0) == CoopService.KEYBOARD_REMAPPED_DEVICE_ID,
+		"the host's player keeps the first slot"
+	)
 	if CoopService.is_device_assigned(DEVICE):
 		_check(
-			CoopService.get_player_input_type(0) == CoopService.PlayerType.GAMEPAD_XBOX,
+			CoopService.get_player_input_type(1) == CoopService.PlayerType.GAMEPAD_XBOX,
 			"virtual player typed as gamepad"
 		)
-		_check(Utils.get_player_rjoy_vector(0).is_equal_approx(Vector2(0, -1)), "aim reaches game")
+		_check(Utils.get_player_rjoy_vector(1).is_equal_approx(Vector2(0, -1)), "aim reaches game")
 
 	var move := Input.get_vector(
 		"analog_move_left_%s" % DEVICE,

@@ -177,9 +177,31 @@ func _host_characters():
 	CoopService.connected_players = online
 	CoopService._remove_player(KEYBOARD)
 	yield(_frames(2), "completed")
+	yield(_locked_cursor(scene), "completed")
 	var state := _capture(scene, 1)
 	state["join"] = []  # the host lets players join: the empty slots show the hint
 	return {"state": state, "screen": scene.get_instance_id()}
+
+
+# A locked-in player's cursor stays on the pick until cancel (extensions/ui/focus_emulator.gd).
+func _locked_cursor(scene: Node):
+	var grid: Node = scene._get_inventories()[0]
+	var emulator = Utils.get_focus_emulator(0, scene)
+	var pick := _first(grid)
+	emulator.focused_control = pick
+	scene._set_selected_element(0)
+	yield(_nav(VirtualDevices.FIRST, "ui_right"), "completed")
+	t._check(emulator.focused_control == pick, "locked in: the cursor stays on the pick")
+	scene._clear_selected_element(0)
+	yield(_nav(VirtualDevices.FIRST, "ui_right"), "completed")
+	t._check(emulator.focused_control != pick, "after cancel: the cursor moves again")
+	emulator.focused_control = pick
+
+
+func _nav(device: int, action: String):
+	for pressed in [true, false]:
+		VirtualDevices.press_button(VirtualDevices.action(action, device), device, pressed)
+		yield(_frames(2), "completed")
 
 
 func _client_characters(host: Dictionary):

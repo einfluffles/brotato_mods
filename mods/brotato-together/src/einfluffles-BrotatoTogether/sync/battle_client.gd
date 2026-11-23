@@ -527,6 +527,9 @@ func _apply_players(
 # Newest host position plus a replay of the inputs the host hasn't applied yet. Corrections are
 # blended out; the player's own steps since the last frame are not a correction.
 func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> void:
+	if _wave_over and _own_base_t >= 0:
+		_stand_own(player, i)
+		return
 	var predicted := _own_target(player, newest.players[i])
 	var history: Array = input_sync.history
 	if _own_base_t < 0:
@@ -546,6 +549,15 @@ func _predict_own(player: Node2D, i: int, newest: Dictionary, delta: float) -> v
 	_view.note_display(_own_display, predicted + _own_error, seq - _own_seq, _predicting())
 	_own_display = predicted + _own_error
 	_own_seq = seq
+	_move(player, "p%s" % i, _own_display)
+
+
+# From the wave's end on the host's player stands, behind the inputs this client showed before it
+# knew: the own player stays where it was last drawn instead of gliding back to the host's spot.
+func _stand_own(player: Node2D, i: int) -> void:
+	_own_display = player.global_position
+	_own_error = Vector2.ZERO
+	_view.note_display(_own_display, _own_display, 0, false)
 	_move(player, "p%s" % i, _own_display)
 
 

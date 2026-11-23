@@ -43,6 +43,23 @@ func _ready() -> void:
 	_bt_init_colors()
 
 
+# A remote player's hold to join counts only once a player of this machine is in, so the host
+# always has the first slot. Runs before the game's _process (both levels are called).
+func _process(_delta: float) -> void:
+	if bt_local_joined():
+		return
+	for device in _hold_timers:
+		if VirtualDevices.is_virtual(device):
+			_hold_timers[device] = 0.0
+
+
+func bt_local_joined() -> bool:
+	for player in connected_players:
+		if not VirtualDevices.is_virtual(player[0]):
+			return true
+	return false
+
+
 # The game would type a remote player's virtual device as keyboard (no joypad name); as a
 # gamepad, stick aim applies. Its key hints follow bt_device_types.
 func _add_player(device: int, player_type: int) -> void:

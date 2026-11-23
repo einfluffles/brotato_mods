@@ -15,6 +15,9 @@ const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const Settings := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/settings.gd")
+const VirtualDevices := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
+)
 const MenuOptionsButton := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/extensions/ui/menu_options.gd"
 )
@@ -655,6 +658,18 @@ func _test_switch(shop: Node, panels: Array):
 	)
 	carousel._on_ArrowRight_pressed()
 	_t._check(carousel.index == 2, "and RB leads no further")
+	var player: Array = CoopService.connected_players[1]
+	var device: int = player[0]
+	player[0] = VirtualDevices.FIRST  # player 2 plays on another machine
+	yield(_t.get_tree(), "idle_frame")
+	carousel._on_ArrowRight_pressed()
+	_t._check(
+		carousel._get_max_index() == 3 and carousel.index == 3,
+		"switched off here: a remote player's panel keeps its damage page"
+	)
+	player[0] = device
+	yield(_t.get_tree(), "idle_frame")
+	_t._check(carousel.index == 2, "a player of this machine goes back to the page before")
 	_t._check(panels[0].carousel.index == 0, "player 1's page stays")
 	ShopIntents.apply_focus(shop, 1, 3, [])
 	_t._check(carousel.index == 2, "a page 3 from the network shows the page before")

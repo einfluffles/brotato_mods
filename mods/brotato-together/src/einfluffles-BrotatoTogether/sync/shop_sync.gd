@@ -126,7 +126,7 @@ func _process(_delta: float) -> void:
 		_shop_id += 1  # part of the state key: the new shop goes out at the next check
 		_reported_popups = {}
 		_popup_memo = {}
-	# The pause menu is the host's: a remote player who paused navigates it with its buttons.
+	# Paused, the host's menu is in charge and the shop takes no input.
 	_block_remote_buttons(not get_tree().paused)
 	_keep_reported_popups()
 
@@ -465,14 +465,13 @@ func _update_seqs(shop: Node) -> void:
 			_seqs[p] += 1
 
 
-# While the shop runs on the clients themselves, a remote button (except pause) must not also
-# press the host's copy of that player's panel.
+# While the shop runs on the clients themselves, a remote button must not also press the host's
+# copy of that player's panel. A client's pause opens its own menu (PauseControl), not the host's.
 func _block_remote_buttons(block: bool) -> void:
 	if input_sync == null:
 		return
 	if block:
-		var all: int = (1 << VirtualDevices.BUTTON_ACTIONS.size()) - 1
-		input_sync.blocked_by[BLOCK_KEY] = all & ~(1 << VirtualDevices.PAUSE_INDEX)
+		input_sync.blocked_by[BLOCK_KEY] = (1 << VirtualDevices.BUTTON_ACTIONS.size()) - 1
 	else:
 		input_sync.blocked_by.erase(BLOCK_KEY)
 

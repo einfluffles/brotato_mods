@@ -39,6 +39,35 @@ func _process(_delta: float) -> void:
 	_drop_freed_control()
 
 
+# A player who locked in on a selection screen keeps the cursor on the pick until cancel undoes
+# it or the screen moves on (the game lets it wander, and accept there replaced the character).
+func _handle_input(event: InputEvent) -> bool:
+	if not _locked_in():
+		return ._handle_input(event)
+	if Utils.is_maybe_action_pressed(event, "ui_accept_%s" % _device):
+		return true
+	for action in _ui_move_action_names():
+		if event.is_action("%s_%s" % [action, _device]):
+			return true
+	return false
+
+
+func _on_focus_changed(control: Control) -> void:
+	if not _locked_in():
+		._on_focus_changed(control)
+
+
+func _locked_in() -> bool:
+	var selected = get_parent().get("_has_player_selected")
+	return (
+		RunData.is_coop_run
+		and selected is Array
+		and player_index >= 0
+		and player_index < selected.size()
+		and selected[player_index]
+	)
+
+
 func _set_focused_control(control: Control) -> void:
 	_drop_freed_control(false)  # the caller names the next control
 	._set_focused_control(control)
