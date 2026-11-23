@@ -178,6 +178,7 @@ func _host_characters():
 	CoopService._remove_player(KEYBOARD)
 	yield(_frames(2), "completed")
 	yield(_locked_cursor(scene), "completed")
+	yield(_pick_leaves(scene), "completed")
 	var state := _capture(scene, 1)
 	state["join"] = []  # the host lets players join: the empty slots show the hint
 	return {"state": state, "screen": scene.get_instance_id()}
@@ -196,6 +197,45 @@ func _locked_cursor(scene: Node):
 	yield(_nav(VirtualDevices.FIRST, "ui_right"), "completed")
 	t._check(emulator.focused_control != pick, "after cancel: the cursor moves again")
 	emulator.focused_control = pick
+
+
+# A player who leaves after locking in takes the pick along (extensions/ui/character_selection.gd):
+# whoever has the slot next starts free, not locked in on the old character.
+func _pick_leaves(scene: Node):
+	var pick: Control = MenuSync._elements_of(scene._get_inventories()[0])[1]
+	var first: int = VirtualDevices.FIRST
+	var last: int = VirtualDevices.FIRST + 1
+	_lock_in(scene, 1, pick)
+	CoopService._remove_player(last)
+	yield(_frames(2), "completed")
+	CoopService._add_player(last, CoopService.PlayerType.GAMEPAD_XBOX)
+	yield(_frames(3), "completed")  # the new player's deferred first focus
+	t._check(_free(scene, 1), "left after locking in: the player back in that slot is free")
+	var emulator = Utils.get_focus_emulator(1, scene)
+	var before = emulator.focused_control
+	yield(_nav(last, "ui_right"), "completed")
+	t._check(emulator.focused_control != before, "and its cursor moves")
+	_lock_in(scene, 1, pick)
+	CoopService._remove_player(first)
+	yield(_frames(2), "completed")
+	t._check(
+		_free(scene, 0) and _free(scene, 1),
+		"the slot before leaves: the player moving up is free, and so is the slot it left"
+	)
+	CoopService._remove_player(last)
+	CoopService._add_player(first, CoopService.PlayerType.GAMEPAD_XBOX)
+	CoopService._add_player(last, CoopService.PlayerType.GAMEPAD_XBOX)
+	yield(_frames(3), "completed")
+
+
+static func _lock_in(scene: Node, player: int, pick: Control) -> void:
+	Utils.get_focus_emulator(player, scene).focused_control = pick
+	scene._player_characters[player] = pick.item
+	scene._set_selected_element(player)
+
+
+static func _free(scene: Node, player: int) -> bool:
+	return not scene._has_player_selected[player] and scene._player_characters[player] == null
 
 
 func _nav(device: int, action: String):
