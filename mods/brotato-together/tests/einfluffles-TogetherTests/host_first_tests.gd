@@ -35,18 +35,23 @@ func run(test_mod: Node, together: Node):
 		if CoopService._hold_timers.has(t.DEVICE):
 			break
 	t._check(CoopService._hold_timers.has(t.DEVICE), "host first: the remote player's hold started")
-	# A frame as long as joining takes: the game adds its delta at once.
-	OS.delay_msec(int(CoopService.HOLD_DURATION * 1000) + 100)
-	_hold(true)
-	yield(tree, "idle_frame")
 	CoopService._hold_timers[t.DEVICE] = CoopService.HOLD_DURATION
 	for _i in 3:
 		_hold(true)
 		yield(tree, "idle_frame")
 	t._check(
 		not CoopService.is_device_assigned(t.DEVICE),
-		"host first: a remote hold does not count before a local player joined, nor in a long frame"
+		"host first: a remote hold does not count before a local player joined"
 	)
+	# A frame as long as joining takes, which the game adds at once after the extension's level
+	# (called alone here: the engine caps a real frame's delta well below HOLD_DURATION).
+	var long_frame: float = CoopService.HOLD_DURATION + 1.0
+	CoopService._process(long_frame)
+	t._check(
+		CoopService._hold_timers.get(t.DEVICE, 0.0) + long_frame < CoopService.HOLD_DURATION,
+		"host first: a long frame does not complete the held-back hold either"
+	)
+	CoopService._hold_timers[t.DEVICE] = 0.0  # where the game's level would have left it
 	var resume := Node.new()
 	resume.filename = COOP_RESUME
 	t._check(
