@@ -2,7 +2,7 @@
 # mod_main.gd's SUITES (in SUITES order). Every suite is in exactly one line; the test mod
 # checks that. Grouped to even out run time.
 cleanup_client,axolotl,own_pickups,input_hints,gear_links
-core,battle_loopback,shop_loopback,local_shop,pause_input,selection,run_parts
+core,battle_loopback,shop_loopback,local_shop,pause_input,selection,run_parts,non_finite
 cleanup_host,menu_ux,live_menu,local_device,traffic,battle_start
 cleanup_misc,anim_mirror,runtime_parts,battle_perf,client_report,cursed_weapon
 input_ack,pose_mirror,bullet_hell_left,bullet_hell_top,bullet_hell_bottom,dig_site,dead_player,hit_numbers

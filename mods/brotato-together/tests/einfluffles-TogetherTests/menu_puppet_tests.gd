@@ -7,6 +7,9 @@ const StateStream := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/state_stream.gd"
 )
 const MenuSync := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/menu_sync.gd")
+const RunStateCodec := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/run_state_codec.gd"
+)
 const Puppet := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet.gd")
 const PuppetMenu := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/session/puppet_menu.gd"
@@ -525,6 +528,14 @@ func _client_end_run():
 	var broken: Dictionary = _sent[WEAPONS].state.duplicate(true)
 	broken.grids.erase("run")
 	t._check(not _menus.show(broken), "a run screen without its run is not entered")
+	# A run state that came but does not parse (a NaN printed by a host without FiniteJson).
+	var unreadable: Dictionary = _sent[END_RUN].state.duplicate(true)
+	unreadable.grids["run"] = RunStateCodec.pack('{"a":nan}')
+	scene = yield(_show(END_RUN, unreadable), "completed")
+	t._check(
+		scene != null and RunData.run_won and RunData.current_wave == 7,
+		"end of run with an unreadable run state: this client's own run state shows"
+	)
 	var junk: Dictionary = _sent[CHARACTERS].state.duplicate(true)
 	junk.grids["inventories"] = [[["x", 0], "junk", [1, 2, 3], ["not_a_real_id", 0, 0]], "junk"]
 	junk["screen"] = -5
