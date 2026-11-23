@@ -10,6 +10,8 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+## 2026-11-23 19:30 UTC
+
 - Online co-op: the host joins first in character selection. A remote player's hold to join counts
   only once a player of the host's machine has joined. Before, a client who held first took slot 1.
 - Character and weapon selection: once you have picked, your cursor stays on your pick until you
