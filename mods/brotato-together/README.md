@@ -58,11 +58,14 @@ used like them, with mouse, keyboard or gamepad.
 ### In a run
 
 - **Joining the run:** the host opens co-op character selection. Remote players hold *accept*
-  (Space / Enter / A) to join, like local players. The host joins first and always has slot 1: a
-  remote player's hold counts only once a player of the host's machine is in. Every free slot
-  shows "Player N" and the game's hold-to-join hint, on the host and on clients.
+  (Space / Enter / A) to join, like local players. The host joins first: a remote player's hold
+  counts only once a player of the host's machine is in, so the host's player starts in slot 1.
+  The co-op resume screen is not held back, since there the slots decide who gets which saved
+  character. Every free slot shows "Player N" and the game's hold-to-join hint, on the host and on
+  clients.
 - **Locking in:** once you have picked your character (or weapon), your cursor stays on it until
-  you cancel or everybody is ready and the game goes on.
+  you cancel or everybody is ready and the game goes on. A player who leaves character selection
+  takes the pick along: whoever gets that slot next starts free.
 - **Colours:** in character selection each player changes their colour with **F** (keyboard) or
   **Y** (gamepad; Triangle on PlayStation pads). It cycles through 8 colours and skips those that
   other players have. The colour is used wherever the game uses player colours (cursor, panels,
@@ -236,7 +239,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 
 | Suite | What it covers |
 |---|---|
-| `core` | Virtual input devices and remote input reaching the game, the host's player first in co-op, the snapshot wire format, the session lifecycle on a fake Steam, a client borrowing the host's DLC, the run-state round trip. |
+| `core` | Virtual input devices and remote input reaching the game, the snapshot wire format, the session lifecycle on a fake Steam, a client borrowing the host's DLC, the run-state round trip. |
 | `battle_loopback` | A real host battle replayed on a client, the own-player prediction, the level-up / crate panels (mirrored, the own panel with pad, keyboard and mouse, decisions checked by the host), a 400 ms snapshot gap. |
 | `input_ack` | A remote player moved one step per acknowledged input against the client's prediction, with jitter, lost packets and gaps; the own player standing still at the wave's end. |
 | `pose_mirror` | Parts the game turns in physics code (a bullet ring, a gun's aim, a dino's heading), facing and hidden flags. |
@@ -246,7 +249,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `bullet_hell_left`, `bullet_hell_top`, `bullet_hell_bottom` | Every visible enemy bullet of a bullet-hell wave is in the snapshot and mirrored (one suite per variant). |
 | `menu_ux` | The wave-failed prompt and its cursor on clients, the change from the battle to the next screen. |
 | `shop_loopback` | The host's real co-op shop and a purchase mirrored on a client with cursor and sounds, the weapons row (Anvil at shop entry, a new weapon slot). |
-| `local_shop` | The own shop panel on a client, decisions applied or refused by the host, locks, the meca upgrade, the reroll's stat text, another mod's decision, the mouse on the item popup, the own popup kept open through a gear change, the wheel, the client's own pause menu. |
+| `local_shop` | The own shop panel on a client, decisions applied or refused by the host, locks, the meca upgrade, the reroll's stat text, another mod's decision, the mouse on the item popup, the own popup kept open through a gear change, the wheel, the client's own pause menu (also when the shop goes with it open). |
 | `local_device` | Which screen drives a client's own input from the level-up panels to the shop, with a host pause across the change. |
 | `pause_input` | Remote button presses, timeouts and pause, menu echo, the own aim setting, who owns the pause menu, absent players. |
 | `live_menu` | The Esc menu over a running online wave, on the host and on a client. |
@@ -261,7 +264,7 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `battle_scene` | A breaking weapon, the hole layout, a stomped hole, the host's speed in the own-player prediction, walking into holes. |
 | `puddle_reuse` | Trails of fire (another player's magma boots), acid and petrol puddles on a client, also once the puddle puppets come back from the pool. |
 | `dead_player` | A player who died stays visible when the next wave starts him at 0 health. |
-| `selection` | The host's selection screens and end of run on a client, colours and join hints, the shared character grid, wheel and right stick, a locked-in cursor. |
+| `selection` | The host's selection screens and end of run on a client, colours and join hints, the shared character grid, wheel and right stick, a locked-in cursor and a player who leaves after the pick, the host's player joining first. |
 | `state_stream` | The state stream on a fake session: change keys, resyncs, states held for a full send queue, malformed messages. |
 | `shop_change` | Change detection of the shop's run state and what a check costs. |
 | `run_parts` | The run state in parts: which parts each change sends, the client building the same run, resyncs. |

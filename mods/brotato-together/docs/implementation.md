@@ -1105,8 +1105,14 @@ opens without pausing.
   ban, page triggers, the cursors), so while it is open the shop node and its `FocusEmulator1..4`
   take no input, `ShopLocal.set_menu_open` takes the own panel's device and mouse, and the game's
   `on_paused` hides the shop's content. Closing puts the other players' cursors back
-  (`FocusSync.reapply`): they could not apply to hidden controls. Tested in `shop_menu_tests.gd`
-  (suite `local_shop`).
+  (`FocusSync.reapply`): they could not apply to hidden controls. `PauseControl` keeps that shop
+  by instance id (`_inert_shop_id`) and forgets it once it is freed. `open_menu` (a lobby
+  question from outside the menu) opens this menu too. Tested in `shop_menu_tests.gd` (suite
+  `local_shop`), also through `_update_live_menu`.
+- A menu freed with its scene while open (the host starts the wave while a client's menu is open
+  in the shop) drops the codex first (the extension's `_exit_tree`): the codex sets itself as
+  `Utils._popup` and clears that only in its own close path, and `FocusEmulator` asks
+  `Utils._popup` on every cursor move, which crashes a release build once it is freed.
 
 ### End of battle and wave lifetime
 
@@ -1751,7 +1757,13 @@ character replaces the pick. The `FocusEmulator` extension
 (`_locked_in`) spends a selected player's moves and accepts, and ignores the Godot focus for it,
 on every `BaseSelection` screen (character, weapon, difficulty) while `_has_player_selected` holds:
 until cancel clears it or the screen moves on. On a client's copy the flags are the host's, so its
-cursors stay too. Suite `selection` checks it.
+cursors stay too. A player who leaves character selection takes the pick along: the game keeps
+`_has_player_selected` and `_player_characters` per slot, so the next player in that slot (a
+rejoin, a player moving up) would start locked in on the old character. The `CharacterSelection`
+extension's `_on_connected_players_updated` clears every slot from the first one whose device
+changed (`_bt_slot_devices`), on the host only. Weapon and difficulty selection need nothing:
+players join and leave only while the game listens for joins (character selection, the co-op
+resume screen), so their slots do not change there. Suite `selection` checks both.
 
 **Locked characters.** The game's `LockedPanel` shows on the copy through the same code, locked
 where the host has it locked. The text is this machine's, so it is localised.
@@ -1866,10 +1878,14 @@ hint, `COOP_HOLD_TO_JOIN`, only in the next free slot), and adds a "Player N" la
 slot. The label's vertical size flags are 0, because a Label's default would centre it over the
 hint.
 
-**Host first.** The host's player always takes slot 1: the `CoopService` extension's `_process`, which
-runs before the game's, holds every remote (virtual) device's hold timer at 0 while no device of
-this machine is in `connected_players` (`bt_local_joined`). A remote player who holds early joins
-a full hold after the host's player is in. Suite `core` checks it.
+**Host first.** In character selection the host's player joins first: the `CoopService`
+extension's `_process`, which runs before the game's, holds back every remote (virtual) device's
+hold timer while no device of this machine is in `connected_players` (`bt_holds_wait`,
+`bt_local_joined`). It sets the timer to minus the frame's delta, so the game's `+= delta` leaves
+it at 0 even after one long frame. A remote player who holds early joins a full hold after the
+host's player is in. This is about the order of joining only: when the host's pad disconnects,
+the game moves the remote players up. The co-op resume screen is not held back, because its slot
+order decides who gets which saved character. Suite `selection` checks it (`host_first_tests.gd`).
 
 ### Popup
 

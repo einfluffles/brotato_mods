@@ -10,11 +10,12 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
-- Online co-op: the host always has the first slot. A remote player's hold to join counts only once
-  a player of the host's machine has joined. Before, a client who held first took slot 1.
+- Online co-op: the host joins first in character selection. A remote player's hold to join counts
+  only once a player of the host's machine has joined. Before, a client who held first took slot 1.
 - Character and weapon selection: once you have picked, your cursor stays on your pick until you
   cancel or the game goes on. Before, it could wander off while you were ready, and accept on
-  another character changed your pick.
+  another character changed your pick. A player who leaves character selection takes the pick
+  along, so whoever gets the slot next starts free.
 - Online co-op: at the end of a wave a client's own character stays where it stands. Before, it
   glided a step or two back to where the host had it.
 - Shop, client: Esc opens your own pause menu over your shop, with the options, as in a wave.
