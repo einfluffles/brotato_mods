@@ -2255,7 +2255,8 @@ switch of it while the game runs.
   `set_tooltip` or a `..._button()` helper (also through a constant of the same file), is an
   error unless it is a key or its line carries `# l10n: keep`. It also checks that every `BT_`
   literal in the sources and tests is a key of the CSV and that every key of the CSV is used.
-  Its allowlist names files not converted yet (brotato:trade's; brotato:together has none).
+  Its allowlist (files not converted yet) is empty: both mods are converted. A node name passed
+  to a `..._button()` helper carries `# l10n: keep`.
 
 **Adding a text:** add a row with the key and at least the English cell (the other cells may stay
 empty), use the key in the code, run `tools/lint.sh` and `tools/check.sh -s l10n`.
