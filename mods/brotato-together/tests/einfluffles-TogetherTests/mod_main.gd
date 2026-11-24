@@ -141,6 +141,7 @@ const GearLinksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/g
 const NonFiniteTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/non_finite_tests.gd"
 )
+const L10nTests := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -196,6 +197,7 @@ const SUITES := [
 	"gear_links",
 	"level_up_options",
 	"non_finite",
+	"l10n",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -590,6 +592,11 @@ func _suite_non_finite(_together: Node):
 	coop_run(3)
 	_suite = NonFiniteTests.new(self)
 	_suite.run()
+
+
+func _suite_l10n(together: Node):
+	_suite = L10nTests.new()
+	yield(_suite.run(self, together), "completed")
 
 
 func _suite_wave_start(together: Node):

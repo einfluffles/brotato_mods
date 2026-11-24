@@ -10,3 +10,4 @@ feedback,looks,damage,battle_scene,state_stream,shop_change,cursor_key,focus_tar
 shop_gear_change,wave_start
 late_load
 damage_run,puddle_reuse,level_up_options
+l10n
