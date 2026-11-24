@@ -6,7 +6,7 @@ weapon of your own in the shop, pass on the item of a crate you open after a wav
 item for another player.
 
 **Status (2026-11-21):** all three ways to trade and the trade key are covered by headless
-tests (6 suites). What is still open is listed under [Limitations](#limitations).
+tests (7 suites). What is still open is listed under [Limitations](#limitations).
 
 Workshop: [item 3841589038](https://steamcommunity.com/sharedfiles/filedetails/?id=3841589038) · mod id: `einfluffles-BrotatoTrade` · source: [`src/einfluffles-BrotatoTrade`](src/einfluffles-BrotatoTrade) · license: [MIT](../../LICENSE)
 
@@ -147,6 +147,19 @@ game does not use. In local co-op and on the host, the trade key opens the list 
 game's own action for that key (for example `R`, which bans an item). On a brotato:together client
 both happen: brotato:together reads the client's buttons directly, so the game's action runs too.
 
+## Languages
+
+The mod's two texts, the **Trade** button and the hint "Press [key] to trade", follow the game's
+language (all 13 of them) and change with it in the options. The player list uses the game's own
+"Player 2", "Combine" and "Cancel".
+
+The texts are in [`translations.csv`](src/einfluffles-BrotatoTrade/translations.csv): one row per
+text, one column per language in the game's order (`key,en,fr,zh,ja,ko,zh_TW,ru,pl,es,pt,de,tr,it`),
+UTF-8, a cell with a comma in double quotes. The hint is worded like the game's "Press {0} to lock
+item" in each language; `{0}` is where the key's glyph goes. A better wording is welcome as a pull
+request that changes only that file. The `l10n` suite checks it: every cell filled, the same `{n}`
+placeholders as English, every character in the game's fonts, and the widths.
+
 ## Limitations
 
 As of 2026-11-21:
@@ -158,7 +171,6 @@ As of 2026-11-21:
 - Online, a crate trade is tested on the host and on a client's side of panels set up by hand,
   not between two running games.
 - Online, a cursor on a *Trade* button is shown only to players who have the mod too.
-- The texts "Trade" and "Press [key] to trade" are English in every language.
 
 ## How it works
 
@@ -174,6 +186,12 @@ As of 2026-11-21:
   (built from the popup's own *Cancel* button) and the hint (the game's `CoopShopHint` scene with
   the mod's glyphs). `CoopShop` decides who can take what and refreshes both panels afterwards. `CoopUpgradesUIPlayerContainer` gets the crate panel's button
   and list, built from its *Take* button. `UpgradesUI` does the crate hand-over.
+- **Texts** (`l10n.gd`): `mod_main.gd` reads `translations.csv` at start into one Godot
+  `Translation` per language (an empty cell falls back to English; between `zh` and `zh_TW` the
+  other Chinese text comes first). brotato:together's loader has the same interface
+  (`load_csv(path)`); this mod keeps its own copy so it runs alone. The buttons hold the key and
+  translate themselves; the hint, which the game's `CoopShopHint` translates once, is built again
+  on a language change.
 - **The trade key** (`trade/hotkey.gd`): the InputMap action `brotato_trade` with the key and
   button from the config. The game wipes runtime actions when the gamepad movement setting
   changes and then copies every action per device; the extension of `InputService`
@@ -241,6 +259,7 @@ As of 2026-11-21:
 | `rules` | The rules and the hand-over on `RunData`: limits, the same object in several lists, effects moving with the item, combining with the cursed weapon, nothing appearing or vanishing. |
 | `shop` | The real co-op shop driven with each player's buttons: popup, list, cancel, both panels and every cursor after a trade, the receiver's open popup kept through a trade and a buy (closed when its weapon is combined away). Buying for another player (`buy_tests.gd`), started with the trade key: the hint, a giver with 6/6 weapons, a receiver without room, price, lock, slot and offers as for a buy, not enough gold. |
 | `hotkey` | The trade key in local co-op: the give list on the own gear, nothing without a target, in an open popup or paused, the hint's glyph for keyboard, PlayStation, Switch and Xbox, real key and pad events, the InputMap rebuilt by the game, a key rebound in the config, an invalid config. |
-| `crate` | The crate panels on the real battle scene: the button, the list with a player who has no room, cancel, an item and a weapon passed on by a giver without a free slot, the receiver's cursor. |
+| `crate` | The crate panels on the real battle scene: the button, the list with a player who has no room, cancel, an item and a weapon passed on by a giver without a free slot, the receiver's cursor, the button's width in every language. |
 | `together` | With brotato:together loaded: a remote player's request applied once on the host, a client's press only sending it, the host's state bringing the result, the host's own trade key, a client's buy for another player with the mouse and T and with the pad's Back, a client's give with the trade key, T in a text field, an open give list or popup kept when the host's player or the host's state brings the player something, a player's give and buy-for lists on the host's and a client's copy of its panel. |
 | `together_crate` | The same for a crate trade, and its list on a client's copy of another player's panel. |
+| `l10n` | `translations.csv` (columns, keys, placeholders, every cell filled) and its loader, the game's keys the mod reuses in all 13 languages, every key the sources name, a language change (en, de, ja) on the Trade button and the hint, the game's fonts and the popup's width for every text. |

@@ -181,6 +181,26 @@ To change it, set a launch option in Steam (right-click *Brotato*, *Properties*,
   256 KB/s. The rate matters only while data is waiting, and the host's setting is the one that
   counts.
 
+## Languages
+
+The mod's own texts follow the game's language (*Options*, also when you change it in a running
+game), in all 13 of the game's languages: English, French, Simplified Chinese, Japanese, Korean,
+Traditional Chinese, Russian, Polish, Spanish, Portuguese, German, Turkish and Italian. They use
+the game's own words where it has them (co-op, player, wave, pause, damage). Where the game has
+none (lobby, host, kick, invite), they follow the usual wording of Steam in that language. The
+translations other than German are drafts: corrections from players of those languages are very
+welcome.
+
+The texts are in [`src/einfluffles-BrotatoTogether/translations.csv`](src/einfluffles-BrotatoTogether/translations.csv):
+one row per text, one column per language in the game's order
+(`key,en,fr,zh,ja,ko,zh_TW,ru,pl,es,pt,de,tr,it`), UTF-8, a cell with a comma in double quotes.
+Corrections are welcome as a pull request that changes only that file. Keep the key and every
+placeholder of the English text (`{0}`, `{1}`), and keep a text about as short as the English
+one: the menus have little room. The `l10n` suite checks the file (every cell filled, the same
+placeholders as English, every character in the game's fonts), and the language sweeps of the
+`l10n`, `damage` and `lobby_menu` suites check that the texts fit their screens in every
+language. How it works: [`docs/implementation.md`](docs/implementation.md#localization).
+
 ## Limitations
 
 As of 2026-11-23 (protocol 33):
@@ -274,10 +294,11 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `focus_targets` | A cursor's gear element named by the item it shows: found again on a row ordered otherwise or with an element more or less, cursed copies and alike weapons told apart, nothing when the item is gone, locked elements and grids by place, malformed targets from the network rejected. |
 | `upgrades_change` | Change detection of the run state of the level-up / crate panels. |
 | `upgrades_popup` | A remote player's open popup on the host's level-up / crate panels: the lobby popup keeps its focus, a client that leaves takes it off. |
-| `lobby_menu` | The lobby in the game's menus on a fake Steam: title screen, kicking, the Co-op row and slot invite of character selection, the client's popup, the pause menu page. |
+| `lobby_menu` | The lobby in the game's menus on a fake Steam: title screen, kicking, the Co-op row and slot invite of character selection (also switched to German), the client's popup, the pause menu page. |
 | `network_stalls` | The render delay through stalls, the log lines for gaps, the session's path. |
 | `traffic` | The reliable traffic that the log names. |
 | `progress` | What the host's run earns for a client's own save. |
 | `client_report` | A client's frame, stall and correction reports and the host's log lines for them. |
 | `axolotl` | The Axolotl's text in the state the game's own roll leaves in co-op, and the Mod Loader's backup of every extended game script. |
 | `own_pickups` | The own player's pickups shown at once on a client. |
+| `l10n` | The mod's texts in the game's languages: `translations.csv` (header, keys, placeholders), its loader, the game's keys the mod uses, the title screen's lobby frame, the lobby page, the client's waiting screen, the pause banner, the options' damage meter switch and the damage board switched from English to German (character selection: `lobby_menu`). |

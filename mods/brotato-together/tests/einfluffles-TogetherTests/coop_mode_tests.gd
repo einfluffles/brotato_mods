@@ -4,10 +4,14 @@ extends Reference
 # input helpers.
 
 const CoopMode := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_mode.gd")
+const CoopSelection := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_selection.gd"
+)
 const SlotInvite := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/slot_invite.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
+const Layout := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_layout.gd")
 const HOST := 2  # lobby_menu_tests.gd's
 const LOBBY := 99
 const KEYBOARD := 7
@@ -17,6 +21,7 @@ const POPUP_COLORS := ["font_color", "font_color_hover", "font_color_disabled", 
 const POPUP_ICONS := ["radio_checked", "radio_unchecked", "checked", "unchecked"]
 
 var s = null  # lobby_menu_tests.gd: t, transport, session, _steam and the input helpers
+var _layout := []  # the language sweep's scene, Co-op row, invite and its slot
 
 
 func run(suite):
@@ -38,11 +43,14 @@ func run(suite):
 		return
 	var values := []
 	for i in mode.get_item_count():
-		values.append(mode.get_item_text(i).split(": ")[-1])
-	t._check(values == ["Off", "Local", "Online"], "selection: Off / Local / Online %s" % [values])
+		values.append(tr(mode.get_item_text(i)))
+	t._check(
+		values == ["Co-op: Off", "Co-op: Local", "Co-op: Online"],
+		"selection: Off / Local / Online %s" % [values]
+	)
 	t._check(
 		mode.selected == CoopMode.Mode.OFF and mode.is_item_disabled(CoopMode.Mode.ONLINE)
-		and "Steam" in mode.hint_tooltip,
+		and "Steam" in tr(mode.hint_tooltip),
 		"selection: solo is Off; without Steam Online is off, the tooltip says why"
 	)
 	s._fake_steam()
@@ -84,17 +92,19 @@ func run(suite):
 	var panels: Array = scene._get_coop_join_panels()
 	var invite: Control = panels[0].get_node(SlotInvite.NODE_NAME)
 	t._check(
-		invite.visible and not invite.button.visible and "creating" in invite.status.text,
+		invite.visible and not invite.button.visible and invite.status.text == tr("BT_STATUS_CREATING"),
 		"selection: the free slot says the lobby is being made (%s)" % invite.status.text
 	)
 	s.transport._on_lobby_created(s.transport.RESULT_OK, LOBBY)
 	yield(s._frames(2), "completed")
 	t._check(
 		mode.selected == CoopMode.Mode.ONLINE and invite.visible and invite.button.visible
-		and invite.status.text == "Online: 1 player" and _shown(panels) == [0],
+		and invite.status.text == Text.text("BT_STATUS_PLAYERS", ["1"])
+		and _shown(panels) == [0],
 		"selection: hosting -> Invite friends and the count in the next free slot (%s, %s)"
 		% [invite.status.text, _shown(panels)]
 	)
+	yield(_test_language(scene, mode, invite, panels), "completed")
 
 	CoopService._add_player(KEYBOARD, CoopService.PlayerType.KEYBOARD_AND_MOUSE)
 	yield(s._frames(2), "completed")
@@ -138,7 +148,8 @@ func run(suite):
 	s.session._add_peer(HOST)
 	yield(s._frames(1), "completed")
 	t._check(
-		invite.status.text == "Online: 2 players", "selection: the status counts the lobby's players"
+		invite.status.text == Text.text("BT_STATUS_PLAYERS", ["2"]),
+		"selection: the status counts the lobby's players"
 	)
 	s.session.peers.clear()
 
@@ -203,6 +214,96 @@ func run(suite):
 	)
 	s.transport.leave_lobby()
 	CoopService.clear_coop_players()
+
+
+# en -> de while hosting: the Co-op row, the invite, the slot label and the colour hint follow at
+# once, and the invite button holds its German text. Then their glyphs, and all 13 languages.
+func _test_language(scene: Node, mode: OptionButton, invite: Control, panels: Array):
+	var t: Node = s.t
+	var saved := [ProgressData.settings.get("language"), TranslationServer.get_locale()]
+	ProgressData.change_language("en")
+	yield(s._frames(2), "completed")
+	var english := _language_texts(scene, mode, invite, panels)
+	ProgressData.change_language("de")
+	yield(s._frames(2), "completed")
+	var german := _language_texts(scene, mode, invite, panels)
+	var wrong := []
+	for name in english:
+		if german[name] == english[name] or "BT_" in german[name] or "{" in german[name]:
+			wrong.append(name)
+	t._check(
+		english.size() == 6 and wrong.empty(),
+		"l10n: character selection changes language at once (unchanged or raw: %s; de: %s)"
+		% [wrong, german.values()]
+	)
+	var button: Button = invite.button
+	var text_width: float = button.get_font("font").get_string_size(tr(button.text)).x
+	t._check(
+		button.rect_size.x >= text_width and invite.rect_size.x <= panels[0].rect_size.x,
+		"l10n: the invite button holds its German text (%d for %d, slot %d)"
+		% [button.rect_size.x, text_width, panels[0].rect_size.x]
+	)
+	var hint: Node = scene.get_node_or_null(CoopSelection.COLOR_HINT)
+	var slot: Label = panels[1].get_node_or_null(CoopSelection.SLOT_LABEL)
+	var fonts := {"co-op row": mode.get_font("font"), "invite": button.get_font("font")}
+	fonts["status"] = invite.status.get_font("font")
+	if hint != null and slot != null:
+		fonts["slot"] = slot.get_font("font")
+		fonts["colour hint"] = hint.get_child(hint.get_child_count() - 1).get_font("font")
+	var missing := Layout.missing_glyphs(fonts, Layout.read_csv())
+	t._check(
+		fonts.size() == 5 and missing.empty(),
+		"l10n: character selection's fonts draw every character of every language %s" % [missing]
+	)
+	_layout = [scene, mode, invite, panels[0]]
+	var problems: Array = yield(Layout.sweep(t, self, "_fits", "selection"), "completed")
+	t._check(
+		problems.empty(),
+		"l10n: the Co-op row, the invite and the colour hint fit in all 13 languages %s"
+		% [problems]
+	)
+	ProgressData.settings["language"] = saved[0]
+	TranslationServer.set_locale(saved[1])
+	yield(s._frames(2), "completed")
+
+
+# No Co-op item clipped by the row, the invite (button and status) within its slot, the colour
+# hint and the slot labels on screen.
+func _fits(_locale: String) -> Array:
+	var scene: Node = _layout[0]
+	var mode: Control = _layout[1]
+	var invite: Control = _layout[2]
+	var slot: Control = _layout[3]
+	var screen := Layout.screen_rect(mode)
+	var problems: Array = Layout.overflow(mode, screen)
+	problems += Layout.overflow(invite, screen)
+	if invite.rect_size.x > slot.rect_size.x + Layout.SLACK:
+		problems.append("the invite (%d px) is wider than its slot (%d)" % [
+			invite.rect_size.x, slot.rect_size.x
+		])
+	var hint: Node = scene.get_node_or_null(CoopSelection.COLOR_HINT)
+	if hint is Control:
+		problems += Layout.overflow(hint, screen)
+	return problems
+
+
+static func _language_texts(
+	scene: Node, mode: OptionButton, invite: Control, panels: Array
+) -> Dictionary:
+	var hint: Node = scene.get_node_or_null(CoopSelection.COLOR_HINT)
+	var slot: Label = panels[1].get_node_or_null(CoopSelection.SLOT_LABEL)
+	return {
+		"row": TranslationServer.translate(mode.text),
+		"first item": TranslationServer.translate(mode.get_item_text(0)),
+		"invite": TranslationServer.translate(invite.button.text),
+		"status": invite.status.text,
+		"slot": slot.text if slot != null else "",
+		"colour hint": (
+			TranslationServer.translate(hint.get_child(hint.get_child_count() - 1).text)
+			if hint != null
+			else ""
+		),
+	}
 
 
 func _choose(mode: OptionButton, index: int):

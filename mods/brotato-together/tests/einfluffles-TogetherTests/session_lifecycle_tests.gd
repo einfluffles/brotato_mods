@@ -358,7 +358,7 @@ func _test_leave_confirmation(transport: Node) -> void:
 	if page == null:
 		return
 	var question: String = page._confirm.get_node("Buttons/Label").text
-	_t._check(page.is_asking() and "Leave the lobby?" in question, "leave confirmation shown")
+	_t._check(page.is_asking() and tr("BT_LEAVE_QUESTION") in question, "leave confirmation shown")
 	page._on_confirm_yes()
 	_t._check(not transport.is_active(), "confirming leaves")
 	close_page(lobby)
@@ -421,6 +421,36 @@ func _test_client_handshake(transport: Node, session: Node) -> void:
 	)
 	_t._check(lobby.open_page() == null, "an error opens nothing by itself")
 	lobby.last_error = ""
+	_test_coded_rejections(transport, session, lobby)
+
+
+# The host's code and args are shown in the client's language; an unknown code shows the reason.
+func _test_coded_rejections(transport: Node, session: Node, lobby: Node) -> void:
+	var saved_locale := TranslationServer.get_locale()
+	var shown := []
+	var expected := []
+	var args := ["0.0.1", "0.0.2"]
+	for code in ["mod", "later"]:
+		_enter_lobby(transport, HOST, [HOST])
+		session._on_peer_joined(HOST)
+		TranslationServer.set_locale("de")
+		var body := {
+			"version": Protocol.VERSION, "accepted": false, "reason": "an English reason",
+			"code": code, "args": args,
+		}
+		_deliver(session, HOST, Protocol.Msg.WELCOME, body)
+		shown.append(lobby.last_error)
+		var reason: String = (
+			Text.text("BT_REJECT_MOD", args) if code == "mod" else "an English reason"
+		)
+		expected.append(Text.text("BT_ERR_REJECTED", [reason]))
+		TranslationServer.set_locale(saved_locale)
+		lobby.last_error = ""
+	var english: String = Text.text("BT_ERR_REJECTED", [Text.text("BT_REJECT_MOD", args)])
+	_t._check(
+		shown == expected and shown[0] != english and "0.0.1" in shown[0],
+		"rejection by code in the client's language, an unknown code by reason %s" % [shown]
+	)
 
 
 func _test_host_handshake(transport: Node, session: Node, input_sync: Node) -> void:
@@ -471,6 +501,11 @@ func _test_host_handshake(transport: Node, session: Node, input_sync: Node) -> v
 	_t._check(
 		not answer.accepted and "game version 0.0.0" in answer.reason and not session.peers[6].ready,
 		"other game version rejected: %s" % answer.reason
+	)
+	_t._check(
+		answer.get("code") == "game"
+		and answer.get("args") == ["0.0.0", str(ProgressData.VERSION)],
+		"the rejection's code and args go along, for the client's language (%s)" % [answer]
 	)
 	input_sync.devices.erase(CLIENT)
 
@@ -570,6 +605,21 @@ func _test_compat() -> void:
 	client.version = Protocol.VERSION - 1
 	_t._check("protocol" in Compat.incompatibility(host, client), "other protocol rejected")
 	_t._check(Compat.incompatibility(host, "x") != "", "malformed HELLO rejected")
+	var codes := []
+	for change in [["version", 0], ["game_version", "0.0.0"], ["mod_version", "0.0.1"]]:
+		client = host.duplicate()
+		client[change[0]] = change[1]
+		codes.append(Compat.rejection(host, client).code)
+	codes.append(Compat.rejection(host, "x").code)
+	_t._check(codes == ["protocol", "game", "mod", ""], "rejection codes %s" % [codes])
+	var two := ["1", "2"]
+	_t._check(
+		Compat.describe({"code": "game", "args": two, "reason": "r"})
+		== Text.text("BT_REJECT_GAME", two)
+		and Compat.describe({"code": "game", "args": ["1"], "reason": "r"}) == "r"
+		and Compat.describe({"reason": "r"}) == "r",
+		"a rejection's text: by its code, else its reason"
+	)
 
 
 func _deliver(session: Node, from: int, msg_type: int, body) -> void:

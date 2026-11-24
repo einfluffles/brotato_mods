@@ -19,7 +19,6 @@ const HOST_TIMEOUT_MSEC := 15000  # client gives up on a silent host (crash, net
 const HELLO_INTERVAL_MSEC := 1000
 const RESYNC_INTERVAL_MSEC := 1000  # at most one full resync per peer and interval
 const SLOW_ANSWER_MSEC := 150  # a PONG this late is logged with where the time went
-const KICKED_TEXT := "The host removed you from the lobby"
 # Transport.connection_status: what Steam measures itself, and what waits in its send queue.
 const STEAM_STATUS_KEYS := [
 	"ping", "queue_time", "pending_reliable", "pending_unreliable", "sent_unacknowledged_reliable",
@@ -150,7 +149,7 @@ func _process(_delta: float) -> void:
 	_frame_msec = now
 	if is_client() and _host_timed_out(now):
 		ModLoaderLog.warning("No messages from the host for a while; leaving", LOG_NAME)
-		transport.emit_signal("lobby_failed", "Connection to the host lost")
+		transport.emit_signal("lobby_failed", tr("BT_ERR_HOST_LOST"))
 		transport.leave_lobby()
 		return
 	resend_hello(now)
@@ -385,15 +384,15 @@ func _handle_hello(steam_id: int, body) -> void:
 	if not is_host():
 		return
 	var local: Dictionary = Compat.local_info(transport.get_persona_name(transport.local_id))
-	var reason := Compat.incompatibility(local, body)
-	var accepted := reason == ""
-	send_reliable(
-		steam_id,
-		Protocol.Msg.WELCOME,
-		{"version": Protocol.VERSION, "accepted": accepted, "reason": reason, "dlcs": local.dlcs}
-	)
+	# code and args: the client's text in its language; reason: English, for older readers and logs.
+	var rejection := Compat.rejection(local, body)
+	var accepted: bool = rejection.reason == ""
+	var welcome := {"version": Protocol.VERSION, "accepted": accepted, "dlcs": local.dlcs}
+	for field in rejection:
+		welcome[field] = rejection[field]
+	send_reliable(steam_id, Protocol.Msg.WELCOME, welcome)
 	if not accepted:
-		ModLoaderLog.warning("Rejected %s: %s" % [steam_id, reason], LOG_NAME)
+		ModLoaderLog.warning("Rejected %s: %s" % [steam_id, rejection.reason], LOG_NAME)
 		return
 	var lent := Compat.missing_dlcs(local.dlcs, body.get("dlcs"))
 	if not lent.empty() and not peers[steam_id].ready:
@@ -416,17 +415,17 @@ func _handle_welcome(steam_id: int, body) -> void:
 			_log_borrowed(DlcBorrow.borrow(_host_dlcs))
 			_mark_ready(steam_id)
 	else:
-		var reason := "The host rejected the join: %s" % str(body.get("reason", "?"))
-		ModLoaderLog.error(reason, LOG_NAME)
-		transport.emit_signal("lobby_failed", reason)  # ui/lobby_menu.gd shows it
+		ModLoaderLog.error("The host rejected the join: %s" % str(body.get("reason", "?")), LOG_NAME)
+		var shown: String = Text.text("BT_ERR_REJECTED", [Compat.describe(body)])
+		transport.emit_signal("lobby_failed", shown)  # ui/lobby_menu.gd shows it
 		transport.leave_lobby()
 
 
 func _handle_kick(steam_id: int) -> void:
 	if not is_client() or steam_id != transport.host_id:
 		return
-	ModLoaderLog.warning(KICKED_TEXT, LOG_NAME)
-	transport.emit_signal("lobby_failed", KICKED_TEXT)
+	ModLoaderLog.warning("The host removed you from the lobby", LOG_NAME)
+	transport.emit_signal("lobby_failed", tr("BT_ERR_KICKED"))
 	transport.leave_lobby()
 
 

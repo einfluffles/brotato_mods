@@ -12,12 +12,14 @@ const EXTENSIONS := [
 	"extensions/ui/upgrades_ui.gd",
 	"extensions/singletons/input_service.gd",
 ]
+const L10n := preload("res://mods-unpacked/einfluffles-BrotatoTrade/l10n.gd")
 
 
 func _init() -> void:
 	for extension in EXTENSIONS:
 		ModLoaderMod.install_script_extension(MOD_DIR + extension)
-	ModLoaderLog.info("Init", LOG_NAME)
+	var keys := L10n.load_csv(MOD_DIR + "translations.csv")
+	ModLoaderLog.info("Init (%d translated texts)" % keys, LOG_NAME)
 
 
 func _ready() -> void:

@@ -288,7 +288,7 @@ func state_key(_section: int) -> String:
 	return var2str(state_body(StateStream.PAUSE_BATTLE))
 
 
-# battle_id, by (name, "": the host), by_id (steam id, 0: the host)
+# battle_id, by (name), by_id (steam id, 0: the host, -1: a player without a name): paused_by's
 func state_body(_section: int):
 	var by: Array = pause_control.paused_by() if pause_control != null else ["", 0]
 	return {"battle_id": _battle_id, "by": by[0], "by_id": by[1]}

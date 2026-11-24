@@ -567,8 +567,8 @@ func _apply_pause(body) -> bool:
 	if _is_loading():
 		return false
 	if is_in_shop():
-		var text := PauseControl.banner_text(body[1], body[2], session.transport.local_id)
-		PauseControl.show_banner(_client_shop, paused, text)
+		var line := PauseControl.banner_line(body[1], body[2], session.transport.local_id)
+		PauseControl.show_banner(_client_shop, paused, line)
 	return true
 
 
@@ -578,7 +578,7 @@ func clear_state(section: int) -> void:
 	if section == StateStream.PAUSE_SHOP:
 		local.set_paused(false)
 		if is_in_shop():
-			PauseControl.show_banner(_client_shop, false, "")
+			PauseControl.show_banner(_client_shop, false, [])
 
 
 # Per player, what of the sent run state its panel is built from: its run parts' ids (data: the

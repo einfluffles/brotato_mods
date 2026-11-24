@@ -4,7 +4,7 @@ extends "res://ui/menus/shop/stats_container.gd"
 # runs this script's _input first, so it notes the trigger and update_tab steps through three.
 
 const BT_TAB := 2
-const BT_TITLE := "Damage"
+const BT_TITLE := "STAT_DAMAGE"  # the game's key: the tooltip translates it
 # The tab row has 360 px inside the panel's 400; the game's tabs take 150 + 180 + 10. With the
 # third tab they give up a little, so the panel keeps its width: 145 + 165 + 40 + 2 x 5 = 360.
 const BT_WIDTHS := [145, 165, 40]

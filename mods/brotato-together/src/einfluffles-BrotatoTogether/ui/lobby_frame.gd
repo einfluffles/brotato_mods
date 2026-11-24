@@ -8,12 +8,13 @@ const PANEL_STYLE_PATH := "res://resources/themes/panel/panel_style.tres"
 const BUTTON_SCRIPT_PATH := "res://ui/menus/global/my_menu_button.gd"
 const NAME_FONT_PATH := "res://resources/fonts/actual/base/font_26.tres"
 const SMALL_FONT_PATH := "res://resources/fonts/actual/base/font_22.tres"
-const TITLE := "Online co-op"
-const HOST_TEXT := "Host lobby"
-const CREATING_TEXT := "Creating lobby…"
-const INVITE_TEXT := "Invite friends"
-const LEAVE_TEXT := "Leave lobby"
-const KICK_TEXT := "Kick"
+# Translation keys (translations.csv): the controls translate them, also after a language switch.
+const TITLE := "BT_ONLINE_COOP"
+const HOST_TEXT := "BT_HOST_LOBBY"
+const CREATING_TEXT := "BT_CREATING_LOBBY"
+const INVITE_TEXT := "BT_INVITE_FRIENDS"
+const LEAVE_TEXT := "BT_LEAVE_LOBBY"
+const KICK_TEXT := "BT_KICK"
 const WIDTH := 520
 const GAP := 30  # to the button column
 
@@ -30,6 +31,7 @@ var _count := Label.new()
 var _list := VBoxContainer.new()
 var _rows_hosting := false
 var _entry_right := NodePath()  # the entry button's neighbour without the frame
+var _entry_base_width := -1.0  # the entry button's minimum width without our texts
 var _locked := false  # Start / Continue switched off by us
 
 
@@ -98,12 +100,24 @@ func _process(_delta: float) -> void:
 
 
 # Wide enough for every text it gets: the button column keeps its width when the text changes.
+# Measured again in another language.
 func _keep_entry_width() -> void:
-	var width := 0.0
+	if _entry_base_width < 0.0:
+		_entry_base_width = entry_button.rect_min_size.x
+	entry_button.rect_min_size.x = _entry_base_width
+	var shown := entry_button.text
+	var width := _entry_base_width
 	for text in [CREATING_TEXT, INVITE_TEXT, LEAVE_TEXT, HOST_TEXT]:
 		entry_button.text = text
 		width = max(width, entry_button.get_combined_minimum_size().x)
+	entry_button.text = shown
 	entry_button.rect_min_size.x = width
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_TRANSLATION_CHANGED and _entry_base_width >= 0.0:
+		if is_instance_valid(entry_button):
+			_keep_entry_width()
 
 
 func _button(text: String, method: String, binds := []) -> Button:

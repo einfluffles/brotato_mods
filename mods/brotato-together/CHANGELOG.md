@@ -23,6 +23,23 @@ upload; three of them are marked where the upload may have differed.
   number as 0 and names it in its log, and its own run keeps the value. A client that still gets
   a run state it cannot read keeps the one it has: the level-up panels, the shop and the end of
   run screen still show, and its log says which part it could not read.
+- Languages: the mod's texts now follow the game's language, in all 13 of the game's languages
+  (the lobby, the *Online co-op* page, lobby errors, the client's waiting screen, character
+  selection, the pause banner, the retry prompt, the damage meter and its switch in the options),
+  and switch at once when the language changes (an error already on screen keeps its language
+  until the next one). They use the game's own words for co-op, player,
+  wave, pause and damage. A join refused for another version is explained in the joining
+  player's language. The texts are in `translations.csv`, open to corrections from players of
+  each language (see the README's Languages section). Where a translation is longer, the layout
+  makes room: on a run's damage board, kills and damage taken stand one under the other when they
+  do not fit side by side, and the lobby status under *Invite friends* in character selection
+  uses the slot's whole width. In
+  English, some texts now read differently: the lobby status in character selection reads
+  "Online · players: 2", the retry prompt names "Player 2" instead of "P2", the damage meter's
+  run reads "Run (waves: 3)", the colour hint "Change color", lobby errors are plain words ("The
+  lobby could not be created" instead of "createLobby failed"), and the question before leaving
+  a lobby mid-run puts each sentence on its own line. The client's waiting screen now uses the
+  game's font.
 - Needs everybody on this update (protocol 33).
 
 ## 2026-11-23 19:30 UTC

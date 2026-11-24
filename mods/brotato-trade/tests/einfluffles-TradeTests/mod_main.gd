@@ -3,7 +3,7 @@ extends Node
 
 const DIR := "res://mods-unpacked/einfluffles-TradeTests/"
 const TOGETHER := "/root/ModLoader/einfluffles-BrotatoTogether"
-const SUITES := ["rules", "shop", "hotkey", "crate", "together", "together_crate"]
+const SUITES := ["rules", "shop", "hotkey", "crate", "l10n", "together", "together_crate"]
 const WATCHDOG_SEC := 120.0
 const FIRST_DEVICE := 1  # device 0 is the keyboard to CoopService
 const PISTOL := "weapon_pistol_1"

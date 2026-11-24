@@ -230,7 +230,7 @@ func _test_title_screen():
 	t._check(
 		button.get_index() == start.get_index() + 1 and button.get_script() == start.get_script()
 		and button.rect_min_size.y == start.rect_min_size.y and button.align == start.align
-		and button.text == "Host lobby",
+		and button.text == LobbyFrame.HOST_TEXT,
 		"title: the button is one of the game's menu buttons, below Start"
 	)
 	t._check(
@@ -256,7 +256,7 @@ func _test_title_screen():
 	yield(_tap_key(KEY_ENTER), "completed")
 	var label: Label = main_menu.error_label
 	t._check(
-		label.visible and "Steam is unavailable" in label.text and not frame.visible,
+		label.visible and tr("BT_NO_STEAM_LONG") in label.text and not frame.visible,
 		"title: without Steam the button says why in the error label (%s)" % label.text
 	)
 	lobby.last_error = ""
@@ -265,8 +265,8 @@ func _test_title_screen():
 	yield(_wait(PRESS_DELAY_SEC), "completed")
 	yield(_tap_key(KEY_ENTER), "completed")
 	t._check(
-		_steam.created == 1 and lobby.creating and button.text == "Creating lobby…"
-		and frame.visible and "Creating" in frame.hint.text,
+		_steam.created == 1 and lobby.creating and button.text == LobbyFrame.CREATING_TEXT
+		and frame.visible and frame.hint.text == tr("BT_CREATING_LOBBY"),
 		"title: accept hosts a lobby; the frame says it is being made (%s)" % button.text
 	)
 	yield(_wait(PRESS_DELAY_SEC), "completed")
@@ -280,7 +280,7 @@ func _test_title_screen():
 		"title: the main menu stays, the cursor where it was"
 	)
 	t._check(
-		button.text == "Invite friends" and _row_texts(frame) == [["local", "host"]]
+		button.text == LobbyFrame.INVITE_TEXT and _row_texts(frame) == [["local", tr("BT_NOTE_HOST")]]
 		and frame.rows[0].kick == null and frame.leave_button.visible,
 		"frame: hosting -> this player as host, Leave lobby %s" % [_row_texts(frame)]
 	)
@@ -310,7 +310,7 @@ func _test_title_screen():
 	transport._on_lobby_chat_update(LOBBY, CLIENT, CLIENT, 1)
 	yield(_frames(2), "completed")
 	t._check(
-		_row_texts(frame) == [["local", "host"], ["friend 5", "connecting"]]
+		_row_texts(frame) == [["local", tr("BT_NOTE_HOST")], ["friend 5", tr("BT_CONNECTING")]]
 		and frame.rows[1].kick != null and frame._count.text == "2 / 4",
 		"frame: a joining player gets a row with Kick %s" % [_row_texts(frame)]
 	)
@@ -334,7 +334,7 @@ func _test_title_screen():
 	yield(_tap_key(KEY_ENTER), "completed")
 	t._check(
 		_sent_to(CLIENT).has(Protocol.Msg.KICK) and not session.peers.has(CLIENT)
-		and not transport.members.has(CLIENT) and _row_texts(frame) == [["local", "host"]],
+		and not transport.members.has(CLIENT) and _row_texts(frame) == [["local", tr("BT_NOTE_HOST")]],
 		"kick: the player is told and is out of the lobby %s" % [_row_texts(frame)]
 	)
 	t._check(scene.get_focus_owner() == frame.leave_button, "kick: the cursor moves on")
@@ -374,13 +374,13 @@ func _test_title_screen():
 	button = main_menu.start_button.get_parent().get_node(lobby.ENTRY_NAME)
 	frame = button.get_parent().get_parent().get_node(LobbyFrame.NODE_NAME)
 	t._check(
-		frame.visible and frame.rows.size() == 2 and button.text == "Invite friends",
+		frame.visible and frame.rows.size() == 2 and button.text == LobbyFrame.INVITE_TEXT,
 		"title: back from a screen the lobby is as it was"
 	)
 	frame.leave_button.grab_focus()
 	yield(_tap_key(KEY_ENTER), "completed")
 	t._check(
-		not transport.is_active() and not frame.visible and button.text == "Host lobby"
+		not transport.is_active() and not frame.visible and button.text == LobbyFrame.HOST_TEXT
 		and scene.get_focus_owner() == button,
 		"frame: Leave lobby ends it; the cursor is on Host lobby"
 	)
@@ -418,15 +418,17 @@ func _test_client_title():
 		"client: joining from the main menu stays in the main menu"
 	)
 	t._check(
-		_row_texts(frame) == [["friend 2", "host"], ["local", "you"], ["friend 5", ""]]
+		_row_texts(frame)
+		== [["friend 2", tr("BT_NOTE_HOST")], ["local", tr("BT_NOTE_YOU")], ["friend 5", ""]]
 		and frame.nav_buttons().empty() and not frame.leave_button.visible,
 		"client: the frame lists the lobby, without Kick or its own Leave %s" % [_row_texts(frame)]
 	)
 	t._check(
-		"Waiting for friend 2" in frame.hint.text, "client: who starts (%s)" % frame.hint.text
+		frame.hint.text == Text.text("BT_HINT_WAITING", ["friend 2"]),
+		"client: who starts (%s)" % frame.hint.text
 	)
 	t._check(
-		start.disabled and resume.disabled and button.text == "Leave lobby"
+		start.disabled and resume.disabled and button.text == LobbyFrame.LEAVE_TEXT
 		and scene.get_focus_owner() == button,
 		"client: Start and Continue are off, the cursor is on Leave lobby"
 	)
@@ -498,7 +500,7 @@ func _test_client_title():
 	button = start.get_parent().get_node(lobby.ENTRY_NAME)
 	frame = button.get_parent().get_parent().get_node(LobbyFrame.NODE_NAME)
 	t._check(
-		start.disabled and frame.visible and button.text == "Leave lobby"
+		start.disabled and frame.visible and button.text == LobbyFrame.LEAVE_TEXT
 		and not lobby.popup_on_pause(scene),
 		"client: with the frame and without Start there too"
 	)
@@ -515,23 +517,23 @@ func _test_client_title():
 		"kicked: the client has left the lobby"
 	)
 	t._check(
-		_tree().current_scene == scene and label.visible and "removed you" in label.text,
+		_tree().current_scene == scene and label.visible and tr("BT_ERR_KICKED") in label.text,
 		"kicked: the main menu stays, with the reason in its error label (%s)" % label.text
 	)
 	t._check(
-		not start.disabled and not frame.visible and button.text == "Host lobby",
+		not start.disabled and not frame.visible and button.text == LobbyFrame.HOST_TEXT,
 		"kicked: Start is back, the frame gone"
 	)
 	lobby.last_error = ""
 
 	_join_as_client()
 	yield(_frames(2), "completed")
-	t._check(start.disabled and button.text == "Leave lobby", "(control) a client again")
+	t._check(start.disabled and button.text == LobbyFrame.LEAVE_TEXT, "(control) a client again")
 	button.grab_focus()
 	yield(_tap_key(KEY_ENTER), "completed")
 	t._check(
 		not transport.is_active() and _tree().current_scene == scene and not start.disabled
-		and button.text == "Host lobby" and not together._client_active,
+		and button.text == LobbyFrame.HOST_TEXT and not together._client_active,
 		"client: Leave lobby leaves; the main menu is the player's again"
 	)
 
@@ -543,11 +545,12 @@ func _test_failed_lobby():
 	t._check(not label.visible, "(control) no error on the title screen")
 	lobby.host()
 	transport._on_lobby_created(2, 0)
+	var failed: String = Text.text("BT_ERR_CREATE", ["2"])
 	t._check(
-		label.visible and "createLobby failed" in label.text and not lobby.creating,
+		label.visible and failed in label.text and not lobby.creating,
 		"failed lobby: in the main menu's error label (%s)" % label.text
 	)
-	t._check("! createLobby failed" in lobby.details_text(), "failed lobby: in the page's details")
+	t._check("! " + failed in lobby.details_text(), "failed lobby: in the page's details")
 
 	yield(_change_scene(MenuData.character_selection_scene), "completed")
 	_enter_lobby(HOST, [HOST])
@@ -556,7 +559,7 @@ func _test_failed_lobby():
 	yield(_change_scene(MenuData.title_screen_scene), "completed")
 	label = _tree().current_scene._main_menu.error_label
 	t._check(
-		label.visible and "The host left the lobby" in label.text,
+		label.visible and tr("BT_ERR_HOST_LEFT") in label.text,
 		"host left: shown after the return to the title screen (%s)" % label.text
 	)
 	lobby.last_error = ""
@@ -601,11 +604,13 @@ func _test_client_popup():
 	t._check(guard != null and guard.get_index() == root.get_child_count() - 1, "popup: guard last")
 	t._check(input_sync.local_input_blocked, "popup: client input to the host neutral")
 	t._check(
-		_texts(page.nav_buttons()) == ["Invite friends", "Leave lobby", "MENU_BACK"]
+		_texts(page.nav_buttons()) == ["BT_INVITE_FRIENDS", "BT_LEAVE_LOBBY", "MENU_BACK"]
 		and page.get_focus_owner() == page._invite_button,
 		"popup: a client's buttons, the cursor on the first %s" % [_texts(page.nav_buttons())]
 	)
-	t._check("Connected as client" in page._details.text, "popup: the same details")
+	t._check(
+		Text.text("BT_DETAILS_CLIENT", [str(LOBBY)]) in page._details.text, "popup: the same details"
+	)
 	var panel: Rect2 = page._center.get_child(0).get_global_rect()
 	var screen: Rect2 = page.get_viewport_rect()
 	t._check(
@@ -647,7 +652,7 @@ func _test_client_popup():
 	var question: String = page._confirm.get_node("Buttons/Label").text
 	t._check(
 		page.is_asking() and transport.is_active() and page._confirm is MenuConfirm
-		and "Leave the lobby? You leave the host's run" in question,
+		and question == tr("BT_LEAVE_QUESTION") + "\n" + tr("BT_LEAVE_CLIENT_MIDRUN"),
 		"popup: Leave lobby mid-run asks first, on the game's confirm page (%s)" % question
 	)
 	t._check(_texts(page.nav_buttons()) == ["MENU_YES", "MENU_NO"], "popup: Yes / No")
@@ -750,7 +755,7 @@ func _test_pause_menu():
 	var confirm: Node = page._confirm
 	var question: String = confirm.get_node("Buttons/Label").text
 	t._check(
-		page.is_asking() and transport.is_active() and "Your run goes on" in question,
+		page.is_asking() and transport.is_active() and tr("BT_LEAVE_HOST_MIDRUN") in question,
 		"pause menu: Leave lobby mid-run asks first (%s)" % question
 	)
 	confirm.get_node("Buttons/CancelButton").emit_signal("pressed")
@@ -776,7 +781,7 @@ func _test_pause_menu():
 		and transport.is_active() and _steam.joined.empty(),
 		"invite mid-run: the pause menu opens on the page, nothing joined yet"
 	)
-	t._check("A friend's invite is waiting" in page._details.text, "invite mid-run: explained")
+	t._check(tr("BT_INVITE_WAITING") in page._details.text, "invite mid-run: explained")
 	menu.unpause()
 	t._check(transport.pending_join_id == 0, "invite mid-run: closing the menu declines it")
 	transport._on_join_requested(555, 9)

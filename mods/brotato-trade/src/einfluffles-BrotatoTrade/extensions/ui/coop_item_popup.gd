@@ -7,7 +7,7 @@ signal trade_requested(item_data, to_player)
 signal trade_buy_requested(shop_item, to_player)
 signal trade_buy_closed(shop_item)
 
-const TRADE_TEXT := "Trade"
+const TRADE_TEXT := "BTR_TRADE"  # a key (translations.csv): the button translates it
 const TRADE_TO_META := "trade_to"
 const TRADE_OK_META := "trade_ok"
 const HINT_SCENE := "res://ui/menus/shop/coop_shop_hint.tscn"
@@ -28,11 +28,11 @@ var _trade_hint_type := -1  # the device type its glyph is for
 
 
 func _ready() -> void:
-	_trade_button = _trade_add_button("TradeButton")
+	_trade_button = _trade_add_button("TradeButton")  # l10n: keep (node name)
 	_trade_button.text = TRADE_TEXT
 	_trade_button.connect("pressed", self, "_on_trade_button_pressed")
 	for i in CoopService.UI_MAX_PLAYER_COUNT - 1:
-		var button := _trade_add_button("TradePlayer%d" % (i + 1))
+		var button := _trade_add_button("TradePlayer%d" % (i + 1))  # l10n: keep (node name)
 		button.expand_icon = true
 		button.connect("pressed", self, "_on_trade_player_pressed", [i])
 		_trade_players.append(button)

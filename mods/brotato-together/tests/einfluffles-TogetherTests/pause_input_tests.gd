@@ -225,6 +225,12 @@ func _test_pause_menu():
 		"remote pause: menu goes to the host's local player"
 	)
 	t._check(pause_control.paused_by() == ["Remote", FAKE_PEER], "pauser known")
+	# A pauser without a name on the host: no English on the wire, the client names it.
+	var peers: Dictionary = pause_control.session.peers
+	var peer = peers[FAKE_PEER]
+	peers.erase(FAKE_PEER)
+	t._check(pause_control.paused_by() == ["", -1], "pauser without a name: sent as \"\", -1")
+	peers[FAKE_PEER] = peer
 	yield(_tap_remote_pause(), "completed")
 	t._check(not t.get_tree().paused, "the remote player who paused resumes")
 
@@ -309,6 +315,11 @@ func _test_client_pause(main: Node) -> void:
 		"pauser sees their own pause"
 	)
 	t._check(PauseControl.banner_text("", 0, FAKE_PEER) == "Paused by the host", "host pause text")
+	t._check(
+		PauseControl.banner_text("", -1, FAKE_PEER) == tr("BT_PAUSED_BY_PLAYER")
+		and PauseControl.banner_text("Remote", 7, FAKE_PEER) == Text.text("BT_PAUSED_BY", ["Remote"]),
+		"a pauser without a name: \"a player\" in the client's language; a named one by name"
+	)
 
 
 func _test_absent_panels():

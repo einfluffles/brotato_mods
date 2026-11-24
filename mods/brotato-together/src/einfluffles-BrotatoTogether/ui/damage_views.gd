@@ -11,13 +11,15 @@ const ROW_NAME := "DamageRow"
 const PAGE_NAME := "DamagePage"
 const HEADING_NAME := "DamageHeading"
 const LIST_NAME := "DamageList"
-const PAGE_TITLE := "Damage"
-const RUN_TITLE := "Run, %d waves"
-const RUN_TITLE_ONE := "Run, 1 wave"
-const OTHER_ROW := "Other"  # the row of what no shown source holds, and its text
-const INCLUDED := "included"  # an overlapping source's share: its damage is in another row's
-const KILLS := "Kills: %s"
-const TAKEN := "Damage taken: %s"
+# Texts are translation keys (the game's or translations.csv's). A label translates a key in its
+# text itself; built texts are built again when the language changes (_notification).
+const PAGE_TITLE := "STAT_DAMAGE"
+const RUN_TITLE := "BT_DMG_RUN"  # {0}: the waves
+const OTHER_ROW := "Other"  # the node name of the row of what no shown source holds
+const OTHER_TEXT := "BT_DMG_OTHER"  # its text
+const INCLUDED := "BT_DMG_INCLUDED"  # an overlapping source's share (in another row's damage)
+const KILLS := "BT_DMG_KILLS"  # {0}: the number
+const TAKEN := "BT_DMG_TAKEN"
 const ICON := "res://ui/icons/misc/weapon_icon.png"
 const TOTAL_ICON := "res://items/stats/percent_damage.png"
 const DPS_ICON := "res://items/stats/attack_speed.png"
@@ -79,6 +81,11 @@ var _hud_fonts := {}  # size -> the HUD font at that size
 func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
 	meter.connect("changed", self, "_fill")
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_TRANSLATION_CHANGED and meter != null:
+		_fill()
 
 
 func _process(_delta: float) -> void:
@@ -361,8 +368,8 @@ func _drop_view(holder: Control) -> void:
 
 
 # List > Head (Wave: the title; Stats: TotalIcon, Total, Share, DpsIcon, Dps, HitIcon > Source,
-# Hit; Extra: Kills, Taken, the run's), a line, Sources (MAX_SOURCES bars and Other, each with
-# Content > Icon, Name, Amount, Share).
+# Hit; Extra: Kills, Taken, the run's, side by side or one under the other), a line, Sources
+# (MAX_SOURCES bars and Other, each with Content > Icon, Name, Amount, Share).
 func _board_list() -> VBoxContainer:
 	var font := _hud_font(HUD_MAIN_SIZE)
 	var list := VBoxContainer.new()
@@ -385,12 +392,18 @@ func _board_list() -> VBoxContainer:
 	stats.add_child(_hit_icon(STAT_ICON, STAT_HIT_SOURCE, "HitIcon"))
 	stats.add_child(_label(font, "Hit", HIT_COLOR))
 	head.add_child(stats)
-	var extra := _line("Extra", BoxContainer.ALIGN_BEGIN, STAT_GAP)
+	var extra := GridContainer.new()
+	extra.name = "Extra"
+	extra.columns = 2
+	extra.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	extra.add_constant_override("hseparation", STAT_GAP)
+	extra.add_constant_override("vseparation", 0)
 	extra.visible = false
 	extra.add_child(_label(load(HUD_FONT), "Kills", MUTED))
 	extra.add_child(_label(load(HUD_FONT), "Taken", MUTED))
 	head.add_child(extra)
 	list.add_child(head)
+	list.connect("resized", self, "_fit_extra", [list])
 	var line := HSeparator.new()
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var line_style := StyleBoxLine.new()
@@ -430,6 +443,23 @@ func _board_list() -> VBoxContainer:
 	return list
 
 
+# Kills and Damage taken side by side while they fit in the board's width, else one under the
+# other (a long translation): the board keeps its panel's width. Side by side they make the board
+# just as wide when they do not fit; one under the other the board has its own width again.
+func _fit_extra(list: Control) -> void:
+	var extra: GridContainer = list.get_node("Head/Extra")
+	if not extra.visible:
+		return
+	var both: float = STAT_GAP
+	for label in extra.get_children():  # the font's width: the minimum size may be stale yet
+		both += label.get_font("font").get_string_size(label.text).x
+	var width := list.rect_size.x
+	if extra.columns == 2 and width < both + 0.5:
+		extra.columns = 1
+	elif extra.columns == 1 and both + 1.0 <= width:
+		extra.columns = 2
+
+
 static func _spacer(width: int) -> Control:
 	var spacer := Control.new()
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -467,8 +497,9 @@ func _fill_board(list: Node, entry: Array, team_share: int, hit: Array, shown: D
 	var extra: Node = list.get_node("Head/Extra")
 	extra.visible = not shown.extra.empty()
 	if extra.visible:
-		extra.get_node("Kills").text = KILLS % short(shown.extra[0])
-		extra.get_node("Taken").text = TAKEN % short(shown.extra[1])
+		extra.get_node("Kills").text = Text.text(KILLS, [short(shown.extra[0])])
+		extra.get_node("Taken").text = Text.text(TAKEN, [short(shown.extra[1])])
+		_fit_extra(list)
 	var sources: Node = list.get_node("Sources")
 	var top: int = entry[1][0][2] if not entry[1].empty() else 1
 	var listed := 0  # what the shown rows that hold no other row's damage dealt
@@ -502,7 +533,7 @@ func _fill_other(row: ProgressBar, total: int, other: int, top: int) -> void:
 		return
 	var content: Node = row.get_node("Content")
 	content.get_node("Icon").texture = null
-	content.get_node("Name").text = OTHER_ROW
+	content.get_node("Name").text = OTHER_TEXT
 	row.value = 1000.0 * other / max(1, max(top, other))
 	row.get_stylebox("fg").bg_color = OTHER_FILL
 	content.get_node("Amount").text = short(other)
@@ -555,7 +586,7 @@ func _fill() -> void:
 	var run_team := _team(run_players)
 	var waves: int = run.get("waves", 0)
 	var whole := {
-		"title": RUN_TITLE_ONE if waves == 1 else RUN_TITLE % waves,
+		"title": Text.text(RUN_TITLE, [str(waves)]),
 		"time": run.get("time", 0.0),
 	}
 	for view in _views:

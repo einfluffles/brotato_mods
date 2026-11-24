@@ -41,6 +41,8 @@ func _button():
 		trade.visible and not trade.disabled and trade.get_index() == panel._take_button.get_index() + 1,
 		"the crate item has a Trade button below Take"
 	)
+	_t.check(trade.text == "BTR_TRADE" and tr(trade.text) != trade.text, "Trade is a translated key")
+	_fits(trade)
 	_emulator(0).focused_control = panel._take_button
 	yield(_t.tap("ui_down", 0), "completed")
 	_t.check(_emulator(0).focused_control == trade, "down from Take: Trade")
@@ -64,6 +66,23 @@ func _button():
 	_t.check(_emulator(0).focused_control == buttons[1], "up does not reach the one without room")
 	yield(_t.tap("ui_down", 0), "completed")
 	_t.check(_emulator(0).focused_control == panel._trade_cancel, "down: Cancel")
+
+
+# Trade in every language within the width the panel gives it in the language the tests run in.
+func _fits(trade: Button) -> void:
+	var font: Font = trade.get_font("font")
+	var margins: float = trade.get_stylebox("normal").get_minimum_size().x
+	var locale := TranslationServer.get_locale()
+	var wide := []
+	for language in ProgressData.languages:
+		TranslationServer.set_locale(language)
+		var width: float = font.get_string_size(tr(trade.text)).x + margins
+		if width > trade.rect_size.x:
+			wide.append("%s %d px" % [language, width])
+	TranslationServer.set_locale(locale)
+	_t.check(
+		wide.empty(), "and fits the panel's %d px in every language %s" % [trade.rect_size.x, wide]
+	)
 
 
 func _back():

@@ -141,6 +141,7 @@ const GearLinksTests := preload("res://mods-unpacked/einfluffles-TogetherTests/g
 const NonFiniteTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/non_finite_tests.gd"
 )
+const L10nTests := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -196,6 +197,7 @@ const SUITES := [
 	"gear_links",
 	"level_up_options",
 	"non_finite",
+	"l10n",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -592,6 +594,11 @@ func _suite_non_finite(_together: Node):
 	_suite.run()
 
 
+func _suite_l10n(together: Node):
+	_suite = L10nTests.new()
+	yield(_suite.run(self, together), "completed")
+
+
 func _suite_wave_start(together: Node):
 	coop_run(WaveStartTests.WAVE)
 	_suite = WaveStartTests.new(self)
@@ -627,8 +634,8 @@ func _suite_core(together: Node):
 
 	var lobby: Node = together.get_node("LobbyMenu")
 	_check(lobby.open_page() == null, "lobby page starts closed")
-	_check("Steam is unavailable" in lobby.details_text(), "lobby details without Steam")
-	_check(lobby.status_text() == "Online: needs Steam", "lobby status line without Steam")
+	_check(tr("BT_NO_STEAM_LONG") in lobby.details_text(), "lobby details without Steam")
+	_check(lobby.status_text() == tr("BT_STATUS_NEEDS_STEAM"), "lobby status line without Steam")
 
 	RunData.set_coop_run(true)
 	CoopService.clear_coop_players()

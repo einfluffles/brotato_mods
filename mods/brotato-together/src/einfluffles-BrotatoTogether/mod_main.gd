@@ -82,7 +82,9 @@ func _init() -> void:
 			backup.store(path)
 	for extension in EXTENSIONS:
 		ModLoaderMod.install_script_extension(MOD_DIR + extension)
-	ModLoaderLog.info("Init", LOG_NAME)
+	# The mod's own texts (keys BT_*) in the game's languages (docs/implementation.md, Localization).
+	var keys: int = load(MOD_DIR + "l10n.gd").load_csv(MOD_DIR + "translations.csv")
+	ModLoaderLog.info("Init (%d translated texts)" % keys, LOG_NAME)
 
 
 # load(), never preload: a preload compiles the mod's scripts, and the game classes they name,

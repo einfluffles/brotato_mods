@@ -12,8 +12,8 @@ const SlotInvite := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/
 # Status lines the slot must hold without growing: the longest count, an error, and a long text
 # like a translation or Steam's error message would be.
 const STATUSES := [
-	"Online: 4 players",
-	"! createLobby failed",
+	"Online · players: 4",
+	"! The lobby could not be created (Steam result 2)",
 	"Online: a much longer status line than any of the mod's own, as a translation could be",
 ]
 
@@ -173,7 +173,9 @@ static func _wide_enough(size: Vector2) -> bool:
 	return size.x >= ProjectSettings.get_setting("display/window/size/width")
 
 
+# text: as set (a key shows translated).
 static func _cut(control: Control, text: String, room: Vector2) -> Array:
+	text = TranslationServer.translate(text)
 	var size: Vector2 = control.get_font("font").get_string_size(text)
 	if size.x > room.x or size.y > room.y:
 		return ["%s %s in %s" % [text, size, room]]

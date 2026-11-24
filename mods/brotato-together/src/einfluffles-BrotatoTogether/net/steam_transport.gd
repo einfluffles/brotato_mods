@@ -327,7 +327,8 @@ func _refresh_members() -> void:
 
 func _on_lobby_created(result: int, new_lobby_id: int) -> void:
 	if result != RESULT_OK:
-		emit_signal("lobby_failed", "createLobby failed (result %s)" % result)
+		ModLoaderLog.warning("createLobby failed (result %s)" % result, LOG_NAME)
+		emit_signal("lobby_failed", Text.text("BT_ERR_CREATE", [str(result)]))
 		return
 	lobby_id = new_lobby_id
 	host_id = local_id
@@ -344,15 +345,17 @@ func _on_lobby_joined(
 	joined_lobby_id: int, _permissions: int, _locked: bool, response: int
 ) -> void:
 	if response != LOBBY_ENTER_SUCCESS:
-		emit_signal("lobby_failed", "joinLobby failed (response %s)" % response)
+		ModLoaderLog.warning("joinLobby failed (response %s)" % response, LOG_NAME)
+		emit_signal("lobby_failed", Text.text("BT_ERR_JOIN", [str(response)]))
 		return
 	if host_id == local_id and lobby_id == joined_lobby_id:
 		return  # host also receives lobby_joined for its own lobby
 	var tag: String = steam.getLobbyData(joined_lobby_id, LOBBY_KEY_MOD)
 	if tag != _lobby_tag:
 		steam.leaveLobby(joined_lobby_id)
-		var reason := "Lobby mod version mismatch: host '%s', local '%s'" % [tag, _lobby_tag]
-		emit_signal("lobby_failed", reason)
+		var tags := [tag, _lobby_tag]
+		ModLoaderLog.warning("Lobby mod version mismatch: host '%s', local '%s'" % tags, LOG_NAME)
+		emit_signal("lobby_failed", Text.text("BT_ERR_LOBBY_VERSION", tags))
 		return
 	lobby_id = joined_lobby_id
 	host_id = int(steam.getLobbyOwner(lobby_id))
@@ -404,7 +407,7 @@ func _on_lobby_chat_update(
 		emit_signal("peer_left", changed_id)
 		if changed_id == host_id:
 			ModLoaderLog.warning("Host left the lobby", LOG_NAME)
-			emit_signal("lobby_failed", "The host left the lobby")
+			emit_signal("lobby_failed", tr("BT_ERR_HOST_LEFT"))
 			leave_lobby()
 
 
