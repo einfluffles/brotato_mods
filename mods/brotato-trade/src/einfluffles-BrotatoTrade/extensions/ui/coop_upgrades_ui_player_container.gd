@@ -4,7 +4,7 @@ extends "res://ui/menus/ingame/coop_upgrades_ui_player_container.gd"
 
 signal trade_requested(to_player)
 
-const TRADE_TEXT := "Trade"
+const TRADE_TEXT := "BTR_TRADE"  # a key (translations.csv): the button translates it
 const TRADE_TO_META := "trade_to"
 const TRADE_OK_META := "trade_ok"
 

@@ -4,7 +4,13 @@ extends "res://ui/menus/shop/coop_shop_hint.gd"
 # player_index on every CoopShopHint when a client's device changes: the setter lands here.
 
 const Hotkey := preload("res://mods-unpacked/einfluffles-BrotatoTrade/trade/hotkey.gd")
-const TRADE_TEXT := "Press {0} to trade"
+const TRADE_TEXT := "BTR_TRADE_HINT"  # a key (translations.csv) with {0} for the glyph
+
+
+# The game's set_text translates the text once: a language chosen later builds the labels again.
+func _notification(what: int) -> void:
+	if what == MainLoop.NOTIFICATION_TRANSLATION_CHANGED:
+		_update_key_icon()
 
 
 func _update_key_icon() -> void:
@@ -18,4 +24,5 @@ func _update_key_icon() -> void:
 		_key_icon.texture = glyph
 		set_text(TRADE_TEXT)
 	else:
-		set_text(TRADE_TEXT.replace("{0}", "%s {0}" % glyph))
+		# A key name in place of an image: it joins the text before the icon's place ("Press Y").
+		set_text(tr(TRADE_TEXT).replace("{0}", "%s {0}" % glyph))

@@ -7,7 +7,7 @@ signal trade_requested(item_data, to_player)
 signal trade_buy_requested(shop_item, to_player)
 signal trade_buy_closed(shop_item)
 
-const TRADE_TEXT := "Trade"
+const TRADE_TEXT := "BTR_TRADE"  # a key (translations.csv): the button translates it
 const TRADE_TO_META := "trade_to"
 const TRADE_OK_META := "trade_ok"
 const HINT_SCENE := "res://ui/menus/shop/coop_shop_hint.tscn"
