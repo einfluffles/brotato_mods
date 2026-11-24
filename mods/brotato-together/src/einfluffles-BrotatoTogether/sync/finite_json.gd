@@ -1,7 +1,8 @@
 extends Reference
 # JSON.print for text a client parses. Godot prints a NaN float as nan and an infinite one as inf
-# or -inf, which JSON.parse rejects (error 43): the client loses the whole text. The game can make
-# such values (a stat divided by a stat gain of 0, say) and its own save has the same problem.
+# or -inf (Linux) or as 1.#INF or -1.#INF (the Windows builds), which JSON.parse rejects (error
+# 43): the client loses the whole text. The game can make such values (a stat divided by a stat
+# gain of 0, say) and its own save has the same problem.
 # to_text() checks the printed text for such a value (two finds on it, see has_non_finite); only
 # on a hit it prints a copy again with each of them as 0, and warns with their paths (once per path
 # per WARN_INTERVAL_MSEC, at most MAX_LINES lines and a summary per call, at most MAX_PATHS paths
@@ -14,7 +15,9 @@ const WARN_INTERVAL_MSEC := 60000
 const MAX_LINES := 3  # warning lines per call; the other paths share one more line
 const SUMMARY_PATHS := 5  # paths named in that line
 const MAX_PATHS := 256
-const TOKENS := ["nan", "inf"]  # "-inf" is "inf" after a "-"
+# "-inf" is "inf" after a "-". The 1.# forms are how the Windows builds print them (msvcrt):
+# 1.#INF for an infinity, 1.#IND, 1.#QNAN or 1.#SNAN for a NaN (Godot itself prints NaN as nan).
+const TOKENS := ["nan", "inf", "1.#INF", "1.#IND", "1.#QNAN", "1.#SNAN"]
 const BEFORE := ":,["  # what JSON.print puts before a value (no spaces without an indent)
 const AFTER := ",]}"
 
@@ -33,8 +36,8 @@ static func to_text(value, root := "") -> String:
 	return JSON.print(copy)
 
 
-# Whether text (JSON.print's) has a bare nan, inf or -inf as a value: after ":", "," or "[" (or
-# the whole text) and before ",", "]" or "}" (or the end). One inside a string ("banana",
+# Whether text (JSON.print's) has a bare nan, inf, -inf or 1.#INF (and the like) as a value:
+# after ":", "," or "[" (or the whole text) and before ",", "]" or "}" (or the end). One inside a string ("banana",
 # "infinite") is not; a string with the very same characters ("x:nan,") is a false hit that
 # finite() then finds nothing in.
 static func has_non_finite(text: String) -> bool:
