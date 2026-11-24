@@ -13,6 +13,8 @@ var state_stream: Node = null
 var battle_host: Node = null
 var battle_client: Node = null
 
+var _shown := {}  # client: the body its prompt shows (its texts are built again in a new language)
+
 
 func setup(netplay_session: Node, host_battle: Node, client_battle: Node) -> void:
 	session = netplay_session
@@ -67,13 +69,27 @@ func apply_state(_section: int, body, _revision: int) -> bool:
 	var with_retry := bool(body.get("retry", false))
 	retry._ok_button.visible = not with_retry
 	retry._retry_wave_container.visible = with_retry
-	retry._label_number_retry.text = Text.text("RETRY_NUMBER", [str(int(body.get("retries", 0)))])
-	_waiting_label(retry).text = waiting_text(body, battle_client._you)
+	_shown = body
+	_fill_texts(retry)
 	retry.visible = true
 	return true
 
 
+func _fill_texts(retry: Node) -> void:
+	var retries := str(int(_shown.get("retries", 0)))
+	retry._label_number_retry.text = Text.text("RETRY_NUMBER", [retries])
+	_waiting_label(retry).text = waiting_text(_shown, battle_client._you)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_TRANSLATION_CHANGED and not _shown.empty():
+		var retry = _client_prompt()
+		if retry != null and retry.visible:
+			_fill_texts(retry)
+
+
 func clear_state(_section: int) -> void:
+	_shown = {}
 	var retry = _client_prompt()
 	if retry != null:
 		retry.visible = false
@@ -88,9 +104,13 @@ func _client_prompt():
 
 static func waiting_text(state: Dictionary, you: int) -> String:
 	var player := int(state.get("player", 0))
+	var who: String = Text.text("COOP_PLAYER", [str(player + 1)])
 	if player == you:
-		return "Your choice (P%d)" % (player + 1)
-	return "Waiting for P%d (%s) to choose…" % [player + 1, str(state.get("name", "host"))]
+		return Text.text("BT_RETRY_YOUR_CHOICE", [who])
+	var name = state.get("name")
+	if name == null:
+		name = TranslationServer.translate("BT_THE_HOST")
+	return Text.text("BT_RETRY_WAITING", [who, str(name)])
 
 
 func _waiting_label(retry: Node) -> Label:

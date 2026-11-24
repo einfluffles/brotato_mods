@@ -6,7 +6,10 @@ const NODE_NAME := "BrotatoTogetherSlotInvite"
 const BUTTON_SCRIPT_PATH := "res://ui/menus/global/my_menu_button.gd"
 const BUTTON_FONT_PATH := "res://resources/fonts/actual/base/font_26.tres"  # Back, run options
 const LABEL_THEME_PATH := "res://resources/themes/small_label_theme.tres"  # the join hint's
-const WIDTH := 260  # "Invite friends" 174 + the button style's 30; status lines up to that
+# At least "Invite friends" 174 + the button style's 30, and the status line as wide. A longer
+# translation widens the button (its minimum size is its text), the status line follows.
+const WIDTH := 260
+const BUTTON_TEXT := "BT_INVITE_FRIENDS"  # a translation key: the button translates it
 const SEPARATION := 10
 const BOTTOM := 50  # space under the status, above the slot's bottom edge
 
@@ -34,8 +37,7 @@ func _init() -> void:
 	add_constant_override("separation", SEPARATION)
 	button.set_script(load(BUTTON_SCRIPT_PATH))
 	button.name = "InviteButton"
-	button.text = "Invite friends"
-	button.clip_text = true
+	button.text = BUTTON_TEXT
 	button.rect_min_size.x = WIDTH
 	# A MyMenuButton takes Godot's focus when the mouse enters it; the focus look then stays.
 	button.set("grab_focus_with_mouse", false)

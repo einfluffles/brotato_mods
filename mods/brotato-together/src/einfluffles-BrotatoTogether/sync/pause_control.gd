@@ -57,20 +57,30 @@ static func disable_local_pause(scene: Node) -> void:
 		InputService.disconnect("game_lost_focus", scene, "_on_game_lost_focus")
 
 
+# [key, args] of the banner's text (translations.csv). by_id: the pauser's steam id, 0 the host,
+# -1 a player the host could not name.
+static func banner_line(by: String, by_id: int, local_id: int) -> Array:
+	if by_id > 0 and by_id == local_id:
+		return ["BT_PAUSED_BY_YOU", []]
+	if by != "":
+		return ["BT_PAUSED_BY", [by]]
+	return ["BT_PAUSED_BY_PLAYER" if by_id == -1 else "BT_PAUSED_BY_HOST", []]
+
+
 static func banner_text(by: String, by_id: int, local_id: int) -> String:
-	if by_id != 0 and by_id == local_id:
-		return "Paused by you · press pause to resume"
-	return "Paused by %s" % (by if by != "" else "the host")
+	var line := banner_line(by, by_id, local_id)
+	return Text.text(line[0], line[1])
 
 
 # The host's pause on a client. The banner lives in the scene it covers, found there by name.
-static func show_banner(parent: Node, visible: bool, text: String) -> void:
+# line: banner_line's.
+static func show_banner(parent: Node, visible: bool, line: Array) -> void:
 	var banner = parent.get_node_or_null(BANNER_NAME)
 	if banner == null:
 		if not visible:
 			return
 		banner = make_banner(parent)
-	banner_label(banner).text = text
+	banner_label(banner).show_line(line)
 	banner.visible = visible
 
 
@@ -93,8 +103,10 @@ static func make_banner(parent: Node) -> CanvasLayer:
 	lines.alignment = BoxContainer.ALIGN_CENTER
 	lines.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lines.add_constant_override("separation", 20)
-	lines.add_child(_line("Title", "PAUSE", TITLE_FONT))
-	lines.add_child(_line("Label", "", TEXT_FONT))
+	lines.add_child(_line(Label.new(), "Title", "PAUSE", TITLE_FONT))
+	var text: Label = _line(BannerLabel.new(), "Label", "", TEXT_FONT)
+	text.autowrap = true  # a long translation wraps
+	lines.add_child(text)
 	mask.add_child(lines)
 	banner.add_child(mask)
 	parent.add_child(banner)
@@ -111,8 +123,7 @@ static func _backdrop(parent: Node) -> StyleBox:
 	return flat
 
 
-static func _line(node_name: String, text: String, font_path: String) -> Label:
-	var label := Label.new()
+static func _line(label: Label, node_name: String, text: String, font_path: String) -> Label:
 	label.name = node_name
 	label.text = text
 	label.align = Label.ALIGN_CENTER
@@ -121,15 +132,33 @@ static func _line(node_name: String, text: String, font_path: String) -> Label:
 	return label
 
 
-# [name, steam id] of whoever paused; ["", 0] for the host.
+# The banner's text, built again in the new language when the language changes.
+class BannerLabel:
+	extends Label
+
+	var line := []  # PauseControl.banner_line's [key, args]
+
+	func show_line(new_line: Array) -> void:
+		line = new_line
+		_build()
+
+	func _build() -> void:
+		text = Text.text(line[0], line[1]) if line.size() == 2 else ""
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_TRANSLATION_CHANGED:
+			_build()
+
+
+# [name, steam id] of whoever paused; ["", 0] for the host, ["", -1] for a player without a
+# name here (each client says "a player" in its own language).
 func paused_by() -> Array:
 	if _pauser_device < 0:
 		return ["", 0]
 	for steam_id in input_sync.devices:
-		if input_sync.devices[steam_id] == _pauser_device:
-			var peer = session.peers.get(steam_id)
-			return [peer.name if peer != null else "a player", steam_id]
-	return ["a player", 0]
+		if input_sync.devices[steam_id] == _pauser_device and session.peers.has(steam_id):
+			return [session.peers[steam_id].name, steam_id]
+	return ["", -1]
 
 
 # Looked up when the scene changes: a node_added handler would run for every spawn of every wave.
@@ -245,7 +274,7 @@ func _process(_delta: float) -> void:
 	_update_live_menu()
 
 
-# Section PAUSE_SHOP: [paused, by (name), by_id (steam id, 0: the host)] while the host is in the
+# Section PAUSE_SHOP: [paused, by (name), by_id (paused_by's)] while the host is in the
 # shop. Handled by ShopSync.
 func state_key(_section: int) -> String:
 	var scene := get_tree().current_scene

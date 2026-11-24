@@ -112,7 +112,7 @@ var _own_seq := 0  # newest own input the displayed position includes
 var _motion_result := Physics2DTestMotionResult.new()  # reused by BattleScene.step
 var _paused := false
 var _wave_over := false  # the host's wave ended: its players stand (_note_wave_end)
-var _pause_text := ""
+var _pause_line := []
 var _events := []  # [host t, event] waiting for render time
 var _pose = Pose.new()
 var _anim_mirror = AnimMirror.new()
@@ -180,7 +180,7 @@ func apply_state(_section: int, body, _revision: int) -> bool:
 		return false
 	var by = body.get("by")
 	var by_id = body.get("by_id")
-	_pause_text = PauseControl.banner_text(
+	_pause_line = PauseControl.banner_line(
 		by if typeof(by) == TYPE_STRING else "",
 		by_id if typeof(by_id) == TYPE_INT else 0,
 		session.transport.local_id
@@ -192,7 +192,7 @@ func apply_state(_section: int, body, _revision: int) -> bool:
 # Resumed (or the battle is over: _leave_battle resets the pause anyway).
 func clear_state(_section: int) -> void:
 	_snapshot_gaps.reset()  # the pause was no stall
-	_pause_text = ""
+	_pause_line = []
 	_set_paused(false)
 
 
@@ -289,7 +289,7 @@ func _reset_battle_state() -> void:
 	_you = -1
 	_paused = false
 	_wave_over = false
-	_pause_text = ""
+	_pause_line = []
 	if input_sync != null:
 		input_sync.set_host_paused("battle", false)
 	_events.clear()
@@ -392,8 +392,8 @@ func _set_paused(paused: bool) -> void:
 		input_sync.set_host_paused("battle", paused and is_in_battle())
 	if not is_in_battle():
 		return
-	var text := _pause_text if _pause_text != "" else "Paused by the host"
-	PauseControl.show_banner(_main, paused, text)
+	var line := _pause_line if not _pause_line.empty() else PauseControl.banner_line("", 0, 0)
+	PauseControl.show_banner(_main, paused, line)
 
 
 # Wave end, half-wave events, harvesting, ... are host decisions. Timers keep counting (the wave

@@ -118,7 +118,7 @@ static func color_hint_row() -> HBoxContainer:
 		COLOR_ACTION, CoopService.PlayerType.GAMEPAD_XBOX, 0
 	))
 	var label := Label.new()
-	label.text = "Change colour"
+	label.text = "BT_CHANGE_COLOR"  # a translation key: the label translates it
 	row.add_child(label)
 	return row
 

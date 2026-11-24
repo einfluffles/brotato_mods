@@ -17,16 +17,8 @@ import pathlib
 import re
 import sys
 
-# Not converted yet (repo-relative). The next localization steps empty it.
-ALLOWLIST = {
-    "mods/brotato-together/src/einfluffles-BrotatoTogether/extensions/ui/menu_options.gd",
-    "mods/brotato-together/src/einfluffles-BrotatoTogether/extensions/ui/stats_container.gd",
-    "mods/brotato-together/src/einfluffles-BrotatoTogether/ui/client_view.gd",
-    "mods/brotato-together/src/einfluffles-BrotatoTogether/ui/coop_mode.gd",
-    "mods/brotato-together/src/einfluffles-BrotatoTogether/ui/coop_selection.gd",
-    "mods/brotato-together/src/einfluffles-BrotatoTogether/ui/damage_views.gd",
-    "mods/brotato-together/src/einfluffles-BrotatoTogether/ui/slot_invite.gd",
-}
+# Files not converted yet (repo-relative). Every mod is converted: keep it empty.
+ALLOWLIST = set()
 
 KEEP = "# l10n: keep"
 STRING = r'"((?:[^"\\]|\\.)*)"'

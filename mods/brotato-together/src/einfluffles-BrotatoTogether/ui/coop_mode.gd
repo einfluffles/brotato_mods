@@ -12,8 +12,10 @@ const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const NODE_NAME := "BrotatoTogetherCoopMode"
-const VALUES := ["Off", "Local", "Online"]
-const NO_STEAM := "Online co-op needs Steam"
+# Whole items (translation keys), so a language can shorten "Co-op" here: the box clips its text.
+# The popup and the box translate them themselves, also after a language switch.
+const VALUES := ["BT_COOP_OFF", "BT_COOP_LOCAL", "BT_COOP_ONLINE"]
+const NO_STEAM := "BT_NEEDS_STEAM"
 
 var lobby: Node = null
 var scene: Node = null
@@ -50,7 +52,7 @@ func _ready() -> void:
 	clip_text = true
 	rect_min_size.y = coop_button.get_combined_minimum_size().y  # the Co-op toggle's row
 	for i in VALUES.size():
-		add_item("%s: %s" % [tr("COOP"), VALUES[i]], i)
+		add_item(VALUES[i], i)
 	coop_button.visible = false
 	connect("item_selected", self, "_on_item_selected")
 	connect("focus_entered", self, "_on_focus_entered")

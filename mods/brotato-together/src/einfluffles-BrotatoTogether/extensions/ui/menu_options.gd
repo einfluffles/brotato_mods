@@ -5,6 +5,7 @@ extends "res://ui/menus/pages/menu_options.gd"
 
 const METER := "/root/ModLoader/einfluffles-BrotatoTogether/DamageMeter"
 const BUTTON_NAME := "DamageMeterButton"
+const BUTTON_TEXT := "BT_DAMAGE_METER"  # a translation key: the button translates it
 
 var _damage_meter_button: CheckButton = null
 
@@ -17,7 +18,7 @@ func _ready() -> void:
 	_damage_meter_button = after.duplicate(DUPLICATE_SCRIPTS)
 	_damage_meter_button.name = BUTTON_NAME
 	_damage_meter_button.unique_name_in_owner = false
-	_damage_meter_button.text = "Damage meter"
+	_damage_meter_button.text = BUTTON_TEXT
 	_damage_meter_button.pressed = meter.shown
 	after.get_parent().add_child_below_node(after, _damage_meter_button)
 	_damage_meter_button.connect("toggled", meter, "set_shown")
