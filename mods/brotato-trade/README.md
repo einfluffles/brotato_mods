@@ -187,10 +187,11 @@ As of 2026-11-21:
   the mod's glyphs). `CoopShop` decides who can take what and refreshes both panels afterwards. `CoopUpgradesUIPlayerContainer` gets the crate panel's button
   and list, built from its *Take* button. `UpgradesUI` does the crate hand-over.
 - **Texts** (`l10n.gd`): `mod_main.gd` reads `translations.csv` at start into one Godot
-  `Translation` per language (an empty cell falls back to English). brotato:together's loader
-  has the same interface (`load_csv(path)`); this mod keeps its own copy so it runs alone. The
-  buttons hold the key and translate themselves; the hint, which the game's `CoopShopHint` translates once, is built again on a
-  language change.
+  `Translation` per language (an empty cell falls back to English; between `zh` and `zh_TW` the
+  other Chinese text comes first). brotato:together's loader has the same interface
+  (`load_csv(path)`); this mod keeps its own copy so it runs alone. The buttons hold the key and
+  translate themselves; the hint, which the game's `CoopShopHint` translates once, is built again
+  on a language change.
 - **The trade key** (`trade/hotkey.gd`): the InputMap action `brotato_trade` with the key and
   button from the config. The game wipes runtime actions when the gamepad movement setting
   changes and then copies every action per device; the extension of `InputService`

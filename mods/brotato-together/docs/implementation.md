@@ -2218,7 +2218,8 @@ switch of it while the game runs.
   API (each mod must work alone).
 - **Fallback.** Every cell is filled (the `l10n` suite fails on an empty one). The loader still
   skips an empty cell, so the game's fallback would show the English text; for `zh_TW` the engine
-  first takes the `zh` text (same language code), then English.
+  first takes the `zh` text (same language code), then English, and `zh` may take the `zh_TW`
+  text the same way.
 - **Terms.** Each language reuses the game's own words, looked up by English text in the
   reference CSV: co-op (`COOP`), player (`COOP_PLAYER`), wave, pause, damage, run (fr *partie*,
   ru *забег*, es/pt/it *partida/partita*, tr *oyun*; ja ゲーム and ko 게임 instead of the game's
@@ -2282,7 +2283,9 @@ switch of it while the game runs.
   error unless it is a key or its line carries `# l10n: keep`. It also checks that every `BT_`
   literal in the sources and tests is a key of the CSV and that every key of the CSV is used.
   Its allowlist (files not converted yet) is empty: both mods are converted. A node name passed
-  to a `..._button()` helper carries `# l10n: keep`.
+  to a `..._button()` helper carries `# l10n: keep`. It only sees a literal written at the
+  assignment or call itself: text returned by a function (`status_text()`, `hint_text()`) or built
+  on another line is up to review and the language-switch tests.
 
 **Adding a text:** add a row with the key and a text in every language (a draft is fine, a
 player corrects it), use the key in the code, run `tools/lint.sh` and

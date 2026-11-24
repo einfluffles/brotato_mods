@@ -26,7 +26,8 @@ upload; three of them are marked where the upload may have differed.
 - Languages: the mod's texts now follow the game's language, in all 13 of the game's languages
   (the lobby, the *Online co-op* page, lobby errors, the client's waiting screen, character
   selection, the pause banner, the retry prompt, the damage meter and its switch in the options),
-  and switch at once when the language changes. They use the game's own words for co-op, player,
+  and switch at once when the language changes (an error already on screen keeps its language
+  until the next one). They use the game's own words for co-op, player,
   wave, pause and damage. A join refused for another version is explained in the joining
   player's language. The texts are in `translations.csv`, open to corrections from players of
   each language (see the README's Languages section). Where a translation is longer, the layout
