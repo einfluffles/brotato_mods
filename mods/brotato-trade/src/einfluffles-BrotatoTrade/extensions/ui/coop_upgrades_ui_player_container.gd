@@ -19,15 +19,15 @@ var _trade_hidden := []  # the game's buttons the list hides
 
 func _ready() -> void:
 	var at: int = _take_button.get_index() + 1
-	_trade_button = _trade_add_button("TradeButton", at)
+	_trade_button = _trade_add_button("TradeButton", at)  # l10n: keep (node name)
 	_trade_button.text = TRADE_TEXT
 	_trade_button.connect("pressed", self, "_on_trade_button_pressed")
 	for i in CoopService.UI_MAX_PLAYER_COUNT - 1:
-		var button := _trade_add_button("TradePlayer%d" % (i + 1), at + 1 + i)
+		var button := _trade_add_button("TradePlayer%d" % (i + 1), at + 1 + i)  # l10n: keep (node name)
 		button.expand_icon = true
 		button.connect("pressed", self, "_on_trade_player_pressed", [i])
 		_trade_players.append(button)
-	_trade_cancel = _trade_add_button("TradeCancel", at + _trade_players.size() + 1)
+	_trade_cancel = _trade_add_button("TradeCancel", at + _trade_players.size() + 1)  # l10n: keep
 	_trade_cancel.text = "MENU_CANCEL"
 	_trade_cancel.connect("pressed", self, "trade_back", [true])
 

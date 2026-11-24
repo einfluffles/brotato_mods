@@ -26,9 +26,6 @@ ALLOWLIST = {
     "mods/brotato-together/src/einfluffles-BrotatoTogether/ui/coop_selection.gd",
     "mods/brotato-together/src/einfluffles-BrotatoTogether/ui/damage_views.gd",
     "mods/brotato-together/src/einfluffles-BrotatoTogether/ui/slot_invite.gd",
-    "mods/brotato-trade/src/einfluffles-BrotatoTrade/extensions/ui/coop_item_popup.gd",
-    "mods/brotato-trade/src/einfluffles-BrotatoTrade/extensions/ui/coop_upgrades_ui_player_container.gd",
-    "mods/brotato-trade/src/einfluffles-BrotatoTrade/ui/trade_hint.gd",
 }
 
 KEEP = "# l10n: keep"
