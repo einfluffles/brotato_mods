@@ -37,9 +37,9 @@ static func to_text(value, root := "") -> String:
 
 
 # Whether text (JSON.print's) has a bare nan, inf, -inf or 1.#INF (and the like) as a value:
-# after ":", "," or "[" (or the whole text) and before ",", "]" or "}" (or the end). One inside a string ("banana",
-# "infinite") is not; a string with the very same characters ("x:nan,") is a false hit that
-# finite() then finds nothing in.
+# after ":", "," or "[" (or the whole text) and before ",", "]" or "}" (or the end). One inside a
+# string ("banana", "infinite") is not; a string with the very same characters ("x:nan,") is a
+# false hit that finite() then finds nothing in.
 static func has_non_finite(text: String) -> bool:
 	for token in TOKENS:
 		var at := text.find(token)
