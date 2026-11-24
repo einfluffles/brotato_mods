@@ -18,7 +18,7 @@ const RUN_SCENE_PREFIXES := ["res://main.tscn", "res://ui/menus/shop/"]
 const PAGE_NAME := "BrotatoTogetherLobbyPage"
 const ENTRY_NAME := "BrotatoTogetherLobbyButton"
 const NOTICE_MAX_AGE_MSEC := 15000  # an error older than this is no news on the title screen
-const NO_STEAM_TEXT := "Steam is unavailable: online play needs the Steam version of the game."
+const NO_STEAM_TEXT := "BT_NO_STEAM_LONG"
 
 var transport: Node = null
 var session: Node = null
@@ -83,7 +83,7 @@ func steam_available() -> bool:
 
 func host() -> void:
 	if not steam_available():
-		_on_lobby_failed(NO_STEAM_TEXT)
+		_on_lobby_failed(tr(NO_STEAM_TEXT))
 		return
 	last_error = ""
 	creating = true
@@ -132,9 +132,8 @@ func players() -> Array:
 		return list
 	var own_name: String = transport.get_persona_name(transport.local_id)
 	var hosting: bool = transport.is_host()
-	list.append(
-		{"id": transport.local_id, "name": own_name, "note": "host" if hosting else "you", "local": true}
-	)
+	var own_note := tr("BT_NOTE_HOST" if hosting else "BT_NOTE_YOU")
+	list.append({"id": transport.local_id, "name": own_name, "note": own_note, "local": true})
 	var ids: Array = transport.members.duplicate()
 	for steam_id in session.peers:
 		if not steam_id in ids:
@@ -148,7 +147,11 @@ func players() -> Array:
 			"local": false,
 		}
 		if steam_id == transport.host_id:
-			player.note = "host" if player.note == "" else "host · " + player.note
+			player.note = (
+				tr("BT_NOTE_HOST")
+				if player.note == ""
+				else Text.text("BT_NOTE_HOST_WITH", [player.note])
+			)
 			list.insert(0, player)
 		else:
 			list.append(player)
@@ -160,56 +163,56 @@ func _peer_note(steam_id: int) -> String:
 		return ""
 	var peer: Dictionary = session.peers[steam_id]
 	if not peer.ready:
-		return "connecting"
+		return tr("BT_CONNECTING")
 	if session.is_peer_stale(steam_id):
-		return "no response"
+		return tr("BT_NO_RESPONSE")
 	return "%d ms" % peer.rtt_ms if peer.rtt_ms >= 0 else ""
 
 
 # What happens next, for the title screen's frame ("": nothing to say).
 func hint_text() -> String:
 	if creating:
-		return "Creating the lobby…"
+		return tr("BT_CREATING_LOBBY")
 	if not transport.is_active():
 		return ""
 	if transport.is_host():
 		if session.peers.empty():
-			return "Invite friends, then start or continue a run."
-		return "Start or continue a run: everybody in the lobby comes along."
+			return tr("BT_HINT_INVITE")
+		return tr("BT_HINT_START")
 	if not session.is_ready_client():
-		return "Connecting to the host…"
-	return "Waiting for %s to start or continue a run." % session.peers[transport.host_id].name
+		return tr("BT_HINT_CONNECTING")
+	return Text.text("BT_HINT_WAITING", [session.peers[transport.host_id].name])
 
 
 func details_text() -> String:
 	var lines := []
 	if not steam_available():
-		lines.append(NO_STEAM_TEXT)
+		lines.append(tr(NO_STEAM_TEXT))
 	elif not transport.is_active():
-		lines.append("Not in a lobby. Host one, then invite friends via Steam.")
+		lines.append(tr("BT_DETAILS_NO_LOBBY"))
 	else:
-		var role := "Hosting" if transport.is_host() else "Connected as client"
-		lines.append("%s · lobby %s" % [role, transport.lobby_id])
+		var role := "BT_DETAILS_HOSTING" if transport.is_host() else "BT_DETAILS_CLIENT"
+		lines.append(Text.text(role, [str(transport.lobby_id)]))
 		if DlcBorrow.is_active():
 			lines.append(DlcBorrow.note())
 		for steam_id in session.peers:
 			var peer: Dictionary = session.peers[steam_id]
-			var state := "ready" if peer.ready else "connecting"
+			var state := tr("BT_READY" if peer.ready else "BT_CONNECTING")
 			if session.is_peer_stale(steam_id):
-				state = "no response"
+				state = tr("BT_NO_RESPONSE")
 			var rtt: String = ("%d ms" % peer.rtt_ms) if peer.rtt_ms >= 0 else "-"
 			var answer: int = peer.get("answer_ms", -1)
 			if peer.rtt_ms >= 0 and answer > peer.rtt_ms:  # what the games' frames added
-				rtt += " (%d ms with frame time)" % answer
+				rtt += " " + Text.text("BT_FRAME_TIME", [str(answer)])
 			lines.append("  %s - %s - %s" % [peer.name, state, rtt])
 	if absent_players != null:
 		lines += absent_players.describe()
 	if battle_host.is_in_battle():
-		lines.append(
+		lines.append(  # l10n: keep (diagnostics)
 			"Battle: %d B snapshots at %d Hz" % [battle_host.snapshot_bytes, battle_host.SNAPSHOT_HZ]
 		)
 	if battle_client.is_in_battle():
-		lines.append("Battle: render lag %d ms" % battle_client.interp_lag_msec)
+		lines.append("Battle: render lag %d ms" % battle_client.interp_lag_msec)  # l10n: keep
 	if last_error != "":
 		lines.append("! " + last_error)
 	if transport.pending_join_id != 0:
@@ -220,30 +223,21 @@ func details_text() -> String:
 # One line for the player slot of character selection ("": nothing to say).
 func status_text() -> String:
 	if not steam_available():
-		return "Online: needs Steam"
+		return tr("BT_STATUS_NEEDS_STEAM")
 	if creating:
-		return "Online: creating the lobby…"
+		return tr("BT_STATUS_CREATING")
 	if transport.is_host():
-		var players: int = session.peers.size() + 1
-		return "Online: %d player%s" % [players, "" if players == 1 else "s"]
+		return Text.text("BT_STATUS_PLAYERS", [str(session.peers.size() + 1)])
 	return "! " + last_error if last_error != "" else ""
 
 
+# Its sentences one per line (no space between sentences in Chinese or Japanese).
 func leave_question() -> String:
-	var what: String = (
-		"A friend's invite is waiting. Joining leaves this lobby."
-		if transport.pending_join_id != 0
-		else "Leave the lobby?"
-	)
+	var what := tr("BT_INVITE_WAITING" if transport.pending_join_id != 0 else "BT_LEAVE_QUESTION")
 	if not is_mid_run():
 		return what
-	if transport.is_host():
-		return (
-			what
-			+ " Your run goes on, but the remote players' characters stay idle (the shop and"
-			+ " level-ups wait for them) until they rejoin a lobby you host."
-		)
-	return what + " You leave the host's run; your own saved run is kept."
+	var midrun := "BT_LEAVE_HOST_MIDRUN" if transport.is_host() else "BT_LEAVE_CLIENT_MIDRUN"
+	return what + "\n" + tr(midrun)
 
 
 func open_page() -> Control:

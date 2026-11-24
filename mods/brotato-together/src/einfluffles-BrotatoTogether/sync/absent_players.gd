@@ -34,14 +34,17 @@ func display_name(steam_id: int) -> String:
 	return _names.get(steam_id, str(steam_id))
 
 
+# Lines for the lobby page's details, in the player's language.
 func describe() -> Array:
 	var lines := []
 	for steam_id in absent:
 		var silent: int = absent[steam_id]
-		var state := "choices made automatically"
+		var args := [display_name(steam_id), str(silent / 1000)]
 		if silent < ABSENT_MSEC:
-			state = "auto-continue in %d s" % ceil((ABSENT_MSEC - silent) / 1000.0)
-		lines.append("%s away %d s · %s" % [display_name(steam_id), silent / 1000, state])
+			args.append(str(int(ceil((ABSENT_MSEC - silent) / 1000.0))))
+			lines.append(Text.text("BT_ABSENT_COUNTDOWN", args))
+		else:
+			lines.append(Text.text("BT_ABSENT_AUTO", args))
 	return lines
 
 

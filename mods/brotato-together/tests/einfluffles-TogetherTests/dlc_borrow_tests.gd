@@ -192,7 +192,7 @@ func _test_borrowed_session(
 	_t._check(not DLC in Compat.local_info("x").dlcs, "borrowed DLC never reported as owned")
 	var page: Control = lobby.open()
 	_t._check(
-		"Using the host's DLC for this session: " in page._details.text
+		DlcBorrow.note() != "" and DlcBorrow.note() in page._details.text
 		and "Primal Dread" in page._details.text,
 		"the lobby page's details note the borrowed DLC"
 	)

@@ -358,7 +358,7 @@ func _test_leave_confirmation(transport: Node) -> void:
 	if page == null:
 		return
 	var question: String = page._confirm.get_node("Buttons/Label").text
-	_t._check(page.is_asking() and "Leave the lobby?" in question, "leave confirmation shown")
+	_t._check(page.is_asking() and tr("BT_LEAVE_QUESTION") in question, "leave confirmation shown")
 	page._on_confirm_yes()
 	_t._check(not transport.is_active(), "confirming leaves")
 	close_page(lobby)

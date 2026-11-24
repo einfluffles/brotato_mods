@@ -12,7 +12,7 @@ const SlotInvite := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/
 # Status lines the slot must hold without growing: the longest count, an error, and a long text
 # like a translation or Steam's error message would be.
 const STATUSES := [
-	"Online: 4 players",
+	"Online · players: 4",
 	"! createLobby failed",
 	"Online: a much longer status line than any of the mod's own, as a translation could be",
 ]

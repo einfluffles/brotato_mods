@@ -84,14 +84,15 @@ func run(suite):
 	var panels: Array = scene._get_coop_join_panels()
 	var invite: Control = panels[0].get_node(SlotInvite.NODE_NAME)
 	t._check(
-		invite.visible and not invite.button.visible and "creating" in invite.status.text,
+		invite.visible and not invite.button.visible and invite.status.text == tr("BT_STATUS_CREATING"),
 		"selection: the free slot says the lobby is being made (%s)" % invite.status.text
 	)
 	s.transport._on_lobby_created(s.transport.RESULT_OK, LOBBY)
 	yield(s._frames(2), "completed")
 	t._check(
 		mode.selected == CoopMode.Mode.ONLINE and invite.visible and invite.button.visible
-		and invite.status.text == "Online: 1 player" and _shown(panels) == [0],
+		and invite.status.text == Text.text("BT_STATUS_PLAYERS", ["1"])
+		and _shown(panels) == [0],
 		"selection: hosting -> Invite friends and the count in the next free slot (%s, %s)"
 		% [invite.status.text, _shown(panels)]
 	)
@@ -138,7 +139,8 @@ func run(suite):
 	s.session._add_peer(HOST)
 	yield(s._frames(1), "completed")
 	t._check(
-		invite.status.text == "Online: 2 players", "selection: the status counts the lobby's players"
+		invite.status.text == Text.text("BT_STATUS_PLAYERS", ["2"]),
+		"selection: the status counts the lobby's players"
 	)
 	s.session.peers.clear()
 

@@ -246,7 +246,7 @@ func _test_client(main: Node):
 	if page != null:
 		var question: String = page._confirm.get_node("Buttons/Label").text
 		t._check(
-			page.is_asking() and "You leave the host's run" in question,
+			page.is_asking() and tr("BT_LEAVE_CLIENT_MIDRUN") in question,
 			"and asks before leaving the lobby (%s)" % question
 		)
 		t._check(

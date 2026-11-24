@@ -106,7 +106,7 @@ static func note() -> String:
 		names.append(NAMES.get(dlc_id, dlc_id))
 	if names.empty():
 		return ""
-	return "Using the host's DLC for this session: %s" % PoolStringArray(names).join(", ")
+	return Text.text("BT_DLC_BORROWED", [PoolStringArray(names).join(", ")])
 
 
 static func _invalidate_item_lists() -> void:

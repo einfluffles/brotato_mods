@@ -627,8 +627,8 @@ func _suite_core(together: Node):
 
 	var lobby: Node = together.get_node("LobbyMenu")
 	_check(lobby.open_page() == null, "lobby page starts closed")
-	_check("Steam is unavailable" in lobby.details_text(), "lobby details without Steam")
-	_check(lobby.status_text() == "Online: needs Steam", "lobby status line without Steam")
+	_check(tr("BT_NO_STEAM_LONG") in lobby.details_text(), "lobby details without Steam")
+	_check(lobby.status_text() == tr("BT_STATUS_NEEDS_STEAM"), "lobby status line without Steam")
 
 	RunData.set_coop_run(true)
 	CoopService.clear_coop_players()

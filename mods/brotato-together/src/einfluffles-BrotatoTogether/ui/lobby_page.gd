@@ -12,7 +12,7 @@ const DETAILS_FONT_PATH := "res://resources/fonts/actual/base/font_26.tres"
 const PANEL_STYLE_PATH := "res://resources/themes/panel/panel_style.tres"
 const BUTTON_SCRIPT_PATH := "res://ui/menus/global/my_menu_button.gd"
 const CONFIRM_SCENE_PATH := "res://ui/menus/pages/menu_confirm.tscn"
-const TITLE := "Online co-op"
+const TITLE := "BT_ONLINE_COOP"  # translation keys: the controls translate them
 const REFRESH_SEC := 0.25
 const DIM := Color(0, 0, 0, 0.6)
 
@@ -89,10 +89,10 @@ func _build_column(column: Container) -> void:
 	_buttons.size_flags_horizontal = SIZE_SHRINK_CENTER
 	_buttons.add_constant_override("separation", 15)
 	column.add_child(_buttons)
-	_join_button = _add_button("Join invite", "_on_join_pressed")
-	_host_button = _add_button("Host lobby", "_on_host_pressed")
-	_invite_button = _add_button("Invite friends", "_on_invite_pressed")
-	_leave_button = _add_button("Leave lobby", "_on_leave_pressed")
+	_join_button = _add_button("BT_JOIN_INVITE", "_on_join_pressed")
+	_host_button = _add_button("BT_HOST_LOBBY", "_on_host_pressed")
+	_invite_button = _add_button("BT_INVITE_FRIENDS", "_on_invite_pressed")
+	_leave_button = _add_button("BT_LEAVE_LOBBY", "_on_leave_pressed")
 	_back_button = _add_button("MENU_BACK", "_on_back_pressed")
 
 
@@ -258,11 +258,24 @@ func _input(event: InputEvent) -> void:
 # Hidden (back, the pause menu closed, the wave ended): no question left open, whose _input
 # would take every cancel, and a pending invite is declined.
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_TRANSLATION_CHANGED:
+		_translate()
+		return
 	if what != NOTIFICATION_VISIBILITY_CHANGED or not _shown or is_visible_in_tree():
 		return
 	_shown = false
 	_show_confirm(false)
 	lobby.decline_invite()
+
+
+# A language switch: the texts built here at once (the buttons and the title translate their keys
+# themselves).
+func _translate() -> void:
+	if lobby == null or not is_inside_tree():
+		return
+	_details.text = lobby.details_text()
+	if is_asking():
+		_confirm.get_node("Buttons/Label").text = lobby.leave_question()
 
 
 func _on_button_focused(button: Button) -> void:
