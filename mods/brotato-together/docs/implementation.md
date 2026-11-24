@@ -41,6 +41,7 @@ which lists every message with its fields).
 
 | Directory | Role |
 |---|---|
+| `l10n.gd`, `translations.csv` | the mod's own texts in the game's languages ([Localization](#localization)) |
 | `mod_main.gd` | creates every module, installs the script extensions, switches a client between its own menus and the host's screens |
 | `net/` | Steam transport (`steam_transport.gd`), message list (`protocol.gd`), connection path and traffic logs |
 | `session/` | handshake, compatibility, puppet mode, DLC borrowing, sound relay, progress sharing, settings |
@@ -1833,7 +1834,8 @@ extension of a menu). Layout sizes are constants in the `ui/` files and are chec
 - **Entry button.** A `MyMenuButton` below `MainMenu.start_button` (same script, alignment, height
   and left / right focus neighbours) does what is next: *Host lobby* (without Steam, the reason
   appears in `%ErrorLabel`), *Creating lobby...*, then *Invite friends* as host or *Leave lobby* as
-  client. Its minimum width is that of its widest text, so the column does not change width.
+  client. Its minimum width is that of its widest text, so the column does not change width; it
+  is measured again after a language switch ([Localization](#localization)).
 - **Frame.** Shown while `transport.is_active()` or `creating`. It lists the players
   (`LobbyMenu.players()`, the host first, with a note per player: host, you, connecting, no
   response, ping), `n / 4`, a hint (`hint_text()`), and for the host *Kick* behind every other
@@ -2191,6 +2193,57 @@ slots and a client's own slot can change after a page was added.
 
 Dart traps have no row: the game ships them without a tracking key. Their damage is in the
 total and so in Other.
+
+### Localization
+
+The mod's own texts follow the game's language (`ProgressData.settings.language`, Options) and a
+switch of it while the game runs.
+
+- **Table.** `translations.csv`, UTF-8, header `key,en,fr,zh,ja,ko,zh_TW,ru,pl,es,pt,de,tr,it`
+  (the game's languages in the game's order), one row per text, quoted cells for commas and line
+  breaks. Placeholders are `{0}`, `{1}` as in the game's own texts.
+- **Loader.** `l10n.gd`, `load_csv(path) -> int`, called from `mod_main.gd` `_init`, before any
+  screen exists. It reads the file with `File.get_csv_line` and adds one `Translation` per
+  language column to the `TranslationServer`, as the game does for its announcements
+  (`singletons/announcement_manager.gd`). The CSV ships in the zip as is: the game cannot import
+  it at runtime, and `tools/package.sh` leaves out `.import` files. A missing or malformed file
+  is a warning in `modloader.log`, never an error. brotato:trade has the same file with the same
+  API (each mod must work alone).
+- **Fallback.** An empty cell is not added, so the game's fallback shows the English text. For
+  `zh_TW` the engine first takes the `zh` text (same language code), then English.
+- **Keys.** The mod's keys start with `BT_` and are never one of the game's. Where the game has
+  the exact term, its key is reused (`MENU_BACK` on the lobby page). The decompiled
+  `reference/resources/translations/translations.csv` mislabels some keys (90 of 1784 were not
+  recovered, `MENU_BACK` holds a body part there), so it serves as a glossary by English text
+  only; the `l10n` suite checks every reused key in the game's own translation resources, in all
+  13 languages (the Chinese ones are `zh_Hans_CN` and `zh_Hant_TW` there).
+- **Static texts** get the key as `text`: `Label` and `Button` translate it themselves and again
+  on `NOTIFICATION_TRANSLATION_CHANGED`, which `TranslationServer.set_locale` sends through the
+  whole tree. Such a control's `text` is the key (tests compare keys).
+- **Built texts** use `tr(key)`, or the game's `Text.text(key, [args])` with placeholders, at the
+  moment they are built. The lobby frame builds its texts every frame, the lobby page every
+  0.25 s and at once on a language switch (`LobbyPage._translate`, also for an open leave
+  question). The entry button's width covers its four texts and is measured again on a switch
+  (`LobbyFrame._keep_entry_width`).
+- **Wording.** Sentences of one text are joined with a line break, not a space (Chinese and
+  Japanese have none between sentences). Counts read "noun: number" ("Online · players: 2"):
+  Godot 3 has no plural forms.
+- **Stays English:** every `modloader.log` line, the diagnostics on the lobby page (`Battle: ...`
+  lines, marked `# l10n: keep`), units (`ms`), numbers and DLC names.
+- **Guard.** `tools/l10n_guard.py`, run by `tools/lint.sh` (also in CI): a string literal with
+  letters assigned to `.text` or `hint_tooltip`, or passed to `add_item`, `set_text`,
+  `set_tooltip` or a `..._button()` helper (also through a constant of the same file), is an
+  error unless it is a key or its line carries `# l10n: keep`. It also checks that every `BT_`
+  literal in the sources and tests is a key of the CSV and that every key of the CSV is used.
+  Its allowlist names the files not converted yet: the error texts, the client view, character
+  selection, the pause banner, the retry prompt and the damage meter are still English.
+
+**Adding a text:** add a row with the key and at least the English cell (the other cells may stay
+empty), use the key in the code, run `tools/lint.sh` and `tools/check.sh -s l10n`.
+
+**Corrections from players** come as pull requests that change only `translations.csv`. The
+`l10n` suite checks the header, unique keys and that each cell has the placeholders of its
+English cell.
 
 ## 10. Game bugs worked around
 

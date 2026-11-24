@@ -181,6 +181,19 @@ To change it, set a launch option in Steam (right-click *Brotato*, *Properties*,
   256 KB/s. The rate matters only while data is waiting, and the host's setting is the one that
   counts.
 
+## Languages
+
+The mod's own texts follow the game's language (*Options*, also when you change it in a running
+game). So far the lobby on the main menu and the *Online co-op* page are translated into German;
+the mod's other texts, and every text in the other languages, are still English.
+
+The texts are in [`src/einfluffles-BrotatoTogether/translations.csv`](src/einfluffles-BrotatoTogether/translations.csv):
+one row per text, one column per language of the game. An empty cell shows the English text.
+Corrections and translations are welcome as a pull request that changes only that file. Keep the
+key and every placeholder of the English text (`{0}`, `{1}`), and keep a text about as long as
+the English one: the menus have little room. How it works:
+[`docs/implementation.md`](docs/implementation.md#localization).
+
 ## Limitations
 
 As of 2026-11-23 (protocol 33):
@@ -281,3 +294,4 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `client_report` | A client's frame, stall and correction reports and the host's log lines for them. |
 | `axolotl` | The Axolotl's text in the state the game's own roll leaves in co-op, and the Mod Loader's backup of every extended game script. |
 | `own_pickups` | The own player's pickups shown at once on a client. |
+| `l10n` | The mod's texts in the game's languages: `translations.csv` (header, keys, placeholders), its loader, the game's keys the mod uses, the title screen's lobby frame and the lobby page switched from English to German. |
