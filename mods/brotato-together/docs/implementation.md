@@ -2216,8 +2216,16 @@ switch of it while the game runs.
   it at runtime, and `tools/package.sh` leaves out `.import` files. A missing or malformed file
   is a warning in `modloader.log`, never an error. brotato:trade has the same file with the same
   API (each mod must work alone).
-- **Fallback.** An empty cell is not added, so the game's fallback shows the English text. For
-  `zh_TW` the engine first takes the `zh` text (same language code), then English.
+- **Fallback.** Every cell is filled (the `l10n` suite fails on an empty one). The loader still
+  skips an empty cell, so the game's fallback would show the English text; for `zh_TW` the engine
+  first takes the `zh` text (same language code), then English.
+- **Terms.** Each language reuses the game's own words, looked up by English text in the
+  reference CSV: co-op (`COOP`), player (`COOP_PLAYER`), wave, pause, damage, run (fr *partie*,
+  ru *забег*, es/pt/it *partida/partita*, tr *oyun*; ja ゲーム and ko 게임 instead of the game's
+  周回 and 달리기, which read oddly in a sentence), "Press {0} to ..." (brotato:trade). The game has no lobby, host, kick or invite: these take
+  Steam's usual wording (fr *salon*, es/pt *sala*, zh *大厅 / 房主*, tr *lobi / kurucu*). Punctuation
+  as in the game: a space before a French colon, full-width punctuation in Chinese and Japanese.
+  Proper names (DLC names, Steam, Workshop items) and units (`ms`) stay.
 - **Keys.** The mod's keys start with `BT_` and are never one of the game's. Where the game has
   the exact term, its key is reused (`MENU_BACK` on the lobby page). The decompiled
   `reference/resources/translations/translations.csv` mislabels some keys (90 of 1784 were not
@@ -2244,7 +2252,25 @@ switch of it while the game runs.
 - **Fonts.** A control of the mod takes the game's fonts (a scene's theme, `base_theme.tres` or a
   font of `resources/fonts/actual/base/`): they fall back to Noto Sans for Chinese, Japanese and
   Korean, Godot's default font has no such glyphs. The client view sets `base_theme.tres` itself
-  (it replaces the scene).
+  (it replaces the scene). The `l10n` suite checks every character of every cell against every
+  font and theme the mod's scripts load and the fonts of the real controls
+  (`DynamicFont.get_available_chars`, with the fallbacks).
+- **Room.** The places with little room, measured in every language by the language sweeps
+  (`tests/.../l10n_layout.gd`, used by the `l10n`, `damage` and `lobby_menu` suites: no clipped
+  text, nothing past the screen, the board and the frame as wide as in English):
+  - The Co-op dropdown clips at 186 px: its items are short forms where the full word is too long
+    (ja 協力なし / ローカル協力 / オンライン協力, ru *Кооп: локал.*, es/pt *Coop.:*).
+  - The slot's *Invite friends* button is 260 px or its text; the lobby status under it has the
+    slot's whole width (370 px).
+  - Kills and Damage taken on a run's damage board stand side by side while they fit, else one
+    under the other (`DamageViews._fit_extra`, a two-column `GridContainer`): the solo stats tab
+    is 360 px wide, the pair needs up to 475 px (pl). English keeps one line.
+  - The share column is 80 px at size 18: "included" is at most that (de *inkl.*).
+  - The lobby frame stays 520 px: a player's note and *Kick* leave 120 px for the name. The
+    entry button grows with its text, the main menu's row stays on screen. The pause banner, the
+    client view, the lobby page's details and its leave question wrap.
+  With `tools\check-window.ps1` the sweeps save screenshots of de, ru, ja and zh
+  (`TOGETHER_L10N_SCREENSHOTS`).
 - **Wording.** Sentences of one text are joined with a line break, not a space (Chinese and
   Japanese have none between sentences). Counts read "noun: number" ("Online · players: 2"):
   Godot 3 has no plural forms.
@@ -2258,12 +2284,14 @@ switch of it while the game runs.
   Its allowlist (files not converted yet) is empty: both mods are converted. A node name passed
   to a `..._button()` helper carries `# l10n: keep`.
 
-**Adding a text:** add a row with the key and at least the English cell (the other cells may stay
-empty), use the key in the code, run `tools/lint.sh` and `tools/check.sh -s l10n`.
+**Adding a text:** add a row with the key and a text in every language (a draft is fine, a
+player corrects it), use the key in the code, run `tools/lint.sh` and
+`tools/check.sh -s l10n,damage,lobby_menu`. A text on a screen the sweeps do not cover yet needs
+its own check there.
 
 **Corrections from players** come as pull requests that change only `translations.csv`. The
-`l10n` suite checks the header, unique keys and that each cell has the placeholders of its
-English cell.
+`l10n` suite checks the header, unique keys, every cell filled, the placeholders of the English
+cell and the glyphs; the sweeps check the room.
 
 ## 10. Game bugs worked around
 
