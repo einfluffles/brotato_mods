@@ -4,5 +4,6 @@
 rules,shop
 hotkey
 crate
+l10n
 together +brotato-together
 together_crate +brotato-together

@@ -141,8 +141,11 @@ func _hint():
 	for file in ["key_t.png", "pad_xbox_view.png", "pad_ps_share.png", "pad_switch_minus.png"]:
 		sizes.append(Hotkey._icon(file).get_size())
 	_t.check(sizes.count(Vector2(100, 100)) == 4, "the mod's four glyph images load (%s)" % [sizes])
-	_t.check("Press" in popup._trade_hint._label1.text, "Press [glyph] to trade")
-	_t.check(popup._trade_hint._label2.text == "to trade", "(%s)" % popup._trade_hint._label2.text)
+	var parts := _hint_parts()
+	_t.check(
+		popup._trade_hint._label1.text == parts[0] and popup._trade_hint._label2.text == parts[1],
+		"%s [glyph] %s" % parts
+	)
 	_emulator(0).focused_control = _element(0, _plain)
 	yield(_t.frames(1), "completed")
 	_t.check(_glyph(0) == Hotkey._icon("key_t.png"), "keyboard: the T glyph")
@@ -221,7 +224,8 @@ func _rebind():
 	yield(_t.frames(1), "completed")
 	var hint = _popup(0)._trade_hint
 	_t.check(
-		hint.visible and not hint._key_icon.visible and hint._label1.text == "Press Y",
+		hint.visible and not hint._key_icon.visible
+		and hint._label1.text == ("%s Y" % _hint_parts()[0]).strip_edges(),
 		"the hint names the key (%s ... %s)" % [hint._label1.text, hint._label2.text]
 	)
 	yield(_press_delay(), "completed")
@@ -298,6 +302,12 @@ func _pad(device: int, button: int):
 
 func _device(player: int) -> int:
 	return CoopService.get_remapped_player_device(player)
+
+
+# The hint's text on both sides of the glyph, in the language the tests run in.
+func _hint_parts() -> Array:
+	var parts := tr("BTR_TRADE_HINT").split("{0}")
+	return [parts[0].strip_edges(), parts[1].strip_edges()]
 
 
 func _glyph(player: int):
