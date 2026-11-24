@@ -368,8 +368,8 @@ func _drop_view(holder: Control) -> void:
 
 
 # List > Head (Wave: the title; Stats: TotalIcon, Total, Share, DpsIcon, Dps, HitIcon > Source,
-# Hit; Extra: Kills, Taken, the run's), a line, Sources (MAX_SOURCES bars and Other, each with
-# Content > Icon, Name, Amount, Share).
+# Hit; Extra: Kills, Taken, the run's, side by side or one under the other), a line, Sources
+# (MAX_SOURCES bars and Other, each with Content > Icon, Name, Amount, Share).
 func _board_list() -> VBoxContainer:
 	var font := _hud_font(HUD_MAIN_SIZE)
 	var list := VBoxContainer.new()
@@ -392,12 +392,18 @@ func _board_list() -> VBoxContainer:
 	stats.add_child(_hit_icon(STAT_ICON, STAT_HIT_SOURCE, "HitIcon"))
 	stats.add_child(_label(font, "Hit", HIT_COLOR))
 	head.add_child(stats)
-	var extra := _line("Extra", BoxContainer.ALIGN_BEGIN, STAT_GAP)
+	var extra := GridContainer.new()
+	extra.name = "Extra"
+	extra.columns = 2
+	extra.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	extra.add_constant_override("hseparation", STAT_GAP)
+	extra.add_constant_override("vseparation", 0)
 	extra.visible = false
 	extra.add_child(_label(load(HUD_FONT), "Kills", MUTED))
 	extra.add_child(_label(load(HUD_FONT), "Taken", MUTED))
 	head.add_child(extra)
 	list.add_child(head)
+	list.connect("resized", self, "_fit_extra", [list])
 	var line := HSeparator.new()
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var line_style := StyleBoxLine.new()
@@ -435,6 +441,23 @@ func _board_list() -> VBoxContainer:
 		row.add_child(content)
 		sources.add_child(row)
 	return list
+
+
+# Kills and Damage taken side by side while they fit in the board's width, else one under the
+# other (a long translation): the board keeps its panel's width. Side by side they make the board
+# just as wide when they do not fit; one under the other the board has its own width again.
+func _fit_extra(list: Control) -> void:
+	var extra: GridContainer = list.get_node("Head/Extra")
+	if not extra.visible:
+		return
+	var both: float = STAT_GAP
+	for label in extra.get_children():  # the font's width: the minimum size may be stale yet
+		both += label.get_font("font").get_string_size(label.text).x
+	var width := list.rect_size.x
+	if extra.columns == 2 and width < both + 0.5:
+		extra.columns = 1
+	elif extra.columns == 1 and both + 1.0 <= width:
+		extra.columns = 2
 
 
 static func _spacer(width: int) -> Control:
@@ -476,6 +499,7 @@ func _fill_board(list: Node, entry: Array, team_share: int, hit: Array, shown: D
 	if extra.visible:
 		extra.get_node("Kills").text = Text.text(KILLS, [short(shown.extra[0])])
 		extra.get_node("Taken").text = Text.text(TAKEN, [short(shown.extra[1])])
+		_fit_extra(list)
 	var sources: Node = list.get_node("Sources")
 	var top: int = entry[1][0][2] if not entry[1].empty() else 1
 	var listed := 0  # what the shown rows that hold no other row's damage dealt

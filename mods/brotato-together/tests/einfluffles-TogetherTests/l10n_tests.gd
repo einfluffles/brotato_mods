@@ -1,9 +1,12 @@
 extends Reference
-# The mod's texts in the game's languages: translations.csv and its loader (l10n.gd), the game's
-# keys the mod reuses, and a language switch on the title screen's lobby frame and lobby page, the
-# client view, the pause banner, the options and the damage board (character selection:
-# coop_mode_tests.gd).
+# The mod's texts in the game's languages: translations.csv (every language filled) and its
+# loader (l10n.gd), the game's keys the mod reuses, a language switch on the title screen's lobby
+# frame and lobby page, the client view, the pause banner, the options and the damage board, the
+# glyphs of every text in the game's fonts, and those screens' layout in all 13 languages
+# (character selection: coop_mode_tests.gd, the shop's and end of run's damage pages:
+# damage_meter_tests.gd).
 
+const Layout := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_layout.gd")
 const L10n := preload("res://mods-unpacked/einfluffles-BrotatoTogether/l10n.gd")
 const LobbyPage := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_page.gd")
 const LobbyFrame := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_frame.gd")
@@ -32,12 +35,21 @@ const VANILLA_KEYS := [
 const GAME_LOCALES := {"zh": "zh_Hans_CN", "zh_TW": "zh_Hant_TW"}
 const LOCAL := 1
 const LOBBY := 99
-# A folder: the German lobby page and title screen are saved there as PNG (check-window.ps1
-# only, the headless run has no image).
-const SCREENSHOT_ENV := "TOGETHER_L10N_SCREENSHOTS"
+# A folder: the screens are saved there as PNG in a few languages (check-window.ps1 only, the
+# headless run has no image; l10n_layout.gd).
+const SCREENSHOT_ENV := Layout.SCREENSHOT_ENV
+# The frame's player row: the panel's and its margin's insets, the row's separation, and what it
+# leaves at least for the player's name (clipped past that).
+const FRAME_INSET := 30
+const ROW_SEPARATION := 15
+const NAME_ROOM := 120
 
 var t: Node = null
 var together: Node = null
+var _frame: Control = null
+var _page: Control = null
+var _screens := {}
+var _english := {}  # widths in English
 
 
 func run(test_mod: Node, mod: Node):
@@ -74,7 +86,6 @@ func _test_csv(rows: Array) -> void:
 	placeholders.compile("\\{\\d+\\}")
 	var keys := {}
 	var problems := []
-	var empty_cells := 0
 	for row in rows.slice(1, rows.size() - 1):
 		var key: String = row[0]
 		if row.size() != HEADER.size():
@@ -89,19 +100,17 @@ func _test_csv(rows: Array) -> void:
 			problems.append("%s: no English text" % key)
 		var expected := _placeholders(placeholders, row[1])
 		for i in range(2, row.size()):
-			if row[i] == "":
-				empty_cells += 1
+			if row[i].strip_edges() == "":
+				problems.append("%s/%s: empty" % [key, HEADER[i]])
 			elif _placeholders(placeholders, row[i]) != expected:
 				problems.append("%s/%s: placeholders %s, en has %s" % [
 					key, HEADER[i], _placeholders(placeholders, row[i]), expected
 				])
 	t._check(
 		problems.empty(),
-		"l10n: %d keys, unique, prefixed, with English, placeholders as in English %s"
+		"l10n: %d keys, unique, prefixed, every language filled, placeholders as in English %s"
 		% [keys.size(), problems]
 	)
-	# Every language filled in is checked once all columns are translated.
-	print("  info: l10n: %d empty cells (they show the English text)" % empty_cells)
 	var unresolved := []
 	for key in keys:
 		if tr(key) == key:
@@ -246,11 +255,17 @@ func _test_switch():
 		"l10n: the main menu's button fits its German texts (%d, widest %d)"
 		% [entry.rect_min_size.x, widest]
 	)
-	var folder := OS.get_environment(SCREENSHOT_ENV)
-	if folder != "":
-		yield(_screenshot(folder.plus_file("l10n_de_page.png")), "completed")
+	_frame = frame
+	_page = page
+	var problems: Array = yield(Layout.sweep(t, self, "_fits_title", "page"), "completed")
+	t._check(
+		problems.empty(),
+		"l10n: the title screen's frame, its button column and the lobby page fit in all 13"
+		+ " languages %s" % [problems]
+	)
+	if OS.get_environment(SCREENSHOT_ENV) != "":
 		page.visible = false
-		yield(_screenshot(folder.plus_file("l10n_de_title.png")), "completed")
+		yield(Layout.sweep(t, self, "_fits_nothing", "title"), "completed")
 	page.queue_free()
 	transport.leave_lobby()
 	_restore(saved)
@@ -303,18 +318,36 @@ func _test_screens():
 		view.theme != null and font is DynamicFont and font.get_fallback_count() > 0,
 		"l10n: the client view uses the game's fonts, with the CJK fallbacks"
 	)
-	var folder := OS.get_environment(SCREENSHOT_ENV)
 	var banner: CanvasLayer = scene.get_node(PauseControl.BANNER_NAME)
-	if folder != "":
+	var fonts := Layout.source_fonts()
+	fonts["client status"] = font
+	var toggle: Control = options.boss_hp_bar_button.get_parent().get_node(
+		MenuOptionsButton.BUTTON_NAME
+	)
+	fonts["options switch"] = toggle.get_font("font")
+	var missing := Layout.missing_glyphs(fonts, Layout.read_csv())
+	t._check(
+		fonts.size() >= 8 and missing.empty(),
+		"l10n: the game's fonts the mod uses (%d) draw every character of every language %s"
+		% [fonts.size(), missing]
+	)
+	stats.update_tab(stats.BT_TAB)  # the damage board, not the (empty) game stats
+	_screens = {"view": view, "banner": banner, "toggle": toggle, "stats": stats}
+	var problems: Array = yield(Layout.sweep(t, self, "_fits_screens", ""), "completed")
+	t._check(
+		problems.empty(),
+		"l10n: the client view, pause banner, options switch and damage board fit in all 13"
+		+ " languages %s" % [problems]
+	)
+	if OS.get_environment(SCREENSHOT_ENV) != "":
 		options.visible = false
 		stats.visible = false
-		yield(_screenshot(folder.plus_file("l10n_de_pause.png")), "completed")
+		yield(Layout.sweep(t, self, "_fits_nothing", "pause"), "completed")
 		banner.visible = false
-		yield(_screenshot(folder.plus_file("l10n_de_client_view.png")), "completed")
+		yield(Layout.sweep(t, self, "_fits_nothing", "client_view"), "completed")
 		view.visible = false
 		stats.visible = true
-		stats.update_tab(stats.BT_TAB)  # the damage board, not the (empty) game stats
-		yield(_screenshot(folder.plus_file("l10n_de_damage.png")), "completed")
+		yield(Layout.sweep(t, self, "_fits_nothing", "damage"), "completed")
 	for node in [view, options, stats, banner]:
 		node.queue_free()
 	if board.empty():
@@ -347,13 +380,72 @@ func _screen_texts(view: Control, scene: Node, options: Node, stats: Node) -> Di
 	}
 
 
-func _screenshot(path: String):
-	yield(_frames(5), "completed")
-	yield(VisualServer, "frame_post_draw")
-	var image := t.get_viewport().get_texture().get_data()
-	image.flip_y()
-	var saved := image.save_png(path)
-	t._check(saved == OK, "l10n: screenshot %s (%s)" % [path, saved])
+func _fits_nothing(_locale: String) -> Array:
+	return []
+
+
+# The frame keeps its width (a player's row: the note and Kick beside a name), the main menu's
+# row of buttons and frame and the lobby page stay on screen, no text clipped.
+func _fits_title(locale: String) -> Array:
+	var problems := []
+	var panel: Control = _frame.get_child(0)
+	if locale == "en":
+		_english["frame"] = panel.rect_size.x
+	elif panel.rect_size.x > _english.frame + Layout.SLACK:
+		problems.append("the frame widens to %d px" % panel.rect_size.x)
+	var small: Font = load(LobbyFrame.SMALL_FONT_PATH)
+	var button: Button = _frame.leave_button
+	var kick: float = (
+		small.get_string_size(tr(LobbyFrame.KICK_TEXT)).x
+		+ button.get_stylebox("normal").get_minimum_size().x
+	)
+	var notes := {  # the host's row of a client; the rows the host sees, with Kick
+		Text.text("BT_NOTE_HOST_WITH", ["999 ms"]): 0.0,
+		tr("BT_CONNECTING"): kick,
+		tr("BT_NO_RESPONSE"): kick,
+	}
+	var room: float = panel.rect_size.x - FRAME_INSET
+	for note in notes:
+		var width: float = small.get_string_size(note).x + notes[note] + 2 * ROW_SEPARATION
+		if room - width < NAME_ROOM:
+			problems.append("a row with '%s' leaves %d px for the name" % [note, room - width])
+	var screen := Layout.screen_rect(_frame)
+	problems += Layout.overflow(_frame.get_parent(), screen)
+	problems += Layout.overflow(_page, screen)
+	return problems
+
+
+# The client view and the banner on screen, the options switch no wider than the column of the
+# game's own switches, the damage board as wide as in English with "included" in its column.
+func _fits_screens(locale: String) -> Array:
+	var screen := Layout.screen_rect(_screens.view)
+	var problems: Array = Layout.overflow(_screens.view, screen)
+	problems += Layout.overflow(_screens.banner.get_node("Mask"), screen)
+	var toggle: Control = _screens.toggle
+	var widest := 0.0
+	for sibling in toggle.get_parent().get_children():
+		if sibling != toggle and sibling is Button and sibling.visible:
+			widest = max(widest, sibling.get_combined_minimum_size().x)
+	if toggle.get_combined_minimum_size().x > widest + Layout.SLACK:
+		problems.append("the options switch is the widest (%d px, the game's %d)" % [
+			toggle.get_combined_minimum_size().x, widest
+		])
+	var page: Control = _screens.stats._secondary_stats.get_parent().get_node(
+		DamageViews.PAGE_NAME
+	)
+	var list: Control = page.get_child(0)
+	if locale == "en":
+		_english["board"] = list.rect_size.x
+	elif list.rect_size.x > _english.board + Layout.SLACK:
+		problems.append("the damage board widens to %d px" % list.rect_size.x)
+	problems += Layout.overflow(page, screen)
+	var share: Label = list.get_node("Sources/%s/Content/Share" % DamageViews.OTHER_ROW)
+	var included: float = share.get_font("font").get_string_size(tr(DamageViews.INCLUDED)).x
+	if included > DamageViews.SHARE_WIDTH:
+		problems.append("'%s' needs %d px of the share column's %d" % [
+			tr(DamageViews.INCLUDED), included, DamageViews.SHARE_WIDTH
+		])
+	return problems
 
 
 # name -> the text shown (a control translates a key in its text itself).

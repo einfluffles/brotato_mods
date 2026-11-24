@@ -1,7 +1,7 @@
 extends Reference
 # Damage meter (sync/damage_meter.gd, ui/damage_views.gd): the measurement, the board on the state
 # stream, the HUD row, and the damage page / tab in the shop and end of run screens. The crowded
-# wave is in damage_run_tests.gd.
+# wave is in damage_run_tests.gd. Both damage pages in all 13 languages: l10n_layout.gd.
 
 const DamageMeter := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_meter.gd")
 const DamageViews := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/damage_views.gd")
@@ -21,10 +21,13 @@ const VirtualDevices := preload(
 const MenuOptionsButton := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/extensions/ui/menu_options.gd"
 )
+const Layout := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_layout.gd")
 const PISTOL := "weapon_pistol_1"
 
 var _t: Node
 var _changes := 0
+var _swept := []  # the language sweep's page and the player's panel around it
+var _english_width := 0.0
 
 
 func _init(test_mod: Node) -> void:
@@ -588,6 +591,7 @@ func _test_shop(meter: Node, item):
 		"the shop shows the wave, though its board has the run; nothing past the rows: no other"
 	)
 	_test_other_row(meter, list)
+	yield(_test_languages(_page(panels[1]), panels[1], "shop_damage"), "completed")
 	# Online the page index travels like the game's own pages: a client's page on the host.
 	ShopIntents.apply_focus(shop, 0, 3, [])
 	_t._check(panels[0].carousel.index == 3, "a page 3 from the network shows the damage page")
@@ -717,6 +721,26 @@ func _test_coop_end_run():
 		head.get_node("Extra/Kills").text == Text.text(DamageViews.KILLS, ["0"]),
 		"kills: %s" % head.get_node("Extra/Kills").text
 	)
+	yield(_test_languages(_page(containers[0]), containers[0], "end_damage"), "completed")
+
+
+func _test_languages(page: Control, panel: Control, shot: String):
+	_swept = [page, panel]
+	var problems: Array = yield(Layout.sweep(_t, self, "_fits", shot), "completed")
+	_t._check(problems.empty(), "%s fits in all 13 languages %s" % [shot, problems])
+
+
+# The board as wide as in English and within the player's panel, nothing clipped.
+func _fits(locale: String) -> Array:
+	var list: Control = _swept[0].get_node(DamageViews.LIST_NAME)
+	if locale == "en":
+		_english_width = list.rect_size.x
+	var problems: Array = Layout.overflow(_swept[0], Layout.screen_rect(list))
+	if list.rect_size.x > _english_width + Layout.SLACK:
+		problems.append("the board widens to %d px" % list.rect_size.x)
+	if not _swept[1].get_global_rect().grow(Layout.SLACK).encloses(list.get_global_rect()):
+		problems.append("the board leaves the panel")
+	return problems
 
 
 # A late endless run, four players with 6 weapons and 250 items each, every counter gaining:
