@@ -32,6 +32,9 @@ $UserDir = "BrotatoModTests"
 # (Invoke-Run), the engine's own reports at exit. Then errors the tests cause on purpose.
 $KnownErrors = @(
     "No run state for the host's",  # menu_puppet_tests: a run screen without its run
+    # non_finite_tests, upgrades_change, shop_gear_change, selection: a NaN or an unreadable run
+    # part on purpose (the client's warning names it; the engine logs the parse error too)
+    "Error parsing JSON at line 0: Expected 'true','false' or 'null', got 'nan'",
     "Can't open steam_data file",
     "Can't open workshop folder",
     'Steam singleton not available',
