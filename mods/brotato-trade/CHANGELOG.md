@@ -6,6 +6,10 @@ changed, newest first. Headings are the time of the release PR in UTC
 
 ## Unreleased
 
+- The Trade button and the hint "Press [key] to trade" are now in the game's language (all 13),
+  and change with it. Corrections to a translation are welcome
+  ([Languages](README.md#languages)).
+
 ## 2026-11-22 11:57 UTC
 
 - Receiving a trade no longer throws you out of a menu: an item popup you have open (its buttons,
