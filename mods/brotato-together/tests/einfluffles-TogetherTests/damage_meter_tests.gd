@@ -613,7 +613,7 @@ func _test_other_row(meter: Node, list: Node) -> void:
 	var content: Node = other.get_node("Content")
 	_t._check(
 		other.visible and content.get_node("Amount").text == "500"
-		and content.get_node("Name").text == DamageViews.OTHER_ROW,
+		and content.get_node("Name").text == DamageViews.OTHER_TEXT,
 		"the other row: what the total holds past the shown rows"
 	)
 	meter.apply_state(StateStream.DAMAGE, saved, 2)
@@ -709,11 +709,12 @@ func _test_coop_end_run():
 	)
 	var head: Node = _list(containers[0]).get_node("Head")
 	_t._check(
-		head.get_node("Wave").text == DamageViews.RUN_TITLE_ONE and head.get_node("Extra").visible,
+		head.get_node("Wave").text == Text.text(DamageViews.RUN_TITLE, ["1"])
+		and head.get_node("Extra").visible,
 		"titled with the run's waves, with kills and damage taken (%s)" % head.get_node("Wave").text
 	)
 	_t._check(
-		head.get_node("Extra/Kills").text == DamageViews.KILLS % "0",
+		head.get_node("Extra/Kills").text == Text.text(DamageViews.KILLS, ["0"]),
 		"kills: %s" % head.get_node("Extra/Kills").text
 	)
 
@@ -880,8 +881,8 @@ func _test_solo_end_run(meter: Node):
 	var seen := []
 	for part in ["Wave", "Stats/Total", "Stats/Dps", "Stats/Hit", "Extra/Kills", "Extra/Taken"]:
 		seen.append(list.get_node("Head/" + part).text)
-	var expected := [DamageViews.RUN_TITLE % 3, "150", "3/s", "40"]
-	expected += [DamageViews.KILLS % "12", DamageViews.TAKEN % "34"]
+	var expected := [Text.text(DamageViews.RUN_TITLE, ["3"]), "150", "3/s", "40"]
+	expected += [Text.text(DamageViews.KILLS, ["12"]), Text.text(DamageViews.TAKEN, ["34"])]
 	_t._check(seen == expected, "its tab shows the run %s" % [seen])
 	var other: Node = list.get_node("Sources").get_node(DamageViews.OTHER_ROW)
 	_t._check(

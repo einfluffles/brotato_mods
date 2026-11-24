@@ -467,7 +467,7 @@ func _test_waves(meter: Node):
 	var list: Node = container.carousel.get_node("%Content").get_node(DamageViews.PAGE_NAME)
 	var head: Node = list.get_child(0).get_node("Head")
 	_t._check(
-		head.get_node("Wave").text == DamageViews.RUN_TITLE % 2
+		head.get_node("Wave").text == Text.text(DamageViews.RUN_TITLE, ["2"])
 		and head.get_node("Stats/Total").text == "1,500",
 		"the end of run's page shows the run (%s)" % head.get_node("Wave").text
 	)

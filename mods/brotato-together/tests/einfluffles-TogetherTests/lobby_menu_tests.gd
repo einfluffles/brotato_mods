@@ -517,7 +517,7 @@ func _test_client_title():
 		"kicked: the client has left the lobby"
 	)
 	t._check(
-		_tree().current_scene == scene and label.visible and "removed you" in label.text,
+		_tree().current_scene == scene and label.visible and tr("BT_ERR_KICKED") in label.text,
 		"kicked: the main menu stays, with the reason in its error label (%s)" % label.text
 	)
 	t._check(
@@ -545,11 +545,12 @@ func _test_failed_lobby():
 	t._check(not label.visible, "(control) no error on the title screen")
 	lobby.host()
 	transport._on_lobby_created(2, 0)
+	var failed: String = Text.text("BT_ERR_CREATE", ["2"])
 	t._check(
-		label.visible and "createLobby failed" in label.text and not lobby.creating,
+		label.visible and failed in label.text and not lobby.creating,
 		"failed lobby: in the main menu's error label (%s)" % label.text
 	)
-	t._check("! createLobby failed" in lobby.details_text(), "failed lobby: in the page's details")
+	t._check("! " + failed in lobby.details_text(), "failed lobby: in the page's details")
 
 	yield(_change_scene(MenuData.character_selection_scene), "completed")
 	_enter_lobby(HOST, [HOST])
@@ -558,7 +559,7 @@ func _test_failed_lobby():
 	yield(_change_scene(MenuData.title_screen_scene), "completed")
 	label = _tree().current_scene._main_menu.error_label
 	t._check(
-		label.visible and "The host left the lobby" in label.text,
+		label.visible and tr("BT_ERR_HOST_LEFT") in label.text,
 		"host left: shown after the return to the title screen (%s)" % label.text
 	)
 	lobby.last_error = ""

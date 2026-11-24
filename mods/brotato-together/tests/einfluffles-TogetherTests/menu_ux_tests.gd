@@ -183,7 +183,10 @@ func _test_retry_prompt(together: Node):
 	stream.receive(message)  # the prompt again, same revision (a resync)
 	t._check(client_retry.visible, "retry: client shows the prompt")
 	var label = client_retry.get_node_or_null(retry_sync.WAITING_LABEL)
-	t._check(label != null and "P1" in label.text, "retry: says whose choice it is")
+	t._check(
+		label != null and Text.text("COOP_PLAYER", ["1"]) in label.text,
+		"retry: says whose choice it is (%s)" % (label.text if label != null else "")
+	)
 	# Nodes another mod added on the client only: first in the scene and next to the button.
 	var expected = puppet.get_node_or_null(focus_path) if not focus_path.is_empty() else null
 	var next_to := [expected] if expected != null else []
@@ -215,7 +218,9 @@ func _test_retry_prompt(together: Node):
 		t._check(view._title.text == "", "transition: no 'waiting' flash")
 		t._check(not SoundRelay.is_muted(), "transition: view not muted")
 		yield(_tree().create_timer(view.WAITING_DELAY_SEC + 0.2), "timeout")
-		t._check("Waiting" in view._title.text, "transition: 'waiting' after a delay")
+		t._check(
+			view._title.text == ClientView.WAITING_TITLE, "transition: 'waiting' after a delay"
+		)
 	together._client_active = false
 	Puppet.set_active(false)
 	host.set_process(true)

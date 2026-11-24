@@ -1,10 +1,20 @@
 extends Reference
 # The mod's texts in the game's languages: translations.csv and its loader (l10n.gd), the game's
-# keys the mod reuses, and a language switch on the title screen's lobby frame and lobby page.
+# keys the mod reuses, and a language switch on the title screen's lobby frame and lobby page, the
+# client view, the pause banner, the options and the damage board (character selection:
+# coop_mode_tests.gd).
 
 const L10n := preload("res://mods-unpacked/einfluffles-BrotatoTogether/l10n.gd")
 const LobbyPage := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_page.gd")
 const LobbyFrame := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/lobby_frame.gd")
+const PauseControl := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/pause_control.gd"
+)
+const DamageViews := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/damage_views.gd")
+const MenuOptionsButton := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/extensions/ui/menu_options.gd"
+)
+const CLIENT_VIEW_PATH := "res://mods-unpacked/einfluffles-BrotatoTogether/ui/client_view.gd"
 const Lifecycle := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
 )
@@ -15,7 +25,9 @@ const HEADER := [
 ]
 const PREFIX := "BT_"
 # The game's own keys the mod shows: each must have a text in every language of the game.
-const VANILLA_KEYS := ["MENU_BACK", "COOP", "COOP_PLAYER", "PAUSE", "RETRY_NUMBER"]
+const VANILLA_KEYS := [
+	"MENU_BACK", "COOP_PLAYER", "PAUSE", "RETRY_NUMBER", "STAT_DAMAGE", "WAVE"
+]
 # The game's Chinese translations name their script; the game's languages zh and zh_TW use them.
 const GAME_LOCALES := {"zh": "zh_Hans_CN", "zh_TW": "zh_Hant_TW"}
 const LOCAL := 1
@@ -36,6 +48,7 @@ func run(test_mod: Node, mod: Node):
 	_test_vanilla_keys(rows)
 	_test_loader()
 	yield(_test_switch(), "completed")
+	yield(_test_screens(), "completed")
 
 
 # [header, row, ...] as the loader reads them.
@@ -242,6 +255,96 @@ func _test_switch():
 	transport.leave_lobby()
 	_restore(saved)
 	yield(_frames(2), "completed")
+
+
+# On the title screen: the client view, the pause banner, the options' switch and the damage
+# board (the solo stats tab, the run's board with kills, damage taken and the other row).
+func _test_screens():
+	var saved := {
+		"language": ProgressData.settings.get("language"),
+		"locale": TranslationServer.get_locale(),
+		"steam": together.transport.steam,
+		"local_id": together.transport.local_id,
+	}
+	ProgressData.change_language("en")
+	var tree := t.get_tree()
+	var scene := tree.current_scene
+	var view: Control = load(CLIENT_VIEW_PATH).new()
+	view.session = together.session
+	scene.add_child(view)
+	view.show_menu({"kind": "title_screen"})
+	PauseControl.show_banner(scene, true, PauseControl.banner_line("", 0, 0))
+	var options: Node = load("res://ui/menus/pages/menu_options.tscn").instance()
+	scene.add_child(options)
+	var meter: Node = together.damage_meter
+	var board: Dictionary = meter.board.duplicate(true)
+	var run := {"waves": 3, "time": 60.0, "players": [[150, [], [40, ""], 12, 34]]}
+	meter.apply_state(0, {"wave": 3, "players": [[50, []]], "run": run}, 0)
+	var stats: Node = load("res://ui/menus/shop/stats_container.tscn").instance()
+	scene.add_child(stats)
+	together.get_node("DamageViews").add_tab(stats, true)
+	yield(_frames(2), "completed")
+	var english := _screen_texts(view, scene, options, stats)
+
+	ProgressData.change_language("de")
+	yield(_frames(2), "completed")
+	var german := _screen_texts(view, scene, options, stats)
+	var wrong := []
+	for name in english:
+		if german.get(name) == english[name] or PREFIX in german[name] or "{" in german[name]:
+			wrong.append(name)
+	t._check(
+		english.size() == 9 and wrong.empty(),
+		"l10n: client view, pause banner, options and damage board change language at once"
+		+ " (unchanged or raw: %s; de: %s)" % [wrong, german.values()]
+	)
+	var font: Font = view._status.get_font("font")
+	t._check(
+		view.theme != null and font is DynamicFont and font.get_fallback_count() > 0,
+		"l10n: the client view uses the game's fonts, with the CJK fallbacks"
+	)
+	var folder := OS.get_environment(SCREENSHOT_ENV)
+	var banner: CanvasLayer = scene.get_node(PauseControl.BANNER_NAME)
+	if folder != "":
+		options.visible = false
+		stats.visible = false
+		yield(_screenshot(folder.plus_file("l10n_de_pause.png")), "completed")
+		banner.visible = false
+		yield(_screenshot(folder.plus_file("l10n_de_client_view.png")), "completed")
+		view.visible = false
+		stats.visible = true
+		stats.update_tab(stats.BT_TAB)  # the damage board, not the (empty) game stats
+		yield(_screenshot(folder.plus_file("l10n_de_damage.png")), "completed")
+	for node in [view, options, stats, banner]:
+		node.queue_free()
+	if board.empty():
+		meter.clear_state(0)
+	else:
+		meter.apply_state(0, board, 0)
+	_restore(saved)
+	yield(_frames(2), "completed")
+
+
+# name -> the text shown.
+func _screen_texts(view: Control, scene: Node, options: Node, stats: Node) -> Dictionary:
+	var banner: Node = scene.get_node(PauseControl.BANNER_NAME)
+	var toggle: Button = options.boss_hp_bar_button.get_parent().get_node_or_null(
+		MenuOptionsButton.BUTTON_NAME
+	)
+	var page: Node = stats._secondary_stats.get_parent().get_node(DamageViews.PAGE_NAME)
+	var head: Node = page.get_child(0).get_node("Head")
+	var other: Node = page.get_child(0).get_node("Sources/" + DamageViews.OTHER_ROW)
+	return {
+		"client title": tr(view._title.text),
+		"client status": view._status.text,
+		"pause": PauseControl.banner_label(banner).text,
+		"options": tr(toggle.text) if toggle != null else "",
+		"damage tab": tr(stats._bt_button.hint_tooltip),
+		"damage title": head.get_node("Wave").text,
+		"damage kills": head.get_node("Extra/Kills").text,
+		"damage taken": head.get_node("Extra/Taken").text,
+		"damage other": tr(other.get_node("Content/Name").text) if other.visible else "",
+	}
 
 
 func _screenshot(path: String):

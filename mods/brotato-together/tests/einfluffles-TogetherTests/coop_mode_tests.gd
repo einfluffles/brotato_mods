@@ -4,11 +4,15 @@ extends Reference
 # input helpers.
 
 const CoopMode := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_mode.gd")
+const CoopSelection := preload(
+	"res://mods-unpacked/einfluffles-BrotatoTogether/ui/coop_selection.gd"
+)
 const SlotInvite := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/slot_invite.gd")
 const VirtualDevices := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/virtual_devices.gd"
 )
 const HOST := 2  # lobby_menu_tests.gd's
+const SCREENSHOT_ENV := "TOGETHER_L10N_SCREENSHOTS"  # l10n_tests.gd's
 const LOBBY := 99
 const KEYBOARD := 7
 const PRESS_DELAY_SEC := 0.1
@@ -38,11 +42,14 @@ func run(suite):
 		return
 	var values := []
 	for i in mode.get_item_count():
-		values.append(mode.get_item_text(i).split(": ")[-1])
-	t._check(values == ["Off", "Local", "Online"], "selection: Off / Local / Online %s" % [values])
+		values.append(tr(mode.get_item_text(i)))
+	t._check(
+		values == ["Co-op: Off", "Co-op: Local", "Co-op: Online"],
+		"selection: Off / Local / Online %s" % [values]
+	)
 	t._check(
 		mode.selected == CoopMode.Mode.OFF and mode.is_item_disabled(CoopMode.Mode.ONLINE)
-		and "Steam" in mode.hint_tooltip,
+		and "Steam" in tr(mode.hint_tooltip),
 		"selection: solo is Off; without Steam Online is off, the tooltip says why"
 	)
 	s._fake_steam()
@@ -96,6 +103,7 @@ func run(suite):
 		"selection: hosting -> Invite friends and the count in the next free slot (%s, %s)"
 		% [invite.status.text, _shown(panels)]
 	)
+	yield(_test_language(scene, mode, invite, panels), "completed")
 
 	CoopService._add_player(KEYBOARD, CoopService.PlayerType.KEYBOARD_AND_MOUSE)
 	yield(s._frames(2), "completed")
@@ -205,6 +213,65 @@ func run(suite):
 	)
 	s.transport.leave_lobby()
 	CoopService.clear_coop_players()
+
+
+# en -> de while hosting: the Co-op row, the invite, the slot label and the colour hint follow at
+# once, and the invite button holds its German text.
+func _test_language(scene: Node, mode: OptionButton, invite: Control, panels: Array):
+	var t: Node = s.t
+	var saved := [ProgressData.settings.get("language"), TranslationServer.get_locale()]
+	ProgressData.change_language("en")
+	yield(s._frames(2), "completed")
+	var english := _language_texts(scene, mode, invite, panels)
+	ProgressData.change_language("de")
+	yield(s._frames(2), "completed")
+	var german := _language_texts(scene, mode, invite, panels)
+	var wrong := []
+	for name in english:
+		if german[name] == english[name] or "BT_" in german[name] or "{" in german[name]:
+			wrong.append(name)
+	t._check(
+		english.size() == 6 and wrong.empty(),
+		"l10n: character selection changes language at once (unchanged or raw: %s; de: %s)"
+		% [wrong, german.values()]
+	)
+	var button: Button = invite.button
+	var text_width: float = button.get_font("font").get_string_size(tr(button.text)).x
+	t._check(
+		button.rect_size.x >= text_width and invite.rect_size.x <= panels[0].rect_size.x,
+		"l10n: the invite button holds its German text (%d for %d, slot %d)"
+		% [button.rect_size.x, text_width, panels[0].rect_size.x]
+	)
+	var folder := OS.get_environment(SCREENSHOT_ENV)  # check-window.ps1 only
+	if folder != "":
+		yield(s._frames(5), "completed")
+		yield(VisualServer, "frame_post_draw")
+		var image := t.get_viewport().get_texture().get_data()
+		image.flip_y()
+		var path := folder.plus_file("l10n_de_selection.png")
+		t._check(image.save_png(path) == OK, "l10n: screenshot %s" % path)
+	ProgressData.settings["language"] = saved[0]
+	TranslationServer.set_locale(saved[1])
+	yield(s._frames(2), "completed")
+
+
+static func _language_texts(
+	scene: Node, mode: OptionButton, invite: Control, panels: Array
+) -> Dictionary:
+	var hint: Node = scene.get_node_or_null(CoopSelection.COLOR_HINT)
+	var slot: Label = panels[1].get_node_or_null(CoopSelection.SLOT_LABEL)
+	return {
+		"row": TranslationServer.translate(mode.text),
+		"first item": TranslationServer.translate(mode.get_item_text(0)),
+		"invite": TranslationServer.translate(invite.button.text),
+		"status": invite.status.text,
+		"slot": slot.text if slot != null else "",
+		"colour hint": (
+			TranslationServer.translate(hint.get_child(hint.get_child_count() - 1).text)
+			if hint != null
+			else ""
+		),
+	}
 
 
 func _choose(mode: OptionButton, index: int):
