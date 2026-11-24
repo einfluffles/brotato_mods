@@ -117,8 +117,10 @@ member enters the lobby and refreshes the member list for unknown senders.
 
 `session/compat.gd`. `HELLO` carries the protocol version (`Protocol.VERSION`), the game version
 (`ProgressData.VERSION`) and the mod version (`version_number` of the manifest). All three must
-match the host's. A rejection carries a reason, which the client shows like every lobby error (see
-[Errors](#errors)). DLC ownership never rejects (see [Host DLC on clients](#host-dlc-on-clients)).
+match the host's. A rejection carries a code (`protocol`, `game`, `mod`) with its two versions as
+`args`, which the client shows in its own language (`Compat.describe`) like every lobby error (see
+[Errors](#errors)), and the English `reason`, which the host logs and a client shows for a code it
+does not know (a malformed `HELLO` has none). DLC ownership never rejects (see [Host DLC on clients](#host-dlc-on-clients)).
 
 Consequence for wire changes: a build with another mod version is turned away, so a message does
 not need optional fields for older builds. Builds that share a mod version (0.2.1 has covered many)
@@ -1093,7 +1095,9 @@ on the menu's paused / unpaused.
   a remote player (focus loss names player 0) goes to the first local player; the player who paused
   resumes with pause (main page only).
 - On a client, a host pause shows a banner over the scene ("PAUSE", "Paused by ...") on the pause
-  menu's own backdrop. While the host is paused the client's own panel takes no input, every press
+  menu's own backdrop. The bodies name the pauser by persona name and steam id (0: the host); a
+  pauser the host cannot name is sent as `""` with -1, and each client says "a player" in its own
+  language (`PauseControl.banner_line`). While the host is paused the client's own panel takes no input, every press
   except pause is dropped (`InputSync.held_while_paused_mask`), and a button held through the pause
   needs a new press afterwards.
 - `retry`, `pause_battle` and `pickups` stay pending until the puppet battle of their `battle_id` is
@@ -1804,7 +1808,8 @@ title screen is not one of them (see
 puppet. Section `retry` is active while the host's prompt is visible. It carries
 `settings.retry_wave`, `RunData.retries` and the deciding player, and stays pending until the puppet
 battle is ready. The client shows its copy with `confirm/cancel_button_pressed = true`, so local
-clicks do nothing, and a "waiting for Pn" line.
+clicks do nothing, and a line saying whose choice it is ("Waiting for Player 1 (name) to
+choose...", with the game's `COOP_PLAYER`).
 
 ### UI sounds
 
@@ -1896,7 +1901,9 @@ disabled item with a tooltip. On a client the row shows Online and takes no focu
 next player takes (the game's `CoopJoinPanel` at `connected + connecting`). They show while
 hosting; the status alone shows while the lobby is made or after it failed. Player 1 reaches the
 button left from the Co-op row. The button has `grab_focus_with_mouse` off, because in co-op the
-emulator would move player 1's cursor onto it and leave its focus style there.
+emulator would move player 1's cursor onto it and leave its focus style there. It is 260 px wide
+or as wide as its translated text, and the status line (clipped, the whole text in its tooltip)
+takes the same width.
 
 `ui/coop_selection.gd` adds two hints. `CoopSelection._process` sets `instructions_visible` on every
 free, non-connecting slot while `CoopService.listening_for_inputs` (the game shows the hold-to-join
@@ -2221,10 +2228,23 @@ switch of it while the game runs.
   on `NOTIFICATION_TRANSLATION_CHANGED`, which `TranslationServer.set_locale` sends through the
   whole tree. Such a control's `text` is the key (tests compare keys).
 - **Built texts** use `tr(key)`, or the game's `Text.text(key, [args])` with placeholders, at the
-  moment they are built. The lobby frame builds its texts every frame, the lobby page every
-  0.25 s and at once on a language switch (`LobbyPage._translate`, also for an open leave
-  question). The entry button's width covers its four texts and is measured again on a switch
-  (`LobbyFrame._keep_entry_width`).
+  moment they are built. The lobby frame, the client view and character selection's slot labels
+  build theirs every frame, the lobby page every 0.25 s. On `NOTIFICATION_TRANSLATION_CHANGED`
+  these are built again at once: the lobby page (`LobbyPage._translate`, also for an open leave
+  question), the pause banner (`PauseControl.BannerLabel` keeps its key and args), the retry
+  prompt's lines (`RetrySync`, from the body it shows) and the damage boards (`DamageViews`,
+  title, kills, damage taken, source names). The entry button's width covers its four texts and
+  is measured again on a switch (`LobbyFrame._keep_entry_width`).
+- **Whole texts.** A text with a value is one key with a placeholder, never pieces joined in
+  code: the Co-op dropdown has a key per item ("Co-op: Off"), so a language can shorten the
+  game's word there.
+- **Errors** (`last_error`) are translated when they happen; the `modloader.log` line next to
+  them stays English. A join rejection crosses the wire as a code (see
+  [Join compatibility](#join-compatibility)).
+- **Fonts.** A control of the mod takes the game's fonts (a scene's theme, `base_theme.tres` or a
+  font of `resources/fonts/actual/base/`): they fall back to Noto Sans for Chinese, Japanese and
+  Korean, Godot's default font has no such glyphs. The client view sets `base_theme.tres` itself
+  (it replaces the scene).
 - **Wording.** Sentences of one text are joined with a line break, not a space (Chinese and
   Japanese have none between sentences). Counts read "noun: number" ("Online · players: 2"):
   Godot 3 has no plural forms.
@@ -2235,8 +2255,7 @@ switch of it while the game runs.
   `set_tooltip` or a `..._button()` helper (also through a constant of the same file), is an
   error unless it is a key or its line carries `# l10n: keep`. It also checks that every `BT_`
   literal in the sources and tests is a key of the CSV and that every key of the CSV is used.
-  Its allowlist names the files not converted yet: the error texts, the client view, character
-  selection, the pause banner, the retry prompt and the damage meter are still English.
+  Its allowlist names files not converted yet (brotato:trade's; brotato:together has none).
 
 **Adding a text:** add a row with the key and at least the English cell (the other cells may stay
 empty), use the key in the code, run `tools/lint.sh` and `tools/check.sh -s l10n`.
@@ -2561,8 +2580,7 @@ As of 2026-11-23, protocol 33.
 - Kick is in the title screen's frame only.
 - A client's live menu is keyboard and pad only. A spectator has none.
 - Options changed by a client are written to disk only after the session.
-- The "Damage meter" label and the meter's own texts ("Run, N waves", "Other", "included",
-  kills and damage taken) are English only. With a client's meter off, the host's carousel for
+- With a client's meter off, the host's carousel for
   that client at the end of run can stand on the damage page while the client shows the page
   before (the host does not know the client's switch).
 

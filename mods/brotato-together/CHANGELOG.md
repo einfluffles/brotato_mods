@@ -23,12 +23,18 @@ upload; three of them are marked where the upload may have differed.
   number as 0 and names it in its log, and its own run keeps the value. A client that still gets
   a run state it cannot read keeps the one it has: the level-up panels, the shop and the end of
   run screen still show, and its log says which part it could not read.
-- Languages: the mod's texts can now follow the game's language. The lobby on the main menu and
-  the *Online co-op* page are translated into German so far, and switch at once when the language
-  changes; the mod's other texts and the other languages are still English. The texts are in
-  `translations.csv`, open to corrections (see the README's Languages section). In English, the
-  lobby status in character selection now reads "Online · players: 2", and the question before
-  leaving a lobby mid-run puts each sentence on its own line.
+- Languages: the mod's texts can now follow the game's language. All of them are translated into
+  German so far (the lobby, the *Online co-op* page, lobby errors, the client's waiting screen,
+  character selection, the pause banner, the retry prompt, the damage meter and its switch in the
+  options) and switch at once when the language changes; the other languages are still English.
+  A join refused for another version is explained in the joining player's language. The texts
+  are in `translations.csv`, open to corrections (see the README's Languages section). In
+  English, some texts now read differently: the lobby status in character selection reads
+  "Online · players: 2", the retry prompt names "Player 2" instead of "P2", the damage meter's
+  run reads "Run (waves: 3)", the colour hint "Change color", lobby errors are plain words ("The
+  lobby could not be created" instead of "createLobby failed"), and the question before leaving
+  a lobby mid-run puts each sentence on its own line. The client's waiting screen now uses the
+  game's font.
 - Needs everybody on this update (protocol 33).
 
 ## 2026-11-23 19:30 UTC
