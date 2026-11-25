@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Headless integration tests. For each mod folder (default: all mods/*/ with a tests/ dir), boot the
-# decompiled game (reference/, see README) in the container with the mod's src/<mod_id> and
-# tests/<test_id> mounted as mods-unpacked/. A test mod prints "MOD-TESTS: START", "  ok   ...",
-# "  FAIL ...", "  info: ..." and finally "MOD-TESTS: PASS" / "MOD-TESTS: FAIL ...", then quits.
+# decompiled game (reference/, see README) in the container with the mod's src/<mod_id>,
+# tests/<test_id> and dev/<dev_mod_id> (dev-only mods the tests use, never packaged) mounted as
+# mods-unpacked/. A test mod prints "MOD-TESTS: START", "  ok   ...", "  FAIL ...", "  info: ..."
+# and finally "MOD-TESTS: PASS" / "MOD-TESTS: FAIL ...", then quits.
 # Fails on: any script error in mod code, any game-script error while tests run (except the
 # missing-Steam ones), a get_meta / get_child / get_node engine error while tests run, a
 # missing PASS.
@@ -125,7 +126,8 @@ for folder in "${folders[@]}"; do
   shards=()
   extras=()  # per shard: the other mod folders its process loads, "+"-separated
   only_extra=""
-  for dir in "$folder"/src/*/ "$folder"/tests/*/; do
+  for dir in "$folder"/src/*/ "$folder"/tests/*/ "$folder"/dev/*/; do
+    [ -d "$dir" ] || continue  # no dev/ (an unmatched glob stays as it is)
     id="$(basename "$dir")"
     mounts+=(-v "${dir%/}:/proj/mods-unpacked/$id:ro$label")
     [ -f "$dir/shards.txt" ] || continue

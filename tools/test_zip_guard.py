@@ -90,6 +90,27 @@ class ZipGuardTest(unittest.TestCase):
         self.assertIn("einfluffles-TogetherLocal/ is no mod of this repo", result.stderr)
         self.assertIn("2 mod folders", result.stderr)
 
+    # A dev mod (mods/<folder>/dev/<mod_id>/, the local-play emulator) has a manifest too, but it
+    # is no mod of the repo: a zip of it, or with it, fails.
+    def test_dev_mod_zip_fails(self):
+        dev = os.path.join(self.root, "mods", "example", "dev", "einfluffles-ExampleLocal")
+        os.makedirs(dev)
+        self.write(os.path.join(dev, "manifest.json"), b'{"name": "ExampleLocal"}\n')
+        path = os.path.join(self.dist, "Local", "Local.zip")
+        os.makedirs(os.path.dirname(path))
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("mods-unpacked/einfluffles-ExampleLocal/manifest.json", b"{}\n")
+            z.writestr("mods-unpacked/einfluffles-ExampleLocal/wire.gd",
+                       b"var peer = NetworkedMultiplayerENet.new()\n")
+        self.make_zip([("mods-unpacked/einfluffles-ExampleLocal/manifest.json", b"{}\n")])
+        result = self.zips()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Local.zip: mods-unpacked/einfluffles-ExampleLocal/ is no mod of this repo",
+                      result.stderr)
+        self.assertIn("Example.zip: mods-unpacked/einfluffles-ExampleLocal/ is no mod",
+                      result.stderr)
+        self.assertIn("wire.gd:1: NetworkedMultiplayerENet", result.stderr)
+
     def test_unsafe_paths_fail(self):
         for entry in ["mods-unpacked/%s/../../evil.gd" % MOD_ID, "/abs.gd", "C:/x.gd"]:
             self.make_zip([(entry, b"x\n")])
