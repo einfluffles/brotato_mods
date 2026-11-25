@@ -19,12 +19,21 @@
 #
 # Usage: tools\play-local.ps1 [-Clients 1..3] [-Engine game|godot] [-NoJoin] [-Mute client|all|none]
 #            [-With mods\<folder>[,...] | -With none] [-GameDir <Brotato install>] [-Run <name>]
-#            [-Fresh]
+#            [-Fresh] [-Profile lan|relay-good|relay-typical|bad|stall|none]
 #        tools\play-local.ps1 -Screenshot <name> [-On <instance>]
 #                                   each running game saves its window to <inst>\shots\<name>.png
 #        tools\play-local.ps1 -Key <Godot key name> [-HoldMs <msec>] [-On <instance>]
 #                                   a key press in that game (Enter, Escape, Right, A, ...); a
 #                                   co-op slot is joined by holding Enter: -Key Enter -HoldMs 1000
+#        tools\play-local.ps1 -Profile <name> -On <instance>|all
+#                                   switches the link profile of what that game sends (each game's
+#                                   profile is one direction); waits until its status shows it
+#        tools\play-local.ps1 -FailSession [-Reason <Steam end reason>] [-On <instance>]
+#                                   that game's sessions fail on both ends (default reason 5003)
+#        tools\play-local.ps1 -FailSend [-Count <n>] [-On <instance>]
+#                                   its next reliable send(s) fail: on the host, a full resync
+#        tools\play-local.ps1 -Stall <msec> [-On <instance>]
+#                                   nothing that game sends moves for that long
 #        tools\play-local.ps1 -Stop closes the windows of the running session
 #   -Engine game   the installed game's engine (default); godot: stock Godot (GodotVersion), cached
 #   -NoJoin        nobody hosts or joins by itself (Invite on the host's lobby page invites all)
@@ -32,6 +41,8 @@
 #   -With          more mods to load (default mods\brotato-trade); none: only brotato:together
 #   -Run           instance folders under play\<run> (default "default"; kept between starts)
 #   -Fresh         start the run's instances from empty user folders
+#   -Profile       the link profile every game sends with (default lan; none: no latency at all);
+#                  profiles and their sources: dev\einfluffles-TogetherLocal\link_profiles.gd
 param(
     [ValidateRange(1, 3)][int]$Clients = 1,
     [ValidateSet("game", "godot")][string]$Engine = "game",
@@ -46,6 +57,12 @@ param(
     [string]$Key = "",
     [string]$On = "",
     [int]$HoldMs = 0,
+    [ValidateSet("lan", "relay-good", "relay-typical", "bad", "stall", "none")][string]$Profile = "",
+    [switch]$FailSession,
+    [ValidateRange(0, 9999)][int]$Reason = 0,
+    [switch]$FailSend,
+    [ValidateRange(0, 100)][int]$Count = 0,
+    [ValidateRange(0, 60000)][int]$Stall = 0,
     [int]$Width = 0,
     [string]$GodotVersion = "3.6.2",
     [int]$TimeoutSec = 180
@@ -107,11 +124,12 @@ if ($Stop) {
     exit 0
 }
 
-# The running instances (all, or the one -On names) for a control command.
+# The running instances (all, or the one -On names; -On all: all) for a control command.
 function Get-Targets {
     $session = Get-Session
     $alive = @(Get-SessionProcesses $session | ForEach-Object { $_.Id })
-    $targets = @($session.instances | Where-Object { $alive -contains $_.pid -and ($On -eq "" -or $_.name -eq $On) })
+    $name = if ($On -eq "all") { "" } else { $On }
+    $targets = @($session.instances | Where-Object { $alive -contains $_.pid -and ($name -eq "" -or $_.name -eq $name) })
     if ($targets.Count -eq 0) { throw "no running instance$(if ($On -ne '') { " named $On" }) of a local session" }
     return $targets
 }
@@ -126,6 +144,47 @@ if ($Key -ne "") {
     foreach ($entry in (Get-Targets)) {
         Send-Control $entry "key-$Key$(if ($HoldMs -gt 0) { "-$HoldMs" })"
         Write-Note "$($entry.name): key $Key$(if ($HoldMs -gt 0) { " held $HoldMs ms" })"
+    }
+    exit 0
+}
+
+function Read-Status([string]$Dir) {
+    $path = Join-Path $Dir "status.json"
+    if (-not (Test-Path $path)) { return $null }
+    try { return Get-Content $path -Raw | ConvertFrom-Json } catch { return $null }
+}
+
+# A link profile at run time: only with -On (without it, -Profile is the start's profile).
+if ($Profile -ne "" -and $On -ne "") {
+    $targets = @(Get-Targets)
+    foreach ($entry in $targets) { Send-Control $entry "profile-$Profile" }
+    $deadline = (Get-Date).AddSeconds(5)
+    $pending = $targets
+    while ((Get-Date) -lt $deadline -and $pending.Count -gt 0) {
+        Start-Sleep -Milliseconds 200
+        $pending = @($pending | Where-Object { (Read-Status $_.dir).link.profile -ne $Profile })
+    }
+    foreach ($entry in $targets) {
+        $link = (Read-Status $entry.dir).link
+        Write-Note "$($entry.name): link profile $($link.profile)$(if ($link.profile -ne $Profile) { " (not $Profile yet)" })"
+    }
+    exit $(if ($pending.Count -eq 0) { 0 } else { 1 })
+}
+
+if ($FailSession -or $FailSend -or $Stall -gt 0) {
+    foreach ($entry in (Get-Targets)) {
+        if ($FailSession) {
+            Send-Control $entry "fail-session$(if ($Reason -gt 0) { "-$Reason" })"
+            Write-Note "$($entry.name): sessions fail$(if ($Reason -gt 0) { " (reason $Reason)" })"
+        }
+        if ($FailSend) {
+            Send-Control $entry "fail-send$(if ($Count -gt 0) { "-$Count" })"
+            Write-Note "$($entry.name): next $([Math]::Max(1, $Count)) reliable send(s) fail"
+        }
+        if ($Stall -gt 0) {
+            Send-Control $entry "stall-$Stall"
+            Write-Note "$($entry.name): link stalls for $Stall ms"
+        }
     }
     exit 0
 }
@@ -274,6 +333,7 @@ $bytes = New-Object byte[] 16
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $token = -join ($bytes | ForEach-Object { $_.ToString("x2") })
 
+$startProfile = if ($Profile -eq "") { "lan" } else { $Profile }
 $runDir = Join-Path $Play $Run
 if ($Fresh -and (Test-Path $runDir)) { Remove-Item -Recurse -Force $runDir }
 $realUserDir = [IO.Path]::GetFullPath((Join-Path $env:APPDATA $UserDirName)).TrimEnd('\')
@@ -343,6 +403,7 @@ for ($i = 0; $i -lt $count; $i++) {
         BT_LOCAL_DIR = $dir
         BT_LOCAL_AUTOHOST = $(if ($role -eq "host" -and -not $NoJoin) { "1" } else { $null })
         BT_LOCAL_MUTE = $(if ($muted) { "1" } else { $null })
+        BT_LOCAL_PROFILE = $(if ($startProfile -eq "none") { $null } else { $startProfile })
     }
     $saved = @{}
     foreach ($key in $environment.Keys) {
@@ -376,18 +437,12 @@ for ($i = 0; $i -lt $count; $i++) {
     [IO.File]::WriteAllText((Join-Path $dir "instance.json"), ($info | ConvertTo-Json), $Utf8)
     $instances += [pscustomobject]$info
 }
-$session = [ordered]@{ run = $Run; engine = $Engine; port = $port; instances = $instances }
+$session = [ordered]@{ run = $Run; engine = $Engine; port = $port; profile = $startProfile; instances = $instances }
 [IO.File]::WriteAllText($SessionFile, ($session | ConvertTo-Json -Depth 5), $Utf8)
-Write-Note "$Engine engine, $count games on 127.0.0.1:$port, mods: $modNames"
+Write-Note "$Engine engine, $count games on 127.0.0.1:$port, link profile $startProfile, mods: $modNames"
 foreach ($entry in $instances) { Write-Note "  $($entry.name): pid $($entry.pid), $($entry.dir)" }
 
 # --- Until the games are up (and the clients in the host's lobby) ---
-
-function Read-Status([string]$Dir) {
-    $path = Join-Path $Dir "status.json"
-    if (-not (Test-Path $path)) { return $null }
-    try { return Get-Content $path -Raw | ConvertFrom-Json } catch { return $null }
-}
 
 $deadline = (Get-Date).AddSeconds($TimeoutSec)
 $done = $false
