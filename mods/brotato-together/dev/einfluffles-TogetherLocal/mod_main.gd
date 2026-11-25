@@ -13,6 +13,9 @@ extends Node
 #   BT_LOCAL_DIR       the instance's folder: status.json, control/, shots/ (local_instance.gd)
 #   BT_LOCAL_AUTOHOST  1: the host opens a lobby at the title screen
 #   BT_LOCAL_MUTE      1: no sound
+#   BT_LOCAL_PROFILE   the link profile of what this game sends (link_profiles.gd: lan, relay-good,
+#                      relay-typical, bad, stall); none: no latency at all. Switched at run time
+#                      by a control file (local_instance.gd).
 # A client joins through the real launch option "+connect_lobby <lobby id>", which the transport
 # acts on when it is first bound: a client binds once the host's game is online and owns that
 # lobby. Docs: docs/implementation.md, "Local play (dev mod)".
@@ -21,6 +24,7 @@ const MOD_ID := "einfluffles-TogetherLocal"
 const MOD_DIR := "res://mods-unpacked/einfluffles-TogetherLocal/"
 const LOG_NAME := MOD_ID + ":Main"
 const TOGETHER_PATH := "/root/ModLoader/einfluffles-BrotatoTogether"
+const LinkProfiles := preload("res://mods-unpacked/einfluffles-TogetherLocal/link_profiles.gd")
 const ROLES := ["host", "client"]
 const GAME_USER_DIR := "Brotato"  # project.godot: config/name, use_custom_user_dir
 const CONNECT_ARG := "+connect_lobby"
@@ -45,6 +49,7 @@ var instance: Node = null  # local_instance.gd
 var _refused := ""
 var _hosted := false
 var _invites_sent := 0
+var _profile_note := ""
 
 
 # Before brotato:together's _ready: the transport's setup must find the emulator ready
@@ -61,6 +66,11 @@ func _init() -> void:
 		number = 1 if role == "host" else 2
 	var persona := OS.get_environment("BT_LOCAL_NAME")
 	emulator = load(MOD_DIR + "steam_emulator.gd").new(number, persona)
+	var profile := OS.get_environment("BT_LOCAL_PROFILE").strip_edges()
+	if profile != "" and not emulator.set_profile(profile):
+		_profile_note = "unknown BT_LOCAL_PROFILE '%s' (known: %s), no latency" % [
+			profile, ", ".join(LinkProfiles.NAMES)
+		]
 	ModLoaderMod.install_script_extension(MOD_DIR + "local_transport.gd")
 
 
@@ -92,10 +102,12 @@ func _ready() -> void:
 	_start_wire()
 	if not bound and (role == "host" or wire == null):
 		_bind()
-	note = "Local play: %s, id %s (%s), %s" % [
-		role, emulator.steam_id, emulator.persona_name, _wire_text()
+	note = "Local play: %s, id %s (%s), %s, link %s" % [
+		role, emulator.steam_id, emulator.persona_name, _wire_text(), _link_text()
 	]
 	ModLoaderLog.info(note, LOG_NAME)
+	if _profile_note != "":
+		ModLoaderLog.warning(_profile_note, LOG_NAME)
 	if connect_lobby != 0:
 		log_info("Joins lobby %s (%s) once the host's game has it" % [connect_lobby, CONNECT_ARG])
 	set_process(true)
@@ -182,6 +194,40 @@ func _start_wire() -> void:
 			wire = null
 	else:
 		wire.join(emulator, port, token)
+
+
+func _link_text() -> String:
+	var profile: String = emulator.link.profile
+	return "profile %s" % profile if profile != "" else "without latency"
+
+
+# A link command (local_instance.gd's control files): "profile" <name>, "fail-session" <reason>,
+# "fail-send" <count>, "stall" <msec>. The line it logs; "" for an unknown command.
+func link_command(kind: String, value: String) -> String:
+	var text := ""
+	match kind:
+		"profile":
+			if emulator.set_profile(value):
+				text = "Link profile %s (control file)" % value
+			else:
+				var known := ", ".join(LinkProfiles.NAMES)
+				text = "Unknown link profile '%s' (known: %s)" % [value, known]
+		"fail-session":
+			var reason: int = int(value) if int(value) > 0 else emulator.END_MISC_TIMEOUT
+			var failed: int = emulator.fail_sessions(reason, "failed on command (control file)")
+			text = "Failed %d session(s), reason %d (control file)" % [failed, reason]
+		"fail-send":
+			var sends: int = int(value) if int(value) > 0 else 1
+			emulator.fail_next_sends(sends)
+			text = "The next %d reliable send(s) fail with LimitExceeded (control file)" % sends
+		"stall":
+			var msec := int(value)
+			if msec > 0:
+				emulator.stall(msec)
+				text = "Link stalled for %d ms (control file)" % msec
+	if text != "":
+		log_info(text)
+	return text
 
 
 func _wire_text() -> String:
@@ -288,6 +334,7 @@ func status() -> Dictionary:
 		"fps": Engine.get_frames_per_second(),
 		"shots": instance.shots if instance != null else 0,
 		"settings": instance.settings_note if instance != null else "",
+		"link": emulator.link_status(),
 	}
 
 

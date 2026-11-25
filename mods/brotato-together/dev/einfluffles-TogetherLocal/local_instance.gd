@@ -10,12 +10,16 @@ extends Node
 #   "screenshot-<name>" saves the window to <dir>/shots/<name>.png, "key-<Name>" presses and
 #   releases a key as the keyboard would (Godot key names: Enter, Escape, Right, A, ...),
 #   "key-<Name>-<msec>" holds it that long (co-op join: Enter for 0.7 s), "quit" ends the game.
-#   (The scenario director of a later step replaces this.)
+#   The link of what this game sends: "profile-<name>" switches the link profile (lan, relay-good,
+#   relay-typical, bad, stall), "fail-session[-<reason>]" fails every session here and at the peer
+#   (Steam's end reason, default 5003), "fail-send[-<count>]" makes the next reliable send(s)
+#   fail (the host's Session then runs a full resync), "stall-<msec>" stalls the line now.
 
 const STATUS_SEC := 1.0
 const CONTROL_SEC := 0.25
 const SHOT_PREFIX := "screenshot-"
 const KEY_PREFIX := "key-"
+const LINK_COMMANDS := ["profile", "fail-session", "fail-send", "stall"]
 const KEY_HOLD_FRAMES := 3
 const KEY_MIN_MSEC := 150  # a tap: the client's input reaches the host's game in samples
 const FOCUS_SETTINGS := {
@@ -123,6 +127,21 @@ func _read_control() -> void:
 		elif command == "quit":
 			local.log_info("Quit (control file)")
 			get_tree().quit()
+		elif not link_command_of(command).empty():
+			var parsed := link_command_of(command)
+			local.link_command(parsed[0], parsed[1])
+			write_status()  # the launcher waits for the new profile there
+
+
+# [kind, value] of a link command's file name ("profile-relay-good": ["profile", "relay-good"],
+# "fail-send": ["fail-send", ""]), [] for none.
+static func link_command_of(command: String) -> Array:
+	for kind in LINK_COMMANDS:
+		if command == kind:
+			return [kind, ""]
+		if command.begins_with(kind + "-"):
+			return [kind, command.substr(kind.length() + 1)]
+	return []
 
 
 # The window as it is drawn, to <dir>/shots/<name>.png (written under another name first, so a
