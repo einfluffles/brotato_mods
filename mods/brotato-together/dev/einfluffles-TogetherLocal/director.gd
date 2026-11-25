@@ -237,8 +237,16 @@ func _session_state() -> Dictionary:
 		"peer_ready": peer_ready_count,
 		"error": local.lobby_error(),
 		"mod_version": Compat.mod_version(),
-		"mods": Compat.local_mods(),
+		"mods": local_mods(),
 	}
+
+
+# Compat.local_mods, {} with a build before it (-ClientRef, -HostRef).
+static func local_mods() -> Dictionary:
+	for method in Compat.get_script_method_list():
+		if method.name == "local_mods":
+			return Compat.local_mods()
+	return {}
 
 
 func _on_peer_ready(_steam_id: int) -> void:
@@ -475,8 +483,8 @@ func _cmd_mods(command: Dictionary):
 		else:
 			_real_versions[mod_id] = all[mod_id].manifest.version_number
 		all[mod_id].manifest.version_number = str(mods[mod_id])
-	local.log_info("Other mods now %s (director)" % [Compat.local_mods()])
-	return ["", {"mods": Compat.local_mods(), "added": _added_mods}]
+	local.log_info("Other mods now %s (director)" % [local_mods()])
+	return ["", {"mods": local_mods(), "added": _added_mods}]
 
 
 static func _added_mod(mod_id: String) -> ModData:
