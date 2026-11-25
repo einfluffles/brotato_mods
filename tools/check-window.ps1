@@ -39,6 +39,7 @@ $KnownErrors = @(
     "Can't open workshop folder",
     'Steam singleton not available',
     'Steam transport unavailable',
+    'Steam not logged on (steam id 0)',  # session_lifecycle: a fake Steam that is not logged on
     'CrashReporter: Failed to find engine logs',
     'Condition "_first != nullptr" is true',
     'Resources still in use at exit',

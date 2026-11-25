@@ -909,7 +909,23 @@ func _test_bind_steam(transport: Node) -> void:
 		again and other.joined == [602] and other.relay_inits == 2,
 		"bind the same object again: still bound, each handler once (%s)" % [other.joined]
 	)
-	# (A user who is not logged on, steam id 0, logs an error: not here, check-window counts it.)
+	# Not logged on (steam id 0, the error is a known one of the runners): unbound, nothing polled.
+	var offline := FakeSteam.new()
+	offline.steam_id = 0
+	offline.inbox.append({"channel": 0, "steam_id_remote": 5, "payload": PoolByteArray()})
+	var online: bool = transport.bind_steam(offline)
+	var inbox_before: int = offline.inbox.size()
+	transport._process(0.0)
+	_t._check(
+		(
+			not online
+			and transport.steam == null
+			and transport.local_id == 0
+			and offline.inbox.size() == inbox_before
+			and not offline.is_connected("join_requested", transport, "_on_join_requested")
+		),
+		"bind with steam id 0: unbound, its messages are never polled"
+	)
 	_t._check(
 		(
 			not transport.bind_steam(null)

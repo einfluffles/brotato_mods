@@ -109,6 +109,9 @@ func bind_steam(steam_object: Object) -> bool:
 		return false
 	local_id = int(steam.getSteamID())
 	if local_id == 0:
+		# Unbound again: _process would otherwise poll a Steam that is not running every frame
+		# (hundreds of engine errors a second).
+		steam = null
 		ModLoaderLog.error("Steam not logged on (steam id 0)", LOG_NAME)
 		return false
 	ModLoaderLog.info(
