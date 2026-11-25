@@ -56,12 +56,13 @@ run_game() {
 }
 
 report() {
-  local log="$1" own_errors runtime_errors engine_errors
-  own_errors=$(grep -A2 "SCRIPT ERROR" "$log" | grep -v -F "$KNOWN_ARTIFACTS" | grep -B1 "mods-unpacked" \
-    | grep -v -F "apply_settings (res://mods-unpacked" || true)
-  runtime_errors=$(awk '/MOD-TESTS: START/{f=1} f' "$log" | grep -A1 "SCRIPT ERROR" \
-    | grep -v -e "in base 'Nil'" -e "SteamPlatform" -e "^--" -F -e "$KNOWN_ARTIFACTS" \
-    | grep -B1 "  at: " | sort -u || true)
+  local log="$1" errors own_errors runtime_errors engine_errors
+  # The log without the known artifacts, each with its "at:" line: the boot splash that sets the
+  # locale can also end after the tests started.
+  errors=$(awk -v known="$KNOWN_ARTIFACTS" 'skip {skip=0; next} index($0, known) {skip=1; next} 1' "$log")
+  own_errors=$(grep -A2 "SCRIPT ERROR" <<<"$errors" | grep -B1 "mods-unpacked" || true)
+  runtime_errors=$(awk '/MOD-TESTS: START/{f=1} f' <<<"$errors" | grep -A1 "SCRIPT ERROR" \
+    | grep -v -e "in base 'Nil'" -e "SteamPlatform" -e "^--" | grep -B1 "  at: " | sort -u || true)
   # Engine errors that always mean a script bug (a script carries on after them, so they are no
   # SCRIPT ERROR): get_meta of a missing key (also with a default), get_child out of range,
   # get_node of a path that names nothing (a focus neighbour left on a freed control) and the
