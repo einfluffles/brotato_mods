@@ -40,6 +40,7 @@ const LobbyMenuTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/lobby_menu_tests.gd"
 )
 const CleanupTests := preload("res://mods-unpacked/einfluffles-TogetherTests/cleanup_tests.gd")
+const ClosingTests := preload("res://mods-unpacked/einfluffles-TogetherTests/closing_tests.gd")
 const BattleLoopbackTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/battle_loopback_tests.gd"
 )
@@ -175,6 +176,7 @@ const SUITES := [
 	"cleanup_host",
 	"cleanup_client",
 	"cleanup_misc",
+	"closing",
 	"feedback",
 	"hit_numbers",
 	"looks",
@@ -438,6 +440,11 @@ func _suite_cleanup_misc(together: Node):
 	coop_run(8)
 	_suite = CleanupTests.new()
 	yield(_suite.run_misc(self, together), "completed")
+
+
+func _suite_closing(together: Node):
+	_suite = ClosingTests.new()
+	_suite.run(self, together)
 
 
 func _suite_feedback(together: Node):
