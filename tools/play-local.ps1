@@ -22,11 +22,15 @@
 # Usage: tools\play-local.ps1 [-Clients 1..3] [-Engine game|godot] [-NoJoin] [-Mute client|all|none]
 #            [-With mods\<folder>[,...] | -With none] [-GameDir <Brotato install>] [-Run <name>]
 #            [-Fresh] [-Profile lan|relay-good|relay-typical|bad|stall|none]
+#            [-HostDlcs ...] [-ClientDlcs ...] [-ClientRef <git ref> | -HostRef <git ref>]
+#            [-Joypad host|client1|none|all|"host=0,client1=1"]
 #        tools\play-local.ps1 -Scenario <name> [-Run <name>] [-Engine ...] [-With ...] [-Profile ...]
 #                                   fresh games play a scripted scenario through the director
 #                                   (the dev mod's scenarios.gd, also run headless by
-#                                   tools/check-pair.sh), every step screenshotted; then the games are closed
-#                                   and it ends with PASS (exit 0) or FAIL (exit 1)
+#                                   tools/check-pair.sh), every step screenshotted; then the games
+#                                   are closed and it ends with PASS (exit 0) or FAIL (exit 1). A
+#                                   scenario's own launch settings (scenarios.gd's LAUNCH: clients,
+#                                   DLCs, another build, no join) apply unless given.
 # Commands to the running games, each one director command (director.gd), answered by each game:
 #        tools\play-local.ps1 -Screenshot <name> [-On <instance>]
 #                                   each running game saves its window to <inst>\shots\<name>.png
@@ -54,6 +58,15 @@
 #   -Fresh         start the run's instances from empty user folders
 #   -Profile       the link profile every game sends with (default lan; none: no latency at all);
 #                  profiles and their sources: dev\einfluffles-TogetherLocal\link_profiles.gd
+#   -HostDlcs, -ClientDlcs   the DLCs the host's / the clients' games own: all (default), none,
+#                  or ids (abyssal_terrors, primal_dread); a client without the host's DLC borrows it
+#   -ClientRef <git ref>     the clients run brotato:together (and the -With mods) of that commit,
+#                  e.g. a release tag, from a second game copy play\game-ref; the dev mod stays this
+#                  worktree's. -HostRef: the same for the host. Never both. The commit's files come
+#                  from git archive into play\refs\<commit>; the checkout is not touched.
+#   -Joypad        which game the gamepads drive: host (default), client1..3, none, all, or pads by
+#                  device number per game ("host=0,client1=1"); keyboard and mouse always act in
+#                  the focused window
 param(
     [ValidateRange(1, 3)][int]$Clients = 1,
     [ValidateSet("game", "godot")][string]$Engine = "game",
@@ -76,6 +89,11 @@ param(
     [switch]$FailSend,
     [ValidateRange(0, 100)][int]$Count = 0,
     [ValidateRange(0, 60000)][int]$Stall = 0,
+    [string]$HostDlcs = "",
+    [string]$ClientDlcs = "",
+    [string]$ClientRef = "",
+    [string]$HostRef = "",
+    [string]$Joypad = "",
     [int]$Width = 0,
     [string]$GodotVersion = "3.6.2",
     [int]$TimeoutSec = 180
@@ -152,6 +170,11 @@ function Get-Targets {
 if ($Scenario -ne "" -and -not (Test-ScenarioName $Scenario)) {
     throw "no scenario '$Scenario' (one of $($ScenarioNames -join ', '))"
 }
+if ($Scenario -ne "") {
+    $defaults = Get-ScenarioDefaults $Scenario @($PSBoundParameters.Keys)
+    foreach ($setting in $defaults.Keys) { Set-Variable -Name $setting -Value $defaults[$setting] }
+}
+if ($ClientRef -ne "" -and $HostRef -ne "") { throw "-ClientRef and -HostRef together: one side runs this worktree" }
 
 # The control switches, each one director command (-Profile with -On switches at run time;
 # without -On it is the start's profile). The link commands may come together: one after another.
@@ -292,21 +315,93 @@ if ((Read-Stamp $stampFile) -ne $stamp) {
     [IO.File]::WriteAllText($stampFile, $stamp)
 }
 
-# Mods, fresh: brotato:together, the dev mod, the -With mods.
-$mods = Join-Path $GameCopy "mods-unpacked"
-if (Test-Path $mods) { Remove-Item -Recurse -Force $mods }
-New-Item -ItemType Directory -Force $mods | Out-Null
-$together = Join-Path $Root "mods\brotato-together"
-$dirs = @(Get-ChildItem -Directory (Join-Path $together "src")) + @(Get-ChildItem -Directory (Join-Path $together "dev"))
-foreach ($other in $With) {
-    if ($other -eq "" -or $other -eq "none") { continue }
-    $dirs += @(Get-ChildItem -Directory (Join-Path (Resolve-Path (Join-Path $Root $other)) "src"))
+# Mods, fresh, into a game copy: brotato:together and the -With mods from $Source (this worktree,
+# or a commit's files), the dev mod always from this worktree. Returns the mod folders' names.
+function Copy-Mods([string]$Game, [string]$Source) {
+    $mods = Join-Path $Game "mods-unpacked"
+    if (Test-Path $mods) { Remove-Item -Recurse -Force $mods }
+    New-Item -ItemType Directory -Force $mods | Out-Null
+    $dirs = @(Get-ChildItem -Directory (Join-Path $Source "mods\brotato-together\src")) +
+        @(Get-ChildItem -Directory (Join-Path $Root "mods\brotato-together\dev"))
+    foreach ($other in $With) {
+        if ($other -eq "" -or $other -eq "none") { continue }
+        $src = Join-Path (Join-Path $Source $other) "src"
+        if (-not (Test-Path $src)) { Write-Note "no $other in $Source, left out"; continue }
+        $dirs += @(Get-ChildItem -Directory $src)
+    }
+    foreach ($dir in $dirs) {
+        robocopy $dir.FullName (Join-Path $mods $dir.Name) /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "copying $($dir.Name) failed (robocopy $LASTEXITCODE)" }
+    }
+    return ($dirs | ForEach-Object { $_.Name }) -join ", "
 }
-foreach ($dir in $dirs) {
-    robocopy $dir.FullName (Join-Path $mods $dir.Name) /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "copying $($dir.Name) failed (robocopy $LASTEXITCODE)" }
+
+# A commit's mods (git archive of mods\, into play\refs\<commit>; the checkout is not touched).
+function Get-RefSource([string]$Ref) {
+    $commit = (git -C $Root rev-parse --verify --quiet "$Ref^{commit}")
+    if ($LASTEXITCODE -ne 0 -or -not $commit) { throw "no commit for -ClientRef / -HostRef '$Ref'" }
+    $commit = "$commit".Trim()
+    $dir = Join-Path $Play "refs\$($commit.Substring(0, 12))"
+    if (-not (Test-Path (Join-Path $dir ".complete"))) {
+        Write-Note "unpacking mods\ of $Ref ($($commit.Substring(0, 12))) to $dir ..."
+        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        $zip = Join-Path $dir "mods.zip"
+        git -C $Root archive --format=zip -o $zip $commit -- mods
+        if ($LASTEXITCODE -ne 0) { throw "git archive of $Ref failed" }
+        Expand-Archive -Path $zip -DestinationPath $dir
+        Remove-Item $zip
+        [IO.File]::WriteAllText((Join-Path $dir ".complete"), "$Ref $commit")
+    }
+    $short = git -C $Root describe --tags --always $commit
+    return [pscustomobject]@{ ref = $Ref; commit = $commit; label = "$short".Trim(); dir = $dir }
 }
-$modNames = ($dirs | ForEach-Object { $_.Name }) -join ", "
+
+$modNames = Copy-Mods $GameCopy $Root
+$refSide = if ($ClientRef -ne "") { "client" } elseif ($HostRef -ne "") { "host" } else { "" }
+$refInfo = $null
+$RefGame = Join-Path $Play "game-ref"
+if ($refSide -ne "") {
+    $refInfo = Get-RefSource $(if ($refSide -eq "client") { $ClientRef } else { $HostRef })
+    # The second game copy: the first one without its mods, refreshed with it.
+    $gameStamp = Read-Stamp (Join-Path $GameCopy ".source-stamp")
+    $refStampFile = Join-Path $RefGame ".source-stamp"
+    if ((Read-Stamp $refStampFile) -ne $gameStamp) {
+        Write-Note "copying the game copy to $RefGame (once per game version) ..."
+        if (Test-Path $refStampFile) { Remove-Item $refStampFile }
+        robocopy $GameCopy $RefGame /MIR /XD (Join-Path $GameCopy "mods-unpacked") (Join-Path $RefGame "mods-unpacked") `
+            /NFL /NDL /NJH /NJS /NP /MT:16 | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "copying the game copy failed (robocopy $LASTEXITCODE)" }
+        [IO.File]::WriteAllText($refStampFile, $gameStamp)
+    }
+    $refModNames = Copy-Mods $RefGame $refInfo.dir
+    Write-Note "the $refSide side runs $($refInfo.label) ($refModNames)"
+}
+
+# -Joypad: instance name -> BT_LOCAL_JOYPAD ("" = every pad, none, or device numbers).
+function Get-JoypadSettings([string[]]$Names) {
+    $text = if ($Joypad -eq "") { "host" } else { $Joypad.Trim().ToLower() }
+    $settings = @{}
+    if ($text -eq "all") {
+        foreach ($name in $Names) { $settings[$name] = "" }
+        return $settings
+    }
+    foreach ($name in $Names) { $settings[$name] = "none" }
+    if ($text -eq "none") { return $settings }
+    if ($text -notmatch "=") {
+        if ($Names -notcontains $text) { throw "-Joypad '$Joypad': no game named $text (one of $($Names -join ', '), none, all)" }
+        $settings[$text] = ""
+        return $settings
+    }
+    foreach ($pair in ($text -split ",")) {
+        if ($pair.Trim() -notmatch '^([a-z0-9]+)=(\d+)$' -or $Names -notcontains $Matches[1]) {
+            throw "-Joypad '$Joypad': '$pair' is not <game>=<pad number> (games: $($Names -join ', '))"
+        }
+        $name = $Matches[1]
+        $settings[$name] = $(if ($settings[$name] -eq "none") { $Matches[2] } else { "$($settings[$name]),$($Matches[2])" })
+    }
+    return $settings
+}
 
 # --- Instances ---
 
@@ -357,10 +452,15 @@ function Set-InstanceSettings([string]$UserDir) {
     [IO.File]::WriteAllText($file, ($data | ConvertTo-Json -Depth 30 -Compress), $Utf8)
 }
 
+$names = @(0..$Clients | ForEach-Object { if ($_ -eq 0) { "host" } else { "client$_" } })
+$joypads = Get-JoypadSettings $names
 $instances = @()
 for ($i = 0; $i -lt $count; $i++) {
     $role = if ($i -eq 0) { "host" } else { "client" }
-    $name = if ($i -eq 0) { "host" } else { "client$i" }
+    $name = $names[$i]
+    $onRef = $refSide -eq $role
+    $game = if ($onRef) { $RefGame } else { $GameCopy }
+    $dlcs = if ($role -eq "host") { $HostDlcs } else { $ClientDlcs }
     $dir = Join-Path $runDir $name
     $appdata = Join-Path $dir "appdata"
     $userDir = [IO.Path]::GetFullPath((Join-Path $appdata $UserDirName)).TrimEnd('\')
@@ -381,7 +481,7 @@ for ($i = 0; $i -lt $count; $i++) {
     $row = [int][Math]::Floor($i / 2)
     $x = $area.X + $gap + $column * ($w + $gap)
     $y = $area.Y + $gap + $row * ($h + $titleBar + $gap) + $titleBar
-    $arguments = @("--path", "`"$GameCopy`"", "--windowed", "--resolution", "${w}x$h", "--position", "$x,$y")
+    $arguments = @("--path", "`"$game`"", "--windowed", "--resolution", "${w}x$h", "--position", "$x,$y")
     if ($role -eq "client" -and -not $NoJoin) { $arguments += @("+connect_lobby", "$FirstLobby") }
     $muted = ($Mute -eq "all") -or ($Mute -eq "client" -and $role -eq "client")
     $environment = [ordered]@{
@@ -395,6 +495,9 @@ for ($i = 0; $i -lt $count; $i++) {
         BT_LOCAL_AUTOHOST = $(if ($role -eq "host" -and -not $NoJoin) { "1" } else { $null })
         BT_LOCAL_MUTE = $(if ($muted) { "1" } else { $null })
         BT_LOCAL_PROFILE = $(if ($startProfile -eq "none") { $null } else { $startProfile })
+        BT_LOCAL_DLCS = $(if ($dlcs -eq "") { $null } else { $dlcs })
+        BT_LOCAL_JOYPAD = $(if ($joypads[$name] -eq "") { $null } else { $joypads[$name] })
+        BT_LOCAL_REF = $(if ($onRef) { "$($refInfo.label) ($($refInfo.commit.Substring(0, 12)))" } else { $null })
     }
     $saved = @{}
     foreach ($key in $environment.Keys) {
@@ -422,7 +525,11 @@ for ($i = 0; $i -lt $count; $i++) {
         stderr = (Join-Path $dir "stderr.log")
         status = (Join-Path $dir "status.json")
         shots = (Join-Path $dir "shots")
-        mods = $modNames
+        game = $game
+        mods = $(if ($onRef) { $refModNames } else { $modNames })
+        build = $(if ($onRef) { "$($refInfo.label) ($($refInfo.commit))" } else { "this worktree" })
+        dlcs = $(if ($dlcs -eq "") { "all" } else { $dlcs })
+        joypad = $(if ($joypads[$name] -eq "") { "all" } else { $joypads[$name] })
         port = $port
     }
     [IO.File]::WriteAllText((Join-Path $dir "instance.json"), ($info | ConvertTo-Json), $Utf8)
@@ -431,7 +538,9 @@ for ($i = 0; $i -lt $count; $i++) {
 $session = [ordered]@{ run = $Run; engine = $Engine; port = $port; profile = $startProfile; instances = $instances }
 [IO.File]::WriteAllText($SessionFile, ($session | ConvertTo-Json -Depth 5), $Utf8)
 Write-Note "$Engine engine, $count games on 127.0.0.1:$port, link profile $startProfile, mods: $modNames"
-foreach ($entry in $instances) { Write-Note "  $($entry.name): pid $($entry.pid), $($entry.dir)" }
+foreach ($entry in $instances) {
+    Write-Note "  $($entry.name): pid $($entry.pid), $($entry.build), DLC $($entry.dlcs), pads $($entry.joypad), $($entry.dir)"
+}
 
 # --- Until the games are up (and the clients in the host's lobby) ---
 
@@ -457,9 +566,10 @@ while (-not $done -and (Get-Date) -lt $deadline) {
         }
         $status = Read-Status $entry.dir
         if ($null -eq $status) { $parts += "$($entry.name): booting"; $done = $false; continue }
-        $lobby = if ($status.lobby.id) { "in lobby" } else { "no lobby" }
+        $lobby = if ($status.lobby.id) { "in lobby" } elseif ($status.lobby_error) { "refused" } else { "no lobby" }
         $parts += "$($entry.name): $(if ($status.bound) { 'bound' } else { 'waiting' }), $lobby"
-        $ready = $status.bound -and ($NoJoin -or $status.lobby.id)
+        # A refused join (another build) is an end state too: the scenario looks at it.
+        $ready = $status.bound -and ($NoJoin -or $status.lobby.id -or $status.lobby_error)
         if (-not $ready) { $done = $false }
     }
     $line = $parts -join "; "

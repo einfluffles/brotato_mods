@@ -29,6 +29,44 @@ $ScenarioNames = @(Get-ScenarioNames)
 
 function Test-ScenarioName([string]$Name) { return $ScenarioNames -contains $Name }
 
+# A scenario's launch settings (scenarios.gd's LAUNCH, the line "<name>": "key=value ..."), as
+# play-local.ps1's parameters, for the ones not given ($Given: their names). client_ref=last_release
+# is the newest tag brotato-together/*; a given -ClientRef or -HostRef replaces the scenario's ref.
+function Get-ScenarioDefaults([string]$Name, [string[]]$Given) {
+    $text = [IO.File]::ReadAllText($ScenariosFile)
+    $block = [regex]::Match($text, '(?s)const LAUNCH := \{(.*?)\n\}')
+    $line = [regex]::Match($block.Groups[1].Value, "`"$Name`": `"([^`"]*)`"")
+    $defaults = @{}
+    if (-not $line.Success) { return $defaults }
+    $parameters = @{ clients = "Clients"; host_dlcs = "HostDlcs"; client_dlcs = "ClientDlcs"; no_join = "NoJoin"
+        client_ref = "ClientRef"; host_ref = "HostRef" }
+    foreach ($pair in @($line.Groups[1].Value -split '\s+' | Where-Object { $_ -ne "" })) {
+        $key, $value = $pair -split '=', 2
+        if (-not $parameters.ContainsKey($key)) { throw "scenarios.gd LAUNCH of ${Name}: unknown setting '$key'" }
+        $parameter = $parameters[$key]
+        if ($parameter -like "*Ref") {
+            if ($Given -contains "ClientRef" -or $Given -contains "HostRef") { continue }
+            if ($value -eq "last_release") { $value = Get-LastRelease }
+        }
+        $defaults[$parameter] = switch ($parameter) {
+            "Clients" { [int]$value }
+            "NoJoin" { [switch]($value -eq "1") }
+            default { $value }
+        }
+    }
+    foreach ($key in @($defaults.Keys)) {
+        if ($Given -contains $key) { $defaults.Remove($key) }
+    }
+    return $defaults
+}
+
+# The newest release tag of brotato:together (brotato-together/<date>).
+function Get-LastRelease {
+    $tag = git -C $Root for-each-ref --sort=-creatordate --count=1 --format="%(refname:short)" "refs/tags/brotato-together/*"
+    if (-not $tag) { throw "no tag brotato-together/* (pass -ClientRef <git ref>)" }
+    return "$tag".Trim()
+}
+
 # -Do's text: a JSON object, or key=value pairs ("cmd=wait_for scene=coop_resume timeout_sec=10";
 # numbers and true / false are converted). Windows PowerShell drops the double quotes of an
 # argument to another powershell.exe, so a JSON object only survives from cmd or within one session.
