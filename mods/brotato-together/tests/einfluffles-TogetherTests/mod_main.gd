@@ -33,6 +33,7 @@ const PerfTests := preload("res://mods-unpacked/einfluffles-TogetherTests/battle
 const SessionLifecycleTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
 )
+const CompatTests := preload("res://mods-unpacked/einfluffles-TogetherTests/compat_tests.gd")
 const DlcBorrowTests := preload("res://mods-unpacked/einfluffles-TogetherTests/dlc_borrow_tests.gd")
 const LocalShopTests := preload("res://mods-unpacked/einfluffles-TogetherTests/local_shop_tests.gd")
 const LiveMenuTests := preload("res://mods-unpacked/einfluffles-TogetherTests/live_menu_tests.gd")
@@ -735,6 +736,7 @@ func _suite_core(together: Node):
 
 	_test_host_timeout(together)
 	SessionLifecycleTests.new().run(self, together)
+	CompatTests.new().run(self)
 	DlcBorrowTests.new().run(self, together)
 	_test_run_state_round_trip()
 

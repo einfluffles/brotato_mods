@@ -1,15 +1,20 @@
 extends Reference
 # Join compatibility, checked by the host on HELLO. Game and mod version must match: the client
-# loads the host's scenes / resources by path and runs the same mirror code. DLC need not: a
-# client borrows what it lacks (session/dlc_borrow.gd).
+# loads the host's scenes / resources by path and runs the same mirror code. So must every other
+# mod and its version, UI-only ones included: another mod changes content and rules. DLC need not:
+# a client borrows what it lacks (session/dlc_borrow.gd).
 
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const DlcBorrow := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/dlc_borrow.gd")
 const MOD_ID := "einfluffles-BrotatoTogether"
 # A rejection's code in WELCOME -> its text (translations.csv, {0}: the client's, {1}: the host's).
 const REJECTION_KEYS := {
-	"protocol": "BT_REJECT_PROTOCOL", "game": "BT_REJECT_GAME", "mod": "BT_REJECT_MOD"
+	"protocol": "BT_REJECT_PROTOCOL",
+	"game": "BT_REJECT_GAME",
+	"mod": "BT_REJECT_MOD",
+	"mods": "BT_REJECT_MODS",
 }
+const MODS_SHOWN := 3  # a side's mods in a rejection's text, the rest as "+N"
 
 
 # What this machine sends in HELLO / compares against.
@@ -20,6 +25,7 @@ static func local_info(persona: String) -> Dictionary:
 		"game_version": str(ProgressData.VERSION),
 		"mod_version": mod_version(),
 		"dlcs": DlcBorrow.owned_ids(),  # never borrowed ones
+		"mods": local_mods(),
 	}
 
 
@@ -28,6 +34,19 @@ static func mod_version() -> String:
 	if mod_data == null or mod_data.manifest == null:
 		return "?"
 	return str(mod_data.manifest.version_number)
+
+
+# Every other mod the Mod Loader loaded and runs: mod id -> version_number.
+static func local_mods() -> Dictionary:
+	var mods := {}
+	var all: Dictionary = ModLoaderMod.get_mod_data_all()
+	for mod_id in all:
+		var mod_data = all[mod_id]
+		if mod_id == MOD_ID or not mod_data.is_loadable or not mod_data.is_active:
+			continue
+		if mod_data.manifest != null:
+			mods[mod_id] = str(mod_data.manifest.version_number)
+	return mods
 
 
 # "" when the client may join the host, else the reason in English (the host's log).
@@ -56,7 +75,41 @@ static func rejection(host: Dictionary, client) -> Dictionary:
 		)
 	if typeof(client.get("dlcs")) != TYPE_ARRAY:
 		return _rejected("", [], "malformed DLC list")
+	var mods = client.get("mods")
+	if typeof(mods) != TYPE_DICTIONARY:
+		return _rejected("", [], "malformed mod list")
+	var differences := mod_differences(host.mods, mods)
+	if not differences.client.empty() or not differences.host.empty():
+		var args := [mods_text(differences.client), mods_text(differences.host)]
+		var all := [mods_text(differences.client, -1), mods_text(differences.host, -1)]
+		return _rejected("mods", args, "different mods (client: %s; host: %s)" % all)
 	return {"code": "", "args": [], "reason": ""}
+
+
+# client: the entries "<mod id> <version>" the client has and the host lacks or has in another
+# version; host: the other way round. Each sorted.
+static func mod_differences(host_mods: Dictionary, client_mods: Dictionary) -> Dictionary:
+	return {"client": _only_in(client_mods, host_mods), "host": _only_in(host_mods, client_mods)}
+
+
+static func _only_in(mods: Dictionary, other: Dictionary) -> Array:
+	var entries := []
+	for mod_id in mods:
+		var version := str(mods[mod_id])
+		if not other.has(mod_id) or str(other[mod_id]) != version:
+			entries.append("%s %s" % [mod_id, version])
+	entries.sort()
+	return entries
+
+
+# A side of the rejection: "-" for none, past `shown` entries (-1: all) "+N".
+static func mods_text(entries: Array, shown: int = MODS_SHOWN) -> String:
+	if entries.empty():
+		return "-"
+	if shown < 0 or entries.size() <= shown:
+		return PoolStringArray(entries).join(", ")
+	var text := PoolStringArray(entries.slice(0, shown - 1)).join(", ")
+	return "%s +%d" % [text, entries.size() - shown]
 
 
 static func _rejected(code: String, args: Array, reason: String) -> Dictionary:

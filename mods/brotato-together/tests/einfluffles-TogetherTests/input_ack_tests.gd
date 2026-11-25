@@ -532,7 +532,8 @@ func _test_timeout_drops() -> void:
 # turned away at HELLO instead of joining with inputs the host drops.
 func _test_protocol() -> void:
 	var host := {
-		"version": Protocol.VERSION, "game_version": "1", "mod_version": "1", "dlcs": []
+		"version": Protocol.VERSION, "game_version": "1", "mod_version": "1", "dlcs": [],
+		"mods": {}
 	}
 	var client := host.duplicate()
 	t._check(Compat.incompatibility(host, client) == "", "protocol: the same build joins")

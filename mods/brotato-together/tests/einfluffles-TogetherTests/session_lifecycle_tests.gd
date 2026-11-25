@@ -195,7 +195,6 @@ func run(t: Node, together: Node) -> void:
 	_test_client_handshake(transport, session)
 	_test_host_handshake(transport, session, input_sync)
 	_test_ping(transport, session)
-	_test_compat()
 	_test_join_presence(transport)
 	_test_relay_route(transport)
 	_test_send_rate(transport)
@@ -415,8 +414,9 @@ func _test_client_handshake(transport: Node, session: Node) -> void:
 	_t._check(
 		hello.get("game_version") == ProgressData.VERSION
 		and hello.get("mod_version") == Compat.mod_version()
-		and typeof(hello.get("dlcs")) == TYPE_ARRAY,
-		"HELLO carries game/mod version and DLCs (%s)" % [hello]
+		and typeof(hello.get("dlcs")) == TYPE_ARRAY
+		and str(hello.get("mods")) == str(Compat.local_mods()),
+		"HELLO carries game/mod version, DLCs and the other mods (%s)" % [hello]
 	)
 	var welcome := {"version": Protocol.VERSION, "accepted": true, "reason": ""}
 	_deliver(session, HOST, Protocol.Msg.WELCOME, welcome)
@@ -593,49 +593,6 @@ func _ask(session: Node) -> void:
 	_steam.sent.clear()
 	session._next_ping_msec = 0
 	session._process(0.0)
-
-
-func _test_compat() -> void:
-	var host := Compat.local_info("host")
-	host.dlcs = ["abyssal_terrors"]
-	var client := host.duplicate()
-	_t._check(Compat.incompatibility(host, client) == "", "same versions and DLCs join")
-	client.dlcs = ["abyssal_terrors", "primal_dread"]
-	_t._check(Compat.incompatibility(host, client) == "", "extra client DLC is fine")
-	client.dlcs = []
-	_t._check(Compat.incompatibility(host, client) == "", "client without the host's DLC joins")
-	_t._check(Compat.missing_dlcs(host.dlcs, client.dlcs) == host.dlcs, "its missing DLC listed")
-	client.dlcs = "abyssal_terrors"
-	_t._check("DLC" in Compat.incompatibility(host, client), "malformed DLC list rejected")
-	client = host.duplicate()
-	client.dlcs = []
-	client.game_version = "0.0.0"
-	_t._check(
-		"game version" in Compat.incompatibility(host, client),
-		"other game version rejected, DLC or not"
-	)
-	client = host.duplicate()
-	client.mod_version = "0.0.1"
-	_t._check("0.0.1" in Compat.incompatibility(host, client), "other mod version rejected")
-	client = host.duplicate()
-	client.version = Protocol.VERSION - 1
-	_t._check("protocol" in Compat.incompatibility(host, client), "other protocol rejected")
-	_t._check(Compat.incompatibility(host, "x") != "", "malformed HELLO rejected")
-	var codes := []
-	for change in [["version", 0], ["game_version", "0.0.0"], ["mod_version", "0.0.1"]]:
-		client = host.duplicate()
-		client[change[0]] = change[1]
-		codes.append(Compat.rejection(host, client).code)
-	codes.append(Compat.rejection(host, "x").code)
-	_t._check(codes == ["protocol", "game", "mod", ""], "rejection codes %s" % [codes])
-	var two := ["1", "2"]
-	_t._check(
-		Compat.describe({"code": "game", "args": two, "reason": "r"})
-		== Text.text("BT_REJECT_GAME", two)
-		and Compat.describe({"code": "game", "args": ["1"], "reason": "r"}) == "r"
-		and Compat.describe({"reason": "r"}) == "r",
-		"a rejection's text: by its code, else its reason"
-	)
 
 
 func _deliver(session: Node, from: int, msg_type: int, body) -> void:
