@@ -307,9 +307,10 @@ Steam-shaped emulator under the unchanged transport (`Transport.bind_steam`, [St
 object](#steam-object)) and links the games over TCP on 127.0.0.1. Status: the emulator, the
 in-process wire, the wire between game processes, the activation rules, the launcher
 `tools\play-local.ps1` ([Play locally](../../../docs/testing.md#play-locally)) with its scenario
-director, the link profiles ([Link profiles](#link-profiles)) and the headless pair tests
-`tools/check-pair.sh` ([Pair tests](../../../docs/testing.md#pair-tests)), which run the same
-scenarios, are in.
+director, the link profiles ([Link profiles](#link-profiles)), up to three clients, other builds
+on one side (`-ClientRef`, `-HostRef`), DLCs per game, gamepad routing and the headless pair
+tests `tools/check-pair.sh` ([Pair tests](../../../docs/testing.md#pair-tests)), which run the
+same scenarios, are in.
 
 **Layout.** `mods/brotato-together/dev/einfluffles-TogetherLocal/`, next to `src/` and `tests/`:
 
@@ -324,6 +325,7 @@ scenarios, are in.
 | `wire_memory.gd` | A wire for two or more emulators in one process, with a clock that moves only when told to. |
 | `wire_tcp.gd` | The wire between game processes: TCP on 127.0.0.1, the host listens, clients connect. |
 | `local_instance.gd` | The instance's side of the launcher: settings and `status.json`. |
+| `joypad_filter.gd` | Which gamepads drive this game (`BT_LOCAL_JOYPAD`): the others are blocked in the engine's mapping. |
 | `director.gd` | The scenario director: JSON commands in the instance's `control\` folder, answers in `out\`. |
 | `menu_driver.gd` | Menus driven as a player drives them (keys, buttons by focus and accept), screenshots, the screen's state. The test mod's `director` suite uses it too. |
 | `scenario_runner.gd` | Runs a scenario in every game of a session at once, in step: each step's answers go through the instances' `out\` folders. |
@@ -364,9 +366,38 @@ game would read at the next boot (it turns mods off after a logged error that na
 extension did not apply, the dev mod binds after the transport's own `setup` as a fallback. The
 launcher deletes each instance's logs before a start anyway.
 
-Then `_ready` starts the wire (`BT_LOCAL_PORT`, `BT_LOCAL_TOKEN`; without a port only this game,
-as in the tests), adds `local_instance.gd`, titles the window "Brotato (local host: Host)" and
-polls wire and emulator every frame (`PAUSE_MODE_PROCESS`).
+Then `_ready` sets the DLCs (`BT_LOCAL_DLCS`, below), adds the gamepad filter (`BT_LOCAL_JOYPAD`,
+below), starts the wire (`BT_LOCAL_PORT`, `BT_LOCAL_TOKEN`; without a port only this game, as in
+the tests), adds `local_instance.gd`, titles the window "Brotato (local host: Host)" and polls
+wire and emulator every frame (`PAUSE_MODE_PROCESS`). The startup line names the DLCs and the
+gamepads too.
+
+- DLCs: `BT_LOCAL_DLCS` is `none` or DLC ids of `ProgressData.dlc_ids` (comma-separated; unset or
+  `all`: the local build's default, every DLC). It becomes `DebugService.owned_dlc_ids`, which
+  `LocalPlatform.is_dlc_owned` asks. The Mod Loader instances the mods in its `_init`, before the
+  later autoloads exist, but their nodes get `_ready` when the Mod Loader enters the tree, before
+  ProgressData's `_ready` reads the DLCs (`check_for_available_dlcs`): so the setting is applied in
+  `_ready`, and a warning says if ProgressData had read them already. A client without the host's
+  DLC then borrows it as with Steam ([Host DLC on clients](#host-dlc-on-clients)).
+- Older builds: a brotato:together from before the seam has no `bind_steam`. The dev mod then
+  binds the emulator as that build's `setup` bound GodotSteam (`steam`, `local_id`, its six Steam
+  signals, relay access, route, send rate, no Join button, `+connect_lobby`) and logs "a build
+  without bind_steam". This is what `tools\play-local.ps1 -ClientRef` / `-HostRef` run.
+- Gamepads (`joypad_filter.gd`): the engine polls XInput and DirectInput itself, so every game
+  process gets every pad's input, focused or not. `BT_LOCAL_JOYPAD` is `all` (unset), `none`, or
+  device numbers. A pad this game must not see is blocked in the engine's own mapping: the engine
+  reads a pad's buttons, axes and hat through the SDL mapping of its GUID and drops what the
+  mapping does not name, before `Input`'s state, the actions or any event. So the filter adds a
+  mapping for a GUID of its own (`btlocalblockedNN`) that names no button and no axis (its hat goes
+  to `misc1`, which the game binds to nothing; an empty mapping would leave the hat as the d-pad)
+  and reports the pad to the engine again under that GUID (`Input.joy_connection_changed`, as a
+  driver does). The pad stays connected under its own name. The engine emits
+  `joy_connection_changed` deferred, so the filter counts its own reports and skips their signals;
+  any other report of a blocked pad (the driver's, on a reconnect) gives it its own mapping back,
+  and the filter blocks it again. `Input.get_joy_guid` answers the mapped GUID on Windows but a
+  fixed text in headless Godot, so what is blocked is kept in the filter. Input that a script
+  sends (`Input.parse_input_event`, the director) comes in after the mapping and is never
+  filtered.
 
 - Host: with `BT_LOCAL_AUTOHOST=1` it opens a lobby (`LobbyMenu.host()`, what the title screen's
   host button does) once the title screen is up. The lobby page's Invite
@@ -418,7 +449,9 @@ hand, never blocking: what a socket does not take waits in the connection's outb
   `apply_settings`).
 - `status.json` every second: role, pid, steam id, name, bound, the `+connect_lobby` lobby, wire
   (state, port, peers, host lobbies, frames), lobby (id, host, members), scene, fps, the
-  director (commands done, the last one, screenshots taken), the settings line, and `link`: the
+  director (commands done, the last one, screenshots taken), the settings line, `lobby_error`,
+  `build` (the lobby tag), `dlcs` (the setting, `available`), `joypads` (the setting, the pads
+  with `blocked`, `guid`, `mapped_guid`), and `link`: the
   profile, its main numbers, stalls and POP changes so far, messages sent, dropped and refused,
   and per peer what Steam would show (state, ping, queue time, pending bytes, both qualities,
   bytes per second out and in, relayed).
@@ -440,7 +473,7 @@ from separate calls keep their order. Menus are driven as a player drives them: 
 | `query` | | Only the state. |
 | `screenshot` | `name` | The window's root viewport after the next frame is drawn, to `shots\<name>.png` (written as `.tmp`, then renamed). It reads the game's own picture, so overlapping windows do not matter; a minimised window is not drawn by the engine, so it is drawn once with `VisualServer.force_draw`. |
 | `host_lobby` | `timeout_sec` | Host: what Host lobby does (`LobbyMenu.host`), then waits for the lobby. |
-| `join` | `lobby` (default: the host's first lobby, from the wire's roster) | Client: the emulator fires `join_requested`, as a Steam invite accepted in the overlay; waits until in that lobby. |
+| `join` | `lobby` (default: the host's first lobby, from the wire's roster), `wait` (true) | Client: the emulator fires `join_requested`, as a Steam invite accepted in the overlay; waits until in that lobby, or with `wait` false answers at once (a join that may be refused; the caller looks at `lobby.error`). |
 | `invite` | | Host: Invite friends (`LobbyMenu.invite`): every client's game gets an accepted invite. |
 | `leave` | | Leave lobby (`LobbyMenu.leave`, as the title frame's and the lobby page's button); waits until out. |
 | `set_profile` | `name` | The link profile of what this game sends from now on (`lan`, `relay-good`, `relay-typical`, `bad`, `stall`, or `none`: no latency at all), through the emulator's `set_profile`; what is on its way keeps its time. The result has the link's status. An unknown name fails and changes nothing. |
@@ -452,18 +485,22 @@ from separate calls keep their order. Menus are driven as a player drives them: 
 | `kick` | `peer` (a steam id; default every other member), `timeout_sec` | Host: what the lobby page's kick does (`LobbyMenu.kick`, `Session.kick`), then waits until the transport no longer lists the player. |
 | `mod_version` | `version` (`""`: the real one again) | This game's brotato:together version from now on: the manifest's `version_number` in the Mod Loader's data, which `Compat` reads for `HELLO`, as a game with another build would have it. |
 | `scenario` | `name`, `run` (the same id in every game), `peers` (instance names, default `host`, `client1`), `shots`, `timeout_sec` (900) | Runs this game's part of a scenario (`scenarios.gd`) in step with the others (below). The result has `passed`, the scenario's `lines` and the `shots`; a game that quit in the scenario closes after the answer. |
+| `joypad` | `connect` (true / false), `device` (0), `name`, `guid` (`__XINPUT_DEVICE__`) | The gamepads as this game sees them (`joypad_filter.gd`'s status: per pad `blocked`, its own `guid`, `mapped_guid`). With `connect`, first a pad reported to the engine as a driver reports one; no input comes from it, it shows what the filter does with a connection. |
 | `quit` | | Answers, then closes the game as its window's close button does: the others see it leave. |
 
 The state (`MenuDriver.snapshot` plus the lobby): `scene`, `scene_path`, `paused`, `locale`,
 `focus` (the focused control's name), `players` (`CoopService.connected_players`), `listening`,
 `run` (`coop`, `count`, `wave`, per player `gold`, `levels`, `items`, `weapons`; `saved`: a run to
-continue), `lobby` (`in`, `is_host`, `members` with this game, `id`), `session` (`ready`: peers
-whose handshake is done, `peer_ready`: the Session's `peer_ready` signals so far, a handshake
-each and then one per full resync, `error`: the lobby error shown last, `LobbyMenu.last_error`,
-`mod_version`), `role`; on the co-op resume screen `resume_shown` (the saved player shown),
-`resume_gold` and `resume_progress`; in a wave `wave_left` and `upgrades` (the level-up or crate
-panels are shown). A client's copy of a screen is the game's own scene, so its state reads the
-same way.
+continue), `lobby` (`in`, `is_host`, `members` with this game, `id`; `details`: the lobby page's
+details text; `tag`: this build's lobby tag), `session` (`ready`: peers whose handshake is done,
+`peer_ready`: the Session's `peer_ready` signals so far, a handshake each and then one per full
+resync, `error`: the lobby error shown last, `LobbyMenu.last_error`, also after a refused join,
+`mod_version`), `dlcs` (`owned`: `DebugService.owned_dlc_ids`; `available`:
+`ProgressData.available_dlc_ids`; `borrowed`: available but not owned), `ref` (`BT_LOCAL_REF`:
+the other build this game runs, empty for this worktree's), `role`; on the co-op resume screen
+`resume_shown` (the saved player shown), `resume_gold` and `resume_progress`; in a wave
+`wave_left` and `upgrades` (the level-up or crate panels are shown). A client's copy of a screen
+is the game's own scene, so its state reads the same way.
 
 Godot's headless build never flushes the input events `Input.parse_input_event` buffers (the
 desktop builds do it every frame), so in a headless game the director flushes them every frame;
@@ -502,8 +539,12 @@ fills `mods-unpacked` fresh (brotato:together's `src/`, the dev mod, the `-With`
 free port and a token, and per instance: deletes its logs, seeds its settings, refuses if its user
 folder would be `%APPDATA%\Brotato`, and starts the engine with `--path <game> --windowed
 --resolution WxH --position X,Y` (a client also `+connect_lobby <id>`) and its own `APPDATA` and
-`BT_LOCAL_*` variables (set for the child only). It waits until the host is bound and every client
-is in the lobby, then returns; `session.json` lists the processes (id and start time) for `-Stop`,
+`BT_LOCAL_*` variables (set for the child only: also `BT_LOCAL_DLCS` from `-HostDlcs` /
+`-ClientDlcs` and `BT_LOCAL_JOYPAD` from `-Joypad`). With `-ClientRef` / `-HostRef` that side runs
+`play\game-ref`, a copy of the game copy (refreshed with it) whose `mods-unpacked` has the commit's
+brotato:together and `-With` mods (`git archive` of `mods\` into `playefs\<commit>`, once per
+commit) and this worktree's dev mod. It waits until the host is bound and every client is in the
+lobby (or refused: `lobby_error` in its status), then returns; `session.json` lists the processes (id and start time) for `-Stop`,
 which closes the windows and ends what is left after 10 s.
 
 Engine spike (2026-11-25): both the game's engine copy and stock Godot 3.6.2 boot the patched game

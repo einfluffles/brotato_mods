@@ -136,8 +136,10 @@ copies the game) and 10 to 45 s after that:
   client joins it through the real launch option `+connect_lobby <lobby id>`, as Steam starts a
   game for an invite. Both show the lobby with both players. From there it is the real game: Start
   on the host, then each player holds Enter (or Space) in its own window to join a slot.
-- Keyboard and mouse act in the focused window. Gamepads are not split per window yet: play with
-  keyboard and mouse. Neither window pauses or mutes when it loses focus; the clients are silent.
+- Keyboard and mouse act in the focused window. Gamepads drive the host's game only (`-Joypad`
+  moves them, below): Windows gives every game process the pads' input, whatever window has the
+  focus, so each game drops the pads that are not its own. Neither window pauses or mutes when it
+  loses focus; the clients are silent.
 - The mods come from this worktree: brotato:together's `src/`, the dev mod, and brotato:trade
   (`-With none` leaves it out). The game is the installed game's engine (`BrotatoLocal.exe`, copied)
   on a copy of `reference/` without the feature `steam`, so it runs as the game's local build:
@@ -150,7 +152,10 @@ Options:
 
 | Option | What |
 |---|---|
-| `-Clients 1..3` | More clients (two or more: a 2x2 grid). |
+| `-Clients 1..3` | More clients (two or more: a 2x2 grid of smaller windows). |
+| `-HostDlcs`, `-ClientDlcs` | The DLCs the host's or the clients' games own: `all` (default), `none`, or ids (`abyssal_terrors`, `primal_dread`, comma-separated). The local build asks the game's `DebugService.owned_dlc_ids`, which the dev mod sets before the game reads its DLCs. A client without the host's DLC borrows it for the session, as with Steam. |
+| `-ClientRef <git ref>`, `-HostRef <git ref>` | The clients (or the host) run brotato:together and the `-With` mods of another commit, for example the last release tag. Its `mods\` come from `git archive` into `play\refs\<commit>` (the checkout is not touched) and run from a second game copy, `play\game-ref` (made once, about 560 MB). The dev mod stays this worktree's; a build from before the local-play seam (`Transport.bind_steam`) is bound the way its own setup bound Steam. Not both at once. |
+| `-Joypad <who>` | Which game the gamepads drive: `host` (default), `client1`..`client3`, `none`, `all`, or pads by device number per game: `"host=0,client1=1"` (two pads, two players). The others drop them (below). |
 | `-Engine godot` | Stock Godot 3.6.2 (downloaded once, as for `check-window.ps1`) instead of the game's engine: a debug build, so the version shows `-debug` and the game's debug keys work. |
 | `-NoJoin` | Nobody hosts or joins by itself. Host in the host window; Invite (title screen or lobby page) sends every client an accepted invite. |
 | `-Mute client\|all\|none` | Who is silent (default `client`). |
@@ -170,10 +175,12 @@ Options:
 
 Everything is in `%LOCALAPPDATA%\brotato-modtools\play`: `game\` (the game copy, refreshed when
 `reference/project.godot` changes, mods replaced on every start), `engine\` (refreshed when the
-installed `Brotato.exe` changes), and per instance `<run>\host`, `<run>\client1`, ...: `appdata\`
+installed `Brotato.exe` changes), with `-ClientRef` / `-HostRef` also `game-ref\` and `refs\`, and
+per instance `<run>\host`, `<run>\client1`, ...: `appdata\`
 (the instance's `APPDATA`; Mod Loader log in `appdata\Brotato\logs\modloader.log`),
 `stdout.log`, `stderr.log`, `instance.json` (what was started: pid, arguments, paths),
-`status.json` (written by the dev mod every second: role, wire, link, lobby, members, scene),
+`status.json` (written by the dev mod every second: role, wire, link, lobby, members, scene, the
+lobby's last error, the build's lobby tag, DLCs, gamepads),
 `control\`, `out\` and `shots\` (the director's commands, answers and screenshots). A scenario's
 run is `play\scenario-<name>\` with `scenario.log` (every command, answer and check).
 
@@ -184,9 +191,9 @@ from the instance's `control\` folder, one at a time, and answers each in `out\<
 `ok`, `error`, a `result` and the screen's `state` (scene, players, run, lobby, the co-op resume
 screen's saved player, ...). It drives the menus as a player does: keys through the game's input,
 buttons by focus and accept. Commands: `press`, `button`, `wait_for`, `query`, `screenshot`,
-`host_lobby`, `join`, `invite`, `leave`, `kick`, `debug`, `language`, `mod_version`, `scenario`,
-`quit`, and on the link of what the game sends `set_profile`, `fail_session`, `fail_send` and
-`stall`; fields and state:
+`host_lobby`, `join`, `invite`, `leave`, `kick`, `debug`, `language`, `mod_version`, `text`,
+`joypad`, `scenario`, `quit`, and on the link of what the game sends `set_profile`, `fail_session`,
+`fail_send` and `stall`; fields and state:
 [the director](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
 `-Key`, `-Screenshot`, `-Do` and the link switches (`-Profile` with `-On`, `-FailSession`,
 `-FailSend`, `-Stall`) send them to a running session: the director is the one way to control a
@@ -207,6 +214,30 @@ waves), so nobody dies and a wave takes 10 to 30 s.
 
 In `resume_leave_rejoin` the client joins first on the resume screen: had the host taken one of
 the two saved players first, the client's join would take the last one and load the shop at once.
+
+A scenario's launch settings (`LAUNCH` in `scenarios.gd`: the clients of `three_players`, the
+other build of `version_mismatch_build`, the DLCs of `dlc_borrow`) apply unless the same option
+is given; `-Run` and the others work as for any start.
+
+Which build refuses whom: the lobby carries brotato:together's tag (mod id and protocol, for
+example `einfluffles-BrotatoTogether/p33`), and a client that finds another tag than its own leaves
+the lobby at once (`BT_ERR_LOBBY_VERSION`). So two builds with different protocols never get as
+far as `HELLO`: the codes of `WELCOME` (protocol, game, mod version; Join compatibility in the
+implementation notes) are reached only by builds that share the tag, for example two builds of
+one protocol with different mod versions. The last release before the translations shows its
+refusal in English, whatever the language.
+
+Gamepads (`-Joypad`): the game's engine polls XInput and DirectInput itself, so every game process
+gets every pad's input whether or not its window has the focus. Each game blocks the pads that
+are not its own (the dev mod's `joypad_filter.gd`, `BT_LOCAL_JOYPAD`): the engine reads a pad
+through the mapping of its GUID and drops what the mapping does not name, so a blocked pad gets a
+GUID and a mapping of its own that name nothing. It stays connected for the game (its name, the
+"Hold to join" hint) but sends nothing. A pad that connects later is blocked when the engine
+reports it. `status.json` lists every pad with `blocked` and `mapped_guid` (the blocked GUID,
+`btlocalblockedNN`, on Windows). Keys and buttons the director sends come in after the mapping and
+are never filtered. Checked on 2026-11-25 with pads reported to the engine as its driver reports
+them (the director's `joypad` command), not yet with a real pad's input: with a pad switched on,
+`tools\play-local.ps1 -Clients 2 -Joypad client1` should move a player in the client1 window only.
 
 For an agent: run a scenario, read its `scenario.log`, then look at the screenshots of the steps
 the change is about. To try something else, start a session (`tools\play-local.ps1`) and drive it
@@ -242,6 +273,13 @@ still loopback in the end: no real Steam relay, NAT or route choice, no real Ste
 invites, friends-only lobbies, DLC ownership, achievements or Workshop. Both games share one PC's
 CPU and GPU, and the game copy is decompiled code, not the shipped `.pck`. Real sessions between
 two Steam accounts stay the check before a release.
+
+Limits of the options: at most three clients (the wire takes three, the game four players).
+`-ClientRef` / `-HostRef` need a build the dev mod can bind: one with `Transport.bind_steam`, or one
+whose transport's setup is the one the dev mod repeats for older builds (checked with
+`brotato-together/2026-11-23-1930`). `-HostDlcs` / `-ClientDlcs` decide what the game counts as
+owned, not what Steam would sell. Gamepad routing is per device number, which Windows gives in the
+order the pads were connected.
 
 ## With real graphics
 
