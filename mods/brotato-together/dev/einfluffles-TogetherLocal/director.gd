@@ -25,7 +25,7 @@ const RESERVED := ["id", "cmd", "timeout_sec"]
 const COMMANDS := [
 	"screenshot", "press", "button", "wait_for", "query", "host_lobby", "join", "invite", "leave",
 	"kick", "quit", "set_profile", "fail_session", "fail_send", "stall", "debug", "language",
-	"mod_version", "scenario"
+	"mod_version", "scenario", "joypad"
 ]
 
 var local: Node = null  # mod_main.gd of the dev mod
@@ -204,9 +204,13 @@ func state() -> Dictionary:
 			"members": transport.members.size() + 1,  # the transport lists the others only
 			"id": transport.lobby_id,
 		}
+	var lobby_menu := _lobby_menu()
+	lobby["details"] = lobby_menu.details_text() if lobby_menu != null else ""
+	lobby["tag"] = str(transport.get("_lobby_tag")) if transport != null else ""
 	snapshot["lobby"] = lobby
 	snapshot["session"] = _session_state()
 	snapshot["role"] = local.role
+	snapshot["dlcs"] = dlc_state()
 	return snapshot
 
 
@@ -221,17 +225,28 @@ func _session_state() -> Dictionary:
 		for steam_id in session.peers:
 			if session.peers[steam_id].ready:
 				ready += 1
-	var lobby_menu := _lobby_menu()
 	return {
 		"ready": ready,
 		"peer_ready": peer_ready_count,
-		"error": lobby_menu.last_error if lobby_menu != null else "",
+		"error": local.lobby_error(),
 		"mod_version": Compat.mod_version(),
 	}
 
 
 func _on_peer_ready(_steam_id: int) -> void:
 	peer_ready_count += 1
+
+
+# The DLCs of this game: owned (DebugService.owned_dlc_ids, which the local build asks), available
+# (ProgressData.available_dlc_ids: owned plus what the host lends, session/dlc_borrow.gd), borrowed.
+static func dlc_state() -> Dictionary:
+	var owned: Array = DebugService.owned_dlc_ids.duplicate()
+	var available: Array = ProgressData.available_dlc_ids.duplicate()
+	var borrowed := []
+	for dlc_id in available:
+		if not dlc_id in owned:
+			borrowed.append(dlc_id)
+	return {"owned": owned, "available": available, "borrowed": borrowed}
 
 
 func _lobby_menu() -> Node:
@@ -354,6 +369,9 @@ func _cmd_join(command: Dictionary):
 		yield(get_tree(), "idle_frame")
 		return ["no lobby to join (role %s)" % local.role, {}]
 	local.emulator.fire_join_requested(lobby_id, local.emulator.lobby_owner(lobby_id))
+	if command.get("wait", true) == false:  # a join that may be refused: the caller looks
+		yield(get_tree(), "idle_frame")
+		return ["", {"lobby": lobby_id}]
 	var wanted := {"lobby.in": true, "lobby.id": lobby_id}
 	var outcome = yield(_wait(wanted, _timeout(command)), "completed")
 	return [outcome[0], {"lobby": lobby_id}]
@@ -532,3 +550,24 @@ func _cmd_language(command: Dictionary):
 		return ["no language '%s' (one of %s)" % [locale, ProgressData.languages], {}]
 	ProgressData.change_language(locale)
 	return ["", {"locale": TranslationServer.get_locale()}]
+
+
+# The gamepads as this game sees them (joypad_filter.gd). With `connect` (true / false) first a pad
+# reported to the engine as a driver reports one: `device` (0), `name`, `guid` (XInput's by
+# default). No input comes from such a pad; it shows what the filter does with a connection.
+func _cmd_joypad(command: Dictionary):
+	if command.has("connect"):
+		var device := int(command.get("device", 0))
+		var pad_name := str(command.get("name", "Director pad"))
+		var guid := str(command.get("guid", "__XINPUT_DEVICE__"))
+		var connected := bool(command.connect)
+		if not connected:
+			pad_name = ""
+			guid = ""
+		Input.joy_connection_changed(device, connected, pad_name, guid)
+		local.log_info("Pad %d %s (director)" % [device, "connected" if connected else "disconnected"])
+	yield(get_tree(), "idle_frame")
+	yield(get_tree(), "idle_frame")  # a pad the filter blocks is blocked one frame later
+	if local.joypads == null:
+		return ["no gamepad filter", {}]
+	return ["", local.joypads.status()]

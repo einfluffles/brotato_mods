@@ -6,6 +6,7 @@ extends Reference
 
 const Director := preload("res://mods-unpacked/einfluffles-TogetherLocal/director.gd")
 const MenuDriver := preload("res://mods-unpacked/einfluffles-TogetherLocal/menu_driver.gd")
+const JoypadFilter := preload("res://mods-unpacked/einfluffles-TogetherLocal/joypad_filter.gd")
 const SteamEmulator := preload(
 	"res://mods-unpacked/einfluffles-TogetherLocal/steam_emulator.gd"
 )
@@ -15,6 +16,7 @@ const ScenarioRunner := preload(
 const Scenarios := preload("res://mods-unpacked/einfluffles-TogetherLocal/scenarios.gd")
 const TEST_DIR := "user://director_tests"
 const ANSWER_MSEC := 3000
+const TEST_PAD := 12  # device numbers no real pad of a test run has (the engine has 16)
 
 var t: Node = null
 var _presses := 0
@@ -30,6 +32,9 @@ class FakeLocal:
 	var emulator = null
 	var lines := []
 
+	func lobby_error() -> String:
+		return ""
+
 	func log_info(text: String) -> void:
 		lines.append(text)
 
@@ -44,6 +49,7 @@ func run(test_mod: Node):
 	yield(_test_commands(), "completed")
 	_test_scenario_list()
 	yield(_test_runner(), "completed")
+	yield(_test_joypads(), "completed")
 
 
 func _test_parse() -> void:
@@ -392,3 +398,58 @@ func _clear() -> void:
 		folder.list_dir_end()
 		folder.remove(path)
 	folder.remove(TEST_DIR)
+
+
+# The gamepad filter (joypad_filter.gd) on pads reported to the engine as a driver reports them:
+# a filtered pad is blocked once and keeps its name, a pad that connects later is blocked unless
+# it is let through, and one the driver reports again is blocked again. That the engine then drops
+# what a blocked pad sends needs a real pad (docs/testing.md, Play locally); headless Godot does
+# not even answer the mapped GUID (Input.get_joy_guid is a fixed text there).
+func _test_joypads():
+	var none: Dictionary = JoypadFilter.parse("none")
+	var pads: Dictionary = JoypadFilter.parse(" 1, 0,1 ")
+	t._check(
+		(
+			JoypadFilter.parse("").mode == "all" and JoypadFilter.parse("ALL").mode == "all"
+			and none.mode == "none" and pads.mode == "list" and pads.allowed == [1, 0]
+			and JoypadFilter.parse("host").mode == "none"
+		),
+		"joypads: all, none, device numbers; anything else blocks every pad (%s)" % [pads]
+	)
+	Input.joy_connection_changed(TEST_PAD, true, "Director test pad", "directortestguid")
+	yield(t.get_tree(), "idle_frame")  # the engine emits its signal deferred: before the filter
+	var filter = JoypadFilter.new("%d" % (TEST_PAD + 1))
+	t.add_child(filter)
+	yield(t.get_tree(), "idle_frame")
+	yield(t.get_tree(), "idle_frame")
+	t._check(
+		(
+			filter.blocks == 1 and filter.blocked.has(TEST_PAD)
+			and Input.get_joy_name(TEST_PAD) == "Director test pad"
+		),
+		"joypads: a filtered pad is blocked once, under its own name (%s)" % [filter.status()]
+	)
+	Input.joy_connection_changed(TEST_PAD + 1, true, "Director test pad 2", "directortestguid2")
+	Input.joy_connection_changed(TEST_PAD + 2, true, "Director test pad 3", "directortestguid3")
+	yield(t.get_tree(), "idle_frame")
+	yield(t.get_tree(), "idle_frame")
+	t._check(
+		(
+			filter.blocks == 2 and not filter.blocked.has(TEST_PAD + 1)
+			and filter.blocked.has(TEST_PAD + 2) and filter.blocked.has(TEST_PAD)
+		),
+		"joypads: a pad that connects later is blocked unless it is the one let through (%s)" % [
+			filter.status()
+		]
+	)
+	Input.joy_connection_changed(TEST_PAD, true, "Director test pad", "directortestguid")
+	yield(t.get_tree(), "idle_frame")
+	yield(t.get_tree(), "idle_frame")
+	t._check(
+		filter.blocks == 3 and filter.blocked.has(TEST_PAD),
+		"joypads: a blocked pad the driver reports again is blocked again (%s)" % [filter.blocks]
+	)
+	filter.queue_free()
+	for device in [TEST_PAD, TEST_PAD + 1, TEST_PAD + 2]:
+		Input.joy_connection_changed(device, false, "", "")
+	yield(t.get_tree(), "idle_frame")
