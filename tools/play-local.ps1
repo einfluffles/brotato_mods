@@ -12,7 +12,9 @@
 #                 own engine build; its install is only read), refreshed when Brotato.exe changes
 #   <run>\<inst>\ per instance (host, client1, ...): appdata\ (the instance's APPDATA, so its
 #                 user folder appdata\Brotato is its own), stdout.log, stderr.log, instance.json
-#                 (what was started), status.json (the dev mod, every second), control\, shots\
+#                 (what was started), status.json (the dev mod, every second), control\, out\ and
+#                 shots\ (the director: commands, answers, screenshots)
+#   <run>\scenario.log  a scenario's steps and result
 #   session.json  the processes of the running session (for -Stop and the next start)
 # The real saves in %APPDATA%\Brotato are never touched: each game gets its own APPDATA, and the
 # launcher refuses to start if an instance's user folder would be that one.
@@ -20,20 +22,29 @@
 # Usage: tools\play-local.ps1 [-Clients 1..3] [-Engine game|godot] [-NoJoin] [-Mute client|all|none]
 #            [-With mods\<folder>[,...] | -With none] [-GameDir <Brotato install>] [-Run <name>]
 #            [-Fresh] [-Profile lan|relay-good|relay-typical|bad|stall|none]
+#        tools\play-local.ps1 -Scenario <name> [-Run <name>] [-Engine ...] [-With ...] [-Profile ...]
+#                                   fresh games play a scripted scenario through the director
+#                                   (tools\play-scenarios.ps1: resume_leave_rejoin, join_wave_shop,
+#                                   language), every step screenshotted; then the games are closed
+#                                   and it ends with PASS (exit 0) or FAIL (exit 1)
+# Commands to the running games, each one director command (director.gd), answered by each game:
 #        tools\play-local.ps1 -Screenshot <name> [-On <instance>]
 #                                   each running game saves its window to <inst>\shots\<name>.png
 #        tools\play-local.ps1 -Key <Godot key name> [-HoldMs <msec>] [-On <instance>]
 #                                   a key press in that game (Enter, Escape, Right, A, ...); a
-#                                   co-op slot is joined by holding Enter: -Key Enter -HoldMs 1000
+#                                   co-op slot is joined by holding Enter: -Key Enter -HoldMs 1500
 #        tools\play-local.ps1 -Profile <name> -On <instance>|all
 #                                   switches the link profile of what that game sends (each game's
-#                                   profile is one direction); waits until its status shows it
+#                                   profile is one direction): set_profile
 #        tools\play-local.ps1 -FailSession [-Reason <Steam end reason>] [-On <instance>]
 #                                   that game's sessions fail on both ends (default reason 5003)
 #        tools\play-local.ps1 -FailSend [-Count <n>] [-On <instance>]
 #                                   its next reliable send(s) fail: on the host, a full resync
 #        tools\play-local.ps1 -Stall <msec> [-On <instance>]
 #                                   nothing that game sends moves for that long
+#        tools\play-local.ps1 -Do "cmd=<name> [key=value ...]" [-On <instance>]
+#                                   any director command (or a JSON object), e.g. "cmd=query";
+#                                   prints the answer
 #        tools\play-local.ps1 -Stop closes the windows of the running session
 #   -Engine game   the installed game's engine (default); godot: stock Godot (GodotVersion), cached
 #   -NoJoin        nobody hosts or joins by itself (Invite on the host's lobby page invites all)
@@ -55,6 +66,8 @@ param(
     [switch]$Stop,
     [string]$Screenshot = "",
     [string]$Key = "",
+    [string]$Do = "",
+    [string]$Scenario = "",
     [string]$On = "",
     [int]$HoldMs = 0,
     [ValidateSet("lan", "relay-good", "relay-typical", "bad", "stall", "none")][string]$Profile = "",
@@ -134,76 +147,47 @@ function Get-Targets {
     return $targets
 }
 
-function Send-Control([object]$Entry, [string]$Command) {
-    New-Item -ItemType Directory -Force (Join-Path $Entry.dir "control") | Out-Null
-    [IO.File]::WriteAllText((Join-Path $Entry.dir "control\$Command"), "")
+# The director's commands (tools\play-scenarios.ps1): Send-Director, Invoke-Director, scenarios.
+. (Join-Path $PSScriptRoot "play-scenarios.ps1")
+if ($Scenario -ne "" -and -not (Test-ScenarioName $Scenario)) {
+    throw "no scenario '$Scenario' (one of $($ScenarioNames -join ', '))"
 }
 
+# The control switches, each one director command (-Profile with -On switches at run time;
+# without -On it is the start's profile). The link commands may come together: one after another.
+$commands = @()
 if ($Key -ne "") {
-    if ($Key -notmatch '^[A-Za-z0-9]+$') { throw "-Key takes a Godot key name such as Enter, Escape, Right, A" }
-    foreach ($entry in (Get-Targets)) {
-        Send-Control $entry "key-$Key$(if ($HoldMs -gt 0) { "-$HoldMs" })"
-        Write-Note "$($entry.name): key $Key$(if ($HoldMs -gt 0) { " held $HoldMs ms" })"
-    }
-    exit 0
+    $commands += @{ cmd = "press"; key = $Key; hold_ms = $HoldMs }
+} elseif ($Screenshot -ne "") {
+    $commands += @{ cmd = "screenshot"; name = ($Screenshot -replace '[^A-Za-z0-9_-]', '_') }
+} elseif ($Do -ne "") {
+    $commands += ConvertFrom-DoText $Do
 }
-
-function Read-Status([string]$Dir) {
-    $path = Join-Path $Dir "status.json"
-    if (-not (Test-Path $path)) { return $null }
-    try { return Get-Content $path -Raw | ConvertFrom-Json } catch { return $null }
+if ($Profile -ne "" -and $On -ne "") { $commands += @{ cmd = "set_profile"; name = $Profile } }
+if ($FailSession) {
+    $commands += $(if ($Reason -gt 0) { @{ cmd = "fail_session"; reason = $Reason } } else { @{ cmd = "fail_session" } })
 }
+if ($FailSend) { $commands += @{ cmd = "fail_send"; count = [Math]::Max(1, $Count) } }
+if ($Stall -gt 0) { $commands += @{ cmd = "stall"; msec = $Stall } }
 
-# A link profile at run time: only with -On (without it, -Profile is the start's profile).
-if ($Profile -ne "" -and $On -ne "") {
+if ($commands.Count -gt 0) {
     $targets = @(Get-Targets)
-    foreach ($entry in $targets) { Send-Control $entry "profile-$Profile" }
-    $deadline = (Get-Date).AddSeconds(5)
-    $pending = $targets
-    while ((Get-Date) -lt $deadline -and $pending.Count -gt 0) {
-        Start-Sleep -Milliseconds 200
-        $pending = @($pending | Where-Object { (Read-Status $_.dir).link.profile -ne $Profile })
-    }
-    foreach ($entry in $targets) {
-        $link = (Read-Status $entry.dir).link
-        Write-Note "$($entry.name): link profile $($link.profile)$(if ($link.profile -ne $Profile) { " (not $Profile yet)" })"
-    }
-    exit $(if ($pending.Count -eq 0) { 0 } else { 1 })
-}
-
-if ($FailSession -or $FailSend -or $Stall -gt 0) {
-    foreach ($entry in (Get-Targets)) {
-        if ($FailSession) {
-            Send-Control $entry "fail-session$(if ($Reason -gt 0) { "-$Reason" })"
-            Write-Note "$($entry.name): sessions fail$(if ($Reason -gt 0) { " (reason $Reason)" })"
-        }
-        if ($FailSend) {
-            Send-Control $entry "fail-send$(if ($Count -gt 0) { "-$Count" })"
-            Write-Note "$($entry.name): next $([Math]::Max(1, $Count)) reliable send(s) fail"
-        }
-        if ($Stall -gt 0) {
-            Send-Control $entry "stall-$Stall"
-            Write-Note "$($entry.name): link stalls for $Stall ms"
+    $failed = 0
+    foreach ($command in $commands) {
+        $answers = Invoke-Director $targets $command  # an array already (return , $answers)
+        foreach ($answer in $answers) {
+            $text = if ($answer.ok) { "ok" } else { "FAILED: $($answer.error)" }
+            $detail = if ($answer.result.path) {
+                " $($answer.result.path)"
+            } elseif ($answer.ok -and $answer.cmd -eq "set_profile") {
+                " (link profile now $($answer.result.link.profile))"
+            } else { "" }
+            Write-Note "$($answer.instance): $($answer.cmd) $text$detail"
+            if ($Do -ne "") { $answer | ConvertTo-Json -Depth 8 | Write-Host }
+            if (-not $answer.ok) { $failed++ }
         }
     }
-    exit 0
-}
-
-if ($Screenshot -ne "") {
-    $name = $Screenshot -replace '[^A-Za-z0-9_-]', '_'
-    $shots = @()
-    foreach ($entry in (Get-Targets)) {
-        $shot = Join-Path $entry.dir "shots\$name.png"
-        if (Test-Path $shot) { Remove-Item $shot }
-        Send-Control $entry "screenshot-$name"
-        $shots += $shot
-    }
-    $deadline = (Get-Date).AddSeconds(15)
-    while ((Get-Date) -lt $deadline -and @($shots | Where-Object { -not (Test-Path $_) }).Count -gt 0) {
-        Start-Sleep -Milliseconds 200
-    }
-    foreach ($shot in $shots) { Write-Host "$(if (Test-Path $shot) { 'saved  ' } else { 'MISSING' }) $shot" }
-    exit $(if (@($shots | Where-Object { -not (Test-Path $_) }).Count -eq 0) { 0 } else { 1 })
+    exit $(if ($failed -eq 0) { 0 } else { 1 })
 }
 
 # --- Checks and copies ---
@@ -326,14 +310,21 @@ $modNames = ($dirs | ForEach-Object { $_.Name }) -join ", "
 
 # --- Instances ---
 
-$udp = New-Object Net.Sockets.UdpClient (New-Object Net.IPEndPoint ([Net.IPAddress]::Loopback, 0))
-$port = $udp.Client.LocalEndPoint.Port
-$udp.Close()
+# A free TCP port on 127.0.0.1 for the host's wire (a free UDP port can be taken for TCP: the
+# host then cannot listen, error 22).
+$listener = New-Object Net.Sockets.TcpListener ([Net.IPAddress]::Loopback, 0)
+$listener.Start()
+$port = $listener.LocalEndpoint.Port
+$listener.Stop()
 $bytes = New-Object byte[] 16
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $token = -join ($bytes | ForEach-Object { $_.ToString("x2") })
 
 $startProfile = if ($Profile -eq "") { "lan" } else { $Profile }
+if ($Scenario -ne "") {
+    if ($Run -eq "default") { $Run = "scenario-$Scenario" }
+    $Fresh = $true  # a scenario starts from empty user folders, every time
+}
 $runDir = Join-Path $Play $Run
 if ($Fresh -and (Test-Path $runDir)) { Remove-Item -Recurse -Force $runDir }
 $realUserDir = [IO.Path]::GetFullPath((Join-Path $env:APPDATA $UserDirName)).TrimEnd('\')
@@ -378,7 +369,7 @@ for ($i = 0; $i -lt $count; $i++) {
     }
     New-Item -ItemType Directory -Force $dir | Out-Null
     # The game reads the last log at boot and turns all mods off after an error that names a mod.
-    foreach ($old in @((Join-Path $userDir "logs"), (Join-Path $dir "control"), (Join-Path $dir "shots"))) {
+    foreach ($old in @((Join-Path $userDir "logs"), (Join-Path $dir "control"), (Join-Path $dir "out"), (Join-Path $dir "shots"))) {
         if (Test-Path $old) { Remove-Item -Recurse -Force $old }
     }
     foreach ($old in @("stdout.log", "stderr.log", "status.json", "instance.json")) {
@@ -444,6 +435,12 @@ foreach ($entry in $instances) { Write-Note "  $($entry.name): pid $($entry.pid)
 
 # --- Until the games are up (and the clients in the host's lobby) ---
 
+function Read-Status([string]$Dir) {
+    $path = Join-Path $Dir "status.json"
+    if (-not (Test-Path $path)) { return $null }
+    try { return Get-Content $path -Raw | ConvertFrom-Json } catch { return $null }
+}
+
 $deadline = (Get-Date).AddSeconds($TimeoutSec)
 $done = $false
 $lastLine = ""
@@ -473,6 +470,17 @@ foreach ($entry in $instances) {
     if (-not (Test-Path $entry.stderr)) { continue }
     $errors = @(Get-Content $entry.stderr | Where-Object { $_ -match '^SCRIPT ERROR' })
     if ($errors.Count -gt 0) { Write-Note "$($entry.name): $($errors.Count) script errors in $($entry.stderr)" }
+}
+if ($Scenario -ne "") {
+    $passed = $false
+    try {
+        if ($done) { $passed = Invoke-Scenario $Scenario $instances $runDir }
+    } finally {
+        $closed = Stop-Session
+        Write-Note "closed the scenario's $closed games"
+    }
+    Write-Host $(if ($passed) { "PASS $Scenario" } else { "FAIL $Scenario" })
+    exit $(if ($passed) { 0 } else { 1 })
 }
 Write-Note "screenshots: tools\play-local.ps1 -Screenshot <name>; stop: tools\play-local.ps1 -Stop (or close the windows)"
 exit $(if ($done) { 0 } else { 1 })
