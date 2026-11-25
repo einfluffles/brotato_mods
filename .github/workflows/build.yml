@@ -52,7 +52,7 @@ jobs:
       - name: Package
         run: CONTAINER=docker tools/package.sh dist
 
-      - name: Guard the zips (only mods-unpacked/<mod_id>/, no socket classes)
+      - name: Guard the zips (only mods-unpacked/<mod_id>/, no network classes, native files or dev mod)
         run: python3 -I tools/zip_guard.py zips dist
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

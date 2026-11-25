@@ -334,7 +334,7 @@ same scenarios, are in.
 
 Nothing under `dev/` is packaged: `tools/package.sh` takes `mods/*/src/<mod_id>/` only, and the zip
 guard fails on any second mod folder in a zip, also one whose manifest sits in `dev/`
-(`tools/test_zip_guard.py`). The socket-class check covers `mods/*/src` only, so a dev mod may use
+(`tools/test_zip_guard.py`). The network-class check covers `mods/*/src` only, so a dev mod may use
 sockets; gdlint covers `dev/` like the rest. `tools/check.sh` and `tools\check-window.ps1` mount
 `dev/*/` next to `src/` and `tests/`, so the test mod preloads the emulator from
 `res://mods-unpacked/einfluffles-TogetherLocal/` and every test run also checks that the dev mod

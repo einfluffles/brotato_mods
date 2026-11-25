@@ -67,14 +67,49 @@ class ZipGuardTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("net/x.gd:3: NetworkedMultiplayerENet", result.stderr)
 
-    def test_every_socket_class_fails(self):
+    def test_every_network_class_fails(self):
         for cls in ["PacketPeerUDP", "StreamPeerTCP", "TCP_Server", "UDPServer",
-                    "WebSocketServer", "WebSocketClient", "WebSocketMultiplayerPeer"]:
+                    "WebSocketServer", "WebSocketClient", "WebSocketMultiplayerPeer",
+                    "HTTPRequest", "HTTPClient", "StreamPeerSSL", "PacketPeerDTLS", "DTLSServer",
+                    "WebRTCPeerConnection", "WebRTCDataChannel", "WebRTCMultiplayer", "UPNP",
+                    "UPNPDevice"]:
             scene = ("script = %s\n" % cls).encode()
             self.make_zip([("mods-unpacked/%s/ui/x.tscn" % MOD_ID, scene)])
             result = self.zips()
             self.assertEqual(result.returncode, 1, cls)
-            self.assertIn("x.tscn:1: " + cls, result.stderr)
+            self.assertIn("network class in shipped code: mods-unpacked/%s/ui/x.tscn:1: %s"
+                          % (MOD_ID, cls), result.stderr)
+
+    # Words that only contain a class name are no class.
+    def test_longer_words_pass(self):
+        self.make_zip([("mods-unpacked/%s/x.gd" % MOD_ID,
+                        b"var my_HTTPRequests := 0\nvar UPNPish_text := \"\"  # TCP_ServerX\n")])
+        result = self.zips()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_native_file_fails(self):
+        for name in ["bin/x.dll", "bin/libx.so", "bin/libx.so.1", "bin/x.dylib", "x.gdnlib",
+                     "x.gdns", "extra.pck", "compiled.gdc", "tool.exe", "bin/X.DLL"]:
+            self.make_zip([("mods-unpacked/%s/%s" % (MOD_ID, name), b"\x00\x01binary")])
+            result = self.zips()
+            self.assertEqual(result.returncode, 1, name)
+            self.assertIn("native or binary file in shipped code: mods-unpacked/%s/%s"
+                          % (MOD_ID, name), result.stderr)
+
+    def test_other_suffixes_pass(self):
+        self.make_zip([("mods-unpacked/%s/%s" % (MOD_ID, name), b"x\n")
+                       for name in ["icon.png", "texts.csv", "a.sound.ogg", "notes.gdc.md"]])
+        result = self.zips()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_dev_mod_named_fails(self):
+        for text in [b'var dev = "/root/ModLoader/einfluffles-TogetherLocal"\n',
+                     b'var role := OS.get_environment("BT_LOCAL_ROLE")\n']:
+            self.make_zip([("mods-unpacked/%s/net/x.gd" % MOD_ID, text)])
+            result = self.zips()
+            self.assertEqual(result.returncode, 1, text)
+            self.assertIn("local-play dev mod named in shipped code: mods-unpacked/%s/net/x.gd:1:"
+                          % MOD_ID, result.stderr)
 
     def test_file_outside_mod_folder_fails(self):
         for entry in ["README.md", "mods-unpacked/stray.gd", "other/%s/x.gd" % MOD_ID]:
@@ -142,10 +177,26 @@ class ZipGuardTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("mods/example/src/%s/net/y.gd:1: PacketPeerUDP" % MOD_ID, result.stderr)
 
+    def test_src_new_rules_fail(self):
+        os.makedirs(os.path.join(self.src, "net"))
+        self.write(os.path.join(self.src, "net", "h.gd"), b"var http = HTTPRequest.new()\n")
+        self.write(os.path.join(self.src, "net", "d.gd"), b'# see BT_LOCAL_PORT\n')
+        self.write(os.path.join(self.src, "native.gdns"), b"[gd_resource]\n")
+        result = run("--root", self.root, "src")
+        self.assertEqual(result.returncode, 1)
+        base = "mods/example/src/%s/" % MOD_ID
+        self.assertIn("network class in shipped code: %snet/h.gd:1: HTTPRequest" % base,
+                      result.stderr)
+        self.assertIn("local-play dev mod named in shipped code: %snet/d.gd:1: BT_LOCAL_PORT"
+                      % base, result.stderr)
+        self.assertIn("native or binary file in shipped code: %snative.gdns" % base, result.stderr)
+
     def test_dev_code_outside_src_is_not_scanned(self):
         dev = os.path.join(self.root, "mods", "example", "dev")
         os.makedirs(dev)
-        self.write(os.path.join(dev, "wire.gd"), b"var peer = NetworkedMultiplayerENet.new()\n")
+        self.write(os.path.join(dev, "wire.gd"),
+                   b'var peer = NetworkedMultiplayerENet.new()  # BT_LOCAL_PORT\n')
+        self.write(os.path.join(dev, "helper.dll"), b"\x00")
         result = run("--root", self.root, "src")
         self.assertEqual(result.returncode, 0, result.stderr)
 
