@@ -5,7 +5,7 @@ extends Reference
 # takes it like the engine's singleton. Dev only: never packaged (mods/*/dev/).
 #
 # No sockets here. What leaves this object goes to a wire (attach_wire): wire_memory.gd for two or
-# more emulators in one process, an ENet wire for two game processes (local play). A wire has
+# more emulators in one process, wire_tcp.gd for game processes on one PC (local play). A wire has
 # send_packet(packet: Dictionary) -> bool (false: the peer is unknown or gone) and hands what it
 # receives to receive_packet. Packets hold plain values only (var2bytes-safe).
 #
@@ -176,6 +176,16 @@ func attach_wire(wire) -> void:
 
 func has_wire() -> bool:
 	return _wire != null
+
+
+# The lobbies this emulator owns (a wire tells the others, so a client joins once one exists).
+func owned_lobby_ids() -> Array:
+	var ids := []
+	for lobby_id in _lobbies:
+		if _lobbies[lobby_id].owner == steam_id:
+			ids.append(lobby_id)
+	ids.sort()
+	return ids
 
 
 # Steam's run_callbacks and the network in one: paces queued messages out, hands due ones to the
