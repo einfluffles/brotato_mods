@@ -47,6 +47,9 @@ upload; three of them are marked where the upload may have differed.
   lobby could not be created" instead of "createLobby failed"), and the question before leaving
   a lobby mid-run puts each sentence on its own line. The client's waiting screen now uses the
   game's font.
+- Online co-op: a client now sees the builder's turret at the host's size and with its level's
+  look, also when it grows at the end of a wave. Before, clients drew it at full size (about
+  twice as big as on the host at the start of a run) and always with the first level's look.
 - Needs everybody on this update (protocol 33).
 
 ## 2026-11-23 19:30 UTC

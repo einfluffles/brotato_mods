@@ -10,13 +10,26 @@ extends Reference
 # - brachiosaurus foot: visibility of its shadow / foot / release sprites, foot flip_h
 # - bosses and elites (Boss): their health as a fraction, for the life bar over them
 # - dig sites (DigSite): progress as a fraction, and whether one is dug (particles, sound)
+# - the builder's turret: sprite size and height (BuilderTurret.set_size) and level texture, which
+#   set_data and the wave's end take from the owner's structure range
 # Optional group, sent after the base values only while active (the value count tells the client):
 # - PIVOTS: boss pivots added at runtime (eel, tyrannosaurus, brachiosaurus `pivots_scene`)
 # - JUMP: JumpAttackBehavior's landing warning (position) and ground shadow (height, size)
 # - WARNING_LINE: WarningChargingAttackBehavior's red charge line (direction)
 
 enum Kind {
-	ROTATION, POSITION_X, SCALE_Y, POSITION_Y, SCALE, BITS, LINE_ANGLE, HEALTH, DIG_PROGRESS, DIG_STATE
+	ROTATION,
+	POSITION_X,
+	SCALE_Y,
+	POSITION_Y,
+	SCALE,
+	BITS,
+	LINE_ANGLE,
+	HEALTH,
+	DIG_PROGRESS,
+	DIG_STATE,
+	SIZE,
+	TEXTURE,
 }
 enum Group { NONE, PIVOTS, JUMP, WARNING_LINE }
 
@@ -167,6 +180,11 @@ static func _derive(scene_path: String) -> Dictionary:
 	if pristine is DigSite:
 		parts.append([NodePath("."), Kind.DIG_PROGRESS])
 		parts.append([NodePath("."), Kind.DIG_STATE])
+	if pristine is BuilderTurret:
+		var sprite := NodePath("Animation/Sprite")
+		parts.append([sprite, Kind.SIZE])
+		parts.append([sprite, Kind.POSITION_Y])
+		parts.append([NodePath("."), Kind.TEXTURE, "turret_sprites"])
 	_derive_group(pristine, lay)
 	pristine.free()
 	if parts.size() > MAX_VALUES:
@@ -278,6 +296,10 @@ static func _read(entity: Node, parts: Array, values: Array) -> bool:
 				values.append(node.scale.y)
 			Kind.SCALE:
 				values.append(node.scale.x)
+			Kind.SIZE:
+				values.append(node.scale.y)
+			Kind.TEXTURE:
+				values.append(node.get(part[2]).find(node.sprite.texture))
 			Kind.BITS:
 				var bits := 0
 				for k in part[2].size():
@@ -327,6 +349,11 @@ static func _write(
 			Kind.SCALE:
 				var s: float = lerp(from, to, t)
 				node.scale = Vector2(s, s)
+			Kind.SIZE:  # keeps the facing flag's sign of scale.x
+				var size: float = lerp(from, to, t)
+				node.scale = Vector2(-size if node.scale.x < 0.0 else size, size)
+			Kind.TEXTURE:
+				_show_texture(node, node.get(part[2]), int(to))
 			Kind.HEALTH:
 				_show_health(node, to)
 			Kind.BITS:
@@ -342,6 +369,12 @@ static func _write(
 				_show_dig_progress(node, to)
 			Kind.DIG_STATE:
 				_show_dig_state(node, int(to))
+
+
+# One of the scene's textures by index; another value (-1: none of them) leaves the puppet's own.
+static func _show_texture(entity: Node, textures: Array, index: int) -> void:
+	if index >= 0 and index < textures.size() and entity.sprite.texture != textures[index]:
+		entity.sprite.texture = textures[index]
 
 
 # The sprite DigSite._draw picks for the host's progress; dug up at 1, as _complete leaves it.
