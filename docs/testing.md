@@ -21,6 +21,25 @@ game-script error or a `get_meta` / `get_child` / `get_node` engine error while 
   mount makes that slow. The copy is refreshed when `reference/project.godot` changes.
   `MOD_CHECK_CACHE=1` or `0` forces the copy on or off, and `MOD_CHECK_RESYNC=1` refreshes it.
 - The scripts use podman, or docker when podman is missing (`CONTAINER=...` picks one).
+- Besides `src/` and `tests/`, a mod folder can have `dev/<dev_mod_id>/`: dev-only mods that
+  `tools/check.sh` and `tools\check-window.ps1` mount for the tests too, and that are never
+  packaged. Every process loads them, so they must stay inert in a test run. See below.
+
+## Local play (emulator)
+
+brotato:together's `dev/einfluffles-TogetherLocal` is the local-play dev mod: a Steam stand-in
+(`steam_emulator.gd`) the real transport binds instead of GodotSteam, so host and clients can run
+without Steam's networking. In a test run it refuses to start (no `BT_LOCAL_ROLE`, the Steam build's
+feature `steam`, the game's own user folder) and logs one line; the suites check that.
+
+- `wire_memory.gd` puts two or more emulators in one process with one clock that moves only when a
+  test steps it. Pacing, latency, loss, reordering, stalls and failures are therefore exact, and a
+  suite on it runs the same every time without waiting in real time.
+- `emulator` tests the stand-in itself, `emulator_transport` a real `Transport` and `Session` per
+  player on it (handshake, messages, send results and the full resync, leave, kick, failures).
+- The dev mod's design, activation rules and coverage of GodotSteam:
+  [Local play](../mods/brotato-together/docs/implementation.md#local-play-dev-mod). Two game
+  windows on one PC (a launcher and a wire between processes) are not in yet.
 
 ## With real graphics
 

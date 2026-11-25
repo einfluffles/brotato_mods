@@ -16,6 +16,7 @@ Each mod's README says how to play it, what it does not do yet and what its test
 mods/<folder>/
   src/<mod_id>/        everything that ships (manifest.json, mod_main.gd, ...)
   tests/<test_mod_id>/ dev-only headless test mod (never packaged)
+  dev/<dev_mod_id>/    optional dev-only mods the tests load too, e.g. local play (never packaged)
   docs/, README.md, CHANGELOG.md, workshop.json
   preview.svg|png      optional Workshop preview (svg is rendered to a 1024x1024 png when packaging)
 docs/                  shared docs: testing, releasing, game code, brotato-hooks.md (where the game

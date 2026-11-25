@@ -236,13 +236,14 @@ keeps the lobby tag and hands the engine's GodotSteam singleton to
 - on the first bind of the process that gets this far, acts on `+connect_lobby <id>`.
 
 Why the seam: it lets another object stand in for the singleton while the transport stays as it
-is. The headless tests bind a fake GodotSteam (`FakeSteam` in `session_lifecycle_tests.gd`). A
-local-play dev mod (planned, outside `src/`, never packaged) is to bind an object with GodotSteam's
-method and signal names that carries lobby and messages between two game instances on one PC, so
-every line of the transport runs as in a Steam session. A player's game binds the singleton once,
-at startup, as before. Outside the transport only `net/link_watch.gd` (handed the object on each
-poll) and the lobby page's availability check (`transport.steam != null`) see the object. The
-zip guard keeps sockets out of shipped code ([Releasing](../../../docs/releasing.md#notes)).
+is. The headless tests bind a fake GodotSteam (`FakeSteam` in `session_lifecycle_tests.gd`). The
+local-play dev mod ([Local play](#local-play-dev-mod), outside `src/`, never packaged) binds an
+object with GodotSteam's method and signal names that carries lobby and messages between game
+instances, so every line of the transport runs as in a Steam session. A player's game binds the
+singleton once, at startup, as before. Outside the transport only `net/link_watch.gd` (handed the
+object on each poll) and the lobby page's availability check (`transport.steam != null`) see the
+object. The zip guard keeps sockets out of shipped code
+([Releasing](../../../docs/releasing.md#notes)).
 
 ### Route
 
@@ -298,6 +299,123 @@ the network and Steam's send queue. The whole time stays in `answer_ms` (shown o
 `network_messages_session_failed` is logged with the reason in words (5008: P2P rendezvous failed,
 and so on). A follow-up line says when the session was up again and over which path, or that it
 still was not after 15 s.
+
+### Local play (dev mod)
+
+Host and clients as game instances on one PC, without Steam's networking. A dev mod puts a
+Steam-shaped emulator under the unchanged transport (`Transport.bind_steam`, [Steam
+object](#steam-object)). Status: the emulator, the in-process wire and the activation rules are in;
+the wire between two game processes (ENet on 127.0.0.1), the launcher `tools\play-local.ps1`, the
+link profiles and the scenario director come later.
+
+**Layout.** `mods/brotato-together/dev/einfluffles-TogetherLocal/`, next to `src/` and `tests/`:
+
+| File | What |
+|---|---|
+| `manifest.json` | Mod `einfluffles-TogetherLocal`, depends on `einfluffles-BrotatoTogether`, so it loads after it. |
+| `mod_main.gd` | Activation rules; when active, builds an emulator and binds it to the transport. |
+| `steam_emulator.gd` | The Steam stand-in: lobbies, sessions, queues, pacing, link, connection info. No sockets. |
+| `wire_memory.gd` | A wire for two or more emulators in one process, with a clock that moves only when told to. |
+
+Nothing under `dev/` is packaged: `tools/package.sh` takes `mods/*/src/<mod_id>/` only, and the zip
+guard fails on any second mod folder in a zip, also one whose manifest sits in `dev/`
+(`tools/test_zip_guard.py`). The socket-class check covers `mods/*/src` only, so a dev mod may use
+sockets; gdlint covers `dev/` like the rest. `tools/check.sh` and `tools\check-window.ps1` mount
+`dev/*/` next to `src/` and `tests/`, so the test mod preloads the emulator from
+`res://mods-unpacked/einfluffles-TogetherLocal/` and every test run also checks that the dev mod
+stays inert.
+
+**Activation.** `mod_main.gd` acts only if all of these hold (`refusal()`, in this order), else it
+logs one line ("Local play off: ...") and does nothing else:
+
+1. `BT_LOCAL_ROLE` is `host` or `client`.
+2. Steam is not logged on here: no GodotSteam singleton, or its `getSteamID()` is 0.
+3. The game is not the Steam build: feature `steam` is absent (the Steam build's `project.godot`
+   sets it; the local game copy has it removed).
+4. The user folder is not the game's own: not `%USERPROFILE%\AppData\Roaming\Brotato` (the
+   launcher gives each instance its own `APPDATA`) and not `$HOME/.local/share/Brotato` (an
+   instance on Linux gets its own `XDG_DATA_HOME`).
+
+The test container's game has feature `steam` and its user folder is
+`$HOME/.local/share/Brotato`, so the dev mod refuses there even with a role. When active (no wire
+yet), it takes `BT_LOCAL_ID` (instance number, default 1 for the host and 2 for a client) and
+`BT_LOCAL_NAME` (persona name), binds the emulator and polls it every frame. The transport's own
+`setup` has already logged "Steam singleton not available" or "Steam not logged on" by then; the
+launcher has to clear the logs before a start, as `tools\check-window.ps1` does.
+
+**The emulator.** One `steam_emulator.gd` object is one player's Steam.
+
+- Ids: `make_id(n)` = `0x0010000100000000 + n`. A real Steam user id has universe 1 in its top
+  byte (7656119...); these have universe 0 (Invalid), so no fake id is ever a real one. Number 0
+  gives steam id 0 (not logged on). Lobby ids have universe 0, type 8 and the owner's number in
+  them (`lobby_owner(lobby_id)`), so a wire can route a join to the owner.
+- Callbacks are queued and emitted in `poll()`, as Steam's `run_callbacks` does once a frame.
+- Lobbies live in the emulator that created them. A join goes to the owner over the wire; the
+  owner answers with the lobby (members, data, joinable, names) and sends every change to the
+  members, which keep a copy. The owner leaving hands the lobby to the next member, as Steam does.
+- Messages: `sendMessageToUser` checks, queues in the session's send queue, `poll()` paces the
+  queue out with a token bucket at the send rate (`BURST_BYTES` 4380), the link adds latency,
+  jitter, loss and stalls, then the packet goes to the wire. Reliable messages keep their order
+  (a lost one arrives `retransmit_msec` later, and the ones after it wait); unreliable ones can be
+  dropped or overtake. The receiver stamps `time_received` from its own `getLocalTimestamp()`.
+- Sessions: the first message to a peer opens one. The receiver holds its messages and fires
+  `network_messages_session_request` until `acceptSessionWithUser` (or a send to that peer, which
+  accepts too); then both sides are connected. A session nobody accepts fails at the sender after
+  `accept_timeout_msec` (10 s, reason 5003). `closeSessionWithUser` closes the peer's side as well
+  (state 4, reason 1000). A broken session answers NoConnection unless the send has
+  `SEND_AUTO_RESTART_BROKEN_SESSION`, which opens a new one.
+- Path: relayed unless both sides allow ICE (`setGlobalConfigValueInt32` with
+  `P2P_Transport_ICE_Enable`), so the transport's relay-only on either side relays the session,
+  shown with the fake POP `lcl`.
+
+GodotSteam calls of the mod and what the emulator does with them:
+
+| GodotSteam | Emulator |
+|---|---|
+| `getSteamID`, `getPersonaName`, `getFriendPersonaName`, `get_godotsteam_version` | fake id, persona from `_init`, names learned with the lobby (`[unknown]` otherwise) |
+| `initRelayNetworkAccess` | counted (`relay_inits`) |
+| `setGlobalConfigValueInt32` | send rate min / max (pacing uses min, capped by max), ICE on or off; every value in `config_values` |
+| `createLobby`, `joinLobby`, `leaveLobby` | as above; join answers: 1 success, 2 no such lobby, 3 not joinable, 4 full, 5 no wire |
+| `getLobbyOwner`, `getNumLobbyMembers`, `getLobbyMemberByIndex`, `getLobbyData`, `setLobbyData`, `setLobbyJoinable` | from the lobby or its copy; only the owner sets |
+| `lobby_created`, `lobby_joined`, `lobby_chat_update` | from `poll()`; chat states 1 entered, 2 left, 4 disconnected (a game gone from the wire) |
+| `join_requested` | `fire_join_requested(lobby_id, friend_id)` |
+| `activateGameOverlayInviteDialog` | recorded (`invite_dialogs`) |
+| `setRichPresence`, `clearRichPresence` | recorded (`rich_presence`, `presence_log`) |
+| `sendMessageToUser` | real flags and channels; results 1 OK, 3 NoConnection (no wire, broken session without restart flag), 8 InvalidParam (no id, own id, negative channel, over 512 KB), 25 LimitExceeded (send queue over 512 KB) |
+| `receiveMessagesOnChannel` | per channel, up to the maximum; `payload`, `size`, `identity`, `channel`, `flags`, `message_number`, `time_received` |
+| `getLocalTimestamp` | the emulator's clock plus its own origin (another one per emulator) |
+| `network_messages_session_request`, `acceptSessionWithUser`, `closeSessionWithUser` | as above |
+| `network_messages_session_failed` | reason, remote id, state 5, debug text: `fail_session(remote_id, reason, debug, both_sides)`, a session nobody accepts (5003), a peer gone from the wire (4001) |
+| `getSessionConnectionInfo` | state, end reason and debug text, relayed flag and POP, ping (twice the link's latency), send rate, pending reliable / unreliable bytes, unacknowledged reliable bytes in flight, queue time, local quality (1 - loss) |
+
+Control (not GodotSteam): `attach_wire(wire)`, `poll()`, `set_link({latency_msec, jitter_msec,
+loss, retransmit_msec, relay_latency_msec})` for what this side sends, `seed_link(seed)`,
+`stall(msec)`, `fail_session(...)`, `fire_join_requested(...)`, `wire_lost(remote_id)`,
+`send_rate()`, `is_relayed(remote_id)`, and the clock (`clock.now_usec()`, a real one by default).
+
+**Wires.** A wire has `send_packet(packet: Dictionary) -> bool` (false: the peer is unknown or
+gone) and hands what arrives to the target's `receive_packet(packet)`; when a peer's game is gone
+it calls `wire_lost(remote_id)` on the others. Packets are dictionaries of plain values with `k`
+(kind: `msg`, `accepted`, `close`, `fail`, `refused`, `join`, `join_fail`, `leave`, `lobby`),
+`from` and `to`, safe for `var2bytes`. `wire_memory.gd` carries them within one process through
+`var2bytes` / `bytes2var` and gives all its emulators one manual clock (`step(msec)` moves it and
+polls every emulator by steam id), so a test runs the same every time.
+
+Not there yet, or simplified:
+
+- The ENet wire, the launcher and the game copy patches; the dev mod's active path has no wire.
+- Link profiles (`lan`, `relay-good`, `bad`, ...) from the measured sessions and switching them at
+  run time: `set_link` takes the numbers, nobody sets them yet.
+- Lobby traffic and session control go straight to the wire, without the link's delay; Steam's
+  real ordering races between lobby updates and messages are not injected yet.
+- Nagle (`SEND_NO_NAGLE`) is not modelled; the remote side's quality is -1 (unknown); bytes and
+  packets per second are not reported.
+- A lobby whose owner left keeps the first owner in its id, so a later join finds no lobby.
+
+Tests: the suites `emulator` (the emulator on the memory wire) and `emulator_transport` (a real
+`Transport` and `Session` per player, bound to emulators: hosting, joining, HELLO / WELCOME,
+messages both ways, send results down to the full resync, leave, kick, a game that is gone, a
+failed session and its restart, another version's lobby tag).
 
 ## 5. State stream and run state
 

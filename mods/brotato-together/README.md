@@ -256,6 +256,10 @@ The mechanisms, the wire format and the measurements are in
 `tools/check.sh mods/brotato-together`, or one suite with `tools/check.sh -s <suite>`. Every suite
 passes on its own. [Testing](../../docs/testing.md) explains how a check runs.
 
+The checks also load `dev/einfluffles-TogetherLocal`, the dev-only local-play mod (never packaged
+either, [Local play](docs/implementation.md#local-play-dev-mod)). The `emulator` suites use its
+Steam stand-in.
+
 The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 
 | Suite | What it covers |
@@ -297,6 +301,8 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `lobby_menu` | The lobby in the game's menus on a fake Steam: title screen, kicking, the Co-op row and slot invite of character selection (also switched to German), the client's popup, the pause menu page. |
 | `network_stalls` | The render delay through stalls, the log lines for gaps, the session's path. |
 | `traffic` | The reliable traffic that the log names. |
+| `emulator` | The local-play dev mod's Steam stand-in (`dev/einfluffles-TogetherLocal`) on the in-process wire: fake ids, lobbies, sessions, send results, pacing, latency, loss, reordering, stalls, failures, connection info; the dev mod staying inert outside local play. |
+| `emulator_transport` | The real transport and session of a host and two clients on that stand-in: hosting, joining, the handshake, messages both ways, send results and the full resync, leaving, kicking, a game that is gone, a failed session and its restart, another version's lobby. |
 | `progress` | What the host's run earns for a client's own save. |
 | `client_report` | A client's frame, stall and correction reports and the host's log lines for them. |
 | `axolotl` | The Axolotl's text in the state the game's own roll leaves in co-op, and the Mod Loader's backup of every extended game script. |
