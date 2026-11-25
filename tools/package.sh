@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Package every mod (mods/*/src/<mod_id>/) into a Steam-Workshop-ready folder:
+# Package every mod (mods/*/src/<mod_id>/) into a Steam-Workshop-ready folder. Only src/ is
+# packaged: tests/ and dev/ (dev-only mods, the local-play emulator) never are; tools/zip_guard.py
+# checks the zips in CI.
 #   <target>/<name>/<name>.zip       zip layout mods-unpacked/<mod_id>/... (Godot Mod Loader)
 #   <target>/<name>/preview.png      mods/<folder>/preview.png, or rendered from mods/<folder>/preview.svg
 # <name> is the manifest's "name" (e.g. BrotatoTogether). Only the folder inside the zip identifies

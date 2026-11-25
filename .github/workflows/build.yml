@@ -1,4 +1,5 @@
-# Lint and package every mod; dist/ becomes the artifact "dist". Also called by release.yml.
+# Lint and package every mod, then check the zips (tools/zip_guard.py); dist/ becomes the
+# artifact "dist". Also called by release.yml.
 # The headless tests need the decompiled game (reference/), which never goes to CI: they run on
 # the maintainer's PC (tools/local-check.sh).
 name: Build
@@ -22,6 +23,9 @@ jobs:
 
       - name: Test the changelog tool
         run: python3 tools/test_changelog.py
+
+      - name: Test the zip guard
+        run: python3 tools/test_zip_guard.py
 
       - name: Shellcheck
         run: shellcheck tools/*.sh
@@ -47,6 +51,9 @@ jobs:
 
       - name: Package
         run: CONTAINER=docker tools/package.sh dist
+
+      - name: Guard the zips (only mods-unpacked/<mod_id>/, no network classes, native files or dev mod)
+        run: python3 -I tools/zip_guard.py zips dist
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

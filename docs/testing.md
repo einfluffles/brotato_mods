@@ -2,7 +2,9 @@
 
 How the mods' tests run: headless in the toolchain container (`tools/check.sh`), and in a real game
 window on Windows (`tools\check-window.ps1`). Both need the decompiled game in `reference/`
-([Game code](game-code.md)).
+([Game code](game-code.md)). [Play locally](#play-locally) starts brotato:together as host and clients in
+several game windows on one PC, without Steam, and [Pair tests](#pair-tests) run its scenarios
+with a host and a client as two headless games (`tools/check-pair.sh`).
 
 ## Headless
 
@@ -21,6 +23,298 @@ game-script error or a `get_meta` / `get_child` / `get_node` engine error while 
   mount makes that slow. The copy is refreshed when `reference/project.godot` changes.
   `MOD_CHECK_CACHE=1` or `0` forces the copy on or off, and `MOD_CHECK_RESYNC=1` refreshes it.
 - The scripts use podman, or docker when podman is missing (`CONTAINER=...` picks one).
+- Besides `src/` and `tests/`, a mod folder can have `dev/<dev_mod_id>/`: dev-only mods that
+  `tools/check.sh` and `tools\check-window.ps1` mount for the tests too, and that are never
+  packaged. Every process loads them, so they must stay inert in a test run. See below.
+
+## Local play (emulator)
+
+brotato:together's `dev/einfluffles-TogetherLocal` is the local-play dev mod: a Steam stand-in
+(`steam_emulator.gd`) the real transport binds instead of GodotSteam, so host and clients can run
+without Steam's networking. In a test run it refuses to start (no `BT_LOCAL_ROLE`, the Steam
+build's feature `steam`, no `BT_LOCAL_DIR` holding the user folder) and logs one line; the suites
+check that.
+
+- `wire_memory.gd` puts two or more emulators in one process with one clock that moves only when a
+  test steps it. Pacing, latency, loss, reordering, stalls and failures are therefore exact, and a
+  suite on it runs the same every time without waiting in real time.
+- `emulator` tests the stand-in itself, `emulator_transport` a real `Transport` and `Session` per
+  player on it (handshake, messages, send results and the full resync, leave, kick, failures),
+  `emulator_wire` the wire between game processes (`wire_tcp.gd`) with real sockets on 127.0.0.1,
+  all ends in one process, `emulator_profiles` the link profiles and, with a real `Transport` and
+  `Session` per player, that `bad` brings out the host's path, Slow answer, traffic and gap lines
+  and `lan` none of them (that part waits in real time, about 9 s).
+- The dev mod's design, activation rules and coverage of GodotSteam:
+  [Local play](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
+
+## Pair tests
+
+`tools/check-pair.sh [-q] [scenario ...]` runs brotato:together's local-play scenarios with a host
+and one or more clients as headless game processes, each scenario in its own container (four at
+once, `PAIR_JOBS`). Without names it runs every scenario in `HEADLESS` of the dev mod's
+`scenarios.gd` (all but `language`, which only takes screenshots). The whole set takes about two
+minutes.
+
+```
+CONTAINER=docker tools/check-pair.sh                  # all of them
+CONTAINER=docker tools/check-pair.sh kick bad_resync  # some
+```
+
+- The game is the one `tools/check.sh` boots (`reference/` or its copy), with its `project.godot`
+  replaced, in the container only, by one without the feature `steam`: the game's local build, as
+  in [Play locally](#play-locally). The mounted mods are brotato:together's `src/` and the dev mod,
+  not the test mod.
+- Each process has its own `HOME` and `XDG_DATA_HOME` (user folder `/pair/<name>/data/Brotato`),
+  the dev mod's `BT_LOCAL_*` variables as `tools\play-local.ps1` sets them (role, id, name, a port
+  and a random token for the wire on 127.0.0.1 inside the container, its folder, the link profile
+  `lan`), the host `BT_LOCAL_AUTOHOST=1` and the clients `+connect_lobby <the host's first lobby>`.
+  The dev mod's refusal rules hold there as in a window: stock Godot has no Steam singleton, the
+  copy has no feature `steam`, and the user folder lies under the process's `BT_LOCAL_DIR`.
+- A scenario's launch settings (`LAUNCH` in `scenarios.gd`, the same ones `-Scenario` uses in
+  windows) decide the rest: `clients` (games `client1` to `clientN`), `host_dlcs` and `client_dlcs`
+  (`BT_LOCAL_DLCS`), `no_join` (no autohost, no `+connect_lobby`), and `client_ref` or `host_ref`:
+  that side runs brotato:together of a git ref (`last_release`: the newest tag
+  `brotato-together/*` whose protocol, `net/protocol.gd`'s `VERSION`, is not this worktree's;
+  only such a build is turned away, and right after a release the newest tag has this worktree's
+  protocol). Without such a tag the scenario is skipped with an info line, not failed;
+  `tools/check-pair.sh --last-release` prints the tag. Its `src/` comes from `git archive` into
+  the run's folder (`refs/`; Git for Windows through WSL's interop when the checkout is a Windows
+  worktree) and is mounted with this worktree's dev mod over a second mount of the same game,
+  `/proj-ref`: nothing is copied.
+  `PAIR_CLIENT_REF=<ref>` or `PAIR_HOST_REF=<ref>` replace the ref of such a scenario (the other
+  direction: `PAIR_HOST_REF=brotato-together/2026-11-23-1930`).
+- `BT_LOCAL_SCENARIO`, `BT_LOCAL_RUN` and `BT_LOCAL_PEERS` make each game run its part of the
+  scenario from the start (see below), print `PAIR-TESTS: PASS` or `PAIR-TESTS: FAIL <why>` and
+  close. A scenario passes when every game prints PASS within `PAIR_TIMEOUT` (420 s), with no
+  script error in mod code and none of the engine errors `tools/check.sh` fails on.
+- On a failure it prints every game's steps, checks and verdicts, their script errors and the
+  mods' warnings, and keeps the scenario's folder (`host/`, `client1/`, ...: `stdout.log`, the user
+  folder, `out/` with every answer). `PAIR_KEEP=1` keeps passed ones too, `PAIR_DIR` picks the
+  folder, `-q` prints the summary lines only.
+- Godot 3.6.2's headless build sometimes crashes in its own teardown when a client closes in a
+  run (signal 11 after every script has ended). That comes after the game's verdict, so it is
+  printed as an `info:` line and does not fail the scenario; a crash before the verdict does.
+- `PAIR_BREAK=token` gives the clients another wire token than the host: the host's game refuses
+  them, the lobby never fills, and every scenario that joins must fail (about three minutes, the
+  first wait's timeout). A check of the layer itself.
+- `tools/local-check.sh` runs the pair tests after `tools/check.sh` when brotato:together is among
+  its mods. For now they are informative: a failure is printed and named in the commit status's
+  description, but the status is still posted. `PAIR_BLOCKING=1` at the top of the script makes a
+  failure stop the check, once they have run stable for a few releases. Not in GitHub's CI:
+  `reference/` never goes there.
+
+**One scenario, every game.** The scenarios are GDScript, `scenarios.gd` in the dev mod (its
+shared steps in `scenario_steps.gd`), and `scenario_runner.gd` runs one in every game of a session
+at once: each game runs the same scenario code. A step names the games that act
+(`r.on("host", {...})`, `r.on("all", {...})`, `r.on(clients(r), {...})`, or a command per game);
+each of them carries out its director command and writes the answer to its `out/` folder, and
+every game reads the others' answers from their folders (the instance folders are siblings). So
+each step is a meeting point, every game sees the same answers, takes the same branches and comes
+to the same checks. The same code runs in game windows through `tools\play-local.ps1 -Scenario
+<name>` (the director's `scenario` command, with screenshots). There is no other scenario
+mechanism: `tools\play-scenarios.ps1` only starts them and collects what they say.
+
+| Scenario | Games | What it checks |
+|---|---|---|
+| `join` | host, client | The client joins through `+connect_lobby`: both in one lobby, the host's session has the client ready and the client has the host's `WELCOME`, no lobby error. |
+| `join_wave_shop` | host, client | Lobby, Start, both join character selection, character, weapon and difficulty by accept, wave 1 with XP and gold, the level-up panels, the shop; the client buys the item under its cursor (checked on the host: gold down, one more item or weapon). |
+| `resume_leave_rejoin` | host, client | Wave 1 into the shop; the host quits to the title screen and continues the saved run. On the co-op resume screen the client takes saved player 1, leaves (the host gets saved player 1 back and stays on the screen), joins again, takes saved player 1 again; the host takes saved player 2 and the shop loads with both. |
+| `host_quits` | host, client | The host's game closes mid-wave: the client drops back to its title screen with "The host left the lobby", out of client mode. |
+| `client_quits` | host, client | The client's game closes mid-wave: the host plays on in its lobby with the client's slot kept, and the closing game logs no script error. |
+| `kick` | host, client | The host kicks the client: it leaves with "The host removed you from the lobby"; it can join again. |
+| `version_mismatch` | host, client | One build, in memory: the client leaves, takes another brotato:together version (the director's `mod_version`) and joins again: the host rejects its `HELLO` with the code `mod` and both versions, shown in its language; with its own version it joins. |
+| `version_mismatch_build` | host, client on the last release (`no_join=1 client_ref=last_release`) | A real older build: nobody joins by itself; the host opens its lobby, the clients switch to German and accept an invite. The lobby's mod tag (mod id and protocol) turns each client away before `HELLO`: it is not in the lobby and its error line names both tags; a client of this worktree (`-HostRef`, `PAIR_HOST_REF`) shows the German `BT_ERR_LOBBY_VERSION` word for word (the director's `text`). The host keeps its lobby, alone, with no error. |
+| `bad_resync` | host, client | Both games on the `bad` profile, the host's next reliable send fails (`fail_send`): the host runs a full resync for the client, and both still get through character selection into a wave with the session up. |
+| `three_players` | host, two clients (`clients=2`; in windows `-Clients 3`: three) | All in the lobby, each joins character selection in turn (player index = join order), character, weapon and difficulty, wave 1 with its level-up panels, the shop; every client buys the item under its cursor (checked on the host per player). |
+| `dlc_borrow` | host with every DLC, client with none (`host_dlcs=all client_dlcs=none`) | At the title screen in the lobby the client's game is its own (the borrowed DLC is parked); from character selection on it uses the host's DLC it lacks and its lobby details say "Using the host's DLC for this session: ..." (also on the lobby page, opened from the pause menu in the shop); back at the title screen it is parked again, and after leaving the lobby the client has only its own. |
+| `language` | host, client | Windows only (screenshots): both games switch to German and Russian at the title screen, in character selection, in the wave and in the shop. |
+
+Every scenario but `language` runs in both places, headless here and in windows; the windows add
+a screenshot of every game after every step.
+
+To add a scenario: a function `scenario_<name>(r)` in `scenarios.gd` (the shared steps are in
+`scenario_steps.gd`: `lobby_step`, `character_join_step`, `select_until`, `wave_to_shop`,
+`clients_buy`, `host_quits_run`, `join_hold`, `state_when_size`, `clients(r)`; they work for any
+number of clients), its name in `NAMES` and, when it has checks, in `HEADLESS`, its launch
+settings in `LAUNCH` when it needs any, and its row here. Every step begins with
+`yield(r.step("<label>"), "completed")`. Rules: branch and loop only on answers (`r.state(name)`,
+the answers of `r.on`) and on counts, never on a game's own clock or state, since each game
+decides for itself; a text that depends on a game's language comes from that game (the director's
+`text`), not from the game that checks; wait for states (`wait_for`) rather than fixed times; give
+a check a text with the values it saw (`r.check(condition, text)`). A command the director lacks
+goes into `director.gd` (its table in the implementation notes). Run it here
+(`tools/check-pair.sh <name>`) and once in windows (`tools\play-local.ps1 -Scenario <name>`).
+
+## Play locally
+
+On Windows, one command starts a host and a client of brotato:together as two game windows side by
+side, connected without Steam:
+
+```
+tools\play-local.ps1
+```
+
+(`powershell -ExecutionPolicy Bypass -File tools\play-local.ps1` if scripts are blocked.) It needs
+`reference/` and the installed game. What you get, after about a minute on the first start (it
+copies the game) and 10 to 45 s after that:
+
+- Two windows, the host on the left. The host opens a lobby at the title screen by itself, the
+  client joins it through the real launch option `+connect_lobby <lobby id>`, as Steam starts a
+  game for an invite. Both show the lobby with both players. From there it is the real game: Start
+  on the host, then each player holds Enter (or Space) in its own window to join a slot.
+- Keyboard and mouse act in the focused window. Gamepads drive the host's game only (`-Joypad`
+  moves them, below): Windows gives every game process the pads' input, whatever window has the
+  focus, so each game drops the pads that are not its own. Neither window pauses or mutes when it
+  loses focus; the clients are silent.
+- The mods come from this worktree: brotato:together's `src/`, the dev mod, and brotato:trade
+  (`-With none` leaves it out). The game is the installed game's engine (`BrotatoLocal.exe`, copied)
+  on a copy of `reference/` without the feature `steam`, so it runs as the game's local build:
+  Steam is never started or initialised, there are no achievements or Steam saves, and both DLCs
+  count as owned.
+- Each game has its own user folder (saves, settings, logs). The real saves in `%APPDATA%\Brotato`
+  are never read or written.
+
+Options:
+
+| Option | What |
+|---|---|
+| `-Clients 1..3` | More clients (two or more: a 2x2 grid of smaller windows). |
+| `-HostDlcs`, `-ClientDlcs` | The DLCs the host's or the clients' games own: `all` (default), `none`, or ids (`abyssal_terrors`, `primal_dread`, comma-separated). The local build asks the game's `DebugService.owned_dlc_ids`, which the dev mod sets before the game reads its DLCs. A client without the host's DLC borrows it for the session, as with Steam. |
+| `-ClientRef <git ref>`, `-HostRef <git ref>` | The clients (or the host) run brotato:together and the `-With` mods of another commit, for example the last release tag. Its `mods\` come from `git archive` into `play\refs\<commit>` (the checkout is not touched) and run from a second game copy, `play\game-ref` (made once, about 560 MB). The dev mod stays this worktree's; a build from before the local-play seam (`Transport.bind_steam`) is bound the way its own setup bound Steam. Not both at once. |
+| `-Joypad <who>` | Which game the gamepads drive: `host` (default), `client1`..`client3`, `none`, `all`, or pads by device number per game: `"host=0,client1=1"` (two pads, two players). The others drop them (below). |
+| `-Engine godot` | Stock Godot 3.6.2 (downloaded once, as for `check-window.ps1`) instead of the game's engine: a debug build, so the version shows `-debug` and the game's debug keys work. |
+| `-NoJoin` | Nobody hosts or joins by itself. Host in the host window; Invite (title screen or lobby page) sends every client an accepted invite. |
+| `-Mute client\|all\|none` | Who is silent (default `client`). |
+| `-With mods\<folder>[,...]`, `-With none` | Other mods to load (default `mods\brotato-trade`). |
+| `-Run <name>`, `-Fresh` | Instance folders under `play\<name>` (default `default`, kept between starts, so unlocks and saved runs stay); `-Fresh` starts from empty ones. |
+| `-GameDir <folder>` | The installed game, when it is not found in Steam's libraries. |
+| `-Stop` | Closes the windows of the running session (the games leave as a closed window does), then ends what is left. Closing the windows by hand does the same; a new start closes the previous session first. |
+| `-Screenshot <name> [-On <instance>]` | Every running game (or one) saves its window to `<instance>\shots\<name>.png`. |
+| `-Key <name> [-HoldMs <msec>] [-On <instance>]` | A key press in a game, by Godot key name (`Enter`, `Escape`, `Right`, `D`, ...). Joining a co-op slot needs a hold: `-Key Enter -HoldMs 1500 -On client1`. |
+| `-Profile <name>` | The link profile every game starts with: `lan` (default), `relay-good`, `relay-typical`, `bad`, `stall`, or `none` (no latency at all). See below. |
+| `-Profile <name> -On <instance>\|all` | Switches a running game's profile (`-On all`: every game) through the director's `set_profile` and prints the profile each game answers with. A game's profile is the line for what it sends, so `-Profile bad -On client1` makes only the client's way to the host bad. |
+| `-FailSession [-Reason <n>] [-On <instance>]` | That game's sessions fail at both ends with Steam's end reason (default 5003, timed out); the next message opens new ones (`fail_session`). |
+| `-FailSend [-Count <n>] [-On <instance>]` | The game's next reliable send(s) fail with LimitExceeded; on the host the mod then runs a full resync for that client (`fail_send`). |
+| `-Stall <msec> [-On <instance>]` | Nothing the game sends moves for that long (`stall`). |
+| `-Do <command> [-On <instance>]` | Any director command (below), as `key=value` pairs (`-Do "cmd=button name=StartButton" -On host`, `-Do "cmd=wait_for scene=coop_resume timeout_sec=20"`) or a JSON object; prints the answer with the screen's state. Windows PowerShell drops the double quotes of an argument to another `powershell.exe`, so JSON only works from cmd or with `& tools\play-local.ps1` in the same session. |
+| `-Scenario <name>` | A scripted scenario in fresh games (below); exits with `PASS` (0) or `FAIL` (1). |
+
+Everything is in `%LOCALAPPDATA%\brotato-modtools\play`: `game\` (the game copy, refreshed when
+`reference/project.godot` changes, mods replaced on every start), `engine\` (refreshed when the
+installed `Brotato.exe` changes), with `-ClientRef` / `-HostRef` also `game-ref\` and `refs\`, and
+per instance `<run>\host`, `<run>\client1`, ...: `appdata\`
+(the instance's `APPDATA`; Mod Loader log in `appdata\Brotato\logs\modloader.log`),
+`stdout.log`, `stderr.log`, `instance.json` (what was started: pid, arguments, paths),
+`status.json` (written by the dev mod every second: role, wire, link, lobby, members, scene, the
+lobby's last error, the build's lobby tag, DLCs, gamepads),
+`control\`, `out\` and `shots\` (the director's commands, answers and screenshots). A scenario's
+run is `play\scenario-<name>\` with `scenario.log` (every command, answer and check).
+
+### Director and scenarios
+
+Every game of a local session has a director (the dev mod's `director.gd`): it takes JSON commands
+from the instance's `control\` folder, one at a time, and answers each in `out\<id>.json` with
+`ok`, `error`, a `result` and the screen's `state` (scene, players, run, lobby, the co-op resume
+screen's saved player, ...). It drives the menus as a player does: keys through the game's input,
+buttons by focus and accept. Commands: `press`, `button`, `wait_for`, `query`, `screenshot`,
+`host_lobby`, `join`, `invite`, `leave`, `kick`, `debug`, `language`, `mod_version`, `text`,
+`joypad`, `scenario`, `quit`, and on the link of what the game sends `set_profile`, `fail_session`,
+`fail_send` and `stall`; fields and state:
+[the director](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
+`-Key`, `-Screenshot`, `-Do` and the link switches (`-Profile` with `-On`, `-FailSession`,
+`-FailSend`, `-Stall`) send them to a running session: the director is the one way to control a
+running game.
+
+Screenshots come from the game's own viewport, so windows on top of it do not matter; a
+minimised window is drawn once for its screenshot.
+
+`tools\play-local.ps1 -Scenario <name>` starts fresh games (run `scenario-<name>`, empty user
+folders), plays the scenario through the directors, takes a screenshot of every game after every
+step (`<instance>\shots\<NN>-<step>.png`, `<NN>-failed.png` when a step fails), closes the games
+and prints `PASS <name>` (exit 0) or `FAIL <name>` (exit 1). The steps live in the dev mod's
+`scenarios.gd`, the same ones [Pair tests](#pair-tests) run headless (the table of scenarios is
+there): the launcher sends every game the director's `scenario` command at once, each runs its
+part in step with the others and takes its screenshots, and the launcher shows the host's steps
+as they come. The host's runs use the game's own test settings (`debug`: invulnerable, short
+waves), so nobody dies and a wave takes 10 to 30 s.
+
+In `resume_leave_rejoin` the client joins first on the resume screen: had the host taken one of
+the two saved players first, the client's join would take the last one and load the shop at once.
+
+A scenario's launch settings (`LAUNCH` in `scenarios.gd`: the clients of `three_players`, the
+other build of `version_mismatch_build`, the DLCs of `dlc_borrow`) apply unless the same option
+is given; `-Run` and the others work as for any start.
+
+Which build refuses whom: the lobby carries brotato:together's tag (mod id and protocol, for
+example `einfluffles-BrotatoTogether/p33`), and a client that finds another tag than its own leaves
+the lobby at once (`BT_ERR_LOBBY_VERSION`). So two builds with different protocols never get as
+far as `HELLO`: the codes of `WELCOME` (protocol, game, mod version; Join compatibility in the
+implementation notes) are reached only by builds that share the tag, for example two builds of
+one protocol with different mod versions. The last release before the translations shows its
+refusal in English, whatever the language.
+
+Gamepads (`-Joypad`): the game's engine polls XInput and DirectInput itself, so every game process
+gets every pad's input whether or not its window has the focus. Each game blocks the pads that
+are not its own (the dev mod's `joypad_filter.gd`, `BT_LOCAL_JOYPAD`): the engine reads a pad
+through the mapping of its GUID and drops what the mapping does not name, so a blocked pad gets a
+GUID and a mapping of its own that name nothing. It stays connected for the game (its name, the
+"Hold to join" hint) but sends nothing. A pad that connects later is blocked when the engine
+reports it. `status.json` lists every pad with `blocked` and `mapped_guid` (the blocked GUID,
+`btlocalblockedNN`, on Windows). Keys and buttons the director sends come in after the mapping and
+are never filtered. Checked on 2026-11-25 with pads reported to the engine as its driver reports
+them (the director's `joypad` command), not yet with a real pad's input: with a pad switched on,
+`tools\play-local.ps1 -Clients 2 -Joypad client1` should move a player in the client1 window only.
+
+For an agent: run a scenario, read its `scenario.log`, then look at the screenshots of the steps
+the change is about. To try something else, start a session (`tools\play-local.ps1`) and drive it
+step by step with `-Do`, reading each answer's `state`. Only one local session runs at a time on a
+PC: a start closes the previous one, and every start fills `play\game\mods-unpacked` from its own
+worktree.
+
+The launcher deletes each instance's logs before a start: the game reads the last log at boot
+and turns all mods off after an error in it that names a mod. Expected in `stderr.log`: none with
+`-Engine godot`; with the game's engine one line "User class not found, Steam may not be
+initialized: getSteamID" (the dev mod asking whether Steam is logged on) and "CrashReporter:
+Failed to find engine logs" (the deleted logs).
+
+Link profiles, from the measured sessions
+([Link profiles](../mods/brotato-together/docs/implementation.md#link-profiles) has the numbers
+and their sources):
+
+| Profile | Steam ping | What the host's log shows |
+|---|---|---|
+| `lan` | 2 ms | the first path line per client, nothing else from the network |
+| `relay-good` | 26 ms | as `lan`, a POP change line after 10 minutes |
+| `relay-typical` | 40 ms, 0.5 % loss | a short stall every minute or two: now and then a gap line or a Slow answer |
+| `bad` | 200 ms, 3 % loss, 64 KB/s | path changes, Slow answers with the traffic summary, "Reliable burst" in the shop, input gaps after its stalls (every 4 to 10 s) |
+| `stall` | 16 ms | the direct route of 2026-11-16: gaps of 300 ms to 3.3 s, the long ones about every half minute |
+
+The log is each game's `appdata\Brotato\logs\modloader.log`; `status.json` has the profile and
+per client Steam's numbers (ping, queue, pending bytes, quality, bytes per second).
+
+What it shows and what it cannot: the mod's transport runs unchanged on the stand-in, so lobby,
+handshake, sessions, sends, leaves and kicks take the same code paths as with Steam, and the
+profiles put measured latency, jitter, loss, slow lines and stalls under them. The line itself is
+still loopback in the end: no real Steam relay, NAT or route choice, no real Steam overlay,
+invites, friends-only lobbies, DLC ownership, achievements or Workshop. Both games share one PC's
+CPU and GPU, and the game copy is decompiled code, not the shipped `.pck`. Real sessions between
+two Steam accounts stay the check before a release.
+
+Where the emulator is kinder than Steam, on purpose for now: a profile's loss drops or delays a
+whole message whatever its size, while Steam splits a message into packets of about 1200 B and a
+large one loses more often. A host whose game is killed is noticed at once (its wire closes),
+while with Steam the client hears nothing for much longer, so `session.gd`'s host timeout
+(`HOST_TIMEOUT_MSEC`) is only reached with the `stall` profile or `-Stall`. And the emulator
+emits its callbacks in the dev mod's `_process`, after the transport has polled its messages in
+the same frame; GodotSteam runs Steam's at its own point of the frame (embedded callbacks, the
+game's `steam.gd`), so a callback and the messages around it can come in another order.
+
+Limits of the options: at most three clients (the wire takes three, the game four players).
+`-ClientRef` / `-HostRef` need a build the dev mod can bind: one with `Transport.bind_steam`, or one
+whose transport's setup is the one the dev mod repeats for older builds (checked with
+`brotato-together/2026-11-23-1930`). `-HostDlcs` / `-ClientDlcs` decide what the game counts as
+owned, not what Steam would sell. Gamepad routing is per device number, which Windows gives in the
+order the pads were connected.
 
 ## With real graphics
 

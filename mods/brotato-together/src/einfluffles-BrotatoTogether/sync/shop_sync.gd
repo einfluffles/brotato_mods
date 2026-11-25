@@ -635,7 +635,10 @@ func _on_puppet_shop_exited(shop: Node) -> void:
 		_client_shop = null
 
 
+# Also on the way out of a closing game, after the tree let go of this node: nothing to stop.
 func _stop_watching_scenes() -> void:
+	if not is_inside_tree():
+		return
 	if get_tree().is_connected("node_added", self, "_on_node_added"):
 		get_tree().disconnect("node_added", self, "_on_node_added")
 

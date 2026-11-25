@@ -16,6 +16,7 @@ Each mod's README says how to play it, what it does not do yet and what its test
 mods/<folder>/
   src/<mod_id>/        everything that ships (manifest.json, mod_main.gd, ...)
   tests/<test_mod_id>/ dev-only headless test mod (never packaged)
+  dev/<dev_mod_id>/    optional dev-only mods the tests load too, e.g. local play (never packaged)
   docs/, README.md, CHANGELOG.md, workshop.json
   preview.svg|png      optional Workshop preview (svg is rendered to a 1024x1024 png when packaging)
 docs/                  shared docs: testing, releasing, game code, brotato-hooks.md (where the game
@@ -40,6 +41,7 @@ podman build -t brotato-modtools -f tools/Containerfile tools   # or: docker bui
 | `tools/lint.sh` | Runs gdlint over `mods/`. |
 | `tools/check.sh [mods/<folder> ...]` | Boots the game headless with each mod and its test mod ([Testing](docs/testing.md)). |
 | `tools\check-window.ps1 [-Mod mods\<folder>] [-Suites <suite>[,...]]` | Windows: runs a mod's tests in a real game window, with graphics and audio ([Testing](docs/testing.md#with-real-graphics)). |
+| `tools\play-local.ps1 [-Clients 1..3] [-Scenario <name>]` | Windows: brotato:together as a host and clients in game windows on this PC, connected without Steam; `-Scenario` plays a scripted scenario with screenshots and ends with PASS or FAIL ([Play locally](docs/testing.md#play-locally)). |
 | `tools/package.sh [target]` | Writes `<target>/<name>/<name>.zip` and `preview.png` for every mod (default target: `dist/`). |
 | `tools/deploy.sh <name> <workshop_item_id>` | Replaces the subscribed Workshop item's zip with the package ([Releasing](docs/releasing.md#trying-a-build-in-the-game)). |
 | `tools/local-check.sh [mods/<folder> ...]` | Lint and tests on a clean, pushed HEAD, then marks the commit on GitHub ([Releasing](docs/releasing.md)). |

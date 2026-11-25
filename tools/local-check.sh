@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Run gdlint and the headless tests on a clean, pushed HEAD, then mark that commit on GitHub with
-# the commit status "local-check" = success. The release workflow refuses a tag without it: the
-# tests need the decompiled game (reference/), so they cannot run in CI.
+# Run gdlint, the headless tests and (for brotato:together) the pair tests on a clean, pushed HEAD,
+# then mark that commit on GitHub with the commit status "local-check" = success. The release
+# workflow refuses a tag without it: the tests need the decompiled game (reference/), so they
+# cannot run in CI.
 # Refuses a dirty tree (untracked files too) and a HEAD that is on no remote branch.
 # Runs from WSL / Linux, or from Git Bash on Windows: there, without podman or docker, lint and
 # tests run in WSL (wsl.exe), and git and gh in Git Bash (gh or gh.cmd).
@@ -9,6 +10,10 @@
 #   -n  run everything but post the status (prints it instead)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# The pair tests (tools/check-pair.sh: brotato:together's local-play scenarios, a host and a client
+# as two headless games) are informative until they have run stable for a few releases: a failure
+# is reported, not blocking. 1 makes a failure stop the release check.
+PAIR_BLOCKING=0
 cd "$ROOT"
 
 dry=0
@@ -54,9 +59,21 @@ in_env() {
 echo "local-check of $sha: ${mods[*]}"
 in_env tools/lint.sh
 in_env tools/check.sh -q "${mods[@]}"
+pair=""
+if [[ " ${mods[*]} " == *" mods/brotato-together "* ]]; then
+  if in_env tools/check-pair.sh -q; then
+    pair="; pair tests passed"
+  elif [ "$PAIR_BLOCKING" = 1 ]; then
+    echo "the pair tests failed" >&2
+    exit 1
+  else
+    pair="; pair tests FAILED (not blocking yet)"
+    echo "the pair tests failed: informative for now, the check goes on" >&2
+  fi
+fi
 
 [ "$(clean_head)" = "$sha" ] || { echo "HEAD moved while the checks ran: run again" >&2; exit 1; }
-description="gdlint + check.sh passed: ${mods[*]}"
+description="gdlint + check.sh passed: ${mods[*]}$pair"
 body="$(printf '{"state":"success","context":"local-check","description":"%s"}' "$description")"
 if [ "$dry" = 1 ]; then
   echo "dry run, would post to repos/$repo/statuses/$sha: $body"

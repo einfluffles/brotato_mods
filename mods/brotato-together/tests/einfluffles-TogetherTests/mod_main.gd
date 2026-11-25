@@ -40,6 +40,7 @@ const LobbyMenuTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/lobby_menu_tests.gd"
 )
 const CleanupTests := preload("res://mods-unpacked/einfluffles-TogetherTests/cleanup_tests.gd")
+const ClosingTests := preload("res://mods-unpacked/einfluffles-TogetherTests/closing_tests.gd")
 const BattleLoopbackTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/battle_loopback_tests.gd"
 )
@@ -117,6 +118,16 @@ const NetworkStallTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
 )
 const TrafficTests := preload("res://mods-unpacked/einfluffles-TogetherTests/traffic_tests.gd")
+const EmulatorTests := preload("res://mods-unpacked/einfluffles-TogetherTests/emulator_tests.gd")
+const EmulatorTransportTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/emulator_transport_tests.gd"
+)
+const EmulatorWireTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/emulator_wire_tests.gd"
+)
+const EmulatorProfilesTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/emulator_profiles_tests.gd"
+)
 const ClientReportTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/client_report_tests.gd"
 )
@@ -142,6 +153,7 @@ const NonFiniteTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/non_finite_tests.gd"
 )
 const L10nTests := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_tests.gd")
+const DirectorTests := preload("res://mods-unpacked/einfluffles-TogetherTests/director_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -164,10 +176,12 @@ const SUITES := [
 	"cleanup_host",
 	"cleanup_client",
 	"cleanup_misc",
+	"closing",
 	"feedback",
 	"hit_numbers",
 	"looks",
 	"damage",
+	"director",
 	"damage_run",
 	"battle_scene",
 	"dig_site",
@@ -186,6 +200,10 @@ const SUITES := [
 	"lobby_menu",
 	"network_stalls",
 	"traffic",
+	"emulator",
+	"emulator_transport",
+	"emulator_wire",
+	"emulator_profiles",
 	"progress",
 	"client_report",
 	"axolotl",
@@ -424,6 +442,11 @@ func _suite_cleanup_misc(together: Node):
 	yield(_suite.run_misc(self, together), "completed")
 
 
+func _suite_closing(together: Node):
+	_suite = ClosingTests.new()
+	_suite.run(self, together)
+
+
 func _suite_feedback(together: Node):
 	coop_run(8)
 	_suite = FeedbackTests.new()
@@ -542,6 +565,28 @@ func _suite_network_stalls(together: Node) -> void:
 
 func _suite_traffic(_together: Node) -> void:
 	TrafficTests.new(self).run()
+
+
+# The local-play dev mod (mods/brotato-together/dev, mounted by tools/check.sh for tests only).
+func _suite_emulator(_together: Node) -> void:
+	EmulatorTests.new(self).run()
+
+
+func _suite_emulator_transport(_together: Node) -> void:
+	EmulatorTransportTests.new(self).run()
+
+
+func _suite_emulator_wire(_together: Node) -> void:
+	EmulatorWireTests.new(self).run()
+
+
+func _suite_emulator_profiles(_together: Node) -> void:
+	EmulatorProfilesTests.new(self).run()
+
+
+func _suite_director(_together: Node):
+	_suite = DirectorTests.new()
+	yield(_suite.run(self), "completed")
 
 
 func _suite_progress(together: Node) -> void:

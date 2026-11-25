@@ -6,9 +6,9 @@ Workshop with steamcmd on the maintainer's PC. GitHub holds no Steam credentials
 
 ## Steps
 
-1. **CI** (`.github/workflows/build.yml`) runs on every push and pull request: the changelog
-   tool's tests, shellcheck, gdlint and `tools/package.sh`. The packaged `dist/` is the run's
-   artifact `dist`.
+1. **CI** (`.github/workflows/build.yml`) runs on every push and pull request: the tests of the
+   changelog tool and of the zip guard, shellcheck, `tools/lint.sh`, `tools/package.sh` and the
+   zip guard on what it packaged (see Notes). The packaged `dist/` is the run's artifact `dist`.
 2. **Release PR**: run the workflow *Release PR* (Actions tab) for the mod. It turns the mod's
    `## Unreleased` in `CHANGELOG.md` into `## <YYYY-MM-DD HH:MM> UTC` under a new empty
    *Unreleased* (`tools/changelog.py cut`, which fails when *Unreleased* is empty) and opens a PR
@@ -58,6 +58,18 @@ Workshop with steamcmd on the maintainer's PC. GitHub holds no Steam credentials
 
 ## Notes
 
+- **Zip guard** (`tools/zip_guard.py`). `zips dist` reads every packaged zip and
+  fails on any entry but the folder `mods-unpacked/` and one `mods-unpacked/<mod_id>/` of a mod
+  of this repo (with its `manifest.json`), and in any file of a zip on: a network class name
+  (sockets: `NetworkedMultiplayerENet`, `PacketPeerUDP`, `StreamPeerTCP`, `TCP_Server`,
+  `UDPServer`, `WebSocket...`; HTTP and TLS: `HTTPRequest`, `HTTPClient`, `StreamPeerSSL`,
+  `PacketPeerDTLS`, `DTLSServer`; `WebRTC...`, `UPNP`, `UPNPDevice`), a native or binary file
+  (`.dll`, `.so`, `.dylib`, `.gdnlib`, `.gdns`, `.pck`, `.gdc`, `.exe`), and a mention of the
+  local-play dev mod (`einfluffles-TogetherLocal`, `BT_LOCAL_...`). `tools/lint.sh` runs the same
+  file checks over `mods/*/src` (`zip_guard.py src`). The mods talk through Steam only; tools
+  that need sockets (such as a local-play dev mod) live outside `src/` and must never reach a
+  Workshop zip. Its tests: `python3 tools/test_zip_guard.py`.
+  Locally: `tools/package.sh && python3 -I tools/zip_guard.py zips dist`.
 - **Contributors can upload.** A Workshop item's contributor uploads with steamcmd like its owner
   (first done 2026-11-21 for both items). The update shows the contributor's name.
 - **The Steam app disconnects during an upload.** steamcmd logs in with the same account, and Steam

@@ -1,0 +1,426 @@
+extends Node
+# Local play (dev only, never packaged): brotato:together's transport on steam_emulator.gd instead
+# of Steam, so game instances on one PC play together over TCP on 127.0.0.1 (wire_tcp.gd). Loads
+# after brotato:together (manifest dependency). Inert unless every rule of refusal() passes:
+# BT_LOCAL_ROLE is set, Steam is not logged on here, the game is not the Steam build (feature
+# "steam") and its user folder lies under BT_LOCAL_DIR, the instance's folder the launcher made.
+# Otherwise one log line and nothing else.
+# The launchers (tools\play-local.ps1, tools/check-pair.sh) set the environment:
+#   BT_LOCAL_ROLE      host | client
+#   BT_LOCAL_ID        the instance's number (default 1 for the host, 2 for a client)
+#   BT_LOCAL_NAME      its persona name
+#   BT_LOCAL_PORT      the host's port on 127.0.0.1 (none: no wire, only this game)
+#   BT_LOCAL_TOKEN     the launcher's random token, checked in the wire's handshake
+#   BT_LOCAL_DIR       the instance's folder: status.json (local_instance.gd), control/, out/,
+#                      shots/ (director.gd); the game's user folder must lie under it
+#   BT_LOCAL_AUTOHOST  1: the host opens a lobby at the title screen
+#   BT_LOCAL_MUTE      1: no sound
+#   BT_LOCAL_PROFILE   the link profile of what this game sends (link_profiles.gd: lan, relay-good,
+#                      relay-typical, bad, stall); none: no latency at all. Switched at run time
+#                      by the director's set_profile (director.gd).
+#   BT_LOCAL_SCENARIO  a scenario (scenarios.gd) this game runs from the start with the others,
+#                      then it closes: tools/check-pair.sh's headless pairs. With it:
+#   BT_LOCAL_RUN       the scenario's run id (the same in every game of the pair)
+#   BT_LOCAL_PEERS     the instances that take part, comma-separated (default host,client1)
+#   BT_LOCAL_DLCS      the DLCs this game owns: none, or ids of ProgressData.dlc_ids separated by
+#                      commas; unset or all: every DLC (the local build's default). Set as
+#                      DebugService.owned_dlc_ids, which the local build asks, before ProgressData
+#                      looks at them.
+#   BT_LOCAL_JOYPAD    which gamepads drive this game: all (unset), none, or device numbers
+#                      (joypad_filter.gd); every game process gets the pads' input otherwise.
+#   BT_LOCAL_REF       the name of the other build this game runs (-ClientRef / -HostRef, or a
+#                      scenario's client_ref in tools/check-pair.sh); unset: this worktree's.
+#                      Only shown: the director's state has it as "ref".
+# An older build of brotato:together without Transport.bind_steam (a release before the local-play
+# seam, tools\play-local.ps1 -ClientRef) is bound the way its setup bound GodotSteam.
+# A client joins through the real launch option "+connect_lobby <lobby id>", which the transport
+# acts on when it is first bound: a client binds once the host's game is online and owns that
+# lobby. Docs: docs/implementation.md, "Local play (dev mod)".
+
+const MOD_ID := "einfluffles-TogetherLocal"
+const MOD_DIR := "res://mods-unpacked/einfluffles-TogetherLocal/"
+const LOG_NAME := MOD_ID + ":Main"
+const TOGETHER_PATH := "/root/ModLoader/einfluffles-BrotatoTogether"
+const LinkProfiles := preload("res://mods-unpacked/einfluffles-TogetherLocal/link_profiles.gd")
+const ROLES := ["host", "client"]
+const DIR_ENV := "BT_LOCAL_DIR"  # the instance's folder; the user folder must lie under it
+const CONNECT_ARG := "+connect_lobby"
+# What the setup of a build without bind_steam connected (its steam_transport.gd)
+const OLDER_BUILD_SIGNALS := [
+	["lobby_created", "_on_lobby_created"],
+	["lobby_joined", "_on_lobby_joined"],
+	["join_requested", "_on_join_requested"],
+	["lobby_chat_update", "_on_lobby_chat_update"],
+	["network_messages_session_request", "_on_session_request"],
+	["network_messages_session_failed", "_on_session_failed"],
+]
+# The transport's lobby events, logged here (the mod itself does not log a peer that left)
+const TRANSPORT_LOGS := [
+	["peer_joined", "Peer joined: %s"],
+	["peer_left", "Peer left: %s"],
+	["lobby_failed", "Lobby failed: %s"],
+]
+
+var active := false
+var role := ""
+var note := ""  # the line logged at startup
+var emulator = null
+var wire = null  # wire_tcp.gd, null without BT_LOCAL_PORT
+var transport: Node = null
+var bound := false
+var connect_lobby := 0  # the lobby of "+connect_lobby" (0: none)
+var autohost := false
+var instance: Node = null  # local_instance.gd
+var director: Node = null  # director.gd, with BT_LOCAL_DIR
+var joypads: Node = null  # joypad_filter.gd
+var dlc_note := ""  # what BT_LOCAL_DLCS set
+
+var _refused := ""
+var _hosted := false
+var _invites_sent := 0
+var _profile_note := ""
+
+
+# Before brotato:together's _ready: the transport's setup must find the emulator ready
+# (local_transport.gd), so the decision and the objects come first.
+func _init() -> void:
+	role = OS.get_environment("BT_LOCAL_ROLE").strip_edges()
+	_refused = refusal(
+		role,
+		_steam_id(),
+		OS.has_feature("steam"),
+		OS.get_user_data_dir(),
+		OS.get_environment(DIR_ENV)
+	)
+	if _refused != "":
+		return
+	var number := int(OS.get_environment("BT_LOCAL_ID"))
+	if number <= 0:
+		number = 1 if role == "host" else 2
+	var persona := OS.get_environment("BT_LOCAL_NAME")
+	emulator = load(MOD_DIR + "steam_emulator.gd").new(number, persona)
+	var profile := OS.get_environment("BT_LOCAL_PROFILE").strip_edges()
+	if profile != "" and not emulator.set_profile(profile):
+		_profile_note = "unknown BT_LOCAL_PROFILE '%s' (known: %s), no latency" % [
+			profile, ", ".join(LinkProfiles.NAMES)
+		]
+	ModLoaderMod.install_script_extension(MOD_DIR + "local_transport.gd")
+
+
+func _ready() -> void:
+	pause_mode = PAUSE_MODE_PROCESS
+	set_process(false)
+	if _refused != "":
+		note = "Local play off: %s" % _refused
+		ModLoaderLog.info(note, LOG_NAME)
+		return
+	if transport == null:  # the extension did not run: bind after the transport's own setup
+		var together := get_node_or_null(TOGETHER_PATH)
+		if together == null or together.get("transport") == null:
+			note = "Local play off: brotato:together is not loaded"
+			ModLoaderLog.warning(note, LOG_NAME)
+			return
+		transport = together.transport
+	active = true
+	dlc_note = _apply_dlcs(OS.get_environment("BT_LOCAL_DLCS"))
+	joypads = load(MOD_DIR + "joypad_filter.gd").new(OS.get_environment("BT_LOCAL_JOYPAD"))
+	add_child(joypads)
+	connect_lobby = launch_lobby(Array(OS.get_cmdline_args()))
+	autohost = role == "host" and OS.get_environment("BT_LOCAL_AUTOHOST") == "1"
+	var dir := OS.get_environment("BT_LOCAL_DIR")
+	instance = load(MOD_DIR + "local_instance.gd").new(
+		self, dir, OS.get_environment("BT_LOCAL_MUTE") == "1"
+	)
+	add_child(instance)
+	if dir != "":
+		director = load(MOD_DIR + "director.gd").new(self, dir)
+		add_child(director)
+	OS.set_window_title("Brotato (local %s: %s)" % [role, emulator.persona_name])
+	for entry in TRANSPORT_LOGS:
+		transport.connect(entry[0], self, "_on_transport_event", [entry[1]])
+	_start_wire()
+	if not bound and (role == "host" or wire == null):
+		_bind()
+	note = "Local play: %s, id %s (%s), %s, link %s, DLC %s, gamepads: %s" % [
+		role, emulator.steam_id, emulator.persona_name, _wire_text(), _link_text(), dlc_note,
+		joypads.note
+	]
+	ModLoaderLog.info(note, LOG_NAME)
+	if _profile_note != "":
+		ModLoaderLog.warning(_profile_note, LOG_NAME)
+	if connect_lobby != 0:
+		log_info("Joins lobby %s (%s) once the host's game has it" % [connect_lobby, CONNECT_ARG])
+	_start_scenario()
+	set_process(true)
+
+
+# BT_LOCAL_SCENARIO: the director runs it from the start, then the game closes.
+func _start_scenario() -> void:
+	var scenario := OS.get_environment("BT_LOCAL_SCENARIO").strip_edges()
+	if scenario == "":
+		return
+	if director == null:
+		ModLoaderLog.warning("No scenario %s: BT_LOCAL_DIR is not set" % scenario, LOG_NAME)
+		return
+	var peers := []
+	for peer in OS.get_environment("BT_LOCAL_PEERS").split(",", false):
+		peers.append(peer.strip_edges())
+	var run := OS.get_environment("BT_LOCAL_RUN").strip_edges()
+	director.call_deferred("run_scenario_and_quit", scenario, run, peers)
+
+
+# Called by local_transport.gd from the transport's setup: true, as the engine's bind would be.
+# The host binds now; a client once the host's game is reachable (_process).
+func take_transport(steam_transport: Node) -> bool:
+	transport = steam_transport
+	if role == "host":
+		return _bind()
+	return true
+
+
+# Why this game must not run local play ("": it may). Every rule is checked, in this order. The
+# user folder must lie under the instance's folder the launcher made (local_dir: BT_LOCAL_DIR), a
+# rule of where it may be, not of where it must not be: no real save folder passes by a path
+# nobody listed.
+static func refusal(
+	env_role: String, steam_id: int, steam_feature: bool, user_dir: String, local_dir: String
+) -> String:
+	if env_role == "":
+		return "BT_LOCAL_ROLE is not set"
+	if not env_role in ROLES:
+		return "BT_LOCAL_ROLE '%s' is none of %s" % [env_role, ROLES]
+	if steam_id != 0:
+		return "Steam is logged on here (steam id %s)" % steam_id
+	if steam_feature:
+		return "this is the Steam build of the game (feature 'steam')"
+	var dir := _normalized(user_dir)
+	if dir == "":
+		return "no user folder"
+	var base := _normalized(local_dir)
+	if base == "":
+		return "BT_LOCAL_DIR is not set"
+	if _has_dot_parts(dir) or _has_dot_parts(base) or not dir.begins_with(base + "/"):
+		return "the user folder %s is not under BT_LOCAL_DIR (%s)" % [user_dir, local_dir]
+	return ""
+
+
+# The lobby id after "+connect_lobby" (as the transport reads it), 0 without one.
+static func launch_lobby(args: Array) -> int:
+	for i in range(args.size() - 1):
+		if args[i] == CONNECT_ARG:
+			return int(args[i + 1])
+	return 0
+
+
+static func _normalized(path: String) -> String:
+	var text := path.strip_edges().replace("\\", "/").to_lower()
+	while text.ends_with("/") and text.length() > 1:
+		text = text.substr(0, text.length() - 1)
+	return text
+
+
+# A "." or ".." part: the folder is not what its text says.
+static func _has_dot_parts(path: String) -> bool:
+	for part in path.split("/"):
+		if part == "." or part == "..":
+			return true
+	return false
+
+
+static func _steam_id() -> int:
+	if not Engine.has_singleton("Steam"):
+		return 0
+	return int(Engine.get_singleton("Steam").getSteamID())
+
+
+func _start_wire() -> void:
+	var port := int(OS.get_environment("BT_LOCAL_PORT"))
+	if port <= 0:
+		return
+	var token := OS.get_environment("BT_LOCAL_TOKEN")
+	if token.length() < 16:
+		ModLoaderLog.warning("No wire: BT_LOCAL_TOKEN is missing or short", LOG_NAME)
+		return
+	wire = load(MOD_DIR + "wire_tcp.gd").new()
+	wire.connect("note", self, "_on_wire_note")
+	wire.connect("invited", self, "_on_wire_invited")
+	if role == "host":
+		if wire.listen(emulator, port, token) != OK:
+			wire = null
+	else:
+		wire.join(emulator, port, token)
+
+
+func _link_text() -> String:
+	var profile: String = emulator.link.profile
+	return "profile %s" % profile if profile != "" else "without latency"
+
+
+func _wire_text() -> String:
+	if wire == null:
+		return "no wire (only this game)"
+	return "wire %s on 127.0.0.1:%s" % [role if role == "host" else "to the host", wire.port]
+
+
+func _bind() -> bool:
+	var older := not transport.has_method("bind_steam")
+	bound = _bind_older_build() if older else transport.bind_steam(emulator)
+	if bound:
+		log_info("Transport bound to the emulator (id %s%s)" % [
+			emulator.steam_id, ", a build without bind_steam" if older else ""
+		])
+	else:
+		ModLoaderLog.warning("The transport did not take the emulator", LOG_NAME)
+	return bound
+
+
+# A build before the seam: what its setup did with the engine's GodotSteam (its first bind is the
+# only one, so "+connect_lobby" is checked here).
+func _bind_older_build() -> bool:
+	transport.steam = emulator
+	transport.local_id = int(emulator.getSteamID())
+	for entry in OLDER_BUILD_SIGNALS:
+		transport._connect_steam(entry[0], entry[1])
+	emulator.initRelayNetworkAccess()
+	transport.apply_route(Array(OS.get_cmdline_args()))
+	transport.apply_send_rate()
+	transport._clear_join_presence()
+	transport._check_launch_args()
+	return true
+
+
+# BT_LOCAL_DLCS as DebugService.owned_dlc_ids (LocalPlatform.is_dlc_owned asks it). Runs before
+# ProgressData's _ready, which takes the owned ones into available_dlc_ids. The note says what.
+func _apply_dlcs(setting: String) -> String:
+	var text := setting.strip_edges().to_lower()
+	var known: Array = ProgressData.dlc_ids
+	if text == "" or text == "all":
+		return "all (%s)" % ", ".join(DebugService.owned_dlc_ids)
+	var owned := []
+	if text != "none":
+		for part in text.split(",", false):
+			var dlc_id: String = part.strip_edges()
+			if not dlc_id in known:
+				ModLoaderLog.warning(
+					"BT_LOCAL_DLCS: no DLC '%s' (known: %s)" % [dlc_id, ", ".join(known)], LOG_NAME
+				)
+			elif not dlc_id in owned:
+				owned.append(dlc_id)
+	DebugService.owned_dlc_ids = owned
+	if not ProgressData.available_dlc_ids.empty():
+		ModLoaderLog.warning("BT_LOCAL_DLCS came after the game had read the DLCs", LOG_NAME)
+	return ", ".join(owned) if not owned.empty() else "none"
+
+
+func _process(_delta: float) -> void:
+	if wire != null:
+		wire.poll()
+	emulator.poll()
+	if not bound and role == "client" and wire != null and wire.state == "online":
+		if connect_lobby == 0 or connect_lobby in wire.host_lobbies:
+			_bind()
+	if bound and role == "host":
+		_host_tick()
+
+
+func _host_tick() -> void:
+	if autohost and not _hosted and _on_title_screen():
+		var lobby_menu := get_node_or_null(TOGETHER_PATH + "/LobbyMenu")
+		if lobby_menu != null and not transport.is_active():
+			_hosted = true
+			log_info("Hosts a lobby (BT_LOCAL_AUTOHOST)")
+			lobby_menu.host()
+	# The invite dialog (the lobby page's Invite) reaches every client's game as an accepted
+	# invite: the stand-in for Steam's overlay and a friend clicking it.
+	var dialogs: Array = emulator.invite_dialogs
+	while _invites_sent < dialogs.size():
+		var lobby_id: int = dialogs[_invites_sent]
+		_invites_sent += 1
+		if wire != null:
+			var count: int = wire.send_invite(lobby_id)
+			log_info("Invite to lobby %s sent to %s client(s)" % [lobby_id, count])
+
+
+func _on_title_screen() -> bool:
+	var scene := get_tree().current_scene
+	return scene != null and scene.filename == MenuData.title_screen_scene
+
+
+func _on_transport_event(value, text: String) -> void:
+	log_info(text % value)
+
+
+func _on_wire_note(level: String, text: String) -> void:
+	if level == "warning":
+		ModLoaderLog.warning(text, LOG_NAME)
+	else:
+		log_info(text)
+
+
+func _on_wire_invited(lobby_id: int, friend_id: int) -> void:
+	log_info("Invite from the host to lobby %s" % lobby_id)
+	emulator.fire_join_requested(lobby_id, friend_id)
+
+
+func log_info(text: String) -> void:
+	ModLoaderLog.info(text, LOG_NAME)
+
+
+# What local_instance.gd writes to status.json.
+func status() -> Dictionary:
+	var scene := get_tree().current_scene
+	var lobby := {}
+	if transport != null and transport.is_active():
+		lobby = {
+			"id": transport.lobby_id,
+			"host": transport.host_id,
+			"is_host": transport.is_host(),
+			"members": transport.members.duplicate(),
+		}
+	var link := {}
+	if wire != null:
+		link = {
+			"state": wire.state,
+			"port": wire.port,
+			"peers": wire.peer_ids.duplicate(),
+			"host_lobbies": wire.host_lobbies.duplicate(),
+			"packets_out": wire.packets_out,
+			"packets_in": wire.packets_in,
+		}
+	return {
+		"role": role,
+		"pid": OS.get_process_id(),
+		"steam_id": emulator.steam_id,
+		"name": emulator.persona_name,
+		"bound": bound,
+		"connect_lobby": connect_lobby,
+		"wire": link,
+		"lobby": lobby,
+		"scene": scene.filename if scene != null else "",
+		"msec": OS.get_ticks_msec(),
+		"fps": Engine.get_frames_per_second(),
+		"director": _director_status(),
+		"settings": instance.settings_note if instance != null else "",
+		"link": emulator.link_status(),
+		"lobby_error": lobby_error(),
+		"build": str(transport.get("_lobby_tag")) if transport != null else "",
+		"dlcs": {"setting": dlc_note, "available": ProgressData.available_dlc_ids.duplicate()},
+		"joypads": joypads.status() if joypads != null else {},
+	}
+
+
+# The lobby's last error as the player sees it (LobbyMenu.last_error: a refused join, ...).
+func lobby_error() -> String:
+	var lobby_menu := get_node_or_null(TOGETHER_PATH + "/LobbyMenu")
+	return str(lobby_menu.get("last_error")) if lobby_menu != null else ""
+
+
+func _exit_tree() -> void:
+	if wire != null:
+		wire.close()  # what waits goes out, then the others hear it
+
+
+func _director_status() -> Dictionary:
+	if director == null:
+		return {}
+	return {"done": director.done, "last": director.last, "shots": director.shots}

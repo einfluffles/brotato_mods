@@ -39,6 +39,7 @@ $KnownErrors = @(
     "Can't open workshop folder",
     'Steam singleton not available',
     'Steam transport unavailable',
+    'Steam not logged on (steam id 0)',  # session_lifecycle: a fake Steam that is not logged on
     'CrashReporter: Failed to find engine logs',
     'Condition "_first != nullptr" is true',
     'Resources still in use at exit',
@@ -96,9 +97,10 @@ if ($current -ne $stamp) {
 }
 
 
-# One game process: the mod, its test mod and the -With mods, fresh in mods-unpacked/ (a leftover
-# folder without manifest stops the loader). The test copy's logs go first: the game reads the
-# last one at boot and turns all mods off when an error in it names mods-unpacked.
+# One game process: the mod, its test mod, its dev mods (dev/) and the -With mods, fresh in
+# mods-unpacked/ (a leftover folder without manifest stops the loader). The test copy's logs go
+# first: the game reads the last one at boot and turns all mods off when an error in it names
+# mods-unpacked.
 function Invoke-Run([string]$RunSuites, [string[]]$Others) {
     $logs = Join-Path $env:APPDATA "$UserDir\logs"
     if (Test-Path $logs) { Remove-Item -Recurse -Force $logs }
@@ -107,6 +109,10 @@ function Invoke-Run([string]$RunSuites, [string[]]$Others) {
     New-Item -ItemType Directory -Force $mods | Out-Null
     $dirs = @(Get-ChildItem -Directory (Join-Path $ModDir "src")) `
         + @(Get-ChildItem -Directory (Join-Path $ModDir "tests"))
+    # dev/: dev-only mods the tests use (the local-play emulator), never packaged
+    if (Test-Path (Join-Path $ModDir "dev")) {
+        $dirs += @(Get-ChildItem -Directory (Join-Path $ModDir "dev"))
+    }
     foreach ($other in $Others) {
         $dirs += @(Get-ChildItem -Directory (Join-Path (Resolve-Path (Join-Path $Root $other)) "src"))
     }

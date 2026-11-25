@@ -24,9 +24,19 @@ var _steam = null
 var _peer_ready_count := 0
 
 
-# gdlint: disable=function-name
+# gdlint: disable=function-name, max-public-methods
 class FakeSteam:
 	extends Reference
+	# GodotSteam's signals the transport connects (Transport.bind_steam)
+	signal lobby_created(result, lobby_id)
+	signal lobby_joined(lobby_id, permissions, locked, response)
+	signal join_requested(lobby_id, friend_id)
+	signal lobby_chat_update(lobby_id, changed_id, making_change_id, chat_state)
+	signal network_messages_session_request(remote_id)
+	signal network_messages_session_failed(reason, remote_id, connection_state, debug)
+	var steam_id := 1  # getSteamID: LOCAL
+	var relay_inits := 0
+	var left := []  # lobby ids left
 	var sent := []  # [steam_id, channel, data]
 	var send_result := 1
 	var accepted := []
@@ -73,6 +83,15 @@ class FakeSteam:
 				inbox.erase(message)
 		return messages
 
+	func getSteamID() -> int:
+		return steam_id
+
+	func get_godotsteam_version() -> String:
+		return "fake"
+
+	func initRelayNetworkAccess() -> void:
+		relay_inits += 1
+
 	func getPersonaName() -> String:
 		return "local"
 
@@ -82,8 +101,8 @@ class FakeSteam:
 	func closeSessionWithUser(_steam_id: int) -> bool:
 		return true
 
-	func leaveLobby(_lobby_id: int) -> void:
-		pass
+	func leaveLobby(lobby_id: int) -> void:
+		left.append(lobby_id)
 
 	func setRichPresence(key: String, value: String) -> bool:
 		if value == "":
@@ -147,7 +166,7 @@ class PathSteam:
 		return infos.get(steam_id, {})
 
 
-# gdlint: enable=function-name
+# gdlint: enable=function-name, max-public-methods
 
 
 func run(t: Node, together: Node) -> void:
@@ -158,7 +177,6 @@ func run(t: Node, together: Node) -> void:
 	var input_sync: Node = together.input_sync
 	var saved := {
 		"steam": transport.steam,
-		"local_id": transport.local_id,
 		"devices": input_sync.devices.duplicate(),
 		"players": CoopService.connected_players.duplicate(true),
 		"listening": CoopService.listening_for_inputs,
@@ -167,8 +185,7 @@ func run(t: Node, together: Node) -> void:
 		"client_active": together._client_active,
 	}
 	_steam = FakeSteam.new()
-	transport.steam = _steam
-	transport.local_id = LOCAL
+	_t._check(transport.bind_steam(_steam), "the fake Steam binds as LOCAL")
 	session.connect("peer_ready", self, "_on_peer_ready")
 
 	_test_client_leave_restores_own_run(transport)
@@ -182,11 +199,10 @@ func run(t: Node, together: Node) -> void:
 	_test_join_presence(transport)
 	_test_relay_route(transport)
 	_test_send_rate(transport)
+	_test_bind_steam(transport)
 
 	session.disconnect("peer_ready", self, "_on_peer_ready")
-	transport.leave_lobby()
-	transport.steam = saved.steam
-	transport.local_id = saved.local_id
+	transport.bind_steam(saved.steam)  # null in tests: leaves the lobby, unbinds the fake
 	transport.pending_join_id = 0
 	session.peers.clear()
 	input_sync.devices = saved.devices
@@ -837,3 +853,89 @@ func _test_direct_under_relay() -> void:
 	var plain = LinkWatch.new()
 	plain.poll(steam, [CLIENT], 1000)
 	_t._check(plain.direct_warnings == 0 and plain.lines == 1, "no warning without relay-only")
+
+
+# bind_steam swaps the object every Steam call goes to (the local-play stand-in binds over the
+# engine's singleton): the old one's lobby is left and its signals no longer reach the transport.
+func _test_bind_steam(transport: Node) -> void:
+	var bound := true
+	for entry in transport.STEAM_SIGNALS:
+		bound = bound and _steam.is_connected(entry[0], transport, entry[1])
+	_t._check(
+		(
+			bound
+			and transport.steam == _steam
+			and transport.local_id == LOCAL
+			and _steam.relay_inits == 1
+		),
+		"bind: the fake's signals connected, local id and relay access from it"
+	)
+	transport.lobby_id = LOBBY
+	transport.host_id = LOCAL
+	_steam.left.clear()
+	var other := FakeSteam.new()
+	other.steam_id = 77
+	var rebound: bool = transport.bind_steam(other)
+	var unbound := true
+	for entry in transport.STEAM_SIGNALS:
+		unbound = unbound and not _steam.is_connected(entry[0], transport, entry[1])
+		bound = bound and other.is_connected(entry[0], transport, entry[1])
+	_t._check(
+		(
+			rebound
+			and bound
+			and unbound
+			and _steam.left == [LOBBY]
+			and not transport.is_active()
+			and transport.local_id == 77
+			and transport.relay_only
+			and other.config_values.get(104) == 0
+			and transport.send_rate == transport.SEND_RATE
+		),
+		"bind again: old lobby left, old signals off, route and send rate on the new object"
+	)
+	_steam.joined.clear()
+	_steam.emit_signal("join_requested", 600, 9)
+	other.emit_signal("join_requested", 601, 9)
+	_t._check(
+		_steam.joined.empty() and other.joined == [601],
+		"bind again: only the new object's signals reach the transport (%s, %s)"
+		% [_steam.joined, other.joined]
+	)
+	other.joined.clear()
+	var again: bool = transport.bind_steam(other)
+	other.emit_signal("join_requested", 602, 9)
+	_t._check(
+		again and other.joined == [602] and other.relay_inits == 2,
+		"bind the same object again: still bound, each handler once (%s)" % [other.joined]
+	)
+	# Not logged on (steam id 0, the error is a known one of the runners): unbound, nothing polled.
+	var offline := FakeSteam.new()
+	offline.steam_id = 0
+	offline.inbox.append({"channel": 0, "steam_id_remote": 5, "payload": PoolByteArray()})
+	var online: bool = transport.bind_steam(offline)
+	var inbox_before: int = offline.inbox.size()
+	transport._process(0.0)
+	_t._check(
+		(
+			not online
+			and transport.steam == null
+			and transport.local_id == 0
+			and offline.inbox.size() == inbox_before
+			and not offline.is_connected("join_requested", transport, "_on_join_requested")
+		),
+		"bind with steam id 0: unbound, its messages are never polled"
+	)
+	_t._check(
+		(
+			not transport.bind_steam(null)
+			and transport.steam == null
+			and transport.local_id == 0
+			and not transport.relay_only
+			and transport.send_rate == 0
+			and transport.route_note == ""
+			and not other.is_connected("join_requested", transport, "_on_join_requested")
+		),
+		"bind null: unbound, no route or send rate claimed"
+	)
+	_t._check(transport.bind_steam(_steam) and transport.local_id == LOCAL, "bind back to the fake")

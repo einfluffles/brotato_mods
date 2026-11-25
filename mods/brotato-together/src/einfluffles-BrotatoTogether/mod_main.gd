@@ -306,7 +306,7 @@ func _is_host_screen(msg_type: int, body) -> bool:
 # The next screen follows BATTLE_END closely and replaces the scene itself: the frozen battle
 # stays (muted) until then; the client view is the fallback after TRANSITION_GRACE_SEC.
 func _on_client_battle_left() -> void:
-	if not _client_active:
+	if not _client_active or not is_inside_tree():  # not in a game that is closing either
 		return
 	var stale := get_tree().current_scene
 	if stale == null or not stale.is_inside_tree():

@@ -221,9 +221,33 @@ A returning player just plays on.
 once a frame (`Transport._process`). Sends use `SEND_AUTO_RESTART_BROKEN_SESSION`, so after a broken
 session the next message opens a new one.
 
+### Steam object
+
+Every Steam call of the mod goes to one object, `Transport.steam`. `Transport.setup(lobby_tag)`
+keeps the lobby tag and hands the engine's GodotSteam singleton to
+`Transport.bind_steam(steam_object) -> bool`, which:
+
+- leaves a lobby of the object bound before and disconnects that object's signals, so binding
+  again replaces the old object cleanly (binding the same object again is fine too). `null` only
+  unbinds: no object, local id 0, no route or send rate claimed.
+- reads the local steam id. 0 (not logged on) logs an error, connects nothing and returns false.
+- connects GodotSteam's signals (`STEAM_SIGNALS`), calls `initRelayNetworkAccess`, applies the
+  [route](#route) and the [send rate](#send-rate) and clears the Join button.
+- on the first bind of the process that gets this far, acts on `+connect_lobby <id>`.
+
+Why the seam: it lets another object stand in for the singleton while the transport stays as it
+is. The headless tests bind a fake GodotSteam (`FakeSteam` in `session_lifecycle_tests.gd`). The
+local-play dev mod ([Local play](#local-play-dev-mod), outside `src/`, never packaged) binds an
+object with GodotSteam's method and signal names that carries lobby and messages between game
+instances, so every line of the transport runs as in a Steam session. A player's game binds the
+singleton once, at startup, as before. Outside the transport only `net/link_watch.gd` (handed the
+object on each poll) and the lobby page's availability check (`transport.steam != null`) see the
+object. The zip guard keeps sockets out of shipped code
+([Releasing](../../../docs/releasing.md#notes)).
+
 ### Route
 
-`Transport.apply_route` runs at startup, before any session. It sets `P2P_Transport_ICE_Enable` to
+`Transport.apply_route` runs when the Steam object is bound (startup), before any session. It sets `P2P_Transport_ICE_Enable` to
 disabled with `setGlobalConfigValueInt32`, so sessions go through Steam's relays (SDR) only.
 
 - Launch option `+bt_direct` leaves Steam's default (direct or relayed, Steam picks). `+bt_relay` is
@@ -275,6 +299,428 @@ the network and Steam's send queue. The whole time stays in `answer_ms` (shown o
 `network_messages_session_failed` is logged with the reason in words (5008: P2P rendezvous failed,
 and so on). A follow-up line says when the session was up again and over which path, or that it
 still was not after 15 s.
+
+### Local play (dev mod)
+
+Host and clients as game instances on one PC, without Steam's networking. A dev mod puts a
+Steam-shaped emulator under the unchanged transport (`Transport.bind_steam`, [Steam
+object](#steam-object)) and links the games over TCP on 127.0.0.1. Status: the emulator, the
+in-process wire, the wire between game processes, the activation rules, the launcher
+`tools\play-local.ps1` ([Play locally](../../../docs/testing.md#play-locally)) with its scenario
+director, the link profiles ([Link profiles](#link-profiles)), up to three clients, other builds
+on one side (`-ClientRef`, `-HostRef`), DLCs per game, gamepad routing and the headless pair
+tests `tools/check-pair.sh` ([Pair tests](../../../docs/testing.md#pair-tests)), which run the
+same scenarios, are in.
+
+**Layout.** `mods/brotato-together/dev/einfluffles-TogetherLocal/`, next to `src/` and `tests/`:
+
+| File | What |
+|---|---|
+| `manifest.json` | Mod `einfluffles-TogetherLocal`, depends on `einfluffles-BrotatoTogether`, so it loads after it. |
+| `mod_main.gd` | Activation rules; when active, builds an emulator, binds it to the transport, starts the wire, hosts or joins. |
+| `local_transport.gd` | Script extension of `net/steam_transport.gd`, installed only when active: `setup` hands the transport to the dev mod instead of binding GodotSteam. |
+| `steam_emulator.gd` | The Steam stand-in: lobbies, sessions, queues, pacing, connection info. No sockets. |
+| `link.gd` | The line one emulator sends over: latency, jitter, loss, retransmits, line rate, stalls, relay POP changes. |
+| `link_profiles.gd` | The named link profiles and the sessions their numbers come from. |
+| `wire_memory.gd` | A wire for two or more emulators in one process, with a clock that moves only when told to. |
+| `wire_tcp.gd` | The wire between game processes: TCP on 127.0.0.1, the host listens, clients connect. |
+| `local_instance.gd` | The instance's side of the launcher: settings and `status.json`. |
+| `joypad_filter.gd` | Which gamepads drive this game (`BT_LOCAL_JOYPAD`): the others are blocked in the engine's mapping. |
+| `director.gd` | The scenario director: JSON commands in the instance's `control\` folder, answers in `out\`. |
+| `menu_driver.gd` | Menus driven as a player drives them (keys, buttons by focus and accept), screenshots, the screen's state. The test mod's `director` suite uses it too. |
+| `scenario_runner.gd` | Runs a scenario in every game of a session at once, in step: each step's answers go through the instances' `out\` folders. |
+| `scenarios.gd` | The scenarios, one coroutine each, for the windows (`-Scenario`) and the headless pair tests (`tools/check-pair.sh`), and what each needs from the launcher (`LAUNCH`: clients, DLCs, another build, no join). |
+| `scenario_steps.gd` | The steps several scenarios share (lobby, character selection, the selection screens, a wave into the shop, buying, quitting the run), for a host and any number of clients; `scenarios.gd` extends it. |
+
+Nothing under `dev/` is packaged: `tools/package.sh` takes `mods/*/src/<mod_id>/` only, and the zip
+guard fails on any second mod folder in a zip, also one whose manifest sits in `dev/`
+(`tools/test_zip_guard.py`). The network-class check covers `mods/*/src` only, so a dev mod may use
+sockets; gdlint covers `dev/` like the rest. `tools/check.sh` and `tools\check-window.ps1` mount
+`dev/*/` next to `src/` and `tests/`, so the test mod preloads the emulator from
+`res://mods-unpacked/einfluffles-TogetherLocal/` and every test run also checks that the dev mod
+stays inert.
+
+**Activation.** `mod_main.gd` decides in its `_init`, which the Mod Loader runs for every mod
+before any mod's `_ready`. It acts only if all of these hold (`refusal()`, in this order), else it
+logs one line ("Local play off: ...") and does nothing else:
+
+1. `BT_LOCAL_ROLE` is `host` or `client`.
+2. Steam is not logged on here: no GodotSteam singleton, or its `getSteamID()` is 0.
+3. The game is not the Steam build: feature `steam` is absent (the Steam build's `project.godot`
+   sets it; the local game copy has it removed).
+4. The user folder lies under `BT_LOCAL_DIR`, the instance's folder the launcher made:
+   `tools\play-local.ps1` gives each instance its own `APPDATA` in that folder
+   (`<inst>\appdata\Brotato`), `tools/check-pair.sh` its own `XDG_DATA_HOME`
+   (`/pair/<name>/data/Brotato`). A rule of where the folder may be, not a list of where it must
+   not be: a real save folder in a place nobody listed cannot pass. The paths are compared as
+   text (case and slashes aside), so a path with a `.` or `..` part is refused.
+
+The test container's game has feature `steam` and no `BT_LOCAL_DIR`, so the dev mod refuses there
+even with a role. Rule 2 asks the
+game's GodotSteam, which is not initialised in a local instance and logs one engine error for it
+("User class not found ... getSteamID"); stock Godot has no GodotSteam.
+
+When active, `_init` builds the emulator (`BT_LOCAL_ID`: instance number, default 1 for the host
+and 2 for a client; `BT_LOCAL_NAME`: persona name) and installs `local_transport.gd`. The Mod
+Loader applies script extensions after every mod's `_init`, so brotato:together's `_ready` creates
+the transport from the extended script, and its `setup` calls the dev mod's `take_transport`
+instead of binding GodotSteam: the host binds the emulator right there, a client later (below).
+So a local instance never logs "Steam not logged on" or "Steam transport unavailable", errors the
+game would read at the next boot (it turns mods off after a logged error that names a mod). If the
+extension did not apply, the dev mod binds after the transport's own `setup` as a fallback. The
+launcher deletes each instance's logs before a start anyway.
+
+Then `_ready` sets the DLCs (`BT_LOCAL_DLCS`, below), adds the gamepad filter (`BT_LOCAL_JOYPAD`,
+below), starts the wire (`BT_LOCAL_PORT`, `BT_LOCAL_TOKEN`; without a port only this game, as in
+the tests), adds `local_instance.gd`, titles the window "Brotato (local host: Host)" and polls
+wire and emulator every frame (`PAUSE_MODE_PROCESS`). The startup line names the DLCs and the
+gamepads too.
+
+- DLCs: `BT_LOCAL_DLCS` is `none` or DLC ids of `ProgressData.dlc_ids` (comma-separated; unset or
+  `all`: the local build's default, every DLC). It becomes `DebugService.owned_dlc_ids`, which
+  `LocalPlatform.is_dlc_owned` asks. The Mod Loader instances the mods in its `_init`, before the
+  later autoloads exist, but their nodes get `_ready` when the Mod Loader enters the tree, before
+  ProgressData's `_ready` reads the DLCs (`check_for_available_dlcs`): so the setting is applied in
+  `_ready`, and a warning says if ProgressData had read them already. A client without the host's
+  DLC then borrows it as with Steam ([Host DLC on clients](#host-dlc-on-clients)).
+- Older builds: a brotato:together from before the seam has no `bind_steam`. The dev mod then
+  binds the emulator as that build's `setup` bound GodotSteam (`steam`, `local_id`, its six Steam
+  signals, relay access, route, send rate, no Join button, `+connect_lobby`) and logs "a build
+  without bind_steam". This is what `tools\play-local.ps1 -ClientRef` / `-HostRef` run.
+- Gamepads (`joypad_filter.gd`): the engine polls XInput and DirectInput itself, so every game
+  process gets every pad's input, focused or not. `BT_LOCAL_JOYPAD` is `all` (unset), `none`, or
+  device numbers. A pad this game must not see is blocked in the engine's own mapping: the engine
+  reads a pad's buttons, axes and hat through the SDL mapping of its GUID and drops what the
+  mapping does not name, before `Input`'s state, the actions or any event. So the filter adds a
+  mapping for a GUID of its own (`btlocalblockedNN`) that names no button and no axis (its hat goes
+  to `misc1`, which the game binds to nothing; an empty mapping would leave the hat as the d-pad)
+  and reports the pad to the engine again under that GUID (`Input.joy_connection_changed`, as a
+  driver does). The pad stays connected under its own name. The engine emits
+  `joy_connection_changed` deferred, so the filter counts its own reports and skips their signals;
+  any other report of a blocked pad (the driver's, on a reconnect) gives it its own mapping back,
+  and the filter blocks it again. `Input.get_joy_guid` answers the mapped GUID on Windows but a
+  fixed text in headless Godot, so what is blocked is kept in the filter. Input that a script
+  sends (`Input.parse_input_event`, the director) comes in after the mapping and is never
+  filtered.
+
+- Host: with `BT_LOCAL_AUTOHOST=1` it opens a lobby (`LobbyMenu.host()`, what the title screen's
+  host button does) once the title screen is up. The lobby page's Invite
+  (`activateGameOverlayInviteDialog`) sends every client an invite, which its emulator fires as
+  `join_requested`: Steam's overlay invite, accepted.
+- Client: binds once its wire is online and, with a launch option `+connect_lobby <lobby id>`,
+  once the host's game owns that lobby (the wire's roster carries the host's lobbies). The
+  transport acts on `+connect_lobby` at its first bind (`_check_launch_args`), so the client joins
+  through the same code as a Steam invite that starts the game. The launcher passes the host's
+  first lobby id, `0x0080000000000000 + (1 << 8) + 1`.
+- The transport's `peer_joined`, `peer_left` and `lobby_failed` are logged ("Peer left: <id>"):
+  the mod itself logs a leaving peer nowhere.
+- `_exit_tree` closes the wire: a closed window leaves at once, as Steam reports a game that quit.
+
+**Wire between games (`wire_tcp.gd`).** Star: the host's game listens with a `TCP_Server` bound to
+127.0.0.1 on the launcher's port; each client connects with a `StreamPeerTCP` (an outgoing
+connection, no socket of its own to reach). A client talks to the host's game only; a packet for
+another client goes through it (the lobby can pass to a client when the host leaves it). Polled by
+hand, never blocking: what a socket does not take waits in the connection's outbox.
+
+- Frames: length (4 bytes, little endian), magic `BTLW`, wire version 1, then `var2bytes` of a
+  Dictionary (read with `bytes2var` without objects). At most 2 MB; a broken frame drops the
+  connection.
+- Handshake: the client's first frame is `hello` with the launcher's random token (32 hex
+  characters), its fake steam id and name. The host refuses a wrong token, a missing or late hello
+  (5 s), a non-fake or taken id (a client that restarted replaces its old connection) and a fourth
+  client, else answers `welcome`. `roster` frames give each client the others' ids and the host's
+  lobbies; `invite` carries the Invite above.
+- Everything else is an emulator packet; the host sets its `from` to the sender's id, so no client
+  speaks for another. A connection that closes (window closed, process killed: the OS closes its
+  sockets) calls `wire_lost` on the emulators that knew it, at once.
+- Reliable and unreliable: the wire carries everything reliable and in order. The emulator's link
+  decides loss, delay and order of unreliable messages before the wire, and loopback adds nothing
+  to that.
+- Why not ENet, as first planned: Godot 3's ENet client binds its UDP socket to every interface,
+  whatever `set_bind_ip` says (checked with the game's engine and with Godot 3.6.2: the client's
+  port showed on `::`), and Windows then offers to let the program through its firewall. Local
+  play must not open anything beyond 127.0.0.1. With TCP, `Get-NetTCPConnection` shows the host's
+  listener on 127.0.0.1 and connections between 127.0.0.1 ports only, and there is no UDP socket.
+
+**The instance (`local_instance.gd`).** With `BT_LOCAL_DIR` (the instance's folder):
+
+- Settings: the launcher seeds `settings.json` (windowed, `pause_on_focus_lost` and
+  `mute_on_focus_lost` off, `on_lost_focus` 0; with two windows one always lacks focus, and the
+  three keys are coupled, `menu_options.gd`). The dev mod enforces them again after ProgressData
+  has loaded them (deferred: the autoloads enter the tree together and get `_ready` afterwards in
+  order, so ProgressData exists before it has loaded anything). `BT_LOCAL_MUTE=1` mutes the Master
+  bus. `--windowed` alone loses against `fullscreen` in the settings (`progress_data.gd`,
+  `apply_settings`).
+- `status.json` every second: role, pid, steam id, name, bound, the `+connect_lobby` lobby, wire
+  (state, port, peers, host lobbies, frames), lobby (id, host, members), scene, fps, the
+  director (commands done, the last one, screenshots taken), the settings line, `lobby_error`,
+  `build` (the lobby tag), `dlcs` (the setting, `available`), `joypads` (the setting, the pads
+  with `blocked`, `guid`, `mapped_guid`), and `link`: the
+  profile, its main numbers, stalls and POP changes so far, messages sent, dropped and refused,
+  and per peer what Steam would show (state, ping, queue time, pending bytes, both qualities,
+  bytes per second out and in, relayed).
+
+**The director (`director.gd`, `menu_driver.gd`).** With `BT_LOCAL_DIR`, every instance reads
+commands from its `control\` folder: each `*.json` file is one command, `{"cmd": "<name>", ...}`,
+its id the file's name without `.json`. The files are taken in name order, one at a time (a
+command that waits blocks the next), and deleted when taken; the answer goes to
+`out\<id>.json`: `id`, `cmd`, `ok`, `error` (why it failed), `msec`, `result` and `state`, the
+screen's state after the command. The launcher names files `<UTC time>-<counter>-<cmd>`, so commands
+from separate calls keep their order. Menus are driven as a player drives them: keys go through
+`Input.parse_input_event` as the OS's key events come in, a button is focused and gets accept.
+
+| Command | Fields | What |
+|---|---|---|
+| `press` | `key` (Godot key name: `Enter`, `Escape`, `Right`, `A`) or `action` (its first key in the InputMap), `hold_ms`, `times`, `shot`, `shot_ms` | Key down, held at least 150 ms or `hold_ms`, up. The client's input reaches the host's game in samples, so a 3-frame tap can fall between them. Joining a co-op slot needs a hold (the scenarios hold 1500 ms; the join comes after about 0.7 s). With `shot`, a screenshot of that name `shot_ms` (default half the hold) into the hold: a join's progress. |
+| `button` | `name` (node name) or `text` (its text, any case) | The last shown, enabled button of that name (popups come after the scene) gets the focus and accept; one that takes no focus gets `pressed`. |
+| `wait_for` | any key of the state, `timeout_sec` (30) | Until the state has every value: `scene` (the file's name, e.g. `coop_resume`, or its path), `players`, `resume_shown`, `lobby.members`; dotted keys look into nested values, numbers compare as numbers. Fails after the timeout with the state it saw. |
+| `query` | | Only the state. |
+| `screenshot` | `name` | The window's root viewport after the next frame is drawn, to `shots\<name>.png` (written as `.tmp`, then renamed). It reads the game's own picture, so overlapping windows do not matter; a minimised window is not drawn by the engine, so it is drawn once with `VisualServer.force_draw`. |
+| `host_lobby` | `timeout_sec` | Host: what Host lobby does (`LobbyMenu.host`), then waits for the lobby. |
+| `join` | `lobby` (default: the host's first lobby, from the wire's roster), `wait` (true) | Client: the emulator fires `join_requested`, as a Steam invite accepted in the overlay; waits until in that lobby, or with `wait` false answers at once (a join that may be refused; the caller looks at `lobby.error`). |
+| `invite` | | Host: Invite friends (`LobbyMenu.invite`): every client's game gets an accepted invite. |
+| `leave` | | Leave lobby (`LobbyMenu.leave`, as the title frame's and the lobby page's button); waits until out. |
+| `set_profile` | `name` | The link profile of what this game sends from now on (`lan`, `relay-good`, `relay-typical`, `bad`, `stall`, or `none`: no latency at all), through the emulator's `set_profile`; what is on its way keeps its time. The result has the link's status. An unknown name fails and changes nothing. |
+| `fail_session` | `peer` (default: every live session), `reason` (5003), `debug`, `both` (true) | The emulator's `fail_session` / `fail_sessions`: Steam reports the session as failed, at both ends unless `both` is false; the next send opens a new one. Fails when there is no session. |
+| `fail_send` | `count` (1) | The next reliable send(s) answer LimitExceeded (`fail_next_sends`): on the host, the Session runs a full resync for that client. |
+| `stall` | `msec` | Nothing this game sends moves for that long (`stall`); the queues keep it. |
+| `debug` | `invulnerable`, `wave_sec`, `xp`, `gold` | The game's own test settings (`DebugService.invulnerable`, `custom_wave_duration`; read at run start and wave start) and, in a run, XP and gold for every player. Host. |
+| `language` | `locale` (`de`, `ru`, ... of `ProgressData.languages`) | What the options' language choice calls (`ProgressData.change_language`). |
+| `text` | `key`, `args` | What this game shows for a translation key with its arguments in its language now (the game's `Text.text`): a scenario's expected text in another game's language. Fails for a key no translation has. |
+| `kick` | `peer` (a steam id; default every other member), `timeout_sec` | Host: what the lobby page's kick does (`LobbyMenu.kick`, `Session.kick`), then waits until the transport no longer lists the player. |
+| `mod_version` | `version` (`""`: the real one again) | This game's brotato:together version from now on: the manifest's `version_number` in the Mod Loader's data, which `Compat` reads for `HELLO`, as a game with another build would have it. |
+| `scenario` | `name`, `run` (the same id in every game), `peers` (instance names, default `host`, `client1`), `shots`, `timeout_sec` (900) | Runs this game's part of a scenario (`scenarios.gd`) in step with the others (below). The result has `passed`, the scenario's `lines` and the `shots`; a game that quit in the scenario closes after the answer. |
+| `joypad` | `connect` (true / false), `device` (0), `name`, `guid` (`__XINPUT_DEVICE__`) | The gamepads as this game sees them (`joypad_filter.gd`'s status: per pad `blocked`, its own `guid`, `mapped_guid`). With `connect`, first a pad reported to the engine as a driver reports one; no input comes from it, it shows what the filter does with a connection. |
+| `quit` | | Answers, then closes the game as its window's close button does: the others see it leave. |
+
+The state (`MenuDriver.snapshot` plus the lobby): `scene`, `scene_path`, `paused`, `locale`,
+`focus` (the focused control's name), `players` (`CoopService.connected_players`), `listening`,
+`run` (`coop`, `count`, `wave`, per player `gold`, `levels`, `items`, `weapons`; `saved`: a run to
+continue), `lobby` (`in`, `is_host`, `members` with this game, `id`; `details`: the lobby page's
+details text; `tag`: this build's lobby tag), `session` (`ready`: peers whose handshake is done,
+`peer_ready`: the Session's `peer_ready` signals so far, a handshake each and then one per full
+resync, `error`: the lobby error shown last, `LobbyMenu.last_error`, also after a refused join,
+`mod_version`), `dlcs` (`owned`: `DebugService.owned_dlc_ids`; `available`:
+`ProgressData.available_dlc_ids`; `borrowed`: available but not owned), `ref` (`BT_LOCAL_REF`:
+the other build this game runs, empty for this worktree's), `role`; on the co-op resume screen
+`resume_shown` (the saved player shown), `resume_gold` and `resume_progress`; in a wave
+`wave_left` and `upgrades` (the level-up or crate panels are shown). A client's copy of a screen
+is the game's own scene, so its state reads the same way.
+
+Godot's headless build never flushes the input events `Input.parse_input_event` buffers (the
+desktop builds do it every frame), so in a headless game the director flushes them every frame;
+the test mod does the same for its suites. The director's flush runs first in the frame
+(`process_priority` -1000), as a desktop build's does at the frame's start: code that polls
+`Input.is_action_just_pressed`, such as the client's pause (`PauseControl`), only sees a key in
+the frame it came in.
+
+**Scenarios (`scenario_runner.gd`, `scenarios.gd`).** A scenario is one GDScript coroutine,
+`scenario_<name>(r)`, that every game of the session runs at the same time: the director's
+`scenario` command, from `tools\play-local.ps1 -Scenario` (every game at once, with screenshots),
+or `BT_LOCAL_SCENARIO` from the start, which `tools/check-pair.sh` sets for its headless pairs
+(`BT_LOCAL_RUN`: the run id, `BT_LOCAL_PEERS`: the instance names; the game closes after its
+verdict). A step, `r.on(games, command)`, names the games that act, with one command for all or
+one each. Each of them runs its command through its director (`execute`, the same path as a
+command file), takes the answer through JSON (as the others will read it) and writes it to its
+`out/` as `scn-<run>-<NNNN>.json`; every game then reads the others' answers from their folders
+(sibling folders: a game's name is its folder's name). So every game sees the same answers,
+takes the same branches and comes to the same checks; a scenario may only branch or loop on
+answers and counts, never on a game's own clock. `r.check` prints `  ok   ...` or fails the
+scenario; a game that fails (a failed command, a check, no answer within the command's timeout
+plus 30 s) writes `scn-<run>-abort.json`, so the others stop waiting at once, and its coroutine
+never resumes. A game that runs `quit` in a scenario ends its part there; the others go on without
+it (`host_quits`, `client_quits`). Each game prints `PAIR-TESTS: START`, its steps, the commands
+with their answers, its checks and `PAIR-TESTS: PASS` or `PAIR-TESTS: FAIL <why>`, to stdout and
+to the Mod Loader log. The scenarios and how to add one:
+[Pair tests](../../../docs/testing.md#pair-tests).
+
+**Launcher (`tools\play-local.ps1`).** Builds `%LOCALAPPDATA%\brotato-modtools\play\game`, a copy
+of `reference/` without `mods-unpacked` and without the line `_custom_features="steam"`: the game
+then picks its `LocalPlatform`, never restarts through Steam or initialises it, and the Mod
+Loader's default profile reads `mods-unpacked`. It fails if that line or
+`config/use_custom_user_dir` is missing. And `play\engine\BrotatoLocal.exe` with
+`steam_api64.dll`, from the installed game (found through Steam's registry entry and
+`libraryfolders.vdf`, `BROTATO_WORKSHOP_DIR` or `-GameDir`; only read). Under another name the
+engine finds no `.pck` of its own and runs `--path`. Both copies are refreshed by a stamp (size and
+time of `reference/project.godot`, of `Brotato.exe`). On each start it closes a running session,
+fills `mods-unpacked` fresh (brotato:together's `src/`, the dev mod, the `-With` mods), picks a
+free port and a token, and per instance: deletes its logs, seeds its settings, refuses if its user
+folder would be `%APPDATA%\Brotato`, and starts the engine with `--path <game> --windowed
+--resolution WxH --position X,Y` (a client also `+connect_lobby <id>`) and its own `APPDATA` and
+`BT_LOCAL_*` variables (set for the child only: also `BT_LOCAL_DLCS` from `-HostDlcs` /
+`-ClientDlcs` and `BT_LOCAL_JOYPAD` from `-Joypad`). With `-ClientRef` / `-HostRef` that side runs
+`play\game-ref`, a copy of the game copy (refreshed with it) whose `mods-unpacked` has the commit's
+brotato:together and `-With` mods (`git archive` of `mods\` into `play\refs\<commit>`, once per
+commit) and this worktree's dev mod, with `BT_LOCAL_REF` (the build's name: `ref` in the
+director's state). It waits until the host is bound and every client is in the lobby (or
+refused: `lobby_error` in its status), then returns; `session.json` lists the processes (id and
+start time) for `-Stop`, which closes the windows and ends what is left after 10 s.
+
+Engine spike (2026-11-25): both the game's engine copy and stock Godot 3.6.2 boot the patched game
+copy with the mods to the title screen (warm boot 8-10 s, a first boot after fresh files up to
+46 s). Default: the game's engine (the real engine build and GodotSteam class, a release build).
+Stock Godot (`-Engine godot`) is a debug build with the game's debug keys and the Mod Loader's
+editor profile, and the only choice for headless runs. Zipped mods (`--mods-path`) and
+`mods-unpacked` cannot be mixed, so the launcher uses unpacked mods.
+
+**The emulator.** One `steam_emulator.gd` object is one player's Steam.
+
+- Ids: `make_id(n)` = `0x0010000100000000 + n`. A real Steam user id has universe 1 in its top
+  byte (7656119...); these have universe 0 (Invalid), so no fake id is ever a real one. Number 0
+  gives steam id 0 (not logged on). Lobby ids have universe 0, type 8 and the owner's number in
+  them (`lobby_owner(lobby_id)`), so a wire can route a join to the owner.
+- Callbacks are queued and emitted in `poll()`, as Steam's `run_callbacks` does once a frame.
+- Lobbies live in the emulator that created them. A join goes to the owner over the wire; the
+  owner answers with the lobby (members, data, joinable, names) and sends every change to the
+  members, which keep a copy. The owner leaving hands the lobby to the next member, as Steam does.
+- Messages: `sendMessageToUser` checks, queues in the session's send queue, `poll()` paces the
+  queue out with a token bucket at the send rate, or the line's rate when the profile's is lower
+  (`BURST_BYTES` 4380), the link adds latency, jitter, loss and stalls, then the packet goes to
+  the wire. Reliable messages keep their order (a lost one arrives `retransmit_msec` later, and
+  the ones after it wait); unreliable ones can be dropped or overtake. The receiver stamps
+  `time_received` from its own `getLocalTimestamp()`.
+- Lobby traffic and session control (join, lobby updates, accepted, close, fail, refused) reach
+  the wire after the link's latency without jitter, loss or stalls: Steam's servers carry them,
+  not the session. Without latency they go at once, as before. A delayed join the wire then
+  cannot carry answers "no such lobby".
+- Sessions: the first message to a peer opens one. The receiver holds its messages and fires
+  `network_messages_session_request` until `acceptSessionWithUser` (or a send to that peer, which
+  accepts too); then both sides are connected. A session nobody accepts fails at the sender after
+  `accept_timeout_msec` (10 s, reason 5003). `closeSessionWithUser` closes the peer's side as well
+  (state 4, reason 1000). A broken session answers NoConnection unless the send has
+  `SEND_AUTO_RESTART_BROKEN_SESSION`, which opens a new one.
+- Path: relayed unless both sides allow ICE (`setGlobalConfigValueInt32` with
+  `P2P_Transport_ICE_Enable`), so the transport's relay-only on either side relays the session,
+  shown with the fake POP `lcl`.
+
+GodotSteam calls of the mod and what the emulator does with them:
+
+| GodotSteam | Emulator |
+|---|---|
+| `getSteamID`, `getPersonaName`, `getFriendPersonaName`, `get_godotsteam_version` | fake id, persona from `_init`, names learned with the lobby (`[unknown]` otherwise) |
+| `initRelayNetworkAccess` | counted (`relay_inits`) |
+| `setGlobalConfigValueInt32` | send rate min / max (pacing uses min, capped by max), ICE on or off; every value in `config_values` |
+| `createLobby`, `joinLobby`, `leaveLobby` | as above; join answers: 1 success, 2 no such lobby, 3 not joinable, 4 full, 5 no wire |
+| `getLobbyOwner`, `getNumLobbyMembers`, `getLobbyMemberByIndex`, `getLobbyData`, `setLobbyData`, `setLobbyJoinable` | from the lobby or its copy; only the owner sets |
+| `lobby_created`, `lobby_joined`, `lobby_chat_update` | from `poll()`; chat states 1 entered, 2 left, 4 disconnected (a game gone from the wire) |
+| `join_requested` | `fire_join_requested(lobby_id, friend_id)` |
+| `activateGameOverlayInviteDialog` | recorded (`invite_dialogs`) |
+| `setRichPresence`, `clearRichPresence` | recorded (`rich_presence`, `presence_log`) |
+| `sendMessageToUser` | real flags and channels; results 1 OK, 3 NoConnection (no wire, broken session without restart flag), 8 InvalidParam (no id, own id, negative channel, over 512 KB), 25 LimitExceeded (send queue over 512 KB) |
+| `receiveMessagesOnChannel` | per channel, up to the maximum; `payload`, `size`, `identity`, `channel`, `flags`, `message_number`, `time_received` |
+| `getLocalTimestamp` | the emulator's clock plus its own origin (another one per emulator) |
+| `network_messages_session_request`, `acceptSessionWithUser`, `closeSessionWithUser` | as above |
+| `network_messages_session_failed` | reason, remote id, state 5, debug text: `fail_session(remote_id, reason, debug, both_sides)`, a session nobody accepts (5003), a peer gone from the wire (4001) |
+| `getSessionConnectionInfo` | state, end reason and debug text, relayed flag and POP (`lcl`, `lcx` after a POP change), ping, send rate (the configured one, also on a slower line), pending reliable / unreliable bytes, unacknowledged reliable bytes in flight, queue time (at the rate the line carries), local and remote quality, packets and bytes per second out and in |
+
+Control (not GodotSteam): `attach_wire(wire)`, `poll()`, `set_link({...})` (link.gd's keys) and
+`set_profile(name)` for what this side sends, `seed_link(seed)`, `stall(msec)`,
+`fail_session(...)`, `fail_sessions(reason, debug)` (every live one), `fail_next_sends(count,
+result)`, `fire_join_requested(...)`, `wire_lost(remote_id)`, `send_rate()`,
+`is_relayed(remote_id)`, `link_status()` (for `status.json`), and the clock (`clock.now_usec()`, a
+real one by default).
+
+#### Link profiles
+
+Each emulator's `link` (`link.gd`) is the line for what that game sends, so a profile is one
+direction: the launcher gives every game the same one, and switching one game changes only its
+way out. Settings: `latency_msec` (one way), `relay_latency_msec` (more on a relayed session),
+`jitter_msec` (+- per message), `loss` (an unreliable message is dropped, a reliable one comes
+`retransmit_msec` later per loss, retransmits can be lost too), `line_rate` (B/s the line carries;
+0: Steam's send rate), `stalls` (kinds of burst stalls: every `[min, max]` msec, a `chance` per
+turn, `[min, max]` msec long; nothing this side sends moves meanwhile, the queues keep it) and
+`pop_switch_msec` (the relay POP alternates between `lcl` and `lcx`). Jitter and loss draw from
+one random stream, the stall and POP schedule from another, both seeded by the instance number,
+so when a stall comes does not depend on how much is sent.
+
+The profiles (`link_profiles.gd`), with the sessions of
+[Measurements](#12-measurements-and-session-findings) they are taken from:
+
+| Profile | Steam ping (relayed) | Jitter, loss | Line | Stalls, POP | Source |
+|---|---|---|---|---|---|
+| `lan` | 2 ms | none | Steam's rate | none | no session: the floor of a wired LAN |
+| `relay-good` | 26 ms (8 + 5 one way) | 2 ms, none | Steam's rate | POP change every 10 min | 2026-11-16, two players relayed via fra for 8 waves: no network stall, one POP change; direct ping on the same lines 15 to 18 ms, the relay's 10 ms estimated |
+| `relay-typical` | 40 ms (12 + 8) | 6 ms, 0.5 % | Steam's rate | 150 to 300 ms every 1 to 2 min | the stall tests' client (Steam ping 25 ms) through a relay; the three-player session of 2026-11-16, whose gaps were almost all scene changes; loss never logged, assumed |
+| `bad` | 200 ms (70 + 30) | 25 ms, 3 % | 64 KB/s | 300 to 800 ms every 4 to 10 s; POP change every minute | the worst of each measurement, more often: the three-player session's backlogs (20 to 250 KB, pings of about 1 s), a slow upload ([Send rate](#send-rate)), the direct route's stalls (300 to 500 ms), a POP change; loss assumed |
+| `stall` | 16 ms (8 + 0) | 2 ms, none | Steam's rate | 300 to 500 ms every 20 to 50 s, and 0.5 to 3.3 s on a 12 s beat (0.44 a beat) | the direct route of 2026-11-16 as measured (22 long stalls in 10 minutes) |
+
+`none` (and no `BT_LOCAL_PROFILE`) is no latency at all, the emulator's default. The ping is the
+sum of both sides' one-way base latency (each side's packets carry its own), without jitter or
+queue, as Steam reports it.
+
+What each shows in the host's log ([Diagnostics](#11-diagnostics)):
+
+- `lan`: the first path line per member ("relayed via lcl (Steam ping 2 ms)") and nothing else
+  from the network: the baseline for a change that should stay quiet.
+- `relay-good`: as `lan` with a realistic ping (the lobby page's ping and "with frame time"), and
+  after 10 minutes one path line for the POP change.
+- `relay-typical`: now and then a short stall: a gap line ("held up on the way") at most every
+  minute or two, a Slow answer when a PING falls into it.
+- `bad`: every line: path changes ("relayed via lcx (peer's POP lcl)"), Slow answers with
+  Steam's numbers and "; reliable in the last 2 s: ...", "Reliable burst to ..." when the shop's
+  states back up on the 64 KB/s line, input gaps on the host and snapshot gaps on a client after
+  each stall, and lower quality values. The game stays playable but visibly behind.
+- `stall`: the direct-route stalls: gap lines of 300 ms to 3.3 s, the long ones about every
+  half minute, and the render delay and prediction riding out the short ones.
+
+Switching at run time: `set_profile(name)` (the director's `set_profile`, launcher `-Profile
+<name> -On <instance>`) applies to what is sent from then on. What is on its way keeps its time:
+an unreliable message sent after a switch to a faster profile overtakes, a reliable one waits for
+the reliable ones before it. The stall and POP schedule starts again with the new profile.
+`link.bring_forward(now, msec)` moves every scheduled stall and POP change to at most msec from
+now, for tests.
+
+Failures on command: `fail_next_sends(count, result)` makes the next reliable sends answer
+LimitExceeded (25) or another EResult: the transport reports `send_failed`, and on the host the
+Session queues a full resync and runs it ("Full resync for ..."). `fail_sessions(reason)` fails
+every live session at both ends with Steam's end reason (default 5003): the transport logs the
+failure, and after the next message link_watch logs "Session with ... up again ... after it
+failed: relayed via lcl". `stall(msec)` stalls the line now. The director's `fail_send`,
+`fail_session` and `stall` call these (launcher `-FailSend`, `-FailSession`, `-Stall`).
+
+Quality and rates: `remote_quality` is the share of this side's transmissions that arrived (a
+reliable message lost twice is three transmissions, one arrived), `local_quality` the same for
+the peer's transmissions, as its packets report it. Both are -1 until connected and counted once;
+after that a second's counts make a new value once 20 or more transmissions weigh in, each
+second's counts half as much in the next. Packets and bytes per second out and in are the last
+full second's, by GodotSteam 3.x's names (`packets_out_per_second`, `bytes_out_per_second`, ...);
+the mod does not read them, `status.json` shows them.
+
+**Wires.** A wire has `send_packet(packet: Dictionary) -> bool` (false: the peer is unknown or
+gone) and hands what arrives to the target's `receive_packet(packet)`; when a peer's game is gone
+it calls `wire_lost(remote_id)` on the others. Packets are dictionaries of plain values with `k`
+(kind: `msg`, `accepted`, `close`, `fail`, `refused`, `join`, `join_fail`, `leave`, `lobby`),
+`from` and `to`, safe for `var2bytes`. `wire_memory.gd` carries them within one process through
+`var2bytes` / `bytes2var` and gives all its emulators one manual clock (`step(msec)` moves it and
+polls every emulator by steam id), so a test runs the same every time.
+
+Not there yet, or simplified:
+
+- Gamepads are not routed per window yet: play with keyboard and mouse. The director presses keys
+  only (no mouse, no pad).
+- Steam's real ordering races between lobby updates and messages are not injected: both take the
+  same base latency.
+- Nagle (`SEND_NO_NAGLE`) is not modelled. A stall holds messages, not lobby traffic. A long stall
+  never times a session out (Steam would after 10 s); `fail_sessions` does that on command.
+- The profiles' loss and the relayed pings of `relay-good` and `relay-typical` are assumptions:
+  no session logged them.
+- A lobby whose owner left keeps the first owner in its id, so a later join finds no lobby.
+
+Tests: the suites `emulator` (the emulator on the memory wire), `emulator_transport` (a real
+`Transport` and `Session` per player, bound to emulators: hosting, joining, HELLO / WELCOME,
+messages both ways, send results down to the full resync, leave, kick, a game that is gone, a
+failed session and its restart, another version's lobby tag) and `emulator_wire` (`wire_tcp.gd`
+with real sockets on 127.0.0.1 in one process: framing, token, roster, join, messages, relay
+through the host, a client and the host leaving; every dev mod script compiles) and
+`emulator_profiles` (each profile's ping, both directions, the stall profile over two minutes,
+the line rate, loss and quality, rates, lobby latency, switching, forced failures; then a real
+`Transport` and `Session` per player under `bad` and `lan`: under `bad` the host's path change,
+Slow answer, traffic and gap lines and a full resync after a forced failed send, under `lan` none
+of these lines). That last part keeps real time at or behind the emulators' clock, because the
+Session times with `OS.get_ticks_msec()`: a delay the profile makes is then certain to show, and
+about 9 s of the suite are this wait. The suite `director` runs the director in one process:
+command files and answers, keys and buttons, the state and its matching, and the link commands on
+a real emulator.
 
 ## 5. State stream and run state
 
