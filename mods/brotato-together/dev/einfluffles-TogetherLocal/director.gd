@@ -2,7 +2,9 @@ extends Node
 # The scenario director of one local-play instance: commands as JSON files in <dir>/control/,
 # handled one at a time in the order of their file names, each answered in <dir>/out/<id>.json.
 # tools\play-local.ps1 writes them (-Screenshot, -Key, -Do, -Scenario, and the link's -Profile,
-# -FailSession, -FailSend, -Stall): the one control mechanism of an instance. Docs:
+# -FailSession, -FailSend, -Stall): the one control mechanism of an instance. A scenario
+# (scenario_runner.gd, scenarios.gd) runs its commands through execute(), from the command
+# "scenario" or, in tools/check-pair.sh's headless games, from the start. Docs:
 # docs/implementation.md, "Local play (dev mod)", director.
 #
 # A command: {"cmd": "<name>", ...}; its id is the file's name without .json. The answer:
@@ -13,12 +15,17 @@ extends Node
 
 const MenuDriver := preload("res://mods-unpacked/einfluffles-TogetherLocal/menu_driver.gd")
 const LinkProfiles := preload("res://mods-unpacked/einfluffles-TogetherLocal/link_profiles.gd")
+const ScenarioRunner := preload(
+	"res://mods-unpacked/einfluffles-TogetherLocal/scenario_runner.gd"
+)
+const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
 const POLL_SEC := 0.1
 const WAIT_SEC := 30.0  # default timeout of the commands that wait
 const RESERVED := ["id", "cmd", "timeout_sec"]
 const COMMANDS := [
 	"screenshot", "press", "button", "wait_for", "query", "host_lobby", "join", "invite", "leave",
-	"quit", "set_profile", "fail_session", "fail_send", "stall", "debug", "language"
+	"kick", "quit", "set_profile", "fail_session", "fail_send", "stall", "debug", "language",
+	"mod_version", "scenario"
 ]
 
 var local: Node = null  # mod_main.gd of the dev mod
@@ -27,9 +34,13 @@ var driver = null  # menu_driver.gd
 var done := 0
 var last := ""  # "<id> <cmd> ok|failed"
 var shots := 0
+var peer_ready_count := 0  # the session's peer_ready signals so far
+var runner = null  # scenario_runner.gd while a scenario runs
+var headless := OS.get_name() == "Server"  # Godot's headless build (tools/check-pair.sh)
 
 var _left := 0.0
 var _busy := false
+var _real_mod_version := ""  # the manifest's, before mod_version changed it
 
 
 func _init(local_mod: Node, instance_dir: String) -> void:
@@ -44,9 +55,15 @@ func _ready() -> void:
 	var folder := Directory.new()
 	for sub in ["control", "out", "shots"]:
 		folder.make_dir_recursive(dir.plus_file(sub))
+	var together := get_node_or_null(local.TOGETHER_PATH)
+	var session = together.get("session") if together != null else null
+	if session != null:
+		session.connect("peer_ready", self, "_on_peer_ready")
 
 
 func _process(delta: float) -> void:
+	if headless:  # desktop platforms flush parsed input events every frame, the headless one never
+		Input.flush_buffered_events()
 	if _busy or dir == "":
 		return
 	_left -= delta
@@ -98,28 +115,63 @@ func _handle(file: String) -> void:
 		text = reader.get_as_text()
 		reader.close()
 	Directory.new().remove(path)
-	var started := OS.get_ticks_msec()
 	var parsed := parse(text, file.get_basename())
 	var command: Dictionary = parsed[0]
-	var answer := {"id": command.id, "cmd": command.get("cmd", ""), "ok": false, "error": parsed[1]}
+	var answer := {}
 	if parsed[1] == "":
-		local.log_info("Director: %s %s" % [command.id, _describe(command)])
-		var outcome = yield(call("_cmd_" + command.cmd, command), "completed")
-		answer["ok"] = outcome[0] == ""
-		answer["error"] = outcome[0]
-		answer["result"] = outcome[1]
+		answer = yield(execute(command), "completed")
 	else:
 		yield(get_tree(), "idle_frame")
+		answer = {"id": command.id, "cmd": command.get("cmd", ""), "ok": false, "error": parsed[1]}
+		answer["msec"] = 0
+		answer["state"] = state()
+		_count(answer)
+	write_answer(answer)
+	_busy = false
+	var result = answer.get("result")
+	if answer.ok and (answer.cmd == "quit" or result is Dictionary and result.get("quit", false)):
+		quit_game()
+
+
+# Runs one parsed command: the command files' way in and the scenario runner's. Yields; the
+# result is the answer (id, cmd, ok, error, msec, result, state).
+func execute(command: Dictionary):
+	var started := OS.get_ticks_msec()
+	local.log_info("Director: %s %s" % [command.id, _describe(command)])
+	var outcome = yield(call("_cmd_" + command.cmd, command), "completed")
+	var answer := {"id": command.id, "cmd": command.cmd, "ok": outcome[0] == ""}
+	answer["error"] = outcome[0]
+	answer["result"] = outcome[1]
 	answer["msec"] = OS.get_ticks_msec() - started
 	answer["state"] = state()
-	write_answer(answer)
+	_count(answer)
+	return answer
+
+
+func _count(answer: Dictionary) -> void:
 	done += 1
 	last = "%s %s %s" % [answer.id, answer.cmd, "ok" if answer.ok else "failed"]
 	if not answer.ok:
 		local.log_info("Director: %s failed: %s" % [answer.id, answer.error])
-	_busy = false
-	if answer.ok and answer.cmd == "quit":
-		get_tree().notification(MainLoop.NOTIFICATION_WM_QUIT_REQUEST)  # as the window's close
+
+
+# A scenario from the start (BT_LOCAL_SCENARIO, tools/check-pair.sh): no command files meanwhile;
+# afterwards the game closes. peers empty: the default ones.
+func run_scenario_and_quit(scenario: String, run: String, peers: Array) -> void:
+	_busy = true
+	var command := {"id": "scenario-%s" % run.validate_node_name(), "cmd": "scenario"}
+	command["name"] = scenario
+	command["run"] = run
+	if not peers.empty():
+		command["peers"] = peers
+	var answer = yield(execute(command), "completed")
+	write_answer(answer)
+	quit_game()
+
+
+# Closes the game as its window's close button does: the others see it leave.
+func quit_game() -> void:
+	get_tree().notification(MainLoop.NOTIFICATION_WM_QUIT_REQUEST)
 
 
 static func _describe(command: Dictionary) -> String:
@@ -153,8 +205,33 @@ func state() -> Dictionary:
 			"id": transport.lobby_id,
 		}
 	snapshot["lobby"] = lobby
+	snapshot["session"] = _session_state()
 	snapshot["role"] = local.role
 	return snapshot
+
+
+# The mod's session as the scenarios check it: ready peers (the handshake done), peer_ready
+# signals so far (a handshake each, then one per full resync), the lobby error the player was
+# shown last (a rejection, a kick, the host gone), this game's mod version (Compat).
+func _session_state() -> Dictionary:
+	var together := get_node_or_null(local.TOGETHER_PATH)
+	var session = together.get("session") if together != null else null
+	var ready := 0
+	if session != null:
+		for steam_id in session.peers:
+			if session.peers[steam_id].ready:
+				ready += 1
+	var lobby_menu := _lobby_menu()
+	return {
+		"ready": ready,
+		"peer_ready": peer_ready_count,
+		"error": lobby_menu.last_error if lobby_menu != null else "",
+		"mod_version": Compat.mod_version(),
+	}
+
+
+func _on_peer_ready(_steam_id: int) -> void:
+	peer_ready_count += 1
 
 
 func _lobby_menu() -> Node:
@@ -299,6 +376,66 @@ func _cmd_leave(command: Dictionary):
 	lobby_menu.leave()  # Leave lobby, on the title screen's frame and the lobby page
 	var outcome = yield(_wait({"lobby.in": false}, _timeout(command)), "completed")
 	return [outcome[0], {}]
+
+
+# Host: removes the player `peer` (a steam id; default: every other member) as the lobby page's
+# kick button does (Session.kick), then waits until the transport no longer lists it.
+func _cmd_kick(command: Dictionary):
+	var lobby_menu := _lobby_menu()
+	var transport: Node = local.transport
+	if lobby_menu == null or transport == null or not transport.is_active() or not transport.is_host():
+		yield(get_tree(), "idle_frame")
+		return ["only the host's game in a lobby kicks", {}]
+	var ids := [int(command.peer)] if command.has("peer") else transport.members.duplicate()
+	if ids.empty():
+		yield(get_tree(), "idle_frame")
+		return ["nobody to kick", {}]
+	for steam_id in ids:
+		lobby_menu.kick(steam_id)
+	var until := OS.get_ticks_msec() + int(_timeout(command) * 1000.0)
+	while true:
+		yield(get_tree(), "idle_frame")
+		var left := []
+		for steam_id in ids:
+			if steam_id in transport.members:
+				left.append(steam_id)
+		if left.empty():
+			return ["", {"kicked": ids}]
+		if OS.get_ticks_msec() >= until:
+			return ["still members after %s s: %s" % [_timeout(command), left], {"kicked": ids}]
+
+
+# This game's brotato:together version (the manifest's version_number, which HELLO carries) is
+# `version` from now on, as a game with another build would have it; "" gives back the real one.
+func _cmd_mod_version(command: Dictionary):
+	yield(get_tree(), "idle_frame")
+	var mod_data = ModLoaderMod.get_mod_data(Compat.MOD_ID)
+	if mod_data == null or mod_data.manifest == null:
+		return ["brotato:together is not loaded", {}]
+	if _real_mod_version == "":
+		_real_mod_version = str(mod_data.manifest.version_number)
+	var version := str(command.get("version", ""))
+	mod_data.manifest.version_number = version if version != "" else _real_mod_version
+	local.log_info("brotato:together version now %s (director)" % Compat.mod_version())
+	return ["", {"mod_version": Compat.mod_version(), "real": _real_mod_version}]
+
+
+# A scenario (scenarios.gd) with the other games of the session, each running its own part in
+# step with them (scenario_runner.gd): `name`, `run` (the exchange's id, the same for every game),
+# `peers` (the instances, default host and client1), `shots` (a screenshot after each step).
+# Fails when the scenario does; the result has its lines.
+func _cmd_scenario(command: Dictionary):
+	var scenario_name := str(command.get("name", ""))
+	var peers: Array = command.get("peers", ScenarioRunner.DEFAULT_PEERS)
+	runner = ScenarioRunner.new(self, scenario_name, str(command.get("run", "")), peers)
+	runner.shots = bool(command.get("shots", false))
+	if command.has("timeout_sec"):
+		runner.limit_sec = _timeout(command)
+	var error = yield(runner.run(), "completed")
+	var result := {"passed": error == "", "lines": runner.lines, "shots": runner.shot_paths}
+	result["quit"] = runner.quits
+	runner = null
+	return [error, result]
 
 
 func _cmd_quit(_command: Dictionary):

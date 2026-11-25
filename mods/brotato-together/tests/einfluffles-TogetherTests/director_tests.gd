@@ -1,13 +1,18 @@
 extends Reference
 # The local-play director (dev mod: director.gd, menu_driver.gd) in one process: command files
 # in, answers out, keys and buttons through the game's input, the screen snapshot and its
-# matching. The scenarios themselves need game windows (tools\play-local.ps1 -Scenario).
+# matching, and the scenario runner's steps between two directors. The scenarios themselves need
+# two games: tools/check-pair.sh (headless) and tools\play-local.ps1 -Scenario (windows).
 
 const Director := preload("res://mods-unpacked/einfluffles-TogetherLocal/director.gd")
 const MenuDriver := preload("res://mods-unpacked/einfluffles-TogetherLocal/menu_driver.gd")
 const SteamEmulator := preload(
 	"res://mods-unpacked/einfluffles-TogetherLocal/steam_emulator.gd"
 )
+const ScenarioRunner := preload(
+	"res://mods-unpacked/einfluffles-TogetherLocal/scenario_runner.gd"
+)
+const Scenarios := preload("res://mods-unpacked/einfluffles-TogetherLocal/scenarios.gd")
 const TEST_DIR := "user://director_tests"
 const ANSWER_MSEC := 3000
 
@@ -37,6 +42,8 @@ func run(test_mod: Node):
 	_test_matches()
 	yield(_test_buttons(), "completed")
 	yield(_test_commands(), "completed")
+	_test_scenario_list()
+	yield(_test_runner(), "completed")
 
 
 func _test_parse() -> void:
@@ -244,6 +251,107 @@ func _test_link_commands(local: Node):
 		"director: fail_session fails a peer's session, and says when there is none (%s, %s)"
 		% [answers["0011-session"].get("error"), info]
 	)
+
+
+# Every scenario name has its function, and the headless ones are scenarios.
+func _test_scenario_list() -> void:
+	var scenarios = Scenarios.new()
+	var missing := []
+	for scenario in Scenarios.NAMES:
+		if not scenarios.has_method("scenario_" + scenario):
+			missing.append(scenario)
+	for scenario in Scenarios.HEADLESS:
+		if not scenario in Scenarios.NAMES:
+			missing.append(scenario)
+	t._check(missing.empty(), "director: every scenario has its function (missing: %s)" % [missing])
+	t._check(
+		"scenario" in Director.COMMANDS and "kick" in Director.COMMANDS,
+		"director: scenarios and kicks are commands"
+	)
+
+
+# Two games' runners in one process, each with its director in a sibling folder: a step is
+# carried out by the games it names and its answers reach every game; a failure in one game
+# stops the other one's wait at once.
+func _test_runner():
+	var pair := TEST_DIR.plus_file("pair")
+	var games := {}
+	for name in ScenarioRunner.DEFAULT_PEERS:
+		var local := FakeLocal.new()
+		local.role = "host" if name == "host" else "client"
+		local.emulator = SteamEmulator.new(1 if name == "host" else 2, name)
+		t.add_child(local)
+		var director = Director.new(local, pair.plus_file(name))
+		local.add_child(director)
+		var runner = ScenarioRunner.new(director, "join", "runner-test", ScenarioRunner.DEFAULT_PEERS)
+		runner.echo = false  # its ok and FAIL lines are not this suite's
+		games[name] = {"local": local, "director": director, "runner": runner}
+	var host = games.host.runner
+	var client = games.client1.runner
+	t._check(
+		host.me == "host" and client.me == "client1",
+		"director: a game's name in a scenario is its folder's name"
+	)
+	var results := {}
+	var each := {"host": {"cmd": "query"}, "client1": {"cmd": "press", "key": "Shift"}}
+	_step_into(host, "all", each, results, "host")
+	_step_into(client, "all", each, results, "client")
+	yield(_until(results, 2), "completed")
+	var same: bool = (
+		results.has("host") and results.has("client")
+		and results.host.size() == 2 and results.client.size() == 2
+		and JSON.print(results.host) == JSON.print(results.client)
+	)
+	t._check(
+		same and results.host[0].cmd == "query" and results.host[1].cmd == "press",
+		"director: every game of a step gets every game's answer, the same ones (%s)" % [results.keys()]
+	)
+	t._check(
+		games.host.director.done == 1 and games.client1.director.done == 1,
+		"director: ... each game carried out its own command only"
+	)
+	results.clear()
+	host.check(false, "a check that fails")
+	_step_into(client, "host", {"cmd": "query"}, results, "client")
+	var started := OS.get_ticks_msec()
+	while client.failed == "" and OS.get_ticks_msec() - started < ANSWER_MSEC:
+		yield(t.get_tree(), "idle_frame")
+	t._check(
+		host.failed != "" and "host" in client.failed and not results.has("client"),
+		"director: a game that fails stops the others' wait (%s)" % client.failed
+	)
+	for name in games:
+		games[name].local.queue_free()
+	yield(t.get_tree(), "idle_frame")
+	_clear_tree(pair)
+
+
+func _step_into(runner, actors, command: Dictionary, results: Dictionary, key: String):
+	var answers = yield(runner.on(actors, command), "completed")
+	results[key] = answers
+
+
+func _until(results: Dictionary, count: int):
+	var until := OS.get_ticks_msec() + ANSWER_MSEC
+	yield(t.get_tree(), "idle_frame")
+	while results.size() < count and OS.get_ticks_msec() < until:
+		yield(t.get_tree(), "idle_frame")
+
+
+func _clear_tree(path: String) -> void:
+	var folder := Directory.new()
+	if folder.open(path) != OK:
+		return
+	folder.list_dir_begin(true, true)
+	var entry := folder.get_next()
+	while entry != "":
+		if folder.current_is_dir():
+			_clear_tree(path.plus_file(entry))
+		else:
+			folder.remove(path.plus_file(entry))
+		entry = folder.get_next()
+	folder.list_dir_end()
+	folder.remove(path)
 
 
 func _command(id: String, command: Dictionary) -> void:

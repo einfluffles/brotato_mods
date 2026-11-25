@@ -4,7 +4,7 @@ extends Node
 # after brotato:together (manifest dependency). Inert unless every rule of refusal() passes:
 # BT_LOCAL_ROLE is set, Steam is not logged on here, the game is not the Steam build (feature
 # "steam") and its user folder is not the game's own. Otherwise one log line and nothing else.
-# The launcher (tools\play-local.ps1) sets the environment:
+# The launchers (tools\play-local.ps1, tools/check-pair.sh) set the environment:
 #   BT_LOCAL_ROLE      host | client
 #   BT_LOCAL_ID        the instance's number (default 1 for the host, 2 for a client)
 #   BT_LOCAL_NAME      its persona name
@@ -17,6 +17,10 @@ extends Node
 #   BT_LOCAL_PROFILE   the link profile of what this game sends (link_profiles.gd: lan, relay-good,
 #                      relay-typical, bad, stall); none: no latency at all. Switched at run time
 #                      by the director's set_profile (director.gd).
+#   BT_LOCAL_SCENARIO  a scenario (scenarios.gd) this game runs from the start with the others,
+#                      then it closes: tools/check-pair.sh's headless pairs. With it:
+#   BT_LOCAL_RUN       the scenario's run id (the same in every game of the pair)
+#   BT_LOCAL_PEERS     the instances that take part, comma-separated (default host,client1)
 # A client joins through the real launch option "+connect_lobby <lobby id>", which the transport
 # acts on when it is first bound: a client binds once the host's game is online and owns that
 # lobby. Docs: docs/implementation.md, "Local play (dev mod)".
@@ -115,7 +119,23 @@ func _ready() -> void:
 		ModLoaderLog.warning(_profile_note, LOG_NAME)
 	if connect_lobby != 0:
 		log_info("Joins lobby %s (%s) once the host's game has it" % [connect_lobby, CONNECT_ARG])
+	_start_scenario()
 	set_process(true)
+
+
+# BT_LOCAL_SCENARIO: the director runs it from the start, then the game closes.
+func _start_scenario() -> void:
+	var scenario := OS.get_environment("BT_LOCAL_SCENARIO").strip_edges()
+	if scenario == "":
+		return
+	if director == null:
+		ModLoaderLog.warning("No scenario %s: BT_LOCAL_DIR is not set" % scenario, LOG_NAME)
+		return
+	var peers := []
+	for peer in OS.get_environment("BT_LOCAL_PEERS").split(",", false):
+		peers.append(peer.strip_edges())
+	var run := OS.get_environment("BT_LOCAL_RUN").strip_edges()
+	director.call_deferred("run_scenario_and_quit", scenario, run, peers)
 
 
 # Called by local_transport.gd from the transport's setup: true, as the engine's bind would be.
