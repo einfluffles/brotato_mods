@@ -152,6 +152,7 @@ const NonFiniteTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/non_finite_tests.gd"
 )
 const L10nTests := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_tests.gd")
+const DirectorTests := preload("res://mods-unpacked/einfluffles-TogetherTests/director_tests.gd")
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -178,6 +179,7 @@ const SUITES := [
 	"hit_numbers",
 	"looks",
 	"damage",
+	"director",
 	"damage_run",
 	"battle_scene",
 	"dig_site",
@@ -573,6 +575,11 @@ func _suite_emulator_wire(_together: Node) -> void:
 
 func _suite_emulator_profiles(_together: Node) -> void:
 	EmulatorProfilesTests.new(self).run()
+
+
+func _suite_director(_together: Node):
+	_suite = DirectorTests.new()
+	yield(_suite.run(self), "completed")
 
 
 func _suite_progress(together: Node) -> void:

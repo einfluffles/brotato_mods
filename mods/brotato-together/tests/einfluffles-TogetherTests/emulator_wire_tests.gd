@@ -22,6 +22,8 @@ const DEV_SCRIPTS := [
 	"wire_tcp.gd",
 	"local_instance.gd",
 	"local_transport.gd",
+	"director.gd",
+	"menu_driver.gd",
 ]
 const CHAT_DISCONNECTED := 4
 
