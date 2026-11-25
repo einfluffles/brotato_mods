@@ -27,6 +27,9 @@ extends Node
 #                      looks at them.
 #   BT_LOCAL_JOYPAD    which gamepads drive this game: all (unset), none, or device numbers
 #                      (joypad_filter.gd); every game process gets the pads' input otherwise.
+#   BT_LOCAL_REF       the name of the other build this game runs (-ClientRef / -HostRef, or a
+#                      scenario's client_ref in tools/check-pair.sh); unset: this worktree's.
+#                      Only shown: the director's state has it as "ref".
 # An older build of brotato:together without Transport.bind_steam (a release before the local-play
 # seam, tools\play-local.ps1 -ClientRef) is bound the way its setup bound GodotSteam.
 # A client joins through the real launch option "+connect_lobby <lobby id>", which the transport

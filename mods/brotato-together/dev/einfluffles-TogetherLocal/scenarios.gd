@@ -1,4 +1,4 @@
-extends Reference
+extends "res://mods-unpacked/einfluffles-TogetherLocal/scenario_steps.gd"
 # The scenarios of local play, one coroutine each (scenario_<name>), run by scenario_runner.gd in
 # every game of a session at once: in game windows by tools\play-local.ps1 -Scenario <name> (with a
 # screenshot after every step), headless by tools/check-pair.sh (PAIR-TESTS lines). One
@@ -8,133 +8,34 @@ extends Reference
 # The host's runs use the game's own test settings (debug: invulnerable, short waves), so nobody
 # dies and a wave takes 10 to 20 s. Docs: docs/testing.md ("Director and scenarios", "Pair tests").
 #
-# A new scenario: a function scenario_<name>(r) here, its name in NAMES (and in HEADLESS when it
-# needs no screenshots to say something), its row in docs/testing.md.
+# The shared steps (lobby_step, character_join_step, ...) are in scenario_steps.gd. A new
+# scenario: a function scenario_<name>(r) here, its name in NAMES (and in HEADLESS when it
+# needs no screenshots to say something), its launch settings in LAUNCH when it needs any, its
+# row in docs/testing.md.
 
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
 const NAMES := [
 	"join", "join_wave_shop", "resume_leave_rejoin", "host_quits", "client_quits", "kick",
-	"version_mismatch", "bad_resync", "language"
+	"version_mismatch", "bad_resync", "language", "three_players", "dlc_borrow",
+	"version_mismatch_build"
 ]
 # What tools/check-pair.sh runs by default: every scenario with checks (language has none).
 const HEADLESS := [
 	"join", "join_wave_shop", "resume_leave_rejoin", "host_quits", "client_quits", "kick",
-	"version_mismatch", "bad_resync"
+	"version_mismatch", "bad_resync", "three_players", "dlc_borrow", "version_mismatch_build"
 ]
-const H := "host"
-const C := "client1"
-const BOTH := ["host", "client1"]
-const BOOT_SEC := 150  # the first wait: a first boot after fresh files took up to 46 s
-const JOIN_HOLD_MSEC := 1500  # holding accept joins a co-op slot after about 0.7 s
+# What a scenario needs from the launcher, one line each, read as text by tools\play-local.ps1
+# and tools/check-pair.sh (keep the form "<name>": "key=value ..."): clients (how many), host_dlcs
+# and client_dlcs (BT_LOCAL_DLCS: all, none or ids), no_join=1 (nobody hosts or joins by itself),
+# client_ref or host_ref (that side runs brotato:together of a git ref; last_release: the newest
+# tag brotato-together/*). A launcher option given by hand wins over the scenario's setting.
+const LAUNCH := {
+	"three_players": "clients=2",
+	"dlc_borrow": "host_dlcs=all client_dlcs=none",
+	"version_mismatch_build": "no_join=1 client_ref=last_release",
+}
+const LAUNCH_KEYS := ["clients", "host_dlcs", "client_dlcs", "no_join", "client_ref", "host_ref"]
 const OTHER_VERSION := "0.0.0-pair"
-
-
-# --- Shared parts ---
-
-
-# Both games in the host's lobby at the title screen with the handshake done; the host's runs are
-# short and nobody dies (the game's DebugService: the director's debug command).
-func lobby_step(r, wave_sec: int):
-	yield(r.step("lobby"), "completed")
-	var settings := {"cmd": "debug", "invulnerable": true, "wave_sec": wave_sec}
-	yield(r.on(H, settings), "completed")
-	var lobby := {"cmd": "wait_for", "scene": "title_screen", "session.ready": 1}
-	lobby["timeout_sec"] = BOOT_SEC
-	var each := {H: _with(lobby, {"lobby.members": 2}), C: _with(lobby, {"lobby.in": true})}
-	yield(r.on(BOTH, each), "completed")
-
-
-static func _with(command: Dictionary, more: Dictionary) -> Dictionary:
-	var merged := command.duplicate()
-	for key in more:
-		merged[key] = more[key]
-	return merged
-
-
-# Start on the host, then both players hold accept to join: the host's player first. Players
-# who are still in from a run before do not hold again.
-func character_join_step(r, suffix := ""):
-	yield(r.step("character_selection" + suffix), "completed")
-	yield(r.on(H, {"cmd": "button", "name": "StartButton"}), "completed")
-	yield(r.on(BOTH, {"cmd": "wait_for", "scene": "character_selection"}), "completed")
-	yield(r.pause(1.0), "completed")
-	var state = yield(r.state(H), "completed")
-	if state.players < 1:
-		yield(r.on(H, _hold()), "completed")
-	yield(r.on(H, {"cmd": "wait_for", "players": 1, "timeout_sec": 10}), "completed")
-	state = yield(r.state(H), "completed")
-	if state.players < 2:
-		yield(r.on(C, _hold()), "completed")
-	yield(r.on(H, {"cmd": "wait_for", "players": 2, "timeout_sec": 10}), "completed")
-	yield(r.pause(1.0), "completed")
-
-
-static func _hold() -> Dictionary:
-	return {"cmd": "press", "key": "Enter", "hold_ms": JOIN_HOLD_MSEC}
-
-
-# Accept on both games, screen by screen (character, weapon, difficulty), until the host's scene
-# is `target`. Each new screen is a step of its own.
-func select_until(r, target: String, suffix := "", max_presses := 12):
-	var seen := "character_selection"
-	for _i in max_presses:
-		var state = yield(r.state(H), "completed")
-		if state.scene == target:
-			break
-		if state.scene != seen:
-			seen = state.scene
-			yield(r.step(seen + suffix), "completed")
-			yield(r.on(C, {"cmd": "wait_for", "scene": seen}), "completed")
-		yield(r.on(BOTH, {"cmd": "press", "key": "Enter"}), "completed")
-		yield(r.pause(1.5), "completed")
-	yield(r.on(BOTH, {"cmd": "wait_for", "scene": target}), "completed")
-
-
-# From the start of the wave to the shop: XP and gold for every player (a level-up at the end
-# of the wave, gold to buy with), the level-up panels chosen with accept on both games.
-func wave_to_shop(r, wave_sec: int, suffix := ""):
-	yield(r.step("wave" + suffix), "completed")
-	yield(r.on(H, {"cmd": "debug", "xp": 20, "gold": 100}), "completed")
-	yield(r.pause(4.0), "completed")
-	var level_up := false
-	for _i in wave_sec + 60:  # a count, not a clock: the same in every game
-		var state = yield(r.state(H), "completed")
-		if state.scene == "coop_shop":
-			break
-		if state.scene == "main" and state.get("upgrades", false):
-			if not level_up:
-				level_up = true
-				yield(r.step("level_up" + suffix), "completed")
-				yield(r.pause(1.0), "completed")
-				yield(r.end_step(), "completed")
-			yield(r.on(BOTH, {"cmd": "press", "key": "Enter"}), "completed")
-		yield(r.pause(1.0), "completed")
-	r.check(level_up, "the wave ended with level-up panels")
-	yield(r.step("shop" + suffix), "completed")
-	yield(r.on(BOTH, {"cmd": "wait_for", "scene": "coop_shop"}), "completed")
-	yield(r.pause(2.0), "completed")
-
-
-# The host quits the run to the title screen (Pause, Quit, Confirm); the client follows.
-func host_quits_run(r):
-	yield(r.on(H, {"cmd": "press", "key": "Escape"}), "completed")
-	yield(r.on(H, {"cmd": "button", "name": "QuitButton"}), "completed")
-	yield(r.on(H, {"cmd": "button", "name": "ConfirmButton"}), "completed")
-	yield(r.on(BOTH, {"cmd": "wait_for", "scene": "title_screen"}), "completed")
-
-
-# Holds accept in `name`'s game to join a slot. With screenshots, every game takes one while it
-# is held (<NN>-<step>-holding: the join's progress, before it takes the slot).
-func join_hold(r, name: String):
-	if not r.shots:
-		yield(r.on(name, _hold()), "completed")
-		return
-	var holding: String = r.tag() + "-holding"
-	var commands := {}
-	for other in r.peers:
-		commands[other] = {"cmd": "screenshot", "name": holding, "after_ms": 450}
-	commands[name] = _with(_hold(), {"shot": holding, "shot_ms": 400})
-	yield(r.on(r.peers, commands), "completed")
 
 
 # --- Scenarios ---
@@ -175,18 +76,7 @@ func scenario_join_wave_shop(r):
 	yield(select_until(r, "main"), "completed")
 	yield(wave_to_shop(r, wave_sec), "completed")
 	yield(r.step("client_buys"), "completed")
-	var before = yield(r.state(H), "completed")
-	yield(r.on(C, {"cmd": "press", "key": "Enter"}), "completed")
-	yield(r.pause(2.0), "completed")
-	var after = yield(r.state(H), "completed")
-	var gear_before := int(before.run.items[1] + before.run.weapons[1])
-	var gear_after := int(after.run.items[1] + after.run.weapons[1])
-	r.check(
-		after.run.gold[1] < before.run.gold[1] and gear_after > gear_before,
-		"the client's player bought something on the host (gold %s -> %s, gear %s -> %s)" % [
-			before.run.gold[1], after.run.gold[1], gear_before, gear_after
-		]
-	)
+	yield(clients_buy(r), "completed")
 
 
 # Host and client play wave 1 into the shop; the host quits to the title screen and continues
@@ -418,3 +308,158 @@ func scenario_language(r):
 		yield(wave_to_shop(r, wave_sec, "-" + locale), "completed")
 		yield(r.step("title-" + locale), "completed")
 		yield(host_quits_run(r), "completed")
+
+
+# Host and two or three clients (LAUNCH: clients=2; -Clients 3 in windows): all join, wave 1
+# with its level-up, the shop, every client buys.
+func scenario_three_players(r):
+	var wave_sec := 12
+	r.check(r.peers.size() >= 3, "a host and at least two clients (%s)" % [r.peers])
+	yield(lobby_step(r, wave_sec), "completed")
+	yield(character_join_step(r), "completed")
+	yield(select_until(r, "main"), "completed")
+	var host = yield(r.state(H), "completed")
+	r.check(
+		host.run.coop and host.run.count == r.peers.size(),
+		"a co-op run with %d players (co-op %s, %s players)" % [
+			r.peers.size(), host.run.coop, host.run.count
+		]
+	)
+	yield(wave_to_shop(r, wave_sec), "completed")
+	yield(r.step("clients_buy"), "completed")
+	yield(clients_buy(r), "completed")
+
+
+# The host owns every DLC, the clients none (LAUNCH: host_dlcs=all client_dlcs=none). In the
+# lobby at the title screen a client's game is its own (the borrowed DLC is parked); from
+# character selection on it uses the host's DLC it lacks (session/dlc_borrow.gd) and its lobby
+# details say so (the lobby page, opened from the pause menu in the shop). Back on the title
+# screen the DLC is parked again, and after leaving the lobby it is gone.
+func scenario_dlc_borrow(r):
+	var wave_sec := 10
+	var host = yield(r.state(H), "completed")
+	var host_dlcs: Array = host.dlcs.owned
+	r.check(not host_dlcs.empty(), "the host owns DLC (%s)" % [host_dlcs])
+	var missing := {}
+	var lacking := 0
+	for name in clients(r):
+		var client = yield(r.state(name), "completed")
+		missing[name] = []
+		for dlc_id in host_dlcs:
+			if not dlc_id in client.dlcs.owned:
+				missing[name].append(dlc_id)
+		lacking += missing[name].size()
+		r.say("  %s owns %s, lacks %s" % [name, client.dlcs.owned, missing[name]])
+	r.check(lacking > 0, "a client lacks a DLC the host owns")
+	yield(lobby_step(r, wave_sec), "completed")
+	yield(clients_own_only(r, "at the title screen in the lobby (parked)"), "completed")
+	yield(character_join_step(r), "completed")
+	yield(r.step("borrowed"), "completed")
+	yield(clients_borrow(r, missing), "completed")
+	yield(select_until(r, "main"), "completed")
+	yield(wave_to_shop(r, wave_sec), "completed")
+	yield(r.step("client_lobby_page"), "completed")
+	yield(r.on(C, {"cmd": "press", "key": "Escape"}), "completed")
+	yield(r.pause(1.0), "completed")
+	yield(r.on(C, {"cmd": "button", "name": "BrotatoTogetherLobbyButton"}), "completed")
+	yield(r.pause(1.5), "completed")
+	yield(clients_borrow(r, missing), "completed")
+	yield(r.step("back_to_title"), "completed")
+	yield(r.on(C, {"cmd": "press", "key": "Escape", "times": 2}), "completed")
+	yield(host_quits_run(r), "completed")
+	yield(r.pause(1.0), "completed")
+	yield(clients_own_only(r, "back at the title screen in the lobby (parked)"), "completed")
+	yield(r.step("clients_leave"), "completed")
+	yield(r.on(clients(r), {"cmd": "leave"}), "completed")
+	yield(r.pause(1.0), "completed")
+	yield(clients_own_only(r, "after leaving the lobby"), "completed")
+
+
+# Every client's game has the DLC it owns, no borrowed one.
+func clients_own_only(r, when: String):
+	for name in clients(r):
+		var state = yield(state_when_size(r, name, "dlcs.borrowed", 0, 10), "completed")
+		r.check(
+			state.dlcs.borrowed.empty() and state.dlcs.available.size() == state.dlcs.owned.size(),
+			"%s has only its own DLC %s (available %s)" % [name, when, state.dlcs.available]
+		)
+
+
+# Every client uses the host's DLC it lacks (`missing`: client -> ids), and its lobby details
+# say so (BT_DLC_BORROWED; every game is in English here).
+func clients_borrow(r, missing: Dictionary):
+	var note: String = Text.text("BT_DLC_BORROWED", [""]).strip_edges()
+	for name in clients(r):
+		var want: Array = missing[name]
+		var state = yield(state_when_size(r, name, "dlcs.borrowed", want.size()), "completed")
+		var borrowed: Array = state.dlcs.borrowed
+		var all_in := borrowed.size() == want.size()
+		for dlc_id in want:
+			all_in = all_in and dlc_id in borrowed
+		r.check(all_in, "%s uses the host's DLC it lacks (%s)" % [name, borrowed])
+		if want.empty():
+			continue
+		var lines := []
+		for line in str(state.lobby.details).split("\n"):
+			if note in line:
+				lines.append(line)
+		r.check(lines.size() == 1, "%s's lobby details: '%s'" % [name, "; ".join(lines)])
+
+
+# One side runs another build of brotato:together (LAUNCH: client_ref=last_release, the newest
+# tag brotato-together/*; -ClientRef or -HostRef name another). Nobody joins by itself: the host
+# opens its lobby, the clients switch to German and accept an invite. The lobby's mod tag
+# (brotato:together and its protocol) turns each client away: it shows why in its own build's
+# words, naming both tags; a client of this worktree in German (BT_ERR_LOBBY_VERSION). The host
+# keeps its lobby, alone, without an error. (version_mismatch: one protocol, another mod version,
+# rejected on HELLO.)
+func scenario_version_mismatch_build(r):
+	var refs := {}
+	var other := false
+	for name in r.peers:
+		var state = yield(r.state(name), "completed")
+		refs[name] = str(state.get("ref", ""))
+		other = other or refs[name] != refs[H]
+	r.check(other, "host and clients run different builds (%s)" % [refs])
+	yield(r.step("lobby"), "completed")
+	yield(r.on(H, {"cmd": "host_lobby"}), "completed")
+	yield(r.on(clients(r), {"cmd": "language", "locale": "de"}), "completed")
+	yield(r.pause(1.0), "completed")
+	var host = yield(r.state(H), "completed")
+	var host_tag: String = host.lobby.tag
+	yield(r.step("clients_refused"), "completed")
+	yield(r.on(clients(r), {"cmd": "join", "wait": false}), "completed")
+	for name in clients(r):
+		var state = null
+		for i in 20:
+			if i > 0:
+				yield(r.pause(1.0), "completed")
+			state = yield(r.state(name), "completed")
+			if state.session.error != "":
+				break
+		var error: String = state.session.error
+		var tag: String = state.lobby.tag
+		r.say("  %s (%s): '%s'" % [name, refs[name] if refs[name] != "" else "this worktree", error])
+		r.check(not state.lobby.in and error != "", "%s is not in the lobby and shows why" % name)
+		r.check(
+			host_tag != tag and host_tag in error and tag in error,
+			"%s's reason names both builds (host %s, own %s)" % [name, host_tag, tag]
+		)
+		if refs[name] == "":  # this worktree's build: the German text
+			var command := {"cmd": "text", "key": "BT_ERR_LOBBY_VERSION", "args": [host_tag, tag]}
+			var text = yield(r.on(name, command), "completed")
+			r.check(
+				str(text[0].result.locale).begins_with("de") and error == text[0].result.text,
+				"%s's reason is its German text ('%s')" % [name, text[0].result.text]
+			)
+	yield(r.pause(2.0), "completed")  # the main menu's error line, for the screenshot
+	yield(r.step("host_unharmed"), "completed")
+	yield(r.pause(3.0), "completed")
+	host = yield(r.state(H), "completed")
+	r.check(
+		host.lobby.in and host.lobby.is_host and host.lobby.members == 1 and host.session.error == "",
+		"the host keeps its lobby, alone, no error (%s, %s members, '%s')" % [
+			host.lobby.in, host.lobby.members, host.session.error
+		]
+	)
+	r.check(host.scene == "title_screen", "the host is on the title screen (%s)" % host.scene)

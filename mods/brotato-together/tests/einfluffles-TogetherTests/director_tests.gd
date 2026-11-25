@@ -194,7 +194,19 @@ func _test_commands():
 		"director: press holds a key at least a tap's time (%s)" % [answers[4].get("result")]
 	)
 	yield(_test_link_commands(local), "completed")
-	t._check(director.done == 12, "director: every command was handled once (%d)" % director.done)
+	_command("0013-text", {"cmd": "text", "key": "BT_ERR_LOBBY_VERSION", "args": ["p1", "p2"]})
+	_command("0014-text", {"cmd": "text", "key": "XX_NO_SUCH_TEXT"})
+	var text = yield(_answer("0013-text"), "completed")
+	var none = yield(_answer("0014-text"), "completed")
+	var wanted: String = Text.text("BT_ERR_LOBBY_VERSION", ["p1", "p2"])
+	t._check(
+		(
+			text.get("ok") == true and text.result.text == wanted and "p2" in wanted
+			and none.get("ok") == false
+		),
+		"director: text answers a translation in the game's language (%s)" % [text.get("result")]
+	)
+	t._check(director.done == 14, "director: every command was handled once (%d)" % director.done)
 	local.queue_free()
 	_clear()
 
@@ -270,6 +282,14 @@ func _test_scenario_list() -> void:
 		if not scenario in Scenarios.NAMES:
 			missing.append(scenario)
 	t._check(missing.empty(), "director: every scenario has its function (missing: %s)" % [missing])
+	var unknown := []
+	for scenario in Scenarios.LAUNCH:
+		if not scenario in Scenarios.NAMES:
+			unknown.append(scenario)
+		for setting in str(Scenarios.LAUNCH[scenario]).split(" ", false):
+			if not setting.split("=")[0] in Scenarios.LAUNCH_KEYS or not "=" in setting:
+				unknown.append("%s: %s" % [scenario, setting])
+	t._check(unknown.empty(), "director: launch settings of scenarios, known ones (%s)" % [unknown])
 	t._check(
 		"scenario" in Director.COMMANDS and "kick" in Director.COMMANDS,
 		"director: scenarios and kicks are commands"

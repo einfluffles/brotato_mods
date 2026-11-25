@@ -25,7 +25,7 @@ const RESERVED := ["id", "cmd", "timeout_sec"]
 const COMMANDS := [
 	"screenshot", "press", "button", "wait_for", "query", "host_lobby", "join", "invite", "leave",
 	"kick", "quit", "set_profile", "fail_session", "fail_send", "stall", "debug", "language",
-	"mod_version", "scenario", "joypad"
+	"mod_version", "text", "scenario", "joypad"
 ]
 
 var local: Node = null  # mod_main.gd of the dev mod
@@ -51,6 +51,10 @@ func _init(local_mod: Node, instance_dir: String) -> void:
 
 func _ready() -> void:
 	pause_mode = PAUSE_MODE_PROCESS
+	if headless:
+		# The flush below comes first in the frame, as a desktop build's does: code that polls
+		# Input.is_action_just_pressed (the mod's client pause, PauseControl) sees a key's frame.
+		process_priority = -1000
 	driver = MenuDriver.new(get_tree())
 	var folder := Directory.new()
 	for sub in ["control", "out", "shots"]:
@@ -211,6 +215,7 @@ func state() -> Dictionary:
 	snapshot["session"] = _session_state()
 	snapshot["role"] = local.role
 	snapshot["dlcs"] = dlc_state()
+	snapshot["ref"] = OS.get_environment("BT_LOCAL_REF")  # the other build this game runs, or ""
 	return snapshot
 
 
@@ -550,6 +555,19 @@ func _cmd_language(command: Dictionary):
 		return ["no language '%s' (one of %s)" % [locale, ProgressData.languages], {}]
 	ProgressData.change_language(locale)
 	return ["", {"locale": TranslationServer.get_locale()}]
+
+
+# What this game shows for the translation key `key` with `args` ({0}, {1}, ...) in its language
+# now (the game's Text.text, as the mods call it): a scenario's expected text in another game's
+# language. Fails for a key no translation has.
+func _cmd_text(command: Dictionary):
+	yield(get_tree(), "idle_frame")
+	var key := str(command.get("key", ""))
+	var args = command.get("args", [])
+	var text: String = Text.text(key, args if args is Array else [args])
+	if text == key:
+		return ["no text for '%s'" % key, {}]
+	return ["", {"text": text, "locale": TranslationServer.get_locale()}]
 
 
 # The gamepads as this game sees them (joypad_filter.gd). With `connect` (true / false) first a pad
