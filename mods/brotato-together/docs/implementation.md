@@ -662,11 +662,19 @@ from a live node, because a puppet's `die()` frees its `Pivot`.
 | `BrachiosaurusFoot` | `visible` of the shadow, foot and release sprites, and the foot's `flip_h` |
 | every `Boss` scene | `Pose.Kind.HEALTH`, the health fraction, last of the base parts |
 | `DigSite` (archaeologist) digs while a player stands in it | `DIG_PROGRESS`, the progress fraction (1: dug up), and `DIG_STATE`: its particles emitting, and being dug |
+| `BuilderTurret.set_data` and `on_bonus_gold_converted` size the builder's turret from its owner's structure range (`set_size`: scale 0.5 to 1, raised up to 50 px) and pick its level texture | `SIZE` (`scale.y` of `Animation/Sprite`), its `position.y`, and `TEXTURE`, the index of the sprite's texture in `turret_sprites` |
 
 The client sets a dig site's progress and `dug_up` and redraws it (`DigSite._draw` picks the
 sprite), turns its particles on with the scene's `body_enter` squash as `_on_body_entered` does,
 and loops the dig sound while it is being dug, as `_physics_process` does. The dug-up sound is a
 `SoundManager2D` sound and the crate a consumable, both mirrored already.
+
+The builder's turret is the only structure whose looks come from data: puppets never run
+`set_data`, so before these values a client drew it at the scene's scale 1 with the level 1 texture
+(about twice the host's size). The client keeps the facing flag's sign of `scale.x`. Like every
+posed entity it sends its position in every snapshot, plus the 3 values (12 bytes). Other structures (the engineer's turrets, garden, wandering bot,
+landmine, dart trap) look the same for any data; a cursed one's particles come with its type and
+its outline with the [looks](#flags-poses-and-animations).
 
 Turrets do not rotate in this game (`Turret.shoot` only aims projectiles). The client hands the
 health value to the puppet's own `on_health_updated`, which follows this client's "life bars on
@@ -2570,6 +2578,8 @@ As of 2026-11-23, protocol 33.
   `position.x`.
 - Effects done inside stripped method tracks or disconnected `animation_finished` handlers.
 - A projectile's scale (the baryonyx' lasers are 0.55 on the host).
+- The pressed sprite of a landmine or dart trap while something stands on it (its `Area2D` is off
+  on puppets).
 - Percent-damage-taken outlines (lute, diver) and the one-shot boost particles (`stats_boosted`).
 - The tint of a player standing in acid or petrol (`Player._set_color_modulation`).
 - A one-shot event other than a damage or heal number is lost with its snapshot (for example one
