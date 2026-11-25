@@ -36,14 +36,22 @@ func run() -> void:
 
 # What the scan looks for is what Godot prints.
 func _test_print() -> void:
+	var printed := JSON.print([NAN, INF, -INF])
 	_t._check(
-		JSON.print([NAN, INF, -INF]) == "[nan,inf,-inf]" and JSON.parse("[nan]").error != OK,
-		"non-finite: JSON.print writes nan, inf and -inf, and JSON.parse rejects them"
+		printed in ["[nan,inf,-inf]", "[nan,1.#INF,-1.#INF]"] and JSON.parse(printed).error != OK,
+		"non-finite: JSON.print writes nan and inf (1.#INF on Windows), JSON.parse rejects them (%s)"
+		% printed
 	)
+	for value in [NAN, INF, -INF]:
+		_t._check(
+			FiniteJson.has_non_finite(JSON.print([value])),
+			"non-finite: the scan finds %s as this build prints it" % JSON.print([value])
+		)
 
 
 func _test_scan() -> void:
 	var hits := ["nan", "[inf]", '{"a":nan}', '{"a":-inf,"b":1}', "[1,nan]", '{"a":{"b":inf}}']
+	hits += ["[1.#INF]", '{"a":-1.#INF}', "[1,-1.#IND]", '{"a":1.#QNAN,"b":2}', "1.#SNAN"]
 	for text in hits:
 		_t._check(FiniteJson.has_non_finite(text), "non-finite: the scan finds %s" % text)
 	var misses := [
@@ -52,6 +60,7 @@ func _test_scan() -> void:
 		'{"nan":1}',
 		'{"a":"nan"}',
 		'["inf"]',
+		'{"a":"1.#INF"}',
 		'{"a":"-inf"}',
 		'{"info":2,"x":"nanobot"}',
 		"",

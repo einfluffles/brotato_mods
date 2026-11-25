@@ -383,7 +383,9 @@ step is required: the game's deserializers expect string keys and float numbers.
 Three things the game does not do by itself:
 
 - **NaN and infinite numbers** (`sync/finite_json.gd`). Godot's `JSON.print` writes them as `nan`,
-  `inf` and `-inf`, which `JSON.parse` rejects (error 43), so the client loses the whole text. The
+  `inf` and `-inf` on Linux, and as `nan`, `1.#INF` and `-1.#INF` on Windows (the scan also knows
+  the other msvcrt forms `1.#IND`, `1.#QNAN`, `1.#SNAN`). `JSON.parse` rejects all of them (error
+  43), so the client loses the whole text. The
   game can make them (a stat divided by a stat gain of 0, for example), and its own save file has
   the same problem. Every JSON text the host sends goes through `FiniteJson.to_text`: the run
   parts (`RunCache.refresh`, `RunParts.entry`), `RunStateCodec.encode_json` (battle start, menus)
