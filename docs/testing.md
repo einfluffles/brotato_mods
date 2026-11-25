@@ -85,20 +85,59 @@ Options:
 | `-GameDir <folder>` | The installed game, when it is not found in Steam's libraries. |
 | `-Stop` | Closes the windows of the running session (the games leave as a closed window does), then ends what is left. Closing the windows by hand does the same; a new start closes the previous session first. |
 | `-Screenshot <name> [-On <instance>]` | Every running game (or one) saves its window to `<instance>\shots\<name>.png`. |
-| `-Key <name> [-HoldMs <msec>] [-On <instance>]` | A key press in a game, by Godot key name (`Enter`, `Escape`, `Right`, `D`, ...). Joining a co-op slot needs a hold: `-Key Enter -HoldMs 1000 -On client1`. |
+| `-Key <name> [-HoldMs <msec>] [-On <instance>]` | A key press in a game, by Godot key name (`Enter`, `Escape`, `Right`, `D`, ...). Joining a co-op slot needs a hold: `-Key Enter -HoldMs 1500 -On client1`. |
 | `-Profile <name>` | The link profile every game starts with: `lan` (default), `relay-good`, `relay-typical`, `bad`, `stall`, or `none` (no latency at all). See below. |
-| `-Profile <name> -On <instance>\|all` | Switches a running game's profile (`-On all`: every game) and waits until its `status.json` shows it. A game's profile is the line for what it sends, so `-Profile bad -On client1` makes only the client's way to the host bad. |
-| `-FailSession [-Reason <n>] [-On <instance>]` | That game's sessions fail at both ends with Steam's end reason (default 5003, timed out); the next message opens new ones. |
-| `-FailSend [-Count <n>] [-On <instance>]` | The game's next reliable send(s) fail with LimitExceeded; on the host the mod then runs a full resync for that client. |
-| `-Stall <msec> [-On <instance>]` | Nothing the game sends moves for that long. |
+| `-Profile <name> -On <instance>\|all` | Switches a running game's profile (`-On all`: every game) through the director's `set_profile` and prints the profile each game answers with. A game's profile is the line for what it sends, so `-Profile bad -On client1` makes only the client's way to the host bad. |
+| `-FailSession [-Reason <n>] [-On <instance>]` | That game's sessions fail at both ends with Steam's end reason (default 5003, timed out); the next message opens new ones (`fail_session`). |
+| `-FailSend [-Count <n>] [-On <instance>]` | The game's next reliable send(s) fail with LimitExceeded; on the host the mod then runs a full resync for that client (`fail_send`). |
+| `-Stall <msec> [-On <instance>]` | Nothing the game sends moves for that long (`stall`). |
+| `-Do <command> [-On <instance>]` | Any director command (below), as `key=value` pairs (`-Do "cmd=button name=StartButton" -On host`, `-Do "cmd=wait_for scene=coop_resume timeout_sec=20"`) or a JSON object; prints the answer with the screen's state. Windows PowerShell drops the double quotes of an argument to another `powershell.exe`, so JSON only works from cmd or with `& tools\play-local.ps1` in the same session. |
+| `-Scenario <name>` | A scripted scenario in fresh games (below); exits with `PASS` (0) or `FAIL` (1). |
 
 Everything is in `%LOCALAPPDATA%\brotato-modtools\play`: `game\` (the game copy, refreshed when
 `reference/project.godot` changes, mods replaced on every start), `engine\` (refreshed when the
 installed `Brotato.exe` changes), and per instance `<run>\host`, `<run>\client1`, ...: `appdata\`
 (the instance's `APPDATA`; Mod Loader log in `appdata\Brotato\logs\modloader.log`),
 `stdout.log`, `stderr.log`, `instance.json` (what was started: pid, arguments, paths),
-`status.json` (written by the dev mod every second: role, wire, lobby, members, scene),
-`control\` and `shots\`.
+`status.json` (written by the dev mod every second: role, wire, link, lobby, members, scene),
+`control\`, `out\` and `shots\` (the director's commands, answers and screenshots). A scenario's
+run is `play\scenario-<name>\` with `scenario.log` (every command, answer and check).
+
+### Director and scenarios
+
+Every game of a local session has a director (the dev mod's `director.gd`): it takes JSON commands
+from the instance's `control\` folder, one at a time, and answers each in `out\<id>.json` with
+`ok`, `error`, a `result` and the screen's `state` (scene, players, run, lobby, the co-op resume
+screen's saved player, ...). It drives the menus as a player does: keys through the game's input,
+buttons by focus and accept. Commands: `press`, `button`, `wait_for`, `query`, `screenshot`,
+`host_lobby`, `join`, `invite`, `leave`, `debug`, `language`, `quit`, and on the link of what the
+game sends `set_profile`, `fail_session`, `fail_send` and `stall`; fields and state:
+[the director](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
+`-Key`, `-Screenshot`, `-Do` and the link switches (`-Profile` with `-On`, `-FailSession`,
+`-FailSend`, `-Stall`) send them to a running session: the director is the one way to control a
+running game.
+
+Screenshots come from the game's own viewport, so windows on top of it do not matter; a
+minimised window is drawn once for its screenshot.
+
+`tools\play-local.ps1 -Scenario <name>` starts fresh games (run `scenario-<name>`, empty user
+folders), plays the scenario through the directors, takes a screenshot of every game after every
+step (`<instance>\shots\<NN>-<step>.png`, `<NN>-failed.png` when a step fails), closes the games
+and prints `PASS <name>` (exit 0) or `FAIL <name>` (exit 1). The steps live in
+`tools\play-scenarios.ps1`. The host's runs use the game's own test settings (`debug`:
+invulnerable, short waves), so nobody dies and a wave takes 10 to 12 s.
+
+| Scenario | What |
+|---|---|
+| `resume_leave_rejoin` | Host and client play wave 1 into the shop; the host quits to the title screen (Pause, Quit, Confirm), the run is saved, and continues it. The client sees the co-op resume screen's copy (saved player, gear, gold) with the host's saved player. The client holds accept and takes saved player 1, then leaves the lobby: the host's screen shows saved player 1 again and does not load the shop. The client joins again (invite accepted), is taken to the resume screen, takes saved player 1 again, the host takes saved player 2, and the shop loads with both. With two saved players the client joins first: had the host taken one first, the client's join would take the last one and load the shop at once. |
+| `join_wave_shop` | Lobby, Start, both join character selection, character, weapon and difficulty by accept, wave 1 with XP and gold given, the level-up panels, the shop, and the client buys the item under its cursor (checked on the host: gold down, one more item or weapon). |
+| `language` | Both games switch to German and Russian (the options' call) at the title screen with the lobby, in character selection and in the wave (the damage meter at each life bar). Screenshots only, no checks of the text. |
+
+For an agent: run a scenario, read its `scenario.log`, then look at the screenshots of the steps
+the change is about. To try something else, start a session (`tools\play-local.ps1`) and drive it
+step by step with `-Do`, reading each answer's `state`. Only one local session runs at a time on a
+PC: a start closes the previous one, and every start fills `play\game\mods-unpacked` from its own
+worktree.
 
 The launcher deletes each instance's logs before a start: the game reads the last log at boot
 and turns all mods off after an error in it that names a mod. Expected in `stderr.log`: none with

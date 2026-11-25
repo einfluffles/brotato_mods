@@ -306,8 +306,8 @@ Host and clients as game instances on one PC, without Steam's networking. A dev 
 Steam-shaped emulator under the unchanged transport (`Transport.bind_steam`, [Steam
 object](#steam-object)) and links the games over TCP on 127.0.0.1. Status: the emulator, the
 in-process wire, the wire between game processes, the activation rules, the launcher
-`tools\play-local.ps1` ([Play locally](../../../docs/testing.md#play-locally)) and the link
-profiles ([Link profiles](#link-profiles)) are in; the scenario director comes later.
+`tools\play-local.ps1` ([Play locally](../../../docs/testing.md#play-locally)) with its scenario
+director, and the link profiles ([Link profiles](#link-profiles)) are in.
 
 **Layout.** `mods/brotato-together/dev/einfluffles-TogetherLocal/`, next to `src/` and `tests/`:
 
@@ -321,7 +321,9 @@ profiles ([Link profiles](#link-profiles)) are in; the scenario director comes l
 | `link_profiles.gd` | The named link profiles and the sessions their numbers come from. |
 | `wire_memory.gd` | A wire for two or more emulators in one process, with a clock that moves only when told to. |
 | `wire_tcp.gd` | The wire between game processes: TCP on 127.0.0.1, the host listens, clients connect. |
-| `local_instance.gd` | The instance's side of the launcher: settings, `status.json`, the `control\` folder (screenshots, key presses, quit). |
+| `local_instance.gd` | The instance's side of the launcher: settings and `status.json`. |
+| `director.gd` | The scenario director: JSON commands in the instance's `control\` folder, answers in `out\`. |
+| `menu_driver.gd` | Menus driven as a player drives them (keys, buttons by focus and accept), screenshots, the screen's state. The test mod's `director` suite uses it too. |
 
 Nothing under `dev/` is packaged: `tools/package.sh` takes `mods/*/src/<mod_id>/` only, and the zip
 guard fails on any second mod folder in a zip, also one whose manifest sits in `dev/`
@@ -411,18 +413,47 @@ hand, never blocking: what a socket does not take waits in the connection's outb
   bus. `--windowed` alone loses against `fullscreen` in the settings (`progress_data.gd`,
   `apply_settings`).
 - `status.json` every second: role, pid, steam id, name, bound, the `+connect_lobby` lobby, wire
-  (state, port, peers, host lobbies, frames), lobby (id, host, members), scene, fps, screenshots
-  taken, the settings line.
-- `control\`: each file is one command, handled and deleted within 0.25 s: `screenshot-<name>`
-  (the viewport after the frame is drawn, to `shots\<name>.png`), `key-<Name>[-<msec>]` (an
-  `InputEventKey` down, held at least 150 ms or the given time, then up: the client's input
-  reaches the host's game in samples, so a 3-frame tap can fall between them), `quit`, and the
-  link commands of [Link profiles](#link-profiles) (`profile-<name>`,
-  `fail-session[-<reason>]`, `fail-send[-<count>]`, `stall-<msec>`). The scenario director
-  replaces this later.
-- `status.json` also has `link`: the profile, its main numbers, stalls and POP changes so far,
-  messages sent, dropped and refused, and per peer what Steam would show (state, ping, queue time,
-  pending bytes, both qualities, bytes per second out and in, relayed).
+  (state, port, peers, host lobbies, frames), lobby (id, host, members), scene, fps, the
+  director (commands done, the last one, screenshots taken), the settings line, and `link`: the
+  profile, its main numbers, stalls and POP changes so far, messages sent, dropped and refused,
+  and per peer what Steam would show (state, ping, queue time, pending bytes, both qualities,
+  bytes per second out and in, relayed).
+
+**The director (`director.gd`, `menu_driver.gd`).** With `BT_LOCAL_DIR`, every instance reads
+commands from its `control\` folder: each `*.json` file is one command, `{"cmd": "<name>", ...}`,
+its id the file's name without `.json`. The files are taken in name order, one at a time (a
+command that waits blocks the next), and deleted when taken; the answer goes to
+`out\<id>.json`: `id`, `cmd`, `ok`, `error` (why it failed), `msec`, `result` and `state`, the
+screen's state after the command. The launcher names files `<UTC time>-<counter>-<cmd>`, so commands
+from separate calls keep their order. Menus are driven as a player drives them: keys go through
+`Input.parse_input_event` as the OS's key events come in, a button is focused and gets accept.
+
+| Command | Fields | What |
+|---|---|---|
+| `press` | `key` (Godot key name: `Enter`, `Escape`, `Right`, `A`) or `action` (its first key in the InputMap), `hold_ms`, `times`, `shot`, `shot_ms` | Key down, held at least 150 ms or `hold_ms`, up. The client's input reaches the host's game in samples, so a 3-frame tap can fall between them. Joining a co-op slot needs a hold (the scenarios hold 1500 ms; the join comes after about 0.7 s). With `shot`, a screenshot of that name `shot_ms` (default half the hold) into the hold: a join's progress. |
+| `button` | `name` (node name) or `text` (its text, any case) | The last shown, enabled button of that name (popups come after the scene) gets the focus and accept; one that takes no focus gets `pressed`. |
+| `wait_for` | any key of the state, `timeout_sec` (30) | Until the state has every value: `scene` (the file's name, e.g. `coop_resume`, or its path), `players`, `resume_shown`, `lobby.members`; dotted keys look into nested values, numbers compare as numbers. Fails after the timeout with the state it saw. |
+| `query` | | Only the state. |
+| `screenshot` | `name` | The window's root viewport after the next frame is drawn, to `shots\<name>.png` (written as `.tmp`, then renamed). It reads the game's own picture, so overlapping windows do not matter; a minimised window is not drawn by the engine, so it is drawn once with `VisualServer.force_draw`. |
+| `host_lobby` | `timeout_sec` | Host: what Host lobby does (`LobbyMenu.host`), then waits for the lobby. |
+| `join` | `lobby` (default: the host's first lobby, from the wire's roster) | Client: the emulator fires `join_requested`, as a Steam invite accepted in the overlay; waits until in that lobby. |
+| `invite` | | Host: Invite friends (`LobbyMenu.invite`): every client's game gets an accepted invite. |
+| `leave` | | Leave lobby (`LobbyMenu.leave`, as the title frame's and the lobby page's button); waits until out. |
+| `set_profile` | `name` | The link profile of what this game sends from now on (`lan`, `relay-good`, `relay-typical`, `bad`, `stall`, or `none`: no latency at all), through the emulator's `set_profile`; what is on its way keeps its time. The result has the link's status. An unknown name fails and changes nothing. |
+| `fail_session` | `peer` (default: every live session), `reason` (5003), `debug`, `both` (true) | The emulator's `fail_session` / `fail_sessions`: Steam reports the session as failed, at both ends unless `both` is false; the next send opens a new one. Fails when there is no session. |
+| `fail_send` | `count` (1) | The next reliable send(s) answer LimitExceeded (`fail_next_sends`): on the host, the Session runs a full resync for that client. |
+| `stall` | `msec` | Nothing this game sends moves for that long (`stall`); the queues keep it. |
+| `debug` | `invulnerable`, `wave_sec`, `xp`, `gold` | The game's own test settings (`DebugService.invulnerable`, `custom_wave_duration`; read at run start and wave start) and, in a run, XP and gold for every player. Host. |
+| `language` | `locale` (`de`, `ru`, ... of `ProgressData.languages`) | What the options' language choice calls (`ProgressData.change_language`). |
+| `quit` | | Answers, then closes the game as its window's close button does: the others see it leave. |
+
+The state (`MenuDriver.snapshot` plus the lobby): `scene`, `scene_path`, `paused`, `locale`,
+`focus` (the focused control's name), `players` (`CoopService.connected_players`), `listening`,
+`run` (`coop`, `count`, `wave`, per player `gold`, `levels`, `items`, `weapons`; `saved`: a run to
+continue), `lobby` (`in`, `is_host`, `members` with this game, `id`), `role`; on the co-op resume
+screen `resume_shown` (the saved player shown), `resume_gold` and `resume_progress`; in a wave
+`wave_left` and `upgrades` (the level-up or crate panels are shown). A client's copy of a screen
+is the game's own scene, so its state reads the same way.
 
 **Launcher (`tools\play-local.ps1`).** Builds `%LOCALAPPDATA%\brotato-modtools\play\game`, a copy
 of `reference/` without `mods-unpacked` and without the line `_custom_features="steam"`: the game
@@ -548,7 +579,7 @@ What each shows in the host's log ([Diagnostics](#11-diagnostics)):
 - `stall`: the direct-route stalls: gap lines of 300 ms to 3.3 s, the long ones about every
   half minute, and the render delay and prediction riding out the short ones.
 
-Switching at run time: `set_profile(name)` (control file `profile-<name>`, launcher `-Profile
+Switching at run time: `set_profile(name)` (the director's `set_profile`, launcher `-Profile
 <name> -On <instance>`) applies to what is sent from then on. What is on its way keeps its time:
 an unreliable message sent after a switch to a faster profile overtakes, a reliable one waits for
 the reliable ones before it. The stall and POP schedule starts again with the new profile.
@@ -560,7 +591,8 @@ LimitExceeded (25) or another EResult: the transport reports `send_failed`, and 
 Session queues a full resync and runs it ("Full resync for ..."). `fail_sessions(reason)` fails
 every live session at both ends with Steam's end reason (default 5003): the transport logs the
 failure, and after the next message link_watch logs "Session with ... up again ... after it
-failed: relayed via lcl". `stall(msec)` stalls the line now.
+failed: relayed via lcl". `stall(msec)` stalls the line now. The director's `fail_send`,
+`fail_session` and `stall` call these (launcher `-FailSend`, `-FailSession`, `-Stall`).
 
 Quality and rates: `remote_quality` is the share of this side's transmissions that arrived (a
 reliable message lost twice is three transmissions, one arrived), `local_quality` the same for
@@ -580,9 +612,8 @@ polls every emulator by steam id), so a test runs the same every time.
 
 Not there yet, or simplified:
 
-- Gamepads are not routed per window yet: play with keyboard and mouse. The scenario director
-  (scripted runs, waiting for screens) is not there; the control folder has screenshots, key
-  presses and the link commands.
+- Gamepads are not routed per window yet: play with keyboard and mouse. The director presses keys
+  only (no mouse, no pad).
 - Steam's real ordering races between lobby updates and messages are not injected: both take the
   same base latency.
 - Nagle (`SEND_NO_NAGLE`) is not modelled. A stall holds messages, not lobby traffic. A long stall
@@ -598,12 +629,14 @@ failed session and its restart, another version's lobby tag) and `emulator_wire`
 with real sockets on 127.0.0.1 in one process: framing, token, roster, join, messages, relay
 through the host, a client and the host leaving; every dev mod script compiles) and
 `emulator_profiles` (each profile's ping, both directions, the stall profile over two minutes,
-the line rate, loss and quality, rates, lobby latency, switching, forced failures, the control
-commands; then a real `Transport` and `Session` per player under `bad` and `lan`: under `bad` the
-host's path change, Slow answer, traffic and gap lines and a full resync after a forced failed
-send, under `lan` none of these lines). That last part keeps real time at or behind the
-emulators' clock, because the Session times with `OS.get_ticks_msec()`: a delay the profile
-makes is then certain to show, and about 9 s of the suite are this wait.
+the line rate, loss and quality, rates, lobby latency, switching, forced failures; then a real
+`Transport` and `Session` per player under `bad` and `lan`: under `bad` the host's path change,
+Slow answer, traffic and gap lines and a full resync after a forced failed send, under `lan` none
+of these lines). That last part keeps real time at or behind the emulators' clock, because the
+Session times with `OS.get_ticks_msec()`: a delay the profile makes is then certain to show, and
+about 9 s of the suite are this wait. The suite `director` runs the director in one process:
+command files and answers, keys and buttons, the state and its matching, and the link commands on
+a real emulator.
 
 ## 5. State stream and run state
 
