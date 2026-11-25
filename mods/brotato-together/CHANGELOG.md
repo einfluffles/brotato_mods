@@ -12,46 +12,21 @@ upload; three of them are marked where the upload may have differed.
 
 ## 2026-11-25 20:42 UTC
 
-- Online co-op: with Steam not running or not logged on, the mod no longer asks Steam for messages
-  every frame (hundreds of errors a second in the game's log). Online co-op is then turned off
-  with the hint that it needs Steam, as without Steam at all. Before, it could be picked and then
-  waited for a lobby that never came.
-- Online co-op: a client that closed the game during a wave logged two script errors on the way
-  out. The game reads its last log at the next start and turns mods off after an error that names
-  a mod, so the mod could be off on the client's next start.
-- Online co-op: when the host continues a saved co-op run, clients now see the resume screen with
-  the saved player to take, their gear and gold, and the hold progress. Before, they only saw the
-  waiting screen.
-- Online co-op: continuing a saved co-op run, a player who leaves the resume screen no longer
-  counts as joining. Their saved character is shown again for the next player to join, and the
-  shop opens only once every saved character has a player, each on the character they took.
-  Before, a leave skipped a saved character (nobody could take it any more) or opened the shop
-  with players missing. The same goes for a local pad unplugged on that screen.
-- Online co-op: a client's level-up could stay empty when the run had a number the game had made
-  invalid (NaN or infinite, for example from a stat divided by 0). The host now sends such a
-  number as 0 and names it in its log, and its own run keeps the value. A client that still gets
-  a run state it cannot read keeps the one it has: the level-up panels, the shop and the end of
-  run screen still show, and its log says which part it could not read.
-- Languages: the mod's texts now follow the game's language, in all 13 of the game's languages
-  (the lobby, the *Online co-op* page, lobby errors, the client's waiting screen, character
-  selection, the pause banner, the retry prompt, the damage meter and its switch in the options),
-  and switch at once when the language changes (an error already on screen keeps its language
-  until the next one). They use the game's own words for co-op, player,
-  wave, pause and damage. A join refused for another version is explained in the joining
-  player's language. The texts are in `translations.csv`, open to corrections from players of
-  each language (see the README's Languages section). Where a translation is longer, the layout
-  makes room: on a run's damage board, kills and damage taken stand one under the other when they
-  do not fit side by side, and the lobby status under *Invite friends* in character selection
-  uses the slot's whole width. In
-  English, some texts now read differently: the lobby status in character selection reads
-  "Online · players: 2", the retry prompt names "Player 2" instead of "P2", the damage meter's
-  run reads "Run (waves: 3)", the colour hint "Change color", lobby errors are plain words ("The
-  lobby could not be created" instead of "createLobby failed"), and the question before leaving
-  a lobby mid-run puts each sentence on its own line. The client's waiting screen now uses the
-  game's font.
-- Online co-op: a client now sees the builder's turret at the host's size and with its level's
-  look, also when it grows at the end of a wave. Before, clients drew it at full size (about
-  twice as big as on the host at the start of a run) and always with the first level's look.
+- Languages: the mod's texts now follow the game's language, in all 13 of the game's languages.
+  Corrections from players are welcome (see the README's Languages section).
+- Online co-op: when the host continues a saved co-op run, clients now see the resume screen (the
+  saved character, gear and gold) instead of the waiting screen. A player who leaves that screen
+  no longer skips a saved character or opens the shop early.
+- Online co-op: a client's level-up could stay empty when the run held an invalid number (for
+  example a stat divided by 0). The client now keeps showing its panels.
+- Online co-op: the builder's turret looked about twice as big on clients and always had its first
+  level's look.
+- Online co-op: closing the game as a client during a wave could turn the mod off at the next
+  start.
+- Online co-op: with Steam not running or not logged on, online co-op is now turned off with a
+  hint instead of waiting for a lobby that never comes.
+- A few English texts read differently, for example "Player 2" instead of "P2" in the retry
+  prompt.
 - Needs everybody on this update (protocol 33).
 
 ## 2026-11-23 19:30 UTC

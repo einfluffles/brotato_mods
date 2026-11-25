@@ -8,9 +8,8 @@ changed, newest first. Headings are the time of the release PR in UTC
 
 ## 2026-11-25 20:42 UTC
 
-- The Trade button and the hint "Press [key] to trade" are now in the game's language (all 13),
-  and change with it. Corrections to a translation are welcome
-  ([Languages](README.md#languages)).
+- The Trade button and its hint now follow the game's language, in all 13 of the game's
+  languages. Corrections from players are welcome (see the README's Languages section).
 
 ## 2026-11-22 11:57 UTC
 
