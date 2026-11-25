@@ -10,12 +10,13 @@ extends Node
 #   BT_LOCAL_NAME      its persona name
 #   BT_LOCAL_PORT      the host's port on 127.0.0.1 (none: no wire, only this game)
 #   BT_LOCAL_TOKEN     the launcher's random token, checked in the wire's handshake
-#   BT_LOCAL_DIR       the instance's folder: status.json, control/, shots/ (local_instance.gd)
+#   BT_LOCAL_DIR       the instance's folder: status.json (local_instance.gd), control/, out/,
+#                      shots/ (director.gd)
 #   BT_LOCAL_AUTOHOST  1: the host opens a lobby at the title screen
 #   BT_LOCAL_MUTE      1: no sound
 #   BT_LOCAL_PROFILE   the link profile of what this game sends (link_profiles.gd: lan, relay-good,
 #                      relay-typical, bad, stall); none: no latency at all. Switched at run time
-#                      by a control file (local_instance.gd).
+#                      by the director's set_profile (director.gd).
 # A client joins through the real launch option "+connect_lobby <lobby id>", which the transport
 # acts on when it is first bound: a client binds once the host's game is online and owns that
 # lobby. Docs: docs/implementation.md, "Local play (dev mod)".
@@ -45,6 +46,7 @@ var bound := false
 var connect_lobby := 0  # the lobby of "+connect_lobby" (0: none)
 var autohost := false
 var instance: Node = null  # local_instance.gd
+var director: Node = null  # director.gd, with BT_LOCAL_DIR
 
 var _refused := ""
 var _hosted := false
@@ -96,6 +98,9 @@ func _ready() -> void:
 		self, dir, OS.get_environment("BT_LOCAL_MUTE") == "1"
 	)
 	add_child(instance)
+	if dir != "":
+		director = load(MOD_DIR + "director.gd").new(self, dir)
+		add_child(director)
 	OS.set_window_title("Brotato (local %s: %s)" % [role, emulator.persona_name])
 	for entry in TRANSPORT_LOGS:
 		transport.connect(entry[0], self, "_on_transport_event", [entry[1]])
@@ -201,35 +206,6 @@ func _link_text() -> String:
 	return "profile %s" % profile if profile != "" else "without latency"
 
 
-# A link command (local_instance.gd's control files): "profile" <name>, "fail-session" <reason>,
-# "fail-send" <count>, "stall" <msec>. The line it logs; "" for an unknown command.
-func link_command(kind: String, value: String) -> String:
-	var text := ""
-	match kind:
-		"profile":
-			if emulator.set_profile(value):
-				text = "Link profile %s (control file)" % value
-			else:
-				var known := ", ".join(LinkProfiles.NAMES)
-				text = "Unknown link profile '%s' (known: %s)" % [value, known]
-		"fail-session":
-			var reason: int = int(value) if int(value) > 0 else emulator.END_MISC_TIMEOUT
-			var failed: int = emulator.fail_sessions(reason, "failed on command (control file)")
-			text = "Failed %d session(s), reason %d (control file)" % [failed, reason]
-		"fail-send":
-			var sends: int = int(value) if int(value) > 0 else 1
-			emulator.fail_next_sends(sends)
-			text = "The next %d reliable send(s) fail with LimitExceeded (control file)" % sends
-		"stall":
-			var msec := int(value)
-			if msec > 0:
-				emulator.stall(msec)
-				text = "Link stalled for %d ms (control file)" % msec
-	if text != "":
-		log_info(text)
-	return text
-
-
 func _wire_text() -> String:
 	if wire == null:
 		return "no wire (only this game)"
@@ -332,7 +308,7 @@ func status() -> Dictionary:
 		"scene": scene.filename if scene != null else "",
 		"msec": OS.get_ticks_msec(),
 		"fps": Engine.get_frames_per_second(),
-		"shots": instance.shots if instance != null else 0,
+		"director": _director_status(),
 		"settings": instance.settings_note if instance != null else "",
 		"link": emulator.link_status(),
 	}
@@ -341,3 +317,9 @@ func status() -> Dictionary:
 func _exit_tree() -> void:
 	if wire != null:
 		wire.close()  # what waits goes out, then the others hear it
+
+
+func _director_status() -> Dictionary:
+	if director == null:
+		return {}
+	return {"done": director.done, "last": director.last, "shots": director.shots}

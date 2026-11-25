@@ -2,19 +2,17 @@ extends Reference
 # Suite emulator_profiles: the local-play emulator's link profiles (dev/einfluffles-TogetherLocal:
 # link_profiles.gd, link.gd) on the memory wire: each profile's ping, per direction impairment
 # (delay queue, loss, retransmits, the line's rate, stalls, relay POP changes), lobby traffic
-# after the latency, quality and rates, switching at run time, forced failures and the control
-# commands. Then the acceptance: a real Transport and Session per player under "bad" log the
-# path, "Slow answer", traffic and gap lines, and a failed reliable send runs a full resync; under
-# "lan" none of these lines appear. The emulators' clock moves only when a test steps it; the
-# diagnostics part keeps real time at or behind it (the mod's Session times with
-# OS.get_ticks_msec), so a line that needs a delay is certain and "lan" stays far below every
-# threshold.
+# after the latency, quality and rates, switching at run time and forced failures (the director's
+# link commands that switch and force them: director_tests.gd). Then the acceptance: a real
+# Transport and Session per player under "bad" log the path, "Slow answer", traffic and gap lines,
+# and a failed reliable send runs a full resync; under "lan" none of these lines appear. The
+# emulators' clock moves only when a test steps it; the diagnostics part keeps real time at or
+# behind it (the mod's Session times with OS.get_ticks_msec), so a line that needs a delay is
+# certain and "lan" stays far below every threshold.
 
 const SteamEmulator := preload("res://mods-unpacked/einfluffles-TogetherLocal/steam_emulator.gd")
 const WireMemory := preload("res://mods-unpacked/einfluffles-TogetherLocal/wire_memory.gd")
 const LinkProfiles := preload("res://mods-unpacked/einfluffles-TogetherLocal/link_profiles.gd")
-const LocalMain := preload("res://mods-unpacked/einfluffles-TogetherLocal/mod_main.gd")
-const LocalInstance := preload("res://mods-unpacked/einfluffles-TogetherLocal/local_instance.gd")
 const LinkWatch := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/link_watch.gd")
 const Protocol := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/protocol.gd")
 const StreamGaps := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/stream_gaps.gd")
@@ -51,7 +49,6 @@ func run() -> void:
 	_test_lobby_latency()
 	_test_switching()
 	_test_failures()
-	_test_commands()
 	var bad := _diagnostics("bad")
 	var lan := _diagnostics("lan")
 	_t._check(
@@ -387,43 +384,6 @@ func _test_failures() -> void:
 		),
 		"emulator_profiles: a forced failed reliable send (LimitExceeded) once; every session fails"
 		+ " on command at both ends"
-	)
-
-
-# The control files' names and what the dev mod does with them.
-func _test_commands() -> void:
-	var parsed := [
-		LocalInstance.link_command_of("profile-relay-good"),
-		LocalInstance.link_command_of("fail-session-5008"),
-		LocalInstance.link_command_of("fail-send"),
-		LocalInstance.link_command_of("stall-400"),
-		LocalInstance.link_command_of("key-Enter"),
-	]
-	var expected := [
-		["profile", "relay-good"], ["fail-session", "5008"], ["fail-send", ""], ["stall", "400"], []
-	]
-	var local = LocalMain.new()
-	local.emulator = SteamEmulator.new(9)
-	var lines := [
-		local.link_command("profile", "stall"),
-		local.link_command("profile", "dial-up"),
-		local.link_command("fail-send", "2"),
-		local.link_command("stall", "250"),
-		local.link_command("fail-session", ""),
-	]
-	var emulator = local.emulator
-	local.free()
-	_t._check(
-		(
-			str(parsed) == str(expected)
-			and emulator.link.profile == "stall"
-			and "Unknown link profile" in lines[1]
-			and emulator._fail_sends == 2
-			and emulator.link.stalled(emulator.now_usec())
-			and "reason 5003" in lines[4]
-		),
-		"emulator_profiles: control files profile-, fail-session-, fail-send-, stall- (%s, %s)"
-		% [parsed, lines]
 	)
 
 

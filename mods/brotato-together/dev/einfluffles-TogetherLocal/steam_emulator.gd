@@ -249,13 +249,13 @@ func fail_next_sends(count := 1, result := RESULT_LIMIT_EXCEEDED) -> void:
 	_fail_result = result
 
 
-# Every live session fails here and at the peer (fail_session); how many did.
-func fail_sessions(reason := END_MISC_TIMEOUT, debug := "") -> int:
+# Every live session fails here and, by default, at the peer (fail_session); how many did.
+func fail_sessions(reason := END_MISC_TIMEOUT, debug := "", both_sides := true) -> int:
 	var count := 0
 	for remote_id in _sessions.keys():
 		var session = _sessions.get(remote_id)
 		if session != null and session.state < STATE_CLOSED_BY_PEER:
-			fail_session(remote_id, reason, debug)
+			fail_session(remote_id, reason, debug, both_sides)
 			count += 1
 	return count
 
