@@ -221,9 +221,32 @@ A returning player just plays on.
 once a frame (`Transport._process`). Sends use `SEND_AUTO_RESTART_BROKEN_SESSION`, so after a broken
 session the next message opens a new one.
 
+### Steam object
+
+Every Steam call of the mod goes to one object, `Transport.steam`. `Transport.setup(lobby_tag)`
+keeps the lobby tag and hands the engine's GodotSteam singleton to
+`Transport.bind_steam(steam_object) -> bool`, which:
+
+- leaves a lobby of the object bound before and disconnects that object's signals, so binding
+  again replaces the old object cleanly (binding the same object again is fine too). `null` only
+  unbinds: no object, local id 0, no route or send rate claimed.
+- reads the local steam id. 0 (not logged on) logs an error, connects nothing and returns false.
+- connects GodotSteam's signals (`STEAM_SIGNALS`), calls `initRelayNetworkAccess`, applies the
+  [route](#route) and the [send rate](#send-rate) and clears the Join button.
+- on the first bind of the process that gets this far, acts on `+connect_lobby <id>`.
+
+Why the seam: it lets another object stand in for the singleton while the transport stays as it
+is. The headless tests bind a fake GodotSteam (`FakeSteam` in `session_lifecycle_tests.gd`). A
+local-play dev mod (planned, outside `src/`, never packaged) is to bind an object with GodotSteam's
+method and signal names that carries lobby and messages between two game instances on one PC, so
+every line of the transport runs as in a Steam session. A player's game binds the singleton once,
+at startup, as before. Outside the transport only `net/link_watch.gd` (handed the object on each
+poll) and the lobby page's availability check (`transport.steam != null`) see the object. The
+zip guard keeps sockets out of shipped code ([Releasing](../../../docs/releasing.md#notes)).
+
 ### Route
 
-`Transport.apply_route` runs at startup, before any session. It sets `P2P_Transport_ICE_Enable` to
+`Transport.apply_route` runs when the Steam object is bound (startup), before any session. It sets `P2P_Transport_ICE_Enable` to
 disabled with `setGlobalConfigValueInt32`, so sessions go through Steam's relays (SDR) only.
 
 - Launch option `+bt_direct` leaves Steam's default (direct or relayed, Steam picks). `+bt_relay` is

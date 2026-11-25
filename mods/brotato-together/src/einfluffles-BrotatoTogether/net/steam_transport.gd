@@ -46,6 +46,16 @@ const CONFIG_SEND_RATE_MAX := ["NETWORKING_CONFIG_SEND_RATE_MAX", 11]
 const SEND_RATE := 524288  # bytes per second, for both (see apply_send_rate)
 const STEAM_SEND_RATE := 262144  # Steam's default for both
 
+# GodotSteam signal -> handler, connected by bind_steam
+const STEAM_SIGNALS := [
+	["lobby_created", "_on_lobby_created"],
+	["lobby_joined", "_on_lobby_joined"],
+	["join_requested", "_on_join_requested"],
+	["lobby_chat_update", "_on_lobby_chat_update"],
+	["network_messages_session_request", "_on_session_request"],
+	["network_messages_session_failed", "_on_session_failed"],
+]
+
 const LinkWatch := preload("res://mods-unpacked/einfluffles-BrotatoTogether/net/link_watch.gd")
 const LOG_NAME := "einfluffles-BrotatoTogether:Transport"
 
@@ -68,6 +78,7 @@ var send_rate_note := ""  # what apply_send_rate logged
 var join_presence := ""  # the "connect" rich presence we advertise ("" = no Join button)
 var _lobby_tag := ""
 var _next_send_warning_msec := 0
+var _launch_args_checked := false  # "+connect_lobby" is acted on once per process
 
 
 func setup(lobby_tag: String) -> bool:
@@ -75,7 +86,27 @@ func setup(lobby_tag: String) -> bool:
 	if not Engine.has_singleton("Steam"):
 		ModLoaderLog.error("Steam singleton not available", LOG_NAME)
 		return false
-	steam = Engine.get_singleton("Steam")
+	return bind_steam(Engine.get_singleton("Steam"))
+
+
+# The object every Steam call goes to: the engine's GodotSteam singleton (setup), a fake in tests,
+# or a stand-in with GodotSteam's method and signal names. Binding over another object first
+# leaves its lobby and disconnects its signals; null only unbinds. Then: local id, signals, relay
+# access, route and send rate, no Join button and, on the first bind that gets this far, the
+# "+connect_lobby" launch option. False without an object or a logged-on user (steam id 0).
+func bind_steam(steam_object: Object) -> bool:
+	if steam != null:
+		leave_lobby()
+		_disconnect_steam()
+	steam = steam_object
+	local_id = 0
+	relay_only = false
+	link_watch.relay_only = false
+	route_note = ""
+	send_rate = 0
+	send_rate_note = ""
+	if steam == null:
+		return false
 	local_id = int(steam.getSteamID())
 	if local_id == 0:
 		ModLoaderLog.error("Steam not logged on (steam id 0)", LOG_NAME)
@@ -84,17 +115,15 @@ func setup(lobby_tag: String) -> bool:
 		"GodotSteam %s, local id %s" % [str(steam.call("get_godotsteam_version")), local_id],
 		LOG_NAME
 	)
-	_connect_steam("lobby_created", "_on_lobby_created")
-	_connect_steam("lobby_joined", "_on_lobby_joined")
-	_connect_steam("join_requested", "_on_join_requested")
-	_connect_steam("lobby_chat_update", "_on_lobby_chat_update")
-	_connect_steam("network_messages_session_request", "_on_session_request")
-	_connect_steam("network_messages_session_failed", "_on_session_failed")
+	for entry in STEAM_SIGNALS:
+		_connect_steam(entry[0], entry[1])
 	steam.initRelayNetworkAccess()
 	apply_route(Array(OS.get_cmdline_args()))
 	apply_send_rate()
 	_clear_join_presence()  # never inherit a Join button from an earlier (crashed) session
-	_check_launch_args()
+	if not _launch_args_checked:
+		_launch_args_checked = true
+		_check_launch_args()
 	return true
 
 
@@ -306,6 +335,12 @@ func _connect_steam(signal_name: String, method: String) -> void:
 		return
 	if not steam.is_connected(signal_name, self, method):
 		steam.connect(signal_name, self, method)
+
+
+func _disconnect_steam() -> void:
+	for entry in STEAM_SIGNALS:
+		if steam.has_signal(entry[0]) and steam.is_connected(entry[0], self, entry[1]):
+			steam.disconnect(entry[0], self, entry[1])
 
 
 func _check_launch_args() -> void:
