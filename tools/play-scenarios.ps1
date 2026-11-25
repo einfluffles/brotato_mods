@@ -31,7 +31,8 @@ function Test-ScenarioName([string]$Name) { return $ScenarioNames -contains $Nam
 
 # A scenario's launch settings (scenarios.gd's LAUNCH, the line "<name>": "key=value ..."), as
 # play-local.ps1's parameters, for the ones not given ($Given: their names). client_ref=last_release
-# is the newest tag brotato-together/*; a given -ClientRef or -HostRef replaces the scenario's ref.
+# is Get-LastRelease's tag; a given -ClientRef or -HostRef replaces the scenario's ref. Without such
+# a tag the result has SkipReason: the scenario cannot run yet (not a failure).
 function Get-ScenarioDefaults([string]$Name, [string[]]$Given) {
     $text = [IO.File]::ReadAllText($ScenariosFile)
     $block = [regex]::Match($text, '(?s)const LAUNCH := \{(.*?)\r?\n\}')
@@ -46,7 +47,14 @@ function Get-ScenarioDefaults([string]$Name, [string[]]$Given) {
         $parameter = $parameters[$key]
         if ($parameter -like "*Ref") {
             if ($Given -contains "ClientRef" -or $Given -contains "HostRef") { continue }
-            if ($value -eq "last_release") { $value = Get-LastRelease }
+            if ($value -eq "last_release") {
+                $value = Get-LastRelease
+                if ($value -eq "") {
+                    $defaults["SkipReason"] = "no tag brotato-together/* has another protocol than this" `
+                        + " worktree's (p$(Get-OwnProtocol)): nothing to turn away yet"
+                    return $defaults
+                }
+            }
         }
         $defaults[$parameter] = switch ($parameter) {
             "Clients" { [int]$value }
@@ -60,11 +68,41 @@ function Get-ScenarioDefaults([string]$Name, [string[]]$Given) {
     return $defaults
 }
 
-# The newest release tag of brotato:together (brotato-together/<date>).
+$ProtocolFile = "mods/brotato-together/src/einfluffles-BrotatoTogether/net/protocol.gd"
+
+# The protocol number in a protocol.gd's text ("const VERSION := <n>"), "" without one.
+function Get-ProtocolVersion([string]$Text) {
+    $match = [regex]::Match($Text, '(?m)^const VERSION := (\d+)')
+    if ($match.Success) { return $match.Groups[1].Value }
+    return ""
+}
+
+function Get-OwnProtocol {
+    $own = Get-ProtocolVersion ([IO.File]::ReadAllText((Join-Path $Root $ProtocolFile)))
+    if ($own -eq "") { throw "no const VERSION in $ProtocolFile" }
+    return $own
+}
+
+# last_release: the newest release tag of brotato:together (brotato-together/<date>) whose protocol
+# (net/protocol.gd's VERSION) is not this worktree's. The lobby's tag names mod and protocol, so
+# only a build of another protocol is turned away (right after a release the newest tag has this
+# worktree's). "" when there is no such tag. As tools/check-pair.sh --last-release.
 function Get-LastRelease {
-    $tag = git -C $Root for-each-ref --sort=-creatordate --count=1 --format="%(refname:short)" "refs/tags/brotato-together/*"
-    if (-not $tag) { throw "no tag brotato-together/* (pass -ClientRef <git ref>)" }
-    return "$tag".Trim()
+    $own = Get-OwnProtocol
+    $tags = @(git -C $Root for-each-ref --sort=-creatordate --format="%(refname:short)" "refs/tags/brotato-together/*")
+    if ($LASTEXITCODE -ne 0) { throw "git for-each-ref failed" }
+    foreach ($tag in $tags) {
+        $tag = "$tag".Trim()
+        if ($tag -eq "") { continue }
+        $listed = git -C $Root ls-tree --name-only $tag -- $ProtocolFile
+        if ($LASTEXITCODE -ne 0) { throw "cannot read $ProtocolFile of $tag" }
+        if (-not $listed) { continue }
+        $text = (git -C $Root show "${tag}:$ProtocolFile") -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw "cannot read $ProtocolFile of $tag" }
+        $theirs = Get-ProtocolVersion $text
+        if ($theirs -ne "" -and $theirs -ne $own) { return $tag }
+    }
+    return ""
 }
 
 # -Do's text: a JSON object, or key=value pairs ("cmd=wait_for scene=coop_resume timeout_sec=10";

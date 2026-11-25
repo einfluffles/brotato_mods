@@ -172,6 +172,11 @@ if ($Scenario -ne "" -and -not (Test-ScenarioName $Scenario)) {
 }
 if ($Scenario -ne "") {
     $defaults = Get-ScenarioDefaults $Scenario @($PSBoundParameters.Keys)
+    if ($defaults.ContainsKey("SkipReason")) {
+        Write-Note "info: $($defaults.SkipReason)"
+        Write-Host "SKIP $Scenario"
+        exit 0
+    }
     foreach ($setting in $defaults.Keys) { Set-Variable -Name $setting -Value $defaults[$setting] }
 }
 if ($ClientRef -ne "" -and $HostRef -ne "") { throw "-ClientRef and -HostRef together: one side runs this worktree" }
@@ -369,8 +374,9 @@ if ($refSide -ne "") {
     if ((Read-Stamp $refStampFile) -ne $gameStamp) {
         Write-Note "copying the game copy to $RefGame (once per game version) ..."
         if (Test-Path $refStampFile) { Remove-Item $refStampFile }
+        # Not the game copy's stamp: a copy cut short must not look complete.
         robocopy $GameCopy $RefGame /MIR /XD (Join-Path $GameCopy "mods-unpacked") (Join-Path $RefGame "mods-unpacked") `
-            /NFL /NDL /NJH /NJS /NP /MT:16 | Out-Null
+            /XF ".source-stamp" /NFL /NDL /NJH /NJS /NP /MT:16 | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "copying the game copy failed (robocopy $LASTEXITCODE)" }
         [IO.File]::WriteAllText($refStampFile, $gameStamp)
     }
@@ -455,142 +461,162 @@ function Set-InstanceSettings([string]$UserDir) {
 $names = @(0..$Clients | ForEach-Object { if ($_ -eq 0) { "host" } else { "client$_" } })
 $joypads = Get-JoypadSettings $names
 $instances = @()
-for ($i = 0; $i -lt $count; $i++) {
-    $role = if ($i -eq 0) { "host" } else { "client" }
-    $name = $names[$i]
-    $onRef = $refSide -eq $role
-    $game = if ($onRef) { $RefGame } else { $GameCopy }
-    $dlcs = if ($role -eq "host") { $HostDlcs } else { $ClientDlcs }
-    $dir = Join-Path $runDir $name
-    $appdata = Join-Path $dir "appdata"
-    $userDir = [IO.Path]::GetFullPath((Join-Path $appdata $UserDirName)).TrimEnd('\')
-    if ($userDir -ieq $realUserDir -or $userDir.StartsWith("$realUserDir\", [StringComparison]::OrdinalIgnoreCase)) {
-        throw "refused: the user folder of $name would be the game's own ($realUserDir)"
-    }
-    New-Item -ItemType Directory -Force $dir | Out-Null
-    # The game reads the last log at boot and turns all mods off after an error that names a mod.
-    foreach ($old in @((Join-Path $userDir "logs"), (Join-Path $dir "control"), (Join-Path $dir "out"), (Join-Path $dir "shots"))) {
-        if (Test-Path $old) { Remove-Item -Recurse -Force $old }
-    }
-    foreach ($old in @("stdout.log", "stderr.log", "status.json", "instance.json")) {
-        $path = Join-Path $dir $old
-        if (Test-Path $path) { Remove-Item -Force $path }
-    }
-    Set-InstanceSettings $userDir
-    $column = $i % 2
-    $row = [int][Math]::Floor($i / 2)
-    $x = $area.X + $gap + $column * ($w + $gap)
-    $y = $area.Y + $gap + $row * ($h + $titleBar + $gap) + $titleBar
-    $arguments = @("--path", "`"$game`"", "--windowed", "--resolution", "${w}x$h", "--position", "$x,$y")
-    if ($role -eq "client" -and -not $NoJoin) { $arguments += @("+connect_lobby", "$FirstLobby") }
-    $muted = ($Mute -eq "all") -or ($Mute -eq "client" -and $role -eq "client")
-    $environment = [ordered]@{
-        APPDATA = $appdata
-        BT_LOCAL_ROLE = $role
-        BT_LOCAL_ID = "$($HostNumber + $i)"
-        BT_LOCAL_NAME = $(if ($i -eq 0) { "Host" } else { "Client $i" })
-        BT_LOCAL_PORT = "$port"
-        BT_LOCAL_TOKEN = $token
-        BT_LOCAL_DIR = $dir
-        BT_LOCAL_AUTOHOST = $(if ($role -eq "host" -and -not $NoJoin) { "1" } else { $null })
-        BT_LOCAL_MUTE = $(if ($muted) { "1" } else { $null })
-        BT_LOCAL_PROFILE = $(if ($startProfile -eq "none") { $null } else { $startProfile })
-        BT_LOCAL_DLCS = $(if ($dlcs -eq "") { $null } else { $dlcs })
-        BT_LOCAL_JOYPAD = $(if ($joypads[$name] -eq "") { $null } else { $joypads[$name] })
-        BT_LOCAL_REF = $(if ($onRef) { "$($refInfo.label) ($($refInfo.commit.Substring(0, 12)))" } else { $null })
-    }
-    $saved = @{}
-    foreach ($key in $environment.Keys) {
-        $saved[$key] = [Environment]::GetEnvironmentVariable($key)
-        [Environment]::SetEnvironmentVariable($key, $environment[$key])
-    }
-    try {
-        $process = Start-Process -FilePath $EngineExe -ArgumentList $arguments -WorkingDirectory $dir -PassThru `
-            -RedirectStandardOutput (Join-Path $dir "stdout.log") -RedirectStandardError (Join-Path $dir "stderr.log")
-    } finally {
-        foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
-    }
-    $info = [ordered]@{
-        name = $name
-        role = $role
-        pid = $process.Id
-        start = $process.StartTime.ToUniversalTime().Ticks
-        dir = $dir
-        engine = $EngineExe
-        arguments = ($arguments -join " ")
-        user_dir = $userDir
-        mod_loader_log = (Join-Path $userDir "logs\modloader.log")
-        godot_log = (Join-Path $userDir "logs\godot.log")
-        stdout = (Join-Path $dir "stdout.log")
-        stderr = (Join-Path $dir "stderr.log")
-        status = (Join-Path $dir "status.json")
-        shots = (Join-Path $dir "shots")
-        game = $game
-        mods = $(if ($onRef) { $refModNames } else { $modNames })
-        build = $(if ($onRef) { "$($refInfo.label) ($($refInfo.commit))" } else { "this worktree" })
-        dlcs = $(if ($dlcs -eq "") { "all" } else { $dlcs })
-        joypad = $(if ($joypads[$name] -eq "") { "all" } else { $joypads[$name] })
-        port = $port
-    }
-    [IO.File]::WriteAllText((Join-Path $dir "instance.json"), ($info | ConvertTo-Json), $Utf8)
-    $instances += [pscustomobject]$info
-}
-$session = [ordered]@{ run = $Run; engine = $Engine; port = $port; profile = $startProfile; instances = $instances }
-[IO.File]::WriteAllText($SessionFile, ($session | ConvertTo-Json -Depth 5), $Utf8)
-Write-Note "$Engine engine, $count games on 127.0.0.1:$port, link profile $startProfile, mods: $modNames"
-foreach ($entry in $instances) {
-    Write-Note "  $($entry.name): pid $($entry.pid), $($entry.build), DLC $($entry.dlcs), pads $($entry.joypad), $($entry.dir)"
+
+# session.json after every start, so Stop-Session (and -Stop) find each game that was started.
+function Save-Session {
+    $session = [ordered]@{ run = $Run; engine = $Engine; port = $port; profile = $startProfile; instances = $instances }
+    [IO.File]::WriteAllText($SessionFile, ($session | ConvertTo-Json -Depth 5), $Utf8)
 }
 
-# --- Until the games are up (and the clients in the host's lobby) ---
-
-function Read-Status([string]$Dir) {
-    $path = Join-Path $Dir "status.json"
-    if (-not (Test-Path $path)) { return $null }
-    try { return Get-Content $path -Raw | ConvertFrom-Json } catch { return $null }
+# A scenario's games close on every way out once one is started: its end, a game that ends while
+# booting, an error. Once.
+$script:ScenarioClosed = $false
+function Close-ScenarioSession {
+    if ($Scenario -eq "" -or $script:ScenarioClosed) { return }
+    $script:ScenarioClosed = $true
+    $closed = Stop-Session
+    Write-Note "closed the scenario's $closed games"
 }
 
-$deadline = (Get-Date).AddSeconds($TimeoutSec)
-$done = $false
-$lastLine = ""
-while (-not $done -and (Get-Date) -lt $deadline) {
-    Start-Sleep -Milliseconds 500
-    $parts = @()
-    $done = $true
-    foreach ($entry in $instances) {
-        $process = Get-Process -Id $entry.pid -ErrorAction SilentlyContinue
-        if ($null -eq $process -or $process.HasExited) {
-            Write-Note "$($entry.name) has ended; last lines of $($entry.stderr):"
-            if (Test-Path $entry.stderr) { Get-Content $entry.stderr -Tail 15 | Write-Host }
-            exit 1
+try {
+    for ($i = 0; $i -lt $count; $i++) {
+        $role = if ($i -eq 0) { "host" } else { "client" }
+        $name = $names[$i]
+        $onRef = $refSide -eq $role
+        $game = if ($onRef) { $RefGame } else { $GameCopy }
+        $dlcs = if ($role -eq "host") { $HostDlcs } else { $ClientDlcs }
+        $dir = Join-Path $runDir $name
+        $appdata = Join-Path $dir "appdata"
+        $userDir = [IO.Path]::GetFullPath((Join-Path $appdata $UserDirName)).TrimEnd('\')
+        if ($userDir -ieq $realUserDir -or $userDir.StartsWith("$realUserDir\", [StringComparison]::OrdinalIgnoreCase)) {
+            throw "refused: the user folder of $name would be the game's own ($realUserDir)"
         }
-        $status = Read-Status $entry.dir
-        if ($null -eq $status) { $parts += "$($entry.name): booting"; $done = $false; continue }
-        $lobby = if ($status.lobby.id) { "in lobby" } elseif ($status.lobby_error) { "refused" } else { "no lobby" }
-        $parts += "$($entry.name): $(if ($status.bound) { 'bound' } else { 'waiting' }), $lobby"
-        # A refused join (another build) is an end state too: the scenario looks at it.
-        $ready = $status.bound -and ($NoJoin -or $status.lobby.id -or $status.lobby_error)
-        if (-not $ready) { $done = $false }
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        # The game reads the last log at boot and turns all mods off after an error that names a mod.
+        foreach ($old in @((Join-Path $userDir "logs"), (Join-Path $dir "control"), (Join-Path $dir "out"), (Join-Path $dir "shots"))) {
+            if (Test-Path $old) { Remove-Item -Recurse -Force $old }
+        }
+        foreach ($old in @("stdout.log", "stderr.log", "status.json", "instance.json")) {
+            $path = Join-Path $dir $old
+            if (Test-Path $path) { Remove-Item -Force $path }
+        }
+        Set-InstanceSettings $userDir
+        $column = $i % 2
+        $row = [int][Math]::Floor($i / 2)
+        $x = $area.X + $gap + $column * ($w + $gap)
+        $y = $area.Y + $gap + $row * ($h + $titleBar + $gap) + $titleBar
+        $arguments = @("--path", "`"$game`"", "--windowed", "--resolution", "${w}x$h", "--position", "$x,$y")
+        if ($role -eq "client" -and -not $NoJoin) { $arguments += @("+connect_lobby", "$FirstLobby") }
+        $muted = ($Mute -eq "all") -or ($Mute -eq "client" -and $role -eq "client")
+        $environment = [ordered]@{
+            APPDATA = $appdata
+            BT_LOCAL_ROLE = $role
+            BT_LOCAL_ID = "$($HostNumber + $i)"
+            BT_LOCAL_NAME = $(if ($i -eq 0) { "Host" } else { "Client $i" })
+            BT_LOCAL_PORT = "$port"
+            BT_LOCAL_TOKEN = $token
+            BT_LOCAL_DIR = $dir
+            BT_LOCAL_AUTOHOST = $(if ($role -eq "host" -and -not $NoJoin) { "1" } else { $null })
+            BT_LOCAL_MUTE = $(if ($muted) { "1" } else { $null })
+            BT_LOCAL_PROFILE = $(if ($startProfile -eq "none") { $null } else { $startProfile })
+            BT_LOCAL_DLCS = $(if ($dlcs -eq "") { $null } else { $dlcs })
+            BT_LOCAL_JOYPAD = $(if ($joypads[$name] -eq "") { $null } else { $joypads[$name] })
+            BT_LOCAL_REF = $(if ($onRef) { "$($refInfo.label) ($($refInfo.commit.Substring(0, 12)))" } else { $null })
+        }
+        $saved = @{}
+        foreach ($key in $environment.Keys) {
+            $saved[$key] = [Environment]::GetEnvironmentVariable($key)
+            [Environment]::SetEnvironmentVariable($key, $environment[$key])
+        }
+        try {
+            $process = Start-Process -FilePath $EngineExe -ArgumentList $arguments -WorkingDirectory $dir -PassThru `
+                -RedirectStandardOutput (Join-Path $dir "stdout.log") -RedirectStandardError (Join-Path $dir "stderr.log")
+        } finally {
+            foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+        }
+        $info = [ordered]@{
+            name = $name
+            role = $role
+            pid = $process.Id
+            start = $process.StartTime.ToUniversalTime().Ticks
+            dir = $dir
+            engine = $EngineExe
+            arguments = ($arguments -join " ")
+            user_dir = $userDir
+            mod_loader_log = (Join-Path $userDir "logs\modloader.log")
+            godot_log = (Join-Path $userDir "logs\godot.log")
+            stdout = (Join-Path $dir "stdout.log")
+            stderr = (Join-Path $dir "stderr.log")
+            status = (Join-Path $dir "status.json")
+            shots = (Join-Path $dir "shots")
+            game = $game
+            mods = $(if ($onRef) { $refModNames } else { $modNames })
+            build = $(if ($onRef) { "$($refInfo.label) ($($refInfo.commit))" } else { "this worktree" })
+            dlcs = $(if ($dlcs -eq "") { "all" } else { $dlcs })
+            joypad = $(if ($joypads[$name] -eq "") { "all" } else { $joypads[$name] })
+            port = $port
+        }
+        [IO.File]::WriteAllText((Join-Path $dir "instance.json"), ($info | ConvertTo-Json), $Utf8)
+        $instances += [pscustomobject]$info
+        Save-Session
     }
-    $line = $parts -join "; "
-    if ($line -ne $lastLine) { Write-Note $line; $lastLine = $line }
-}
-if (-not $done) { Write-Note "not all games were ready after $TimeoutSec s (see status.json and stderr.log)" }
-foreach ($entry in $instances) {
-    if (-not (Test-Path $entry.stderr)) { continue }
-    $errors = @(Get-Content $entry.stderr | Where-Object { $_ -match '^SCRIPT ERROR' })
-    if ($errors.Count -gt 0) { Write-Note "$($entry.name): $($errors.Count) script errors in $($entry.stderr)" }
-}
-if ($Scenario -ne "") {
-    $passed = $false
-    try {
+    Write-Note "$Engine engine, $count games on 127.0.0.1:$port, link profile $startProfile, mods: $modNames"
+    foreach ($entry in $instances) {
+        Write-Note "  $($entry.name): pid $($entry.pid), $($entry.build), DLC $($entry.dlcs), pads $($entry.joypad), $($entry.dir)"
+    }
+
+    # --- Until the games are up (and the clients in the host's lobby) ---
+
+    function Read-Status([string]$Dir) {
+        $path = Join-Path $Dir "status.json"
+        if (-not (Test-Path $path)) { return $null }
+        try { return Get-Content $path -Raw | ConvertFrom-Json } catch { return $null }
+    }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    $done = $false
+    $lastLine = ""
+    while (-not $done -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+        $parts = @()
+        $done = $true
+        foreach ($entry in $instances) {
+            $process = Get-Process -Id $entry.pid -ErrorAction SilentlyContinue
+            if ($null -eq $process -or $process.HasExited) {
+                Write-Note "$($entry.name) has ended; last lines of $($entry.stderr):"
+                if (Test-Path $entry.stderr) { Get-Content $entry.stderr -Tail 15 | Write-Host }
+                if ($Scenario -ne "") {
+                    Close-ScenarioSession
+                    Write-Host "FAIL $Scenario"
+                }
+                exit 1
+            }
+            $status = Read-Status $entry.dir
+            if ($null -eq $status) { $parts += "$($entry.name): booting"; $done = $false; continue }
+            $lobby = if ($status.lobby.id) { "in lobby" } elseif ($status.lobby_error) { "refused" } else { "no lobby" }
+            $parts += "$($entry.name): $(if ($status.bound) { 'bound' } else { 'waiting' }), $lobby"
+            # A refused join (another build) is an end state too: the scenario looks at it.
+            $ready = $status.bound -and ($NoJoin -or $status.lobby.id -or $status.lobby_error)
+            if (-not $ready) { $done = $false }
+        }
+        $line = $parts -join "; "
+        if ($line -ne $lastLine) { Write-Note $line; $lastLine = $line }
+    }
+    if (-not $done) { Write-Note "not all games were ready after $TimeoutSec s (see status.json and stderr.log)" }
+    foreach ($entry in $instances) {
+        if (-not (Test-Path $entry.stderr)) { continue }
+        $errors = @(Get-Content $entry.stderr | Where-Object { $_ -match '^SCRIPT ERROR' })
+        if ($errors.Count -gt 0) { Write-Note "$($entry.name): $($errors.Count) script errors in $($entry.stderr)" }
+    }
+    if ($Scenario -ne "") {
+        $passed = $false
         if ($done) { $passed = Invoke-Scenario $Scenario $instances $runDir }
-    } finally {
-        $closed = Stop-Session
-        Write-Note "closed the scenario's $closed games"
+        Close-ScenarioSession
+        Write-Host $(if ($passed) { "PASS $Scenario" } else { "FAIL $Scenario" })
+        exit $(if ($passed) { 0 } else { 1 })
     }
-    Write-Host $(if ($passed) { "PASS $Scenario" } else { "FAIL $Scenario" })
-    exit $(if ($passed) { 0 } else { 1 })
+    Write-Note "screenshots: tools\play-local.ps1 -Screenshot <name>; stop: tools\play-local.ps1 -Stop (or close the windows)"
+    exit $(if ($done) { 0 } else { 1 })
+} finally {
+    Close-ScenarioSession  # also when a game ends while booting, or anything throws
 }
-Write-Note "screenshots: tools\play-local.ps1 -Screenshot <name>; stop: tools\play-local.ps1 -Stop (or close the windows)"
-exit $(if ($done) { 0 } else { 1 })

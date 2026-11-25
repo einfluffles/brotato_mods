@@ -36,7 +36,7 @@ if [ "$use_cache" = 1 ]; then
   stamp="$(stat -c '%Y %s' "$ROOT/reference/project.godot")"
   if [ "${MOD_CHECK_RESYNC:-0}" = 1 ] || [ "$(cat "$GAME/.source-stamp" 2> /dev/null)" != "$stamp" ]; then
     echo "copying reference/ to $GAME (once per game version) ..."
-    mkdir -p "$GAME"
+    mkdir -p "$GAME" && rm -f "$GAME/.source-stamp"  # a copy cut short must not look complete
     if command -v rsync > /dev/null 2>&1; then
       rsync -a --delete --exclude /mods-unpacked/ --exclude /.source-stamp "$ROOT/reference/" "$GAME/" || exit 1
     else

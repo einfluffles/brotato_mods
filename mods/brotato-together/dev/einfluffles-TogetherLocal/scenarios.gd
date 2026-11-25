@@ -28,7 +28,8 @@ const HEADLESS := [
 # and tools/check-pair.sh (keep the form "<name>": "key=value ..."): clients (how many), host_dlcs
 # and client_dlcs (BT_LOCAL_DLCS: all, none or ids), no_join=1 (nobody hosts or joins by itself),
 # client_ref or host_ref (that side runs brotato:together of a git ref; last_release: the newest
-# tag brotato-together/*). A launcher option given by hand wins over the scenario's setting.
+# tag brotato-together/* of another protocol than this worktree's, and without one the launchers
+# skip the scenario). A launcher option given by hand wins over the scenario's setting.
 const LAUNCH := {
 	"three_players": "clients=2",
 	"dlc_borrow": "host_dlcs=all client_dlcs=none",
@@ -407,12 +408,12 @@ func clients_borrow(r, missing: Dictionary):
 
 
 # One side runs another build of brotato:together (LAUNCH: client_ref=last_release, the newest
-# tag brotato-together/*; -ClientRef or -HostRef name another). Nobody joins by itself: the host
-# opens its lobby, the clients switch to German and accept an invite. The lobby's mod tag
-# (brotato:together and its protocol) turns each client away: it shows why in its own build's
-# words, naming both tags; a client of this worktree in German (BT_ERR_LOBBY_VERSION). The host
-# keeps its lobby, alone, without an error. (version_mismatch: one protocol, another mod version,
-# rejected on HELLO.)
+# tag brotato-together/* of another protocol; -ClientRef or -HostRef name another). Nobody joins by
+# itself: the host opens its lobby, the clients switch to German and accept an invite. The lobby's
+# mod tag (brotato:together and its protocol) turns each client away: it shows why in its own
+# build's words, naming both tags; a client of this worktree in German (BT_ERR_LOBBY_VERSION). The
+# host keeps its lobby, alone, without an error. (version_mismatch: one protocol, another mod
+# version, rejected on HELLO.)
 func scenario_version_mismatch_build(r):
 	var refs := {}
 	var other := false

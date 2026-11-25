@@ -12,20 +12,23 @@
 # and BT_LOCAL_SCENARIO: it runs its part of the scenario (scenarios.gd, in step with the other
 # games: scenario_runner.gd), prints "PAIR-TESTS: PASS" or "PAIR-TESTS: FAIL <why>" and closes.
 # The dev mod's refusal rules hold as in a window: stock Godot has no Steam singleton, the copy
-# has no feature "steam", the user folder is not the game's own. The clients join through the
+# has no feature "steam", the user folder lies under BT_LOCAL_DIR. The clients join through the
 # launch option "+connect_lobby <the host's first lobby>", as in a window.
 #
 # A scenario's launch settings come from scenarios.gd's LAUNCH, as for tools\play-local.ps1:
 # clients (games client1..N), host_dlcs / client_dlcs (BT_LOCAL_DLCS), no_join (no autohost, no
 # +connect_lobby) and client_ref / host_ref: that side runs brotato:together of a git ref
-# (last_release: the newest tag brotato-together/*). Its src/ comes from git archive into the
-# run's folder and is mounted, with this worktree's dev mod, over a second mount of the same game
-# at /proj-ref; nothing is copied.
+# (last_release: the newest tag brotato-together/* whose protocol, net/protocol.gd's VERSION, is
+# not this worktree's; with none such the scenario is skipped, not failed). Its src/ comes from git
+# archive into the run's folder and is mounted, with this worktree's dev mod, over a second mount
+# of the same game at /proj-ref; nothing is copied.
 #
 # A scenario passes when every game prints PASS within PAIR_TIMEOUT, without a script error in mod
-# code. On a failure every log's relevant lines are printed; the folders are kept.
+# code. On a failure every log's relevant lines are printed; the folders are kept. The games'
+# containers have no network (--network none): the wire runs on the container's own loopback.
 #
 # Usage: tools/check-pair.sh [-q] [scenario ...]   (default: every one in scenarios.gd's HEADLESS)
+#        tools/check-pair.sh --last-release        prints the tag last_release names, or nothing
 #   -q  print the summary lines only
 # Environment:
 #   CONTAINER, MOD_CHECK_CACHE, MOD_CHECK_RESYNC   as for tools/check.sh
@@ -92,9 +95,58 @@ fi
 
 # --- Outside: the containers and the report ---
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-[ -f "$ROOT/reference/project.godot" ] || { echo "reference/ missing: decompile the game first (docs/game-code.md)" >&2; exit 1; }
 MOD="$ROOT/mods/brotato-together"
 SCENARIOS_GD="$MOD/dev/einfluffles-TogetherLocal/scenarios.gd"
+PROTOCOL_GD=mods/brotato-together/src/einfluffles-BrotatoTogether/net/protocol.gd
+
+# git for this checkout. A Windows worktree's .git names a Windows path that WSL's git cannot
+# follow: then Git for Windows, through WSL's interop.
+git_here() {
+  if git -C "$ROOT" rev-parse --git-dir > /dev/null 2>&1; then
+    git -C "$ROOT" "$@"
+  else
+    (cd "$ROOT" && git.exe "$@")
+  fi
+}
+
+# brotato:together's protocol (net/protocol.gd: "const VERSION := <n>") in a git ref, or in this
+# worktree without one; nothing when the file or the line is missing; false when git fails.
+protocol_of() {
+  local listed
+  if [ -n "${1:-}" ]; then
+    listed="$(git_here ls-tree --name-only "$1" -- "$PROTOCOL_GD")" || return 1
+    [ -n "$listed" ] || return 0
+    git_here show "$1:$PROTOCOL_GD" || return 1
+  else
+    cat "$ROOT/$PROTOCOL_GD"
+  fi | tr -d '\r' | sed -n 's/^const VERSION := \([0-9][0-9]*\).*/\1/p' | head -1
+}
+
+# last_release: the newest tag brotato-together/* whose protocol is not this worktree's. The
+# lobby's tag names mod and protocol, so only a build of another protocol is turned away (right
+# after a release the newest tag has this worktree's). Nothing when there is no such tag.
+last_release() {
+  local own tags tag theirs
+  own="$(protocol_of)"
+  [ -n "$own" ] || { echo "no const VERSION in $PROTOCOL_GD" >&2; return 1; }
+  tags="$(git_here for-each-ref --sort=-creatordate --format='%(refname:short)' \
+    'refs/tags/brotato-together/*')" || { echo "git for-each-ref failed" >&2; return 1; }
+  while read -r tag; do
+    [ -n "$tag" ] || continue
+    theirs="$(protocol_of "$tag")" || { echo "cannot read $PROTOCOL_GD of $tag" >&2; return 1; }
+    if [ -n "$theirs" ] && [ "$theirs" != "$own" ]; then
+      echo "$tag"
+      return 0
+    fi
+  done < <(printf '%s\n' "$tags" | tr -d '\r')
+}
+
+if [ "${1:-}" = --last-release ]; then
+  last_release
+  exit
+fi
+
+[ -f "$ROOT/reference/project.godot" ] || { echo "reference/ missing: decompile the game first (docs/game-code.md)" >&2; exit 1; }
 
 quiet=0
 while getopts "q" opt; do
@@ -135,30 +187,23 @@ for dir in "$MOD"/src/*/ "$MOD"/dev/*/; do
 done
 mounts+=(-v "$ROOT/tools/check-pair.sh:/pair-tool/check-pair.sh:ro$label")
 
-# git for this checkout. A Windows worktree's .git names a Windows path that WSL's git cannot
-# follow: then Git for Windows, through WSL's interop.
-git_here() {
-  if git -C "$ROOT" rev-parse --git-dir > /dev/null 2>&1; then
-    git -C "$ROOT" "$@"
-  else
-    (cd "$ROOT" && git.exe "$@")
-  fi
-}
-
 # A scenario's LAUNCH settings in scenarios.gd ("<name>": "key=value ..."), one per line.
 launch_of() {
   sed -n '/^const LAUNCH := {/,/^}/p' "$SCENARIOS_GD" \
     | sed -n "s/^[[:space:]]*\"$1\": \"\([^\"]*\)\".*/\1/p" | tr ' ' '\n' | grep -v '^$' || true
 }
 
-# brotato:together's src/ of a git ref (last_release: the newest tag brotato-together/*) in
-# $work/refs/<commit>: sets ref_label and ref_dir.
+# brotato:together's src/ of a git ref (last_release: see last_release) in $work/refs/<commit>:
+# sets ref_label and ref_dir. Returns 3 (and sets skip_why) when last_release names no tag.
 prepare_ref() {
   local ref="$1" commit
   if [ "$ref" = last_release ]; then
-    ref="$(git_here for-each-ref --sort=-creatordate --count=1 --format='%(refname:short)' \
-      'refs/tags/brotato-together/*' | tr -d '\r')"
-    [ -n "$ref" ] || { echo "no tag brotato-together/* for last_release" >&2; return 1; }
+    ref="$(last_release)" || return 1
+    if [ -z "$ref" ]; then
+      skip_why="no tag brotato-together/* has another protocol than this worktree's"
+      skip_why+=" (p$(protocol_of)): nothing to turn away yet"
+      return 3
+    fi
   fi
   commit="$(git_here rev-parse --verify -q "$ref^{commit}" | tr -d '\r')"
   [ -n "$commit" ] || { echo "no commit for the ref '$ref'" >&2; return 1; }
@@ -173,6 +218,7 @@ prepare_ref() {
 
 # Each scenario's launch settings, before any container starts (the refs are unpacked once).
 declare -A clients_of host_dlcs_of client_dlcs_of no_join_of ref_side_of ref_label_of ref_dir_of
+declare -A skipped_why  # scenario -> why it does not run (an info, not a failure)
 for scenario in "${scenarios[@]}"; do
   side="" ref=""
   while IFS='=' read -r key value; do
@@ -191,7 +237,12 @@ for scenario in "${scenarios[@]}"; do
   elif [ -n "${PAIR_CLIENT_REF:-}" ]; then
     side=client ref="$PAIR_CLIENT_REF"
   fi
-  prepare_ref "$ref" || exit 1
+  prepare_ref "$ref"
+  case $? in
+    0) ;;
+    3) skipped_why[$scenario]="$skip_why"; continue ;;
+    *) exit 1 ;;
+  esac
   ref_side_of[$scenario]="$side"
   ref_label_of[$scenario]="$ref_label"
   ref_dir_of[$scenario]="$ref_dir"
@@ -222,7 +273,7 @@ start_scenario() {
       [ -d "$mod" ] && more+=(-v "${mod%/}:/proj-ref/mods-unpacked/$(basename "$mod"):ro$label")
     done
   fi
-  "$RUNTIME" run --rm --name "$name" "${run_as[@]}" -e HOME=/tmp \
+  "$RUNTIME" run --rm --name "$name" --network none "${run_as[@]}" -e HOME=/tmp \
     -e PAIR_TIMEOUT="${PAIR_TIMEOUT:-420}" -e PAIR_BREAK="${PAIR_BREAK:-}" \
     -e PAIR_CLIENTS="$clients" -e PAIR_HOST_DLCS="${host_dlcs_of[$1]:-}" \
     -e PAIR_CLIENT_DLCS="${client_dlcs_of[$1]:-}" -e PAIR_NO_JOIN="${no_join_of[$1]:-0}" \
@@ -296,6 +347,7 @@ started=$(date +%s)
 jobs_max="${PAIR_JOBS:-4}"
 running=0
 for scenario in "${scenarios[@]}"; do
+  [ -z "${skipped_why[$scenario]:-}" ] || continue
   if [ "$running" -ge "$jobs_max" ]; then
     wait -n
     running=$((running - 1))
@@ -307,17 +359,25 @@ wait
 cleanup_done=1  # every container has ended (--rm)
 
 failed=0
+skipped=0
 for scenario in "${scenarios[@]}"; do
-  if report "$scenario"; then
+  if [ -n "${skipped_why[$scenario]:-}" ]; then
+    echo "== $scenario: skipped"
+    echo "  info: ${skipped_why[$scenario]}"
+    skipped=$((skipped + 1))
+  elif report "$scenario"; then
     [ "${PAIR_KEEP:-0}" = 1 ] || rm -rf "${work:?}/$scenario"
   else
     failed=$((failed + 1))
   fi
 done
 took=$(($(date +%s) - started))
+ran=$((${#scenarios[@]} - skipped))
+skip_note=""
+[ "$skipped" = 0 ] || skip_note=", $skipped skipped"
 if [ "$failed" -gt 0 ]; then
-  echo "FAILED ($failed of ${#scenarios[@]} scenarios, ${took} s)"
+  echo "FAILED ($failed of $ran scenarios$skip_note, ${took} s)"
   exit 1
 fi
 [ "${PAIR_KEEP:-0}" = 1 ] || [ -n "${PAIR_DIR:-}" ] || rm -rf "$work"
-echo "passed (${#scenarios[@]} scenarios, ${took} s)"
+echo "passed ($ran scenarios$skip_note, ${took} s)"

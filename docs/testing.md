@@ -69,14 +69,18 @@ CONTAINER=docker tools/check-pair.sh kick bad_resync  # some
   and a random token for the wire on 127.0.0.1 inside the container, its folder, the link profile
   `lan`), the host `BT_LOCAL_AUTOHOST=1` and the clients `+connect_lobby <the host's first lobby>`.
   The dev mod's refusal rules hold there as in a window: stock Godot has no Steam singleton, the
-  copy has no feature `steam`, and the user folder is not `$HOME/.local/share/Brotato`.
+  copy has no feature `steam`, and the user folder lies under the process's `BT_LOCAL_DIR`.
 - A scenario's launch settings (`LAUNCH` in `scenarios.gd`, the same ones `-Scenario` uses in
   windows) decide the rest: `clients` (games `client1` to `clientN`), `host_dlcs` and `client_dlcs`
   (`BT_LOCAL_DLCS`), `no_join` (no autohost, no `+connect_lobby`), and `client_ref` or `host_ref`:
   that side runs brotato:together of a git ref (`last_release`: the newest tag
-  `brotato-together/*`). Its `src/` comes from `git archive` into the run's folder (`refs/`; Git
-  for Windows through WSL's interop when the checkout is a Windows worktree) and is mounted with
-  this worktree's dev mod over a second mount of the same game, `/proj-ref`: nothing is copied.
+  `brotato-together/*` whose protocol, `net/protocol.gd`'s `VERSION`, is not this worktree's;
+  only such a build is turned away, and right after a release the newest tag has this worktree's
+  protocol). Without such a tag the scenario is skipped with an info line, not failed;
+  `tools/check-pair.sh --last-release` prints the tag. Its `src/` comes from `git archive` into
+  the run's folder (`refs/`; Git for Windows through WSL's interop when the checkout is a Windows
+  worktree) and is mounted with this worktree's dev mod over a second mount of the same game,
+  `/proj-ref`: nothing is copied.
   `PAIR_CLIENT_REF=<ref>` or `PAIR_HOST_REF=<ref>` replace the ref of such a scenario (the other
   direction: `PAIR_HOST_REF=brotato-together/2026-11-23-1930`).
 - `BT_LOCAL_SCENARIO`, `BT_LOCAL_RUN` and `BT_LOCAL_PEERS` make each game run its part of the
@@ -295,6 +299,15 @@ still loopback in the end: no real Steam relay, NAT or route choice, no real Ste
 invites, friends-only lobbies, DLC ownership, achievements or Workshop. Both games share one PC's
 CPU and GPU, and the game copy is decompiled code, not the shipped `.pck`. Real sessions between
 two Steam accounts stay the check before a release.
+
+Where the emulator is kinder than Steam, on purpose for now: a profile's loss drops or delays a
+whole message whatever its size, while Steam splits a message into packets of about 1200 B and a
+large one loses more often. A host whose game is killed is noticed at once (its wire closes),
+while with Steam the client hears nothing for much longer, so `session.gd`'s host timeout
+(`HOST_TIMEOUT_MSEC`) is only reached with the `stall` profile or `-Stall`. And the emulator
+emits its callbacks in the dev mod's `_process`, after the transport has polled its messages in
+the same frame; GodotSteam runs Steam's at its own point of the frame (embedded callbacks, the
+game's `steam.gd`), so a callback and the messages around it can come in another order.
 
 Limits of the options: at most three clients (the wire takes three, the game four players).
 `-ClientRef` / `-HostRef` need a build the dev mod can bind: one with `Transport.bind_steam`, or one
