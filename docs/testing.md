@@ -2,7 +2,8 @@
 
 How the mods' tests run: headless in the toolchain container (`tools/check.sh`), and in a real game
 window on Windows (`tools\check-window.ps1`). Both need the decompiled game in `reference/`
-([Game code](game-code.md)).
+([Game code](game-code.md)). [Play locally](#play-locally) starts brotato:together as host and clients in
+several game windows on one PC, without Steam.
 
 ## Headless
 
@@ -36,10 +37,74 @@ feature `steam`, the game's own user folder) and logs one line; the suites check
   test steps it. Pacing, latency, loss, reordering, stalls and failures are therefore exact, and a
   suite on it runs the same every time without waiting in real time.
 - `emulator` tests the stand-in itself, `emulator_transport` a real `Transport` and `Session` per
-  player on it (handshake, messages, send results and the full resync, leave, kick, failures).
+  player on it (handshake, messages, send results and the full resync, leave, kick, failures),
+  `emulator_wire` the wire between game processes (`wire_tcp.gd`) with real sockets on 127.0.0.1,
+  all ends in one process.
 - The dev mod's design, activation rules and coverage of GodotSteam:
-  [Local play](../mods/brotato-together/docs/implementation.md#local-play-dev-mod). Two game
-  windows on one PC (a launcher and a wire between processes) are not in yet.
+  [Local play](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
+
+## Play locally
+
+On Windows, one command starts a host and a client of brotato:together as two game windows side by
+side, connected without Steam:
+
+```
+tools\play-local.ps1
+```
+
+(`powershell -ExecutionPolicy Bypass -File tools\play-local.ps1` if scripts are blocked.) It needs
+`reference/` and the installed game. What you get, after about a minute on the first start (it
+copies the game) and 10 to 45 s after that:
+
+- Two windows, the host on the left. The host opens a lobby at the title screen by itself, the
+  client joins it through the real launch option `+connect_lobby <lobby id>`, as Steam starts a
+  game for an invite. Both show the lobby with both players. From there it is the real game: Start
+  on the host, then each player holds Enter (or Space) in its own window to join a slot.
+- Keyboard and mouse act in the focused window. Gamepads are not split per window yet: play with
+  keyboard and mouse. Neither window pauses or mutes when it loses focus; the clients are silent.
+- The mods come from this worktree: brotato:together's `src/`, the dev mod, and brotato:trade
+  (`-With none` leaves it out). The game is the installed game's engine (`BrotatoLocal.exe`, copied)
+  on a copy of `reference/` without the feature `steam`, so it runs as the game's local build:
+  Steam is never started or initialised, there are no achievements or Steam saves, and both DLCs
+  count as owned.
+- Each game has its own user folder (saves, settings, logs). The real saves in `%APPDATA%\Brotato`
+  are never read or written.
+
+Options:
+
+| Option | What |
+|---|---|
+| `-Clients 1..3` | More clients (two or more: a 2x2 grid). |
+| `-Engine godot` | Stock Godot 3.6.2 (downloaded once, as for `check-window.ps1`) instead of the game's engine: a debug build, so the version shows `-debug` and the game's debug keys work. |
+| `-NoJoin` | Nobody hosts or joins by itself. Host in the host window; Invite (title screen or lobby page) sends every client an accepted invite. |
+| `-Mute client\|all\|none` | Who is silent (default `client`). |
+| `-With mods\<folder>[,...]`, `-With none` | Other mods to load (default `mods\brotato-trade`). |
+| `-Run <name>`, `-Fresh` | Instance folders under `play\<name>` (default `default`, kept between starts, so unlocks and saved runs stay); `-Fresh` starts from empty ones. |
+| `-GameDir <folder>` | The installed game, when it is not found in Steam's libraries. |
+| `-Stop` | Closes the windows of the running session (the games leave as a closed window does), then ends what is left. Closing the windows by hand does the same; a new start closes the previous session first. |
+| `-Screenshot <name> [-On <instance>]` | Every running game (or one) saves its window to `<instance>\shots\<name>.png`. |
+| `-Key <name> [-HoldMs <msec>] [-On <instance>]` | A key press in a game, by Godot key name (`Enter`, `Escape`, `Right`, `D`, ...). Joining a co-op slot needs a hold: `-Key Enter -HoldMs 1000 -On client1`. |
+
+Everything is in `%LOCALAPPDATA%\brotato-modtools\play`: `game\` (the game copy, refreshed when
+`reference/project.godot` changes, mods replaced on every start), `engine\` (refreshed when the
+installed `Brotato.exe` changes), and per instance `<run>\host`, `<run>\client1`, ...: `appdata\`
+(the instance's `APPDATA`; Mod Loader log in `appdata\Brotato\logs\modloader.log`),
+`stdout.log`, `stderr.log`, `instance.json` (what was started: pid, arguments, paths),
+`status.json` (written by the dev mod every second: role, wire, lobby, members, scene),
+`control\` and `shots\`.
+
+The launcher deletes each instance's logs before a start: the game reads the last log at boot
+and turns all mods off after an error in it that names a mod. Expected in `stderr.log`: none with
+`-Engine godot`; with the game's engine one line "User class not found, Steam may not be
+initialized: getSteamID" (the dev mod asking whether Steam is logged on) and "CrashReporter:
+Failed to find engine logs" (the deleted logs).
+
+What it shows and what it cannot: the mod's transport runs unchanged on the stand-in, so lobby,
+handshake, sessions, sends, leaves and kicks take the same code paths as with Steam. The line
+itself is loopback: no latency, loss or Steam relay (link profiles come later), no real Steam
+overlay, invites, friends-only lobbies, DLC ownership, achievements or Workshop. Both games share
+one PC's CPU and GPU, and the game copy is decompiled code, not the shipped `.pck`. Real sessions
+between two Steam accounts stay the check before a release.
 
 ## With real graphics
 

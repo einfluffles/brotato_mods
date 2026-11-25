@@ -304,18 +304,22 @@ still was not after 15 s.
 
 Host and clients as game instances on one PC, without Steam's networking. A dev mod puts a
 Steam-shaped emulator under the unchanged transport (`Transport.bind_steam`, [Steam
-object](#steam-object)). Status: the emulator, the in-process wire and the activation rules are in;
-the wire between two game processes (ENet on 127.0.0.1), the launcher `tools\play-local.ps1`, the
-link profiles and the scenario director come later.
+object](#steam-object)) and links the games over TCP on 127.0.0.1. Status: the emulator, the
+in-process wire, the wire between game processes, the activation rules and the launcher
+`tools\play-local.ps1` ([Play locally](../../../docs/testing.md#play-locally)) are in; the link
+profiles and the scenario director come later.
 
 **Layout.** `mods/brotato-together/dev/einfluffles-TogetherLocal/`, next to `src/` and `tests/`:
 
 | File | What |
 |---|---|
 | `manifest.json` | Mod `einfluffles-TogetherLocal`, depends on `einfluffles-BrotatoTogether`, so it loads after it. |
-| `mod_main.gd` | Activation rules; when active, builds an emulator and binds it to the transport. |
+| `mod_main.gd` | Activation rules; when active, builds an emulator, binds it to the transport, starts the wire, hosts or joins. |
+| `local_transport.gd` | Script extension of `net/steam_transport.gd`, installed only when active: `setup` hands the transport to the dev mod instead of binding GodotSteam. |
 | `steam_emulator.gd` | The Steam stand-in: lobbies, sessions, queues, pacing, link, connection info. No sockets. |
 | `wire_memory.gd` | A wire for two or more emulators in one process, with a clock that moves only when told to. |
+| `wire_tcp.gd` | The wire between game processes: TCP on 127.0.0.1, the host listens, clients connect. |
+| `local_instance.gd` | The instance's side of the launcher: settings, `status.json`, the `control\` folder (screenshots, key presses, quit). |
 
 Nothing under `dev/` is packaged: `tools/package.sh` takes `mods/*/src/<mod_id>/` only, and the zip
 guard fails on any second mod folder in a zip, also one whose manifest sits in `dev/`
@@ -325,7 +329,8 @@ sockets; gdlint covers `dev/` like the rest. `tools/check.sh` and `tools\check-w
 `res://mods-unpacked/einfluffles-TogetherLocal/` and every test run also checks that the dev mod
 stays inert.
 
-**Activation.** `mod_main.gd` acts only if all of these hold (`refusal()`, in this order), else it
+**Activation.** `mod_main.gd` decides in its `_init`, which the Mod Loader runs for every mod
+before any mod's `_ready`. It acts only if all of these hold (`refusal()`, in this order), else it
 logs one line ("Local play off: ...") and does nothing else:
 
 1. `BT_LOCAL_ROLE` is `host` or `client`.
@@ -337,11 +342,104 @@ logs one line ("Local play off: ...") and does nothing else:
    instance on Linux gets its own `XDG_DATA_HOME`).
 
 The test container's game has feature `steam` and its user folder is
-`$HOME/.local/share/Brotato`, so the dev mod refuses there even with a role. When active (no wire
-yet), it takes `BT_LOCAL_ID` (instance number, default 1 for the host and 2 for a client) and
-`BT_LOCAL_NAME` (persona name), binds the emulator and polls it every frame. The transport's own
-`setup` has already logged "Steam singleton not available" or "Steam not logged on" by then; the
-launcher has to clear the logs before a start, as `tools\check-window.ps1` does.
+`$HOME/.local/share/Brotato`, so the dev mod refuses there even with a role. Rule 2 asks the
+game's GodotSteam, which is not initialised in a local instance and logs one engine error for it
+("User class not found ... getSteamID"); stock Godot has no GodotSteam.
+
+When active, `_init` builds the emulator (`BT_LOCAL_ID`: instance number, default 1 for the host
+and 2 for a client; `BT_LOCAL_NAME`: persona name) and installs `local_transport.gd`. The Mod
+Loader applies script extensions after every mod's `_init`, so brotato:together's `_ready` creates
+the transport from the extended script, and its `setup` calls the dev mod's `take_transport`
+instead of binding GodotSteam: the host binds the emulator right there, a client later (below).
+So a local instance never logs "Steam not logged on" or "Steam transport unavailable", errors the
+game would read at the next boot (it turns mods off after a logged error that names a mod). If the
+extension did not apply, the dev mod binds after the transport's own `setup` as a fallback. The
+launcher deletes each instance's logs before a start anyway.
+
+Then `_ready` starts the wire (`BT_LOCAL_PORT`, `BT_LOCAL_TOKEN`; without a port only this game,
+as in the tests), adds `local_instance.gd`, titles the window "Brotato (local host: Host)" and
+polls wire and emulator every frame (`PAUSE_MODE_PROCESS`).
+
+- Host: with `BT_LOCAL_AUTOHOST=1` it opens a lobby (`LobbyMenu.host()`, what the title screen's
+  host button does) once the title screen is up. The lobby page's Invite
+  (`activateGameOverlayInviteDialog`) sends every client an invite, which its emulator fires as
+  `join_requested`: Steam's overlay invite, accepted.
+- Client: binds once its wire is online and, with a launch option `+connect_lobby <lobby id>`,
+  once the host's game owns that lobby (the wire's roster carries the host's lobbies). The
+  transport acts on `+connect_lobby` at its first bind (`_check_launch_args`), so the client joins
+  through the same code as a Steam invite that starts the game. The launcher passes the host's
+  first lobby id, `0x0080000000000000 + (1 << 8) + 1`.
+- The transport's `peer_joined`, `peer_left` and `lobby_failed` are logged ("Peer left: <id>"):
+  the mod itself logs a leaving peer nowhere.
+- `_exit_tree` closes the wire: a closed window leaves at once, as Steam reports a game that quit.
+
+**Wire between games (`wire_tcp.gd`).** Star: the host's game listens with a `TCP_Server` bound to
+127.0.0.1 on the launcher's port; each client connects with a `StreamPeerTCP` (an outgoing
+connection, no socket of its own to reach). A client talks to the host's game only; a packet for
+another client goes through it (the lobby can pass to a client when the host leaves it). Polled by
+hand, never blocking: what a socket does not take waits in the connection's outbox.
+
+- Frames: length (4 bytes, little endian), magic `BTLW`, wire version 1, then `var2bytes` of a
+  Dictionary (read with `bytes2var` without objects). At most 2 MB; a broken frame drops the
+  connection.
+- Handshake: the client's first frame is `hello` with the launcher's random token (32 hex
+  characters), its fake steam id and name. The host refuses a wrong token, a missing or late hello
+  (5 s), a non-fake or taken id (a client that restarted replaces its old connection) and a fourth
+  client, else answers `welcome`. `roster` frames give each client the others' ids and the host's
+  lobbies; `invite` carries the Invite above.
+- Everything else is an emulator packet; the host sets its `from` to the sender's id, so no client
+  speaks for another. A connection that closes (window closed, process killed: the OS closes its
+  sockets) calls `wire_lost` on the emulators that knew it, at once.
+- Reliable and unreliable: the wire carries everything reliable and in order. The emulator's link
+  decides loss, delay and order of unreliable messages before the wire, and loopback adds nothing
+  to that.
+- Why not ENet, as first planned: Godot 3's ENet client binds its UDP socket to every interface,
+  whatever `set_bind_ip` says (checked with the game's engine and with Godot 3.6.2: the client's
+  port showed on `::`), and Windows then offers to let the program through its firewall. Local
+  play must not open anything beyond 127.0.0.1. With TCP, `Get-NetTCPConnection` shows the host's
+  listener on 127.0.0.1 and connections between 127.0.0.1 ports only, and there is no UDP socket.
+
+**The instance (`local_instance.gd`).** With `BT_LOCAL_DIR` (the instance's folder):
+
+- Settings: the launcher seeds `settings.json` (windowed, `pause_on_focus_lost` and
+  `mute_on_focus_lost` off, `on_lost_focus` 0; with two windows one always lacks focus, and the
+  three keys are coupled, `menu_options.gd`). The dev mod enforces them again after ProgressData
+  has loaded them (deferred: the autoloads enter the tree together and get `_ready` afterwards in
+  order, so ProgressData exists before it has loaded anything). `BT_LOCAL_MUTE=1` mutes the Master
+  bus. `--windowed` alone loses against `fullscreen` in the settings (`progress_data.gd`,
+  `apply_settings`).
+- `status.json` every second: role, pid, steam id, name, bound, the `+connect_lobby` lobby, wire
+  (state, port, peers, host lobbies, frames), lobby (id, host, members), scene, fps, screenshots
+  taken, the settings line.
+- `control\`: each file is one command, handled and deleted within 0.25 s: `screenshot-<name>`
+  (the viewport after the frame is drawn, to `shots\<name>.png`), `key-<Name>[-<msec>]` (an
+  `InputEventKey` down, held at least 150 ms or the given time, then up: the client's input
+  reaches the host's game in samples, so a 3-frame tap can fall between them), `quit`. The
+  scenario director replaces this later.
+
+**Launcher (`tools\play-local.ps1`).** Builds `%LOCALAPPDATA%\brotato-modtools\play\game`, a copy
+of `reference/` without `mods-unpacked` and without the line `_custom_features="steam"`: the game
+then picks its `LocalPlatform`, never restarts through Steam or initialises it, and the Mod
+Loader's default profile reads `mods-unpacked`. It fails if that line or
+`config/use_custom_user_dir` is missing. And `play\engine\BrotatoLocal.exe` with
+`steam_api64.dll`, from the installed game (found through Steam's registry entry and
+`libraryfolders.vdf`, `BROTATO_WORKSHOP_DIR` or `-GameDir`; only read). Under another name the
+engine finds no `.pck` of its own and runs `--path`. Both copies are refreshed by a stamp (size and
+time of `reference/project.godot`, of `Brotato.exe`). On each start it closes a running session,
+fills `mods-unpacked` fresh (brotato:together's `src/`, the dev mod, the `-With` mods), picks a
+free port and a token, and per instance: deletes its logs, seeds its settings, refuses if its user
+folder would be `%APPDATA%\Brotato`, and starts the engine with `--path <game> --windowed
+--resolution WxH --position X,Y` (a client also `+connect_lobby <id>`) and its own `APPDATA` and
+`BT_LOCAL_*` variables (set for the child only). It waits until the host is bound and every client
+is in the lobby, then returns; `session.json` lists the processes (id and start time) for `-Stop`,
+which closes the windows and ends what is left after 10 s.
+
+Engine spike (2026-11-25): both the game's engine copy and stock Godot 3.6.2 boot the patched game
+copy with the mods to the title screen (warm boot 8-10 s, a first boot after fresh files up to
+46 s). Default: the game's engine (the real engine build and GodotSteam class, a release build).
+Stock Godot (`-Engine godot`) is a debug build with the game's debug keys and the Mod Loader's
+editor profile, and the only choice for headless runs. Zipped mods (`--mods-path`) and
+`mods-unpacked` cannot be mixed, so the launcher uses unpacked mods.
 
 **The emulator.** One `steam_emulator.gd` object is one player's Steam.
 
@@ -403,7 +501,9 @@ polls every emulator by steam id), so a test runs the same every time.
 
 Not there yet, or simplified:
 
-- The ENet wire, the launcher and the game copy patches; the dev mod's active path has no wire.
+- Gamepads are not routed per window yet: play with keyboard and mouse. The scenario director
+  (scripted runs, waiting for screens) is not there; the control folder has screenshots and key
+  presses only.
 - Link profiles (`lan`, `relay-good`, `bad`, ...) from the measured sessions and switching them at
   run time: `set_link` takes the numbers, nobody sets them yet.
 - Lobby traffic and session control go straight to the wire, without the link's delay; Steam's
@@ -412,10 +512,12 @@ Not there yet, or simplified:
   packets per second are not reported.
 - A lobby whose owner left keeps the first owner in its id, so a later join finds no lobby.
 
-Tests: the suites `emulator` (the emulator on the memory wire) and `emulator_transport` (a real
+Tests: the suites `emulator` (the emulator on the memory wire), `emulator_transport` (a real
 `Transport` and `Session` per player, bound to emulators: hosting, joining, HELLO / WELCOME,
 messages both ways, send results down to the full resync, leave, kick, a game that is gone, a
-failed session and its restart, another version's lobby tag).
+failed session and its restart, another version's lobby tag) and `emulator_wire` (`wire_tcp.gd`
+with real sockets on 127.0.0.1 in one process: framing, token, roster, join, messages, relay
+through the host, a client and the host leaving; every dev mod script compiles).
 
 ## 5. State stream and run state
 
