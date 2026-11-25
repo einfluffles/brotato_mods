@@ -10,9 +10,11 @@ extends Reference
 # receives to receive_packet. Packets hold plain values only (var2bytes-safe).
 #
 # Lobbies live in the emulator that created them; members keep a copy the owner updates. Lobby
-# traffic goes straight to the wire. Messages go through a session per peer: a send queue paced
-# at the send rate (token bucket), then the link (latency, jitter, loss, stalls: set_link), then
-# the wire. Callbacks (the signals) are emitted in poll(), as Steam runs them once a frame.
+# traffic and session control reach the wire after the link's latency (no jitter, loss or stalls:
+# Steam's servers carry them). Messages go through a session per peer: a send queue paced at the
+# send rate or the line's (token bucket), then the link (link.gd: latency, jitter, loss, stalls; a
+# profile from link_profiles.gd), then the wire. Callbacks (the signals) are emitted in poll(), as
+# Steam runs them once a frame.
 # Docs: docs/implementation.md, "Local play (dev mod)".
 
 # GodotSteam's signals, as Transport.STEAM_SIGNALS connects them
@@ -23,7 +25,9 @@ signal lobby_chat_update(lobby_id, changed_id, making_change_id, chat_state)
 signal network_messages_session_request(remote_id)
 signal network_messages_session_failed(reason, remote_id, connection_state, debug)
 
-const VERSION := "local-play emulator 1"
+const Link := preload("res://mods-unpacked/einfluffles-TogetherLocal/link.gd")
+
+const VERSION := "local-play emulator 2"
 
 # Ids: a real Steam user id has universe 1 (Public) in its top byte (7656119...); these have
 # universe 0 (Invalid), so no fake id can ever be a real one. Lobby ids: universe 0, type 8 (chat),
@@ -31,7 +35,7 @@ const VERSION := "local-play emulator 1"
 const FAKE_ID_BASE := 0x0010000100000000
 const FAKE_LOBBY_BASE := 0x0080000000000000
 const MAX_NUMBER := 0xFFFFFFFF
-const FAKE_POP := 0x6C636C  # "lcl" as LinkWatch.pop_code reads it
+const FAKE_POP := Link.FAKE_POP  # "lcl" as LinkWatch.pop_code reads it
 
 # EResult
 const RESULT_OK := 1
@@ -76,15 +80,8 @@ const CONFIG_ICE_DISABLE := ["NETWORKING_CONFIG_P2P_TRANSPORT_ICE_DISABLE", 0]
 # getLocalTimestamp: Steam's clock starts elsewhere than the engine's (per emulator, see _init).
 const CLOCK_ORIGIN_USEC := 5000000000
 const ACCEPT_TIMEOUT_MSEC := 10000  # a session nobody accepts fails at the sender after this
-# What this side sends goes through this link (set_link). Retransmits: a lost reliable message
-# arrives retransmit_msec later per loss; relay_latency_msec is added on a relayed path.
-const DEFAULT_LINK := {
-	"latency_msec": 0,
-	"jitter_msec": 0,
-	"loss": 0.0,
-	"retransmit_msec": 100,
-	"relay_latency_msec": 0,
-}
+const MEASURE_USEC := 1000000  # quality and bytes / packets per second: over the last second
+const QUALITY_MIN_SENT := 20  # transmissions in a period that make a new quality
 
 var steam_id := 0  # getSteamID; 0: not logged on (number 0 in _init)
 var persona_name := ""
@@ -92,18 +89,20 @@ var clock = null  # now_usec(): RealClock, or the wire's clock (wire_memory.gd)
 var clock_origin_usec := 0
 var send_buffer_bytes := SEND_BUFFER_BYTES
 var accept_timeout_msec := ACCEPT_TIMEOUT_MSEC
-var link := DEFAULT_LINK.duplicate()
+var link = null  # link.gd: what this side sends goes through it (set_link, set_profile)
 # Recorded for tests and the director (PR 5): what the game asked Steam for.
 var relay_inits := 0
 var config_values := {}  # ESteamNetworkingConfigValue -> value set
 var rich_presence := {}
 var presence_log := []  # [key, value] per setRichPresence / clearRichPresence ("*", "")
 var invite_dialogs := []  # lobby ids activateGameOverlayInviteDialog opened for
-# Counters: messages paced out, dropped by the link, delivered to the wire, delivered here
+# Counters: messages paced out, dropped by the link, delivered to the wire, delivered here,
+# reliable sends refused on command (fail_next_sends)
 var sent_count := 0
 var dropped_count := 0
 var wire_count := 0
 var received_count := 0
+var refused_count := 0
 
 var _wire = null
 var _lobbies := {}  # lobby id -> {owner, members, data, joinable, max, type, names}
@@ -120,9 +119,10 @@ var _config_rate_min := 0
 var _config_rate_max := 0
 var _config_ice := 0
 var _ice_disable := 0
-var _stall_until_usec := 0
 var _last_poll_usec := -1
-var _rng := RandomNumberGenerator.new()
+var _outbox := []  # lobby traffic and session control on their way: {due, packet}, by due
+var _fail_sends := 0  # how many reliable sends to refuse yet (fail_next_sends)
+var _fail_result := RESULT_LIMIT_EXCEEDED
 
 
 class RealClock:
@@ -139,7 +139,7 @@ func _init(number := 1, persona := "") -> void:
 	_names[steam_id] = persona_name
 	clock = RealClock.new()
 	clock_origin_usec = CLOCK_ORIGIN_USEC + number * 1000000000
-	_rng.seed = number
+	link = Link.new(number)
 	_config_rate_min = _steam_constant(CONFIG_SEND_RATE_MIN)
 	_config_rate_max = _steam_constant(CONFIG_SEND_RATE_MAX)
 	_config_ice = _steam_constant(CONFIG_ICE_ENABLE)
@@ -194,7 +194,9 @@ func poll() -> void:
 	var now := now_usec()
 	var elapsed := 0 if _last_poll_usec < 0 else now - _last_poll_usec
 	_last_poll_usec = now
-	var stalled := now < _stall_until_usec
+	link.tick(now)
+	var stalled: bool = link.stalled(now)
+	_release_outbox(now)
 	for remote_id in _sessions.keys():
 		var session = _sessions.get(remote_id)
 		if session != null:
@@ -205,6 +207,9 @@ func poll() -> void:
 		session = _sessions.get(remote_id)
 		if session != null:
 			_expire_held(remote_id, session, now)
+		session = _sessions.get(remote_id)
+		if session != null:
+			_measure(session, now)
 	var due := _callbacks
 	_callbacks = []
 	for callback in due:
@@ -215,24 +220,44 @@ func now_usec() -> int:
 	return clock.now_usec()
 
 
-# The link of what this side sends, by DEFAULT_LINK's keys; false for an unknown key.
+# The link of what this side sends, by link.gd's DEFAULT keys; false (and nothing changed) for an
+# unknown key or a bad value.
 func set_link(settings: Dictionary) -> bool:
-	var known := true
-	for key in settings:
-		if DEFAULT_LINK.has(key):
-			link[key] = settings[key]
-		else:
-			known = false
-	return known
+	return link.set_values(settings)
+
+
+# A named profile (link_profiles.gd: lan, relay-good, relay-typical, bad, stall) for what this side
+# sends from now on; what is on its way keeps its time. False for an unknown name.
+func set_profile(name: String) -> bool:
+	return link.set_profile(name)
 
 
 func seed_link(value: int) -> void:
-	_rng.seed = value
+	link.reseed(value)
 
 
 # Nothing this side sends moves for msec (a stall of the line or of Steam); the queues keep it.
 func stall(msec: int) -> void:
-	_stall_until_usec = now_usec() + msec * 1000
+	link.stall(now_usec(), msec)
+
+
+# The next count reliable sends answer result instead of OK (LimitExceeded by default, as when
+# Steam's send buffer is full): what makes the mod's Session run a full resync. Unreliable sends
+# are not touched (a failed one changes nothing there).
+func fail_next_sends(count := 1, result := RESULT_LIMIT_EXCEEDED) -> void:
+	_fail_sends = int(max(0, count))
+	_fail_result = result
+
+
+# Every live session fails here and at the peer (fail_session); how many did.
+func fail_sessions(reason := END_MISC_TIMEOUT, debug := "") -> int:
+	var count := 0
+	for remote_id in _sessions.keys():
+		var session = _sessions.get(remote_id)
+		if session != null and session.state < STATE_CLOSED_BY_PEER:
+			fail_session(remote_id, reason, debug)
+			count += 1
+	return count
 
 
 # The session with remote_id fails here (and, by default, at the remote too): what Steam reports
@@ -453,6 +478,10 @@ func sendMessageToUser(remote_id: int, data: PoolByteArray, flags: int, channel:
 	if session.pending_reliable + session.pending_unreliable + data.size() > send_buffer_bytes:
 		return RESULT_LIMIT_EXCEEDED
 	var reliable: bool = flags & SEND_RELIABLE != 0
+	if reliable and _fail_sends > 0:
+		_fail_sends -= 1
+		refused_count += 1
+		return _fail_result
 	session.queue.append(
 		{
 			"payload": data,
@@ -510,24 +539,53 @@ func getSessionConnectionInfo(remote_id: int, get_connection: bool, get_status: 
 		info.end_reason = session.end_reason
 		info.end_debug = session.end_debug
 		info.info_flags = FLAG_RELAYED if relayed else 0
-		info.pop_relay = FAKE_POP if relayed else 0
+		info.pop_relay = link.pop() if relayed else 0
 		info.remote_pop = FAKE_POP if relayed else 0
 		info.remote_address = "" if relayed else "127.0.0.1"
-		info.debug_description = "local-play session with %s" % remote_id
+		info.debug_description = "local-play session with %s (%s)" % [remote_id, link.profile]
 	if get_status:
-		var rate := send_rate()
 		var waiting: int = session.pending_reliable + session.pending_unreliable
 		var debt: float = max(0.0, -session.tokens)
+		var connected: bool = session.state == STATE_CONNECTED
 		info.state = session.state
-		info.ping = _ping_msec(relayed) if session.state == STATE_CONNECTED else -1
-		info.local_quality = 1.0 - float(link.loss)
-		info.remote_quality = -1.0  # unknown: the other side's link
-		info.send_rate = rate
+		info.ping = _ping_msec(session, relayed) if connected else -1
+		# Steam: local, the share of the peer's packets that arrive here (its link, which its
+		# packets report); remote, of this side's packets at the peer. -1 before a measurement.
+		info.local_quality = session.quality_in if connected else -1.0
+		info.remote_quality = session.quality_out if connected else -1.0
+		info.send_rate = send_rate()
 		info.pending_reliable = session.pending_reliable
 		info.pending_unreliable = session.pending_unreliable
 		info.sent_unacknowledged_reliable = session.unacked_reliable
-		info.queue_time = int((debt + waiting) * 1000000.0 / rate)
+		info.queue_time = int((debt + waiting) * 1000000.0 / link.pace_rate(send_rate()))
+		# GodotSteam 3.x's names; the mod does not read them (status.json does)
+		info.packets_out_per_second = session.rates[0]
+		info.bytes_out_per_second = session.rates[1]
+		info.packets_in_per_second = session.rates[2]
+		info.bytes_in_per_second = session.rates[3]
 	return info
+
+
+# For status.json: the link and the numbers Steam would show per peer.
+func link_status() -> Dictionary:
+	var peers := {}
+	for remote_id in _sessions:
+		var info := getSessionConnectionInfo(remote_id, false, true)
+		var entry := {}
+		for key in ["state", "ping", "queue_time", "pending_reliable", "pending_unreliable"]:
+			entry[key] = info.get(key)
+		for key in ["local_quality", "remote_quality"]:
+			entry[key] = stepify(float(info.get(key, -1.0)), 0.001)
+		entry.bytes_out_per_second = info.get("bytes_out_per_second")
+		entry.bytes_in_per_second = info.get("bytes_in_per_second")
+		entry.relayed = is_relayed(remote_id)
+		peers[str(remote_id)] = entry
+	var summary: Dictionary = link.summary()
+	summary.sent = sent_count
+	summary.dropped = dropped_count
+	summary.refused = refused_count
+	summary.peers = peers
+	return summary
 
 
 # --- Wire side ---
@@ -547,6 +605,7 @@ func receive_packet(packet: Dictionary) -> void:
 			if live:
 				session.state = STATE_CONNECTED
 				session.remote_ice = bool(packet.get("ice", true))
+				session.remote_one_way = float(packet.get("lat", -1.0))
 		"close":
 			if live:
 				_end(session, STATE_CLOSED_BY_PEER, END_APP_GENERIC, "closed by peer")
@@ -573,6 +632,11 @@ func _receive_message(from: int, packet: Dictionary) -> void:
 		session = _new_session(false)
 		_sessions[from] = session
 	session.remote_ice = bool(packet.get("ice", true))
+	session.remote_one_way = float(packet.get("lat", -1.0))
+	session.quality_in = float(packet.get("q", session.quality_in))
+	var size: int = packet.get("payload", PoolByteArray()).size()
+	session.counts[2] += 1
+	session.counts[3] += size
 	if session.accepted:
 		_deliver(from, session, packet)
 		return
@@ -608,7 +672,8 @@ func _confirm(remote_id: int, session: Dictionary) -> void:
 	session.state = STATE_CONNECTED
 	if not session.acked:
 		session.acked = true
-		_send_control(remote_id, {"k": "accepted", "ice": _ice_enabled})
+		var one_way: float = link.base_msec(is_relayed(remote_id))
+		_send_control(remote_id, {"k": "accepted", "ice": _ice_enabled, "lat": one_way})
 
 
 func _accept(remote_id: int, session: Dictionary) -> void:
@@ -639,6 +704,17 @@ func _new_session(opened: bool) -> Dictionary:
 		"pending_reliable": 0,
 		"pending_unreliable": 0,
 		"unacked_reliable": 0,
+		"remote_one_way": -1.0,  # the peer's link without jitter (msec), as its packets say
+		# Measured per MEASURE_USEC: quality out (transmissions that arrived) and as the peer
+		# measured it for its packets (in); counts: packets out, bytes out, packets in, bytes in,
+		# transmissions, lost transmissions; rates: the last period's counts per second
+		"quality_in": -1.0,
+		"quality_out": -1.0,
+		"counts": [0, 0, 0, 0, 0, 0],
+		"rates": [0.0, 0.0, 0.0, 0.0],
+		"sent_weight": 0.0,
+		"lost_weight": 0.0,
+		"measured_usec": -1,
 	}
 
 
@@ -666,7 +742,7 @@ func _fail(remote_id: int, reason: int, debug: String) -> void:
 # Token bucket: refills at the send rate up to BURST_BYTES; a message leaves when the bucket is not
 # in debt and takes its size out, so the next one waits until the line has carried it.
 func _pace(remote_id: int, session: Dictionary, now: int, elapsed: int, stalled: bool) -> void:
-	var rate := send_rate()
+	var rate: int = link.pace_rate(send_rate())
 	session.tokens = min(float(BURST_BYTES), session.tokens + rate * elapsed / 1000000.0)
 	if stalled:
 		return
@@ -684,17 +760,18 @@ func _pace(remote_id: int, session: Dictionary, now: int, elapsed: int, stalled:
 func _launch(remote_id: int, session: Dictionary, message: Dictionary, sent_usec: int) -> void:
 	sent_count += 1
 	_message_number += 1
-	var due := sent_usec + _latency_usec(remote_id)
-	var lost := _lost()
-	if lost and not message.reliable:
+	var relayed := is_relayed(remote_id)
+	var due: int = sent_usec + link.latency_usec(relayed)
+	session.counts[4] += 1
+	if not message.reliable and link.lost():
 		dropped_count += 1
+		session.counts[5] += 1
 		return
 	if message.reliable:
-		var tries := 0
-		while lost and tries < 10:  # a retransmit per loss, the retransmits can be lost too
-			due += int(link.retransmit_msec) * 1000
-			tries += 1
-			lost = _lost()
+		var retry: Array = link.retransmit_usec()  # a retransmit per loss
+		due += retry[0]
+		session.counts[4] += retry[1]
+		session.counts[5] += retry[1]
 		due = int(max(due, session.last_reliable_due))  # reliable keeps its order
 		session.last_reliable_due = due
 		session.unacked_reliable += message.size
@@ -707,6 +784,8 @@ func _launch(remote_id: int, session: Dictionary, message: Dictionary, sent_usec
 		"payload": message.payload,
 		"ice": _ice_enabled,
 		"n": _message_number,
+		"lat": link.base_msec(relayed),
+		"q": session.quality_out,
 	}
 	var item := {"due": due, "packet": packet, "reliable": message.reliable, "size": message.size}
 	var at: int = session.in_flight.size()
@@ -724,6 +803,8 @@ func _release(remote_id: int, session: Dictionary, now: int) -> void:
 			_fail(remote_id, END_REMOTE_TIMEOUT, "the peer cannot be reached")
 			return
 		wire_count += 1
+		session.counts[0] += 1
+		session.counts[1] += item.size
 
 
 func _expire_held(remote_id: int, session: Dictionary, now: int) -> void:
@@ -735,23 +816,37 @@ func _expire_held(remote_id: int, session: Dictionary, now: int) -> void:
 	_send_control(remote_id, {"k": "refused"})
 
 
-func _latency_usec(remote_id: int) -> int:
-	var msec := float(link.latency_msec)
-	if is_relayed(remote_id):
-		msec += float(link.relay_latency_msec)
-	var jitter := float(link.jitter_msec)
-	if jitter > 0.0:
-		msec += _rng.randf_range(-jitter, jitter)
-	return int(max(0.0, msec) * 1000.0)
+# Steam's ping: this side's way plus the peer's (as its packets say; twice this side's before).
+func _ping_msec(session: Dictionary, relayed: bool) -> int:
+	var one_way: float = link.base_msec(relayed)
+	var back: float = session.remote_one_way if session.remote_one_way >= 0.0 else one_way
+	return int(round(one_way + back))
 
 
-func _lost() -> bool:
-	return float(link.loss) > 0.0 and _rng.randf() < float(link.loss)
-
-
-func _ping_msec(relayed: bool) -> int:
-	var one_way := float(link.latency_msec) + (float(link.relay_latency_msec) if relayed else 0.0)
-	return int(round(2.0 * one_way))
+# Once a period: the quality of this side's transmissions and the rates, from the counts.
+func _measure(session: Dictionary, now: int) -> void:
+	if session.measured_usec < 0:
+		session.measured_usec = now
+		return
+	var period: int = now - session.measured_usec
+	if period < MEASURE_USEC:
+		return
+	var counts: Array = session.counts
+	# Transmissions and losses, each period's weight halved in the next: a quiet period keeps the
+	# last quality (one lost of two is no measure).
+	session.sent_weight = session.sent_weight * 0.5 + counts[4]
+	session.lost_weight = session.lost_weight * 0.5 + counts[5]
+	if session.sent_weight >= QUALITY_MIN_SENT or (counts[4] > 0 and session.quality_out < 0.0):
+		session.quality_out = 1.0 - session.lost_weight / session.sent_weight
+	elif session.state == STATE_CONNECTED and session.quality_out < 0.0:
+		session.quality_out = 1.0
+	var seconds := period / 1000000.0
+	var rates := []
+	for i in 4:
+		rates.append(counts[i] / seconds)
+	session.rates = rates
+	session.counts = [0, 0, 0, 0, 0, 0]
+	session.measured_usec = now
 
 
 # --- Lobby owner and member side ---
@@ -823,12 +918,31 @@ func _member_update(packet: Dictionary) -> void:
 		_queue("lobby_chat_update", [lobby_id] + change)
 
 
+# Lobby traffic and session control: at once without latency (false: the wire does not know the
+# peer), else after it (true; a join the wire then cannot carry answers "no such lobby").
 func _send_control(to: int, packet: Dictionary) -> bool:
 	if _wire == null:
 		return false
 	packet["from"] = steam_id
 	packet["to"] = to
-	return _wire.send_packet(packet)
+	var delay := int(link.base_msec(is_relayed(to)) * 1000.0)
+	if delay <= 0 and _outbox.empty():
+		return _wire.send_packet(packet)
+	var due := now_usec() + delay
+	var at := _outbox.size()
+	while at > 0 and _outbox[at - 1].due > due:
+		at -= 1
+	_outbox.insert(at, {"due": due, "packet": packet})
+	return true
+
+
+func _release_outbox(now: int) -> void:
+	while not _outbox.empty() and _outbox[0].due <= now:
+		var packet: Dictionary = _outbox.pop_front().packet
+		if _wire != null and _wire.send_packet(packet):
+			continue
+		if packet.k == "join":
+			_queue("lobby_joined", [int(packet.lobby), 0, false, ENTER_DOESNT_EXIST])
 
 
 func _queue(signal_name: String, args: Array) -> void:
