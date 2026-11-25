@@ -10,6 +10,8 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+## 2026-11-25 20:42 UTC
+
 - Online co-op: with Steam not running or not logged on, the mod no longer asks Steam for messages
   every frame (hundreds of errors a second in the game's log). Online co-op is then turned off
   with the hint that it needs Steam, as without Steam at all. Before, it could be picked and then
