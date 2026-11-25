@@ -1,7 +1,8 @@
 # Release: a pushed tag <mod>/<YYYY-MM-DD-HHMM> on a commit of the default branch that has the
 # commit status local-check = success (tools/local-check.sh) and whose changelog's newest section is
-# that time becomes a GitHub Release with <Name>.zip, <Name>.zip.sha256 and changenote.txt (the
-# section as Steam BBCode). tools/release.sh uploads it to the Workshop from the maintainer's PC.
+# that time becomes a GitHub Release with <Name>.zip, <Name>.zip.sha256, changenote.txt (the
+# section as Steam BBCode) and <Name>-preview.png (the Workshop preview, when the mod has one).
+# tools/release.sh uploads it to the Workshop from the maintainer's PC.
 name: Release
 
 on:
@@ -85,6 +86,11 @@ jobs:
           [ -f "dist/${zip%.zip}/$zip" ] || { echo "::error::no dist/${zip%.zip}/$zip: the zip in mods/$MOD/workshop.json does not match the manifest's name"; exit 1; }
           cp "dist/${zip%.zip}/$zip" "$out/"
           (cd "$out" && sha256sum "$zip" > "$zip.sha256")
+          preview=()
+          if [ -f "dist/${zip%.zip}/preview.png" ]; then
+            cp "dist/${zip%.zip}/preview.png" "$out/${zip%.zip}-preview.png"
+            preview=("$out/${zip%.zip}-preview.png")
+          fi
           python3 tools/changelog.py notes "$changelog" --bbcode > "$out/changenote.txt"
           {
             python3 tools/changelog.py notes "$changelog"
@@ -93,4 +99,4 @@ jobs:
           } > "$RUNNER_TEMP/notes.md"
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
             --notes-file "$RUNNER_TEMP/notes.md" \
-            "$out/$zip" "$out/$zip.sha256" "$out/changenote.txt"
+            "$out/$zip" "$out/$zip.sha256" "$out/changenote.txt" "${preview[@]}"

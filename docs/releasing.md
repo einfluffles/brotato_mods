@@ -25,8 +25,9 @@ Workshop with steamcmd on the maintainer's PC. GitHub holds no Steam credentials
    (`.github/workflows/release.yml`) checks that the commit is on `main`, has `local-check` =
    success for that mod, and that the changelog's newest section is the tag's time with
    *Unreleased* empty. It packages the mod and creates the GitHub Release with `<Name>.zip`,
-   `<Name>.zip.sha256` and `changenote.txt` (the section as Steam BBCode). A failed check can be
-   fixed and the workflow re-run.
+   `<Name>.zip.sha256`, `changenote.txt` (the section as Steam BBCode) and `<Name>-preview.png`
+   (the Workshop preview `tools/package.sh` renders from `preview.svg`, when the mod has one). A
+   failed check can be fixed and the workflow re-run.
 5. **Try it**: `tools/release.sh <mod> <tag> local` downloads the release, checks the hash and
    puts exactly that zip into this PC's copy of the subscribed item, as `tools/deploy.sh` does
    (`BROTATO_WORKSHOP_DIR`, see below). Start the game and check the mod. Nobody else gets it yet.
