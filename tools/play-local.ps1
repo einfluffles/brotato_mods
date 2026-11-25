@@ -24,8 +24,8 @@
 #            [-Fresh] [-Profile lan|relay-good|relay-typical|bad|stall|none]
 #        tools\play-local.ps1 -Scenario <name> [-Run <name>] [-Engine ...] [-With ...] [-Profile ...]
 #                                   fresh games play a scripted scenario through the director
-#                                   (tools\play-scenarios.ps1: resume_leave_rejoin, join_wave_shop,
-#                                   language), every step screenshotted; then the games are closed
+#                                   (the dev mod's scenarios.gd, also run headless by
+#                                   tools/check-pair.sh), every step screenshotted; then the games are closed
 #                                   and it ends with PASS (exit 0) or FAIL (exit 1)
 # Commands to the running games, each one director command (director.gd), answered by each game:
 #        tools\play-local.ps1 -Screenshot <name> [-On <instance>]
