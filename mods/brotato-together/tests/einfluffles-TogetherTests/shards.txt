@@ -3,7 +3,7 @@
 # checks that. Grouped to even out run time.
 cleanup_client,axolotl,own_pickups,input_hints,gear_links
 core,battle_loopback,shop_loopback,local_shop,pause_input,selection,run_parts,non_finite
-cleanup_host,menu_ux,live_menu,local_device,traffic,emulator,emulator_transport,emulator_wire,battle_start
+cleanup_host,menu_ux,live_menu,local_device,traffic,emulator,emulator_transport,emulator_wire,emulator_profiles,battle_start
 cleanup_misc,anim_mirror,runtime_parts,battle_perf,client_report,cursed_weapon
 input_ack,pose_mirror,bullet_hell_left,bullet_hell_top,bullet_hell_bottom,dig_site,dead_player,hit_numbers
 feedback,looks,damage,battle_scene,state_stream,shop_change,cursor_key,focus_targets,upgrades_change,upgrades_popup,lobby_menu,network_stalls,progress

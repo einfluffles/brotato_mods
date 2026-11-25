@@ -524,13 +524,14 @@ func _test_connection_info() -> void:
 			and direct.ping == 0
 			and LinkWatch.describe(relayed) == "relayed via lcl"
 			and relayed.info_flags & LinkWatch.FLAG_RELAYED
-			and relayed.ping == 50
+			and relayed.ping == 25
 			and relayed.sent_unacknowledged_reliable == 1008
 			and relayed.pending_reliable == 0
 			and LinkWatch.describe(peer_view) == "relayed via lcl"
 		),
-		"emulator: path, ping and unacked bytes from its own link; relay-only on one side relays"
-		+ " both (%s, %s)" % [LinkWatch.describe(direct), relayed]
+		"emulator: path, ping (its own 25 ms one way, the peer's 0 back) and unacked bytes from its"
+		+ " own link; relay-only on one side relays both (%s, %s)"
+		% [LinkWatch.describe(direct), relayed]
 	)
 
 
