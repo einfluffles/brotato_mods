@@ -10,6 +10,9 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Online co-op: a client that closed the game during a wave logged two script errors on the way
+  out. The game reads its last log at the next start and turns mods off after an error that names
+  a mod, so the mod could be off on the client's next start.
 - Online co-op: when the host continues a saved co-op run, clients now see the resume screen with
   the saved player to take, their gear and gold, and the hold progress. Before, they only saw the
   waiting screen.

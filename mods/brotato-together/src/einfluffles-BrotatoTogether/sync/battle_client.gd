@@ -315,7 +315,11 @@ func _on_node_added(node: Node) -> void:
 		node.connect("ready", self, "_on_battle_scene_ready", [node], CONNECT_ONESHOT)
 
 
+# Also on the way out of a closing game, after the tree let go of this node (a client that closes
+# its game in a wave leaves the lobby then): nothing to stop.
 func _stop_watching_scenes() -> void:
+	if not is_inside_tree():
+		return
 	if get_tree().is_connected("node_added", self, "_on_node_added"):
 		get_tree().disconnect("node_added", self, "_on_node_added")
 
