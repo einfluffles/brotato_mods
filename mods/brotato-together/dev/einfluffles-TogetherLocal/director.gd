@@ -25,7 +25,7 @@ const RESERVED := ["id", "cmd", "timeout_sec"]
 const COMMANDS := [
 	"screenshot", "press", "button", "wait_for", "query", "host_lobby", "join", "invite", "leave",
 	"kick", "quit", "set_profile", "fail_session", "fail_send", "stall", "debug", "language",
-	"mod_version", "text", "scenario", "joypad"
+	"mod_version", "mods", "text", "scenario", "joypad"
 ]
 
 var local: Node = null  # mod_main.gd of the dev mod
@@ -41,6 +41,8 @@ var headless := OS.get_name() == "Server"  # Godot's headless build (tools/check
 var _left := 0.0
 var _busy := false
 var _real_mod_version := ""  # the manifest's, before mod_version changed it
+var _real_versions := {}  # mod id -> the manifest's version, before mods changed it
+var _added_mods := []  # the mod ids mods added to the Mod Loader's data
 
 
 func _init(local_mod: Node, instance_dir: String) -> void:
@@ -221,7 +223,7 @@ func state() -> Dictionary:
 
 # The mod's session as the scenarios check it: ready peers (the handshake done), peer_ready
 # signals so far (a handshake each, then one per full resync), the lobby error the player was
-# shown last (a rejection, a kick, the host gone), this game's mod version (Compat).
+# shown last (a rejection, a kick, the host gone), this game's mod version and other mods (Compat).
 func _session_state() -> Dictionary:
 	var together := get_node_or_null(local.TOGETHER_PATH)
 	var session = together.get("session") if together != null else null
@@ -235,6 +237,7 @@ func _session_state() -> Dictionary:
 		"peer_ready": peer_ready_count,
 		"error": local.lobby_error(),
 		"mod_version": Compat.mod_version(),
+		"mods": Compat.local_mods(),
 	}
 
 
@@ -441,6 +444,60 @@ func _cmd_mod_version(command: Dictionary):
 	mod_data.manifest.version_number = version if version != "" else _real_mod_version
 	local.log_info("brotato:together version now %s (director)" % Compat.mod_version())
 	return ["", {"mod_version": Compat.mod_version(), "real": _real_mod_version}]
+
+
+# This game's other mods (Compat.local_mods, which HELLO carries) from now on, as a game with
+# other mods would have them: `mods` (mod id -> version) gives a mod it has that version and adds
+# one it lacks to the Mod Loader's data; {} gives back the real ones.
+func _cmd_mods(command: Dictionary):
+	yield(get_tree(), "idle_frame")
+	var mods = command.get("mods", {})
+	if typeof(mods) != TYPE_DICTIONARY:
+		return ["mods is not an object: %s" % [mods], {}]
+	for mod_id in mods:
+		var parts: Array = str(mod_id).split("-", true, 1)
+		var valid: bool = parts.size() == 2 and mod_id != Compat.MOD_ID
+		for part in parts:
+			valid = valid and ModManifest.is_name_or_namespace_valid(part, true)
+		if not valid:
+			return ["not another mod's id: '%s'" % mod_id, {}]
+	var all: Dictionary = ModLoaderMod.get_mod_data_all()
+	for mod_id in _added_mods:
+		all.erase(mod_id)
+	for mod_id in _real_versions:
+		all[mod_id].manifest.version_number = _real_versions[mod_id]
+	_added_mods.clear()
+	_real_versions.clear()
+	for mod_id in mods:
+		if not all.has(mod_id):
+			all[mod_id] = _added_mod(mod_id)
+			_added_mods.append(mod_id)
+		else:
+			_real_versions[mod_id] = all[mod_id].manifest.version_number
+		all[mod_id].manifest.version_number = str(mods[mod_id])
+	local.log_info("Other mods now %s (director)" % [Compat.local_mods()])
+	return ["", {"mods": Compat.local_mods(), "added": _added_mods}]
+
+
+static func _added_mod(mod_id: String) -> ModData:
+	var parts := mod_id.split("-", true, 1)
+	var godot := {
+		"authors": [], "compatible_mod_loader_version": ["6.3.0"], "compatible_game_version": []
+	}
+	var mod_data := ModData.new()
+	mod_data.dir_name = mod_id
+	mod_data.manifest = ModManifest.new(
+		{
+			"name": parts[1],
+			"namespace": parts[0],
+			"version_number": "1.0.0",
+			"website_url": "",
+			"description": "Added by the local-play director",
+			"dependencies": [],
+			"extra": {"godot": godot},
+		}
+	)
+	return mod_data
 
 
 # A scenario (scenarios.gd) with the other games of the session, each running its own part in

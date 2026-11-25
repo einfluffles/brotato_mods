@@ -16,13 +16,14 @@ extends "res://mods-unpacked/einfluffles-TogetherLocal/scenario_steps.gd"
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
 const NAMES := [
 	"join", "join_wave_shop", "resume_leave_rejoin", "host_quits", "client_quits", "kick",
-	"version_mismatch", "bad_resync", "language", "three_players", "dlc_borrow",
+	"version_mismatch", "mod_mismatch", "bad_resync", "language", "three_players", "dlc_borrow",
 	"version_mismatch_build"
 ]
 # What tools/check-pair.sh runs by default: every scenario with checks (language has none).
 const HEADLESS := [
 	"join", "join_wave_shop", "resume_leave_rejoin", "host_quits", "client_quits", "kick",
-	"version_mismatch", "bad_resync", "three_players", "dlc_borrow", "version_mismatch_build"
+	"version_mismatch", "mod_mismatch", "bad_resync", "three_players", "dlc_borrow",
+	"version_mismatch_build"
 ]
 # What a scenario needs from the launcher, one line each, read as text by tools\play-local.ps1
 # and tools/check-pair.sh (keep the form "<name>": "key=value ..."): clients (how many), host_dlcs
@@ -37,6 +38,8 @@ const LAUNCH := {
 }
 const LAUNCH_KEYS := ["clients", "host_dlcs", "client_dlcs", "no_join", "client_ref", "host_ref"]
 const OTHER_VERSION := "0.0.0-pair"
+const EXTRA_MOD := "einfluffles-PairExtra"  # a mod only the client has in mod_mismatch
+const EXTRA_VERSION := "1.0.0"
 
 
 # --- Scenarios ---
@@ -250,6 +253,54 @@ func scenario_version_mismatch(r):
 	)
 	yield(r.step("client_with_its_version"), "completed")
 	yield(r.on(C, {"cmd": "mod_version", "version": ""}), "completed")
+	yield(r.on(C, {"cmd": "join"}), "completed")
+	yield(r.on(H, {"cmd": "wait_for", "lobby.members": 2, "session.ready": 1}), "completed")
+	yield(r.on(C, {"cmd": "wait_for", "session.ready": 1}), "completed")
+
+
+# A client with a mod the host lacks is turned away with the code "mods": its text, in its own
+# language (German here), names that mod; without the mod it joins.
+func scenario_mod_mismatch(r):
+	yield(lobby_step(r, 12), "completed")
+	yield(r.step("client_leaves"), "completed")
+	yield(r.on(C, {"cmd": "leave"}), "completed")
+	yield(r.on(H, {"cmd": "wait_for", "lobby.members": 1}), "completed")
+	yield(r.step("client_with_another_mod"), "completed")
+	yield(r.on(C, {"cmd": "language", "locale": "de"}), "completed")
+	yield(r.on(C, {"cmd": "mods", "mods": {EXTRA_MOD: EXTRA_VERSION}}), "completed")
+	yield(r.on(C, {"cmd": "join"}, true), "completed")  # in, then out again: may miss "in"
+	yield(r.on(C, {"cmd": "wait_for", "lobby.in": false}), "completed")
+	yield(r.on(H, {"cmd": "wait_for", "lobby.members": 1, "session.ready": 0}), "completed")
+	var host = yield(r.state(H), "completed")
+	var client = yield(r.state(C), "completed")
+	r.check(
+		client.session.mods.get(EXTRA_MOD) == EXTRA_VERSION and not EXTRA_MOD in host.session.mods,
+		"only the client has %s (client %s, host %s)" % [
+			EXTRA_MOD, client.session.mods, host.session.mods
+		]
+	)
+	var entry := "%s %s" % [EXTRA_MOD, EXTRA_VERSION]
+	var reason = yield(
+		r.on(C, {"cmd": "text", "key": "BT_REJECT_MODS", "args": [entry, "-"]}), "completed"
+	)
+	var shown = yield(
+		r.on(C, {"cmd": "text", "key": "BT_ERR_REJECTED", "args": [reason[0].result.text]}),
+		"completed"
+	)
+	var error: String = client.session.error
+	r.check(
+		str(shown[0].result.locale).begins_with("de") and error == shown[0].result.text,
+		"the client was rejected with the code mods, in German ('%s')" % error
+	)
+	r.check(entry in error, "the client's text names %s" % entry)
+	r.check(
+		client.session.ready == 0 and host.lobby.members == 1,
+		"the client is not in the host's lobby (%s ready, the host has %s)" % [
+			client.session.ready, host.lobby.members
+		]
+	)
+	yield(r.step("client_without_it"), "completed")
+	yield(r.on(C, {"cmd": "mods", "mods": {}}), "completed")
 	yield(r.on(C, {"cmd": "join"}), "completed")
 	yield(r.on(H, {"cmd": "wait_for", "lobby.members": 2, "session.ready": 1}), "completed")
 	yield(r.on(C, {"cmd": "wait_for", "session.ready": 1}), "completed")
