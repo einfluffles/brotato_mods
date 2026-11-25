@@ -2,7 +2,7 @@
 
 How the mod works, for a developer who is new to it. The game hooks it builds on are listed in
 [`docs/brotato-hooks.md`](../../../docs/brotato-hooks.md). This document describes the code as of
-2026-11-23 (protocol 33, mod version 0.2.1). File paths are relative to
+2026-11-26 (protocol 34, mod version 0.2.1). File paths are relative to
 `src/einfluffles-BrotatoTogether/`, test suites live in `tests/einfluffles-TogetherTests/`.
 
 Contents: [Overview](#1-overview), [Glossary](#2-glossary), [Session](#3-session),
@@ -116,11 +116,22 @@ member enters the lobby and refreshes the member list for unknown senders.
 ### Join compatibility
 
 `session/compat.gd`. `HELLO` carries the protocol version (`Protocol.VERSION`), the game version
-(`ProgressData.VERSION`) and the mod version (`version_number` of the manifest). All three must
-match the host's. A rejection carries a code (`protocol`, `game`, `mod`) with its two versions as
-`args`, which the client shows in its own language (`Compat.describe`) like every lobby error (see
-[Errors](#errors)), and the English `reason`, which the host logs and a client shows for a code it
-does not know (a malformed `HELLO` has none). DLC ownership never rejects (see [Host DLC on clients](#host-dlc-on-clients)).
+(`ProgressData.VERSION`), the mod version (`version_number` of the manifest) and the other mods
+(`mods`, `Compat.local_mods`: mod id to `version_number` of every mod the Mod Loader loaded and has
+active, brotato:together left out). All four must match the host's. A rejection carries a code
+(`protocol`, `game`, `mod`, `mods`) with two `args`, which the client shows in its own language
+(`Compat.describe`) like every lobby error (see [Errors](#errors)), and the English `reason`, which
+the host logs and a client shows for a code it does not know (a malformed `HELLO` has none). DLC
+ownership never rejects (see [Host DLC on clients](#host-dlc-on-clients)).
+
+- The `args` are the two versions, for `mods` the two sides of `Compat.mod_differences`: the
+  entries `<mod id> <version>` the client has and the host lacks or has in another version, then
+  the other way round, each sorted. A side shows its first three (`Compat.MODS_SHOWN`) and `+N`
+  for the rest, `-` when it is empty; the host's log line has every entry.
+- Strict on purpose: any difference rejects, mods that only change the UI too (a product decision
+  of 2026-11-26). A mod that changes items, characters or rules breaks the run state a client
+  rebuilds, and the mod cannot tell such a mod from a harmless one.
+- A `HELLO` whose `mods` is not a Dictionary is malformed, as one whose `dlcs` is not an Array.
 
 Consequence for wire changes: a build with another mod version is turned away, so a message does
 not need optional fields for older builds. Builds that share a mod version (0.2.1 has covered many)
@@ -489,6 +500,7 @@ from separate calls keep their order. Menus are driven as a player drives them: 
 | `text` | `key`, `args` | What this game shows for a translation key with its arguments in its language now (the game's `Text.text`): a scenario's expected text in another game's language. Fails for a key no translation has. |
 | `kick` | `peer` (a steam id; default every other member), `timeout_sec` | Host: what the lobby page's kick does (`LobbyMenu.kick`, `Session.kick`), then waits until the transport no longer lists the player. |
 | `mod_version` | `version` (`""`: the real one again) | This game's brotato:together version from now on: the manifest's `version_number` in the Mod Loader's data, which `Compat` reads for `HELLO`, as a game with another build would have it. |
+| `mods` | `mods` (mod id to version; `{}`: the real ones again) | This game's other mods from now on, as a game with other mods would have them: a mod it has gets that `version_number`, one it lacks is added to the Mod Loader's data (`ModLoaderMod.get_mod_data_all`), which `Compat.local_mods` reads for `HELLO`. brotato:together's own id is refused (`mod_version`). |
 | `scenario` | `name`, `run` (the same id in every game), `peers` (instance names, default `host`, `client1`), `shots`, `timeout_sec` (900) | Runs this game's part of a scenario (`scenarios.gd`) in step with the others (below). The result has `passed`, the scenario's `lines` and the `shots`; a game that quit in the scenario closes after the answer. |
 | `joypad` | `connect` (true / false), `device` (0), `name`, `guid` (`__XINPUT_DEVICE__`) | The gamepads as this game sees them (`joypad_filter.gd`'s status: per pad `blocked`, its own `guid`, `mapped_guid`). With `connect`, first a pad reported to the engine as a driver reports one; no input comes from it, it shows what the filter does with a connection. |
 | `quit` | | Answers, then closes the game as its window's close button does: the others see it leave. |
@@ -500,7 +512,7 @@ continue), `lobby` (`in`, `is_host`, `members` with this game, `id`; `details`: 
 details text; `tag`: this build's lobby tag), `session` (`ready`: peers whose handshake is done,
 `peer_ready`: the Session's `peer_ready` signals so far, a handshake each and then one per full
 resync, `error`: the lobby error shown last, `LobbyMenu.last_error`, also after a refused join,
-`mod_version`), `dlcs` (`owned`: `DebugService.owned_dlc_ids`; `available`:
+`mod_version`, `mods`: `Compat.local_mods`), `dlcs` (`owned`: `DebugService.owned_dlc_ids`; `available`:
 `ProgressData.available_dlc_ids`; `borrowed`: available but not owned), `ref` (`BT_LOCAL_REF`:
 the other build this game runs, empty for this worktree's), `role`; on the co-op resume screen
 `resume_shown` (the saved player shown), `resume_gold` and `resume_progress`; in a wave
@@ -3014,7 +3026,7 @@ slow-answer lines' `rate` should read 524288 B/s).
 
 ## 13. Known gaps
 
-As of 2026-11-23, protocol 33.
+As of 2026-11-26, protocol 34.
 
 **Not mirrored in a battle**
 

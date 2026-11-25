@@ -4,7 +4,7 @@ Online co-op for [Brotato](https://store.steampowered.com/app/1942280/Brotato/) 
 networking, in place of Steam Remote Play's video stream. Every player runs the game on their own
 machine, and their own character and menus react at once.
 
-**Status (2026-11-23, protocol 33):** early development. Sessions over Steam with friends work;
+**Status (2026-11-26, protocol 34):** early development. Sessions over Steam with friends work;
 the sessions measured in the implementation notes were played on 2026-11-16. Expect rough edges
 and please report them (see [Reporting problems](#reporting-problems)).
 
@@ -16,8 +16,11 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
 - Every player subscribes to the mod's Workshop item and unsubscribes from other online co-op
   mods.
 - Every player needs the same game version, the same version of the mod and the same protocol
-  (30 on 2026-11-18). The host refuses a join that differs, and the *Online co-op* page of the
+  (34 on 2026-11-26). The host refuses a join that differs, and the *Online co-op* page of the
   player who tried shows the reason.
+- Every player needs the same other mods in the same versions, also mods that only change the
+  interface. The host refuses a join otherwise, and the *Online co-op* page of the player who
+  tried names the mods that differ: theirs and the host's.
 - A lobby holds up to 4 players and is open to Steam friends only.
 - Clients do not need the host's DLCs (see [Features](#features)).
 
@@ -203,7 +206,7 @@ language. How it works: [`docs/implementation.md`](docs/implementation.md#locali
 
 ## Limitations
 
-As of 2026-11-23 (protocol 33):
+As of 2026-11-26 (protocol 34):
 
 - Not shared with clients yet: the species challenges of Primal Dread (trophy hunter, clever
   girl, egg hunt) and the codex's kill counts.

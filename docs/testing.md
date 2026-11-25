@@ -123,6 +123,7 @@ mechanism: `tools\play-scenarios.ps1` only starts them and collects what they sa
 | `client_quits` | host, client | The client's game closes mid-wave: the host plays on in its lobby with the client's slot kept, and the closing game logs no script error. |
 | `kick` | host, client | The host kicks the client: it leaves with "The host removed you from the lobby"; it can join again. |
 | `version_mismatch` | host, client | One build, in memory: the client leaves, takes another brotato:together version (the director's `mod_version`) and joins again: the host rejects its `HELLO` with the code `mod` and both versions, shown in its language; with its own version it joins. |
+| `mod_mismatch` | host, client | The client leaves, switches to German, reports a mod the host lacks (the director's `mods`) and joins again: the host rejects its `HELLO` with the code `mods`, and the client's error is its German text (the director's `text`) naming that mod; with its real mods it joins. |
 | `version_mismatch_build` | host, client on the last release (`no_join=1 client_ref=last_release`) | A real older build: nobody joins by itself; the host opens its lobby, the clients switch to German and accept an invite. The lobby's mod tag (mod id and protocol) turns each client away before `HELLO`: it is not in the lobby and its error line names both tags; a client of this worktree (`-HostRef`, `PAIR_HOST_REF`) shows the German `BT_ERR_LOBBY_VERSION` word for word (the director's `text`). The host keeps its lobby, alone, with no error. |
 | `bad_resync` | host, client | Both games on the `bad` profile, the host's next reliable send fails (`fail_send`): the host runs a full resync for the client, and both still get through character selection into a wave with the session up. |
 | `three_players` | host, two clients (`clients=2`; in windows `-Clients 3`: three) | All in the lobby, each joins character selection in turn (player index = join order), character, weapon and difficulty, wave 1 with its level-up panels, the shop; every client buys the item under its cursor (checked on the host per player). |
@@ -217,9 +218,9 @@ from the instance's `control\` folder, one at a time, and answers each in `out\<
 `ok`, `error`, a `result` and the screen's `state` (scene, players, run, lobby, the co-op resume
 screen's saved player, ...). It drives the menus as a player does: keys through the game's input,
 buttons by focus and accept. Commands: `press`, `button`, `wait_for`, `query`, `screenshot`,
-`host_lobby`, `join`, `invite`, `leave`, `kick`, `debug`, `language`, `mod_version`, `text`,
-`joypad`, `scenario`, `quit`, and on the link of what the game sends `set_profile`, `fail_session`,
-`fail_send` and `stall`; fields and state:
+`host_lobby`, `join`, `invite`, `leave`, `kick`, `debug`, `language`, `mod_version`, `mods`,
+`text`, `joypad`, `scenario`, `quit`, and on the link of what the game sends `set_profile`,
+`fail_session`, `fail_send` and `stall`; fields and state:
 [the director](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
 `-Key`, `-Screenshot`, `-Do` and the link switches (`-Profile` with `-On`, `-FailSession`,
 `-FailSend`, `-Stall`) send them to a running session: the director is the one way to control a
@@ -246,11 +247,11 @@ other build of `version_mismatch_build`, the DLCs of `dlc_borrow`) apply unless 
 is given; `-Run` and the others work as for any start.
 
 Which build refuses whom: the lobby carries brotato:together's tag (mod id and protocol, for
-example `einfluffles-BrotatoTogether/p33`), and a client that finds another tag than its own leaves
+example `einfluffles-BrotatoTogether/p34`), and a client that finds another tag than its own leaves
 the lobby at once (`BT_ERR_LOBBY_VERSION`). So two builds with different protocols never get as
-far as `HELLO`: the codes of `WELCOME` (protocol, game, mod version; Join compatibility in the
-implementation notes) are reached only by builds that share the tag, for example two builds of
-one protocol with different mod versions. The last release before the translations shows its
+far as `HELLO`: the codes of `WELCOME` (protocol, game, mod version, other mods; Join
+compatibility in the implementation notes) are reached only by builds that share the tag, for
+example two builds of one protocol with different mod versions. The last release before the translations shows its
 refusal in English, whatever the language.
 
 Gamepads (`-Joypad`): the game's engine polls XInput and DirectInput itself, so every game process
