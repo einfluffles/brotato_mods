@@ -70,6 +70,7 @@ run_game() {
       cp "$(zip_of "$dir")" "$zips/$(basename "$dir").zip" || return 1
     done
     mounts=(-v "$zips:/mods:ro$label" -v "$pack/steam.tres:/proj/$STEAM_PROFILE:ro$label")
+    mounts+=("${PACKAGED_ENV[@]}")
     args=(--mods-path=/mods)
   else
     for dir in "$@"; do mounts+=(-v "${dir%/}:/proj/mods-unpacked/$(basename "$dir"):ro$label"); done

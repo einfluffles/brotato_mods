@@ -52,13 +52,20 @@ mkdir -p "$GAME/mods-unpacked"  # the mount point of each process's own tmpfs
 # The Mod Loader loads every zip in the folder that --mods-path names. A game that has loaded a
 # zip no longer lists res://mods-unpacked/, so zips and folders cannot be mixed in one game: in
 # this mode every mod of a game is a zip, the dev and test mods too.
-
 #
 # The Steam build (project.godot's feature "steam", as tools/check.sh runs the game) has the Mod
 # Loader take zips from the Steam Workshop's subscriptions, which need Steam; the local build
 # (tools/check-pair.sh) takes them from --mods-path. STEAM_PROFILE: the Mod Loader's options for
 # the feature "steam"; steam_profile writes a copy without the Workshop, to mount over it.
 STEAM_PROFILE=addons/mod_loader/options/profiles/steam.tres
+#
+# PACKAGED_ENV: the container's environment for a game with zips. Godot 3.6's zip reader leaves
+# its end-of-file flag uninitialized until the first read (docs/testing.md, "Mods from zips"), so
+# a file read that asks that flag first behaves as the heap's leftover byte says: always wrong in
+# the Windows game, now and then in a Linux container. glibc fills each new allocation with a
+# nonzero byte (MALLOC_PERTURB_; its per-thread cache, which skips that, off), so such a read
+# fails in every packaged run, as in the Windows game.
+PACKAGED_ENV=(-e MALLOC_PERTURB_=1 -e GLIBC_TUNABLES=glibc.malloc.tcache_count=0)
 
 # steam_profile <file>: the Mod Loader's steam profile with steam_workshop_enabled = false.
 steam_profile() {

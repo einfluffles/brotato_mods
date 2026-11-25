@@ -16,9 +16,9 @@ Workshop with steamcmd on the maintainer's PC. GitHub holds no Steam credentials
    it changes the changelog only. Review and merge it.
 3. **Local check** on the merge commit: `git switch main && git pull`, then
    `tools/local-check.sh mods/<mod>`. It refuses a dirty tree and a HEAD that is not pushed, runs
-   gdlint and `tools/check.sh -p` (the mods from the zips players get), and on success sets the
-   commit status `local-check` on that commit. From Git Bash on Windows, without podman or docker
-   there, lint and tests run in WSL. `-n` runs everything but setting the status.
+   gdlint, `tools/check.sh` and `tools/check.sh -p` (the mods from the zips players get), and on
+   success sets the commit status `local-check` on that commit. From Git Bash on Windows, without
+   podman or docker there, lint and tests run in WSL. `-n` runs everything but setting the status.
 4. **Tag** the merge commit `<mod>/<YYYY-MM-DD-HHMM>` with the time of the changelog heading and
    push it: `git tag brotato-together/2026-11-21-1305 && git push origin brotato-together/2026-11-21-1305`
    (the release PR's description has the exact commands). The workflow *Release*

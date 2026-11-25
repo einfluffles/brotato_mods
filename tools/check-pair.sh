@@ -206,7 +206,7 @@ if [ "$packaged" = 1 ]; then
   done
   zip_folders "$work/zips/dev" "${dev_dirs[@]}" || exit 1
   cp "$work/zips/dev/"*.zip "$work/zips/main/"
-  mounts+=(-v "$work/zips/main:/mods:ro$label")
+  mounts+=(-v "$work/zips/main:/mods:ro$label" "${PACKAGED_ENV[@]}")
 else
   for dir in "$MOD"/src/*/ "${dev_dirs[@]}"; do
     mounts+=(-v "${dir%/}:/proj/mods-unpacked/$(basename "$dir"):ro$label")

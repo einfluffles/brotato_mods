@@ -41,7 +41,9 @@ never end. The 2026-11-25 releases read no translations that way and showed ever
 (`BT_INVITE_FRIENDS`), although every test with folders passed. Whether a given game hits it
 depends on memory contents: the Windows game did every time, the Linux container in some runs
 only. So the mods read their files in one piece (`get_buffer`, `get_as_text`), and the tests also
-run on zips:
+run on zips, with glibc filling every new allocation with a nonzero byte (`MALLOC_PERTURB_=1`,
+its per-thread cache off: `PACKAGED_ENV` in `tools/game-env.sh`), so that such a read fails in
+every packaged run, as in the Windows game:
 
 - `tools/check.sh -p` (packaged): `src/` as package.sh's zips (built into a temporary folder;
   `dist/` is not touched), `tests/` and `dev/` zipped the same way by the script (never by
@@ -53,7 +55,9 @@ run on zips:
   Loader's `steam` options profile with `steam_workshop_enabled = false` over it, in the container
   only, so the Mod Loader takes `--mods-path` instead.
 - `tools/check-pair.sh` runs packaged by default (`-u`: folders), see [Pair tests](#pair-tests).
-- `tools/local-check.sh` runs `tools/check.sh -p` for the release check.
+- `tools/local-check.sh` runs `tools/check.sh` and then `tools/check.sh -p` for the release check.
+  The memory fill makes allocations slower; the one check that compares timings of two code paths
+  (a crate item's state against before issue #110, `upgrades_change`) is an info line under it.
 
 ## Local play (emulator)
 

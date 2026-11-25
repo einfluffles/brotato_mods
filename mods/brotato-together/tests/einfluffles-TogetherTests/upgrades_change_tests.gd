@@ -658,14 +658,19 @@ func _client_replay(label: String, players: int):
 			)
 			% [label, now, split[0], split[1], split[2], split[4], before]
 		)
-		_t._check(
-			now * 2 < before,
+		var claim := (
 			(
 				"%s, client: a crate item's state applies in under half the time it took before"
 				+ " issue #110 (%d usec, then %d)"
 			)
 			% [label, now, before]
 		)
+		# tools/check.sh -p fills every allocation (MALLOC_PERTURB_): the run parse's many
+		# allocations then cost several times more, so the ratio says nothing there.
+		if OS.get_environment("MALLOC_PERTURB_") != "":
+			print("  info: not measured with MALLOC_PERTURB_: %s" % claim)
+		else:
+			_t._check(now * 2 < before, claim)
 	_sync._on_battle_left()  # the client's state of these panels goes
 	_sync.run_store = saved_store
 	client._you = saved_you
