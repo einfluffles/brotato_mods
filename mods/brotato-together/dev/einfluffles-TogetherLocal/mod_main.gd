@@ -3,7 +3,8 @@ extends Node
 # of Steam, so game instances on one PC play together over TCP on 127.0.0.1 (wire_tcp.gd). Loads
 # after brotato:together (manifest dependency). Inert unless every rule of refusal() passes:
 # BT_LOCAL_ROLE is set, Steam is not logged on here, the game is not the Steam build (feature
-# "steam") and its user folder is not the game's own. Otherwise one log line and nothing else.
+# "steam") and its user folder lies under BT_LOCAL_DIR, the instance's folder the launcher made.
+# Otherwise one log line and nothing else.
 # The launchers (tools\play-local.ps1, tools/check-pair.sh) set the environment:
 #   BT_LOCAL_ROLE      host | client
 #   BT_LOCAL_ID        the instance's number (default 1 for the host, 2 for a client)
@@ -11,7 +12,7 @@ extends Node
 #   BT_LOCAL_PORT      the host's port on 127.0.0.1 (none: no wire, only this game)
 #   BT_LOCAL_TOKEN     the launcher's random token, checked in the wire's handshake
 #   BT_LOCAL_DIR       the instance's folder: status.json (local_instance.gd), control/, out/,
-#                      shots/ (director.gd)
+#                      shots/ (director.gd); the game's user folder must lie under it
 #   BT_LOCAL_AUTOHOST  1: the host opens a lobby at the title screen
 #   BT_LOCAL_MUTE      1: no sound
 #   BT_LOCAL_PROFILE   the link profile of what this game sends (link_profiles.gd: lan, relay-good,
@@ -42,7 +43,7 @@ const LOG_NAME := MOD_ID + ":Main"
 const TOGETHER_PATH := "/root/ModLoader/einfluffles-BrotatoTogether"
 const LinkProfiles := preload("res://mods-unpacked/einfluffles-TogetherLocal/link_profiles.gd")
 const ROLES := ["host", "client"]
-const GAME_USER_DIR := "Brotato"  # project.godot: config/name, use_custom_user_dir
+const DIR_ENV := "BT_LOCAL_DIR"  # the instance's folder; the user folder must lie under it
 const CONNECT_ARG := "+connect_lobby"
 # What the setup of a build without bind_steam connected (its steam_transport.gd)
 const OLDER_BUILD_SIGNALS := [
@@ -85,7 +86,11 @@ var _profile_note := ""
 func _init() -> void:
 	role = OS.get_environment("BT_LOCAL_ROLE").strip_edges()
 	_refused = refusal(
-		role, _steam_id(), OS.has_feature("steam"), OS.get_user_data_dir(), own_user_dirs()
+		role,
+		_steam_id(),
+		OS.has_feature("steam"),
+		OS.get_user_data_dir(),
+		OS.get_environment(DIR_ENV)
 	)
 	if _refused != "":
 		return
@@ -173,9 +178,12 @@ func take_transport(steam_transport: Node) -> bool:
 	return true
 
 
-# Why this game must not run local play ("": it may). Every rule is checked, in this order.
+# Why this game must not run local play ("": it may). Every rule is checked, in this order. The
+# user folder must lie under the instance's folder the launcher made (local_dir: BT_LOCAL_DIR), a
+# rule of where it may be, not of where it must not be: no real save folder passes by a path
+# nobody listed.
 static func refusal(
-	env_role: String, steam_id: int, steam_feature: bool, user_dir: String, own_dirs: Array
+	env_role: String, steam_id: int, steam_feature: bool, user_dir: String, local_dir: String
 ) -> String:
 	if env_role == "":
 		return "BT_LOCAL_ROLE is not set"
@@ -188,24 +196,12 @@ static func refusal(
 	var dir := _normalized(user_dir)
 	if dir == "":
 		return "no user folder"
-	for own in own_dirs:
-		if dir == _normalized(own):
-			return "the user folder is the game's own (%s)" % user_dir
+	var base := _normalized(local_dir)
+	if base == "":
+		return "BT_LOCAL_DIR is not set"
+	if _has_dot_parts(dir) or _has_dot_parts(base) or not dir.begins_with(base + "/"):
+		return "the user folder %s is not under BT_LOCAL_DIR (%s)" % [user_dir, local_dir]
 	return ""
-
-
-# Where the game keeps its real saves: on Windows under the profile's roaming AppData (the
-# launcher gives each instance its own APPDATA, which does not move USERPROFILE), elsewhere under
-# HOME's data folder (an instance gets XDG_DATA_HOME).
-static func own_user_dirs() -> Array:
-	var dirs := []
-	var profile := OS.get_environment("USERPROFILE")
-	if profile != "":
-		dirs.append(profile.plus_file("AppData/Roaming").plus_file(GAME_USER_DIR))
-	var home := OS.get_environment("HOME")
-	if home != "":
-		dirs.append(home.plus_file(".local/share").plus_file(GAME_USER_DIR))
-	return dirs
 
 
 # The lobby id after "+connect_lobby" (as the transport reads it), 0 without one.
@@ -221,6 +217,14 @@ static func _normalized(path: String) -> String:
 	while text.ends_with("/") and text.length() > 1:
 		text = text.substr(0, text.length() - 1)
 	return text
+
+
+# A "." or ".." part: the folder is not what its text says.
+static func _has_dot_parts(path: String) -> bool:
+	for part in path.split("/"):
+		if part == "." or part == "..":
+			return true
+	return false
 
 
 static func _steam_id() -> int:

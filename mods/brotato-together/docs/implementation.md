@@ -348,12 +348,15 @@ logs one line ("Local play off: ...") and does nothing else:
 2. Steam is not logged on here: no GodotSteam singleton, or its `getSteamID()` is 0.
 3. The game is not the Steam build: feature `steam` is absent (the Steam build's `project.godot`
    sets it; the local game copy has it removed).
-4. The user folder is not the game's own: not `%USERPROFILE%\AppData\Roaming\Brotato` (the
-   launcher gives each instance its own `APPDATA`) and not `$HOME/.local/share/Brotato` (an
-   instance on Linux gets its own `XDG_DATA_HOME`).
+4. The user folder lies under `BT_LOCAL_DIR`, the instance's folder the launcher made:
+   `tools\play-local.ps1` gives each instance its own `APPDATA` in that folder
+   (`<inst>\appdata\Brotato`), `tools/check-pair.sh` its own `XDG_DATA_HOME`
+   (`/pair/<name>/data/Brotato`). A rule of where the folder may be, not a list of where it must
+   not be: a real save folder in a place nobody listed cannot pass. The paths are compared as
+   text (case and slashes aside), so a path with a `.` or `..` part is refused.
 
-The test container's game has feature `steam` and its user folder is
-`$HOME/.local/share/Brotato`, so the dev mod refuses there even with a role. Rule 2 asks the
+The test container's game has feature `steam` and no `BT_LOCAL_DIR`, so the dev mod refuses there
+even with a role. Rule 2 asks the
 game's GodotSteam, which is not initialised in a local instance and logs one engine error for it
 ("User class not found ... getSteamID"); stock Godot has no GodotSteam.
 

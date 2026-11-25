@@ -31,8 +31,9 @@ game-script error or a `get_meta` / `get_child` / `get_node` engine error while 
 
 brotato:together's `dev/einfluffles-TogetherLocal` is the local-play dev mod: a Steam stand-in
 (`steam_emulator.gd`) the real transport binds instead of GodotSteam, so host and clients can run
-without Steam's networking. In a test run it refuses to start (no `BT_LOCAL_ROLE`, the Steam build's
-feature `steam`, the game's own user folder) and logs one line; the suites check that.
+without Steam's networking. In a test run it refuses to start (no `BT_LOCAL_ROLE`, the Steam
+build's feature `steam`, no `BT_LOCAL_DIR` holding the user folder) and logs one line; the suites
+check that.
 
 - `wire_memory.gd` puts two or more emulators in one process with one clock that moves only when a
   test steps it. Pacing, latency, loss, reordering, stalls and failures are therefore exact, and a

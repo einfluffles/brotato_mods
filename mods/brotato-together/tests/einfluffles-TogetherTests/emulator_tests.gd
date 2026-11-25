@@ -576,35 +576,48 @@ func _test_dev_mod() -> void:
 		"emulator: the dev mod loads and stays inert without BT_LOCAL_ROLE (%s)"
 		% (dev.note if dev != null else "not loaded")
 	)
-	var own := ["C:/Users/x/AppData/Roaming/Brotato"]
-	var instance := "C:\\Users\\x\\AppData\\Local\\brotato-modtools\\play\\1\\appdata\\Brotato"
+	# As the launchers set them: play-local.ps1 (APPDATA under the instance's folder) and
+	# check-pair.sh (XDG_DATA_HOME under /pair/<name>).
+	var local := "C:\\Users\\x\\AppData\\Local\\brotato-modtools\\play\\default\\client1"
+	var instance := local + "\\appdata\\Brotato"
+	var real := "C:/Users/x/AppData/Roaming/Brotato"
+	var linux := "/home/x/.local/share/Brotato"
+	var dotted := "C:/Users/x/a/.."  # names C:/Users/x
+	var not_under := "not under BT_LOCAL_DIR"
 	var cases := [
-		[LocalMain.refusal("", 0, false, instance, own), "BT_LOCAL_ROLE is not set"],
-		[LocalMain.refusal("spectator", 0, false, instance, own), "none of"],
-		[LocalMain.refusal("host", REAL_STEAM_ID, false, instance, own), "Steam is logged on"],
-		[LocalMain.refusal("host", 0, true, instance, own), "Steam build"],
-		[LocalMain.refusal("host", 0, false, "", own), "no user folder"],
-		[
-			LocalMain.refusal("client", 0, false, "c:\\users\\x\\AppData\\Roaming\\Brotato\\", own),
-			"the game's own",
-		],
+		[LocalMain.refusal("", 0, false, instance, local), "BT_LOCAL_ROLE is not set"],
+		[LocalMain.refusal("spectator", 0, false, instance, local), "none of"],
+		[LocalMain.refusal("host", REAL_STEAM_ID, false, instance, local), "Steam is logged on"],
+		[LocalMain.refusal("host", 0, true, instance, local), "Steam build"],
+		[LocalMain.refusal("host", 0, false, "", local), "no user folder"],
+		[LocalMain.refusal("host", 0, false, instance, ""), "BT_LOCAL_DIR is not set"],
+		[LocalMain.refusal("client", 0, false, real, local), not_under],
+		[LocalMain.refusal("client", 0, false, real, "C:/Users/x/AppData/Local"), not_under],
+		[LocalMain.refusal("client", 0, false, local, local), not_under],  # the folder itself
+		[LocalMain.refusal("client", 0, false, local + "2\\appdata\\Brotato", local), not_under],
+		[LocalMain.refusal("client", 0, false, local + "\\..\\..\\Brotato", local), not_under],
+		[LocalMain.refusal("client", 0, false, dotted + "/AppData/Roaming/Brotato", dotted), not_under],
+		[LocalMain.refusal("host", 0, false, linux, "/pair/host"), not_under],
 	]
 	var wrong := []
 	for case in cases:
 		if not case[1] in case[0]:
 			wrong.append(case)
+	var allowed := [
+		LocalMain.refusal("client", 0, false, instance, local),
+		LocalMain.refusal("client", 0, false, instance.replace("\\", "/").to_lower(), local + "\\"),
+		LocalMain.refusal("host", 0, false, "/pair/host/data/Brotato", "/pair/host"),
+	]
 	_t._check(
-		wrong.empty() and LocalMain.refusal("client", 0, false, instance, own) == "",
-		"emulator: the dev mod refuses without a role, with Steam logged on, in the Steam build"
-		+ " and in the game's own user folder (%s)" % [wrong]
+		wrong.empty() and allowed == ["", "", ""],
+		"emulator: the dev mod refuses without a role, with Steam logged on, in the Steam build,"
+		+ " and with a user folder that is not under BT_LOCAL_DIR (%s; allowed: %s)" % [wrong, allowed]
 	)
-	# The test copy of tools/check-window.ps1 has a user folder of its own (BrotatoModTests); the
-	# container runs with the game's name under HOME, which counts as the game's own.
+	# No launcher sets BT_LOCAL_DIR here: this game's own user folder is refused by that rule.
 	var user_dir := OS.get_user_data_dir()
-	var here: String = LocalMain.refusal("host", 0, false, user_dir, LocalMain.own_user_dirs())
-	var own_name: bool = user_dir.replace("\\", "/").get_file() == "Brotato"
+	var env_dir := OS.get_environment(LocalMain.DIR_ENV)
+	var here: String = LocalMain.refusal("host", 0, false, user_dir, env_dir)
 	_t._check(
-		("the game's own" in here) == own_name,
-		"emulator: this game's user folder is refused exactly when it is the game's own (%s: %s)"
-		% [user_dir, here]
+		here == "BT_LOCAL_DIR is not set",
+		"emulator: this game's user folder is refused without BT_LOCAL_DIR (%s: %s)" % [user_dir, here]
 	)
