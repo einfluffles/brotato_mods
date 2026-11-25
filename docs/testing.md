@@ -3,7 +3,8 @@
 How the mods' tests run: headless in the toolchain container (`tools/check.sh`), and in a real game
 window on Windows (`tools\check-window.ps1`). Both need the decompiled game in `reference/`
 ([Game code](game-code.md)). [Play locally](#play-locally) starts brotato:together as host and clients in
-several game windows on one PC, without Steam.
+several game windows on one PC, without Steam, and [Pair tests](#pair-tests) run its scenarios
+with a host and a client as two headless games (`tools/check-pair.sh`).
 
 ## Headless
 
@@ -44,6 +45,79 @@ feature `steam`, the game's own user folder) and logs one line; the suites check
   and `lan` none of them (that part waits in real time, about 9 s).
 - The dev mod's design, activation rules and coverage of GodotSteam:
   [Local play](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
+
+## Pair tests
+
+`tools/check-pair.sh [-q] [scenario ...]` runs brotato:together's local-play scenarios with a host
+and a client as two headless game processes, each scenario in its own container (four at once,
+`PAIR_JOBS`). Without names it runs every scenario in `HEADLESS` of the dev mod's `scenarios.gd`
+(all but `language`, which only takes screenshots). The whole set takes about a minute.
+
+```
+CONTAINER=docker tools/check-pair.sh                  # all of them
+CONTAINER=docker tools/check-pair.sh kick bad_resync  # some
+```
+
+- The game is the one `tools/check.sh` boots (`reference/` or its copy), with its `project.godot`
+  replaced, in the container only, by one without the feature `steam`: the game's local build, as
+  in [Play locally](#play-locally). The mounted mods are brotato:together's `src/` and the dev mod,
+  not the test mod.
+- Each process has its own `HOME` and `XDG_DATA_HOME` (user folder `/pair/<name>/data/Brotato`),
+  the dev mod's `BT_LOCAL_*` variables as `tools\play-local.ps1` sets them (role, id, name, a port
+  and a random token for the wire on 127.0.0.1 inside the container, its folder, the link profile
+  `lan`), the host `BT_LOCAL_AUTOHOST=1` and the client `+connect_lobby <the host's first lobby>`.
+  The dev mod's refusal rules hold there as in a window: stock Godot has no Steam singleton, the
+  copy has no feature `steam`, and the user folder is not `$HOME/.local/share/Brotato`.
+- `BT_LOCAL_SCENARIO`, `BT_LOCAL_RUN` and `BT_LOCAL_PEERS` make each game run its part of the
+  scenario from the start (see below), print `PAIR-TESTS: PASS` or `PAIR-TESTS: FAIL <why>` and
+  close. A scenario passes when both games print PASS within `PAIR_TIMEOUT` (420 s), with no
+  script error in mod code and none of the engine errors `tools/check.sh` fails on.
+- On a failure it prints both games' steps, checks and verdicts, their script errors and the
+  mods' warnings, and keeps the scenario's folder (`host/` and `client1/`: `stdout.log`, the user
+  folder, `out/` with every answer). `PAIR_KEEP=1` keeps passed ones too, `PAIR_DIR` picks the
+  folder, `-q` prints the summary lines only.
+- Godot 3.6.2's headless build sometimes crashes in its own teardown when a client closes in a
+  run (signal 11 after every script has ended). That comes after the game's verdict, so it is
+  printed as an `info:` line and does not fail the scenario; a crash before the verdict does.
+- `PAIR_BREAK=token` gives the client another wire token than the host: the host's game refuses
+  it, the lobby never fills, and every scenario must fail (about three minutes, the first wait's
+  timeout). A check of the layer itself.
+- `tools/local-check.sh` runs the pair tests after `tools/check.sh` when brotato:together is among
+  its mods. For now they are informative: a failure is printed and named in the commit status's
+  description, but the status is still posted. `PAIR_BLOCKING=1` at the top of the script makes a
+  failure stop the check, once they have run stable for a few releases. Not in GitHub's CI:
+  `reference/` never goes there.
+
+**One scenario, two games.** The scenarios are GDScript, `scenarios.gd` in the dev mod, and
+`scenario_runner.gd` runs one in every game of a session at once: each game runs the same
+scenario code. A step names the games that act (`r.on("host", {...})`, `r.on(BOTH, {...})`, or a
+command per game); each of them carries out its director command and writes the answer to its
+`out/` folder, and every game reads the others' answers from their folders (the instance folders
+are siblings). So each step is a meeting point, every game sees the same answers, takes the same
+branches and comes to the same checks. The same code runs in game windows through
+`tools\play-local.ps1 -Scenario <name>` (the director's `scenario` command, with screenshots).
+
+| Scenario | What it checks |
+|---|---|
+| `join` | The client joins through `+connect_lobby`: both in one lobby, the host's session has the client ready and the client has the host's `WELCOME`, no lobby error. |
+| `join_wave_shop` | Lobby, Start, both join character selection, character, weapon and difficulty by accept, wave 1 with XP and gold, the level-up panels, the shop; the client buys the item under its cursor (checked on the host: gold down, one more item or weapon). |
+| `resume_leave_rejoin` | Wave 1 into the shop; the host quits to the title screen and continues the saved run. On the co-op resume screen the client takes saved player 1, leaves (the host gets saved player 1 back and stays on the screen), joins again, takes saved player 1 again; the host takes saved player 2 and the shop loads with both. |
+| `host_quits` | The host's game closes mid-wave: the client drops back to its title screen with "The host left the lobby", out of client mode. |
+| `client_quits` | The client's game closes mid-wave: the host plays on in its lobby with the client's slot kept, and the closing game logs no script error. |
+| `kick` | The host kicks the client: it leaves with "The host removed you from the lobby"; it can join again. |
+| `version_mismatch` | The client leaves, takes another brotato:together version (the director's `mod_version`) and joins again: rejected with the code `mod` and both versions, in its language; with its own version it joins. |
+| `bad_resync` | Both games on the `bad` profile, the host's next reliable send fails (`fail_send`): the host runs a full resync for the client, and both still get through character selection into a wave with the session up. |
+| `language` | Windows only (screenshots): both games switch to German and Russian at the title screen, in character selection, in the wave and in the shop. |
+
+To add a scenario: a function `scenario_<name>(r)` in `scenarios.gd` (the shared parts are there:
+`lobby_step`, `character_join_step`, `select_until`, `wave_to_shop`, `host_quits_run`,
+`join_hold`), its name in `NAMES` and, when it has checks, in `HEADLESS`, and its row here. Every
+step begins with `yield(r.step("<label>"), "completed")`. Rules: branch and loop only on answers
+(`r.state(name)`, the answers of `r.on`) and on counts, never on a game's own clock or state,
+since each game decides for itself; wait for states (`wait_for`) rather than fixed times; give a
+check a text with the values it saw (`r.check(condition, text)`). A command the director lacks
+goes into `director.gd` (its table in the implementation notes). Run it here
+(`tools/check-pair.sh <name>`) and once in windows (`tools\play-local.ps1 -Scenario <name>`).
 
 ## Play locally
 
@@ -110,8 +184,9 @@ from the instance's `control\` folder, one at a time, and answers each in `out\<
 `ok`, `error`, a `result` and the screen's `state` (scene, players, run, lobby, the co-op resume
 screen's saved player, ...). It drives the menus as a player does: keys through the game's input,
 buttons by focus and accept. Commands: `press`, `button`, `wait_for`, `query`, `screenshot`,
-`host_lobby`, `join`, `invite`, `leave`, `debug`, `language`, `quit`, and on the link of what the
-game sends `set_profile`, `fail_session`, `fail_send` and `stall`; fields and state:
+`host_lobby`, `join`, `invite`, `leave`, `kick`, `debug`, `language`, `mod_version`, `scenario`,
+`quit`, and on the link of what the game sends `set_profile`, `fail_session`, `fail_send` and
+`stall`; fields and state:
 [the director](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
 `-Key`, `-Screenshot`, `-Do` and the link switches (`-Profile` with `-On`, `-FailSession`,
 `-FailSend`, `-Stall`) send them to a running session: the director is the one way to control a
@@ -123,15 +198,15 @@ minimised window is drawn once for its screenshot.
 `tools\play-local.ps1 -Scenario <name>` starts fresh games (run `scenario-<name>`, empty user
 folders), plays the scenario through the directors, takes a screenshot of every game after every
 step (`<instance>\shots\<NN>-<step>.png`, `<NN>-failed.png` when a step fails), closes the games
-and prints `PASS <name>` (exit 0) or `FAIL <name>` (exit 1). The steps live in
-`tools\play-scenarios.ps1`. The host's runs use the game's own test settings (`debug`:
-invulnerable, short waves), so nobody dies and a wave takes 10 to 12 s.
+and prints `PASS <name>` (exit 0) or `FAIL <name>` (exit 1). The steps live in the dev mod's
+`scenarios.gd`, the same ones [Pair tests](#pair-tests) run headless (the table of scenarios is
+there): the launcher sends every game the director's `scenario` command at once, each runs its
+part in step with the others and takes its screenshots, and the launcher shows the host's steps
+as they come. The host's runs use the game's own test settings (`debug`: invulnerable, short
+waves), so nobody dies and a wave takes 10 to 30 s.
 
-| Scenario | What |
-|---|---|
-| `resume_leave_rejoin` | Host and client play wave 1 into the shop; the host quits to the title screen (Pause, Quit, Confirm), the run is saved, and continues it. The client sees the co-op resume screen's copy (saved player, gear, gold) with the host's saved player. The client holds accept and takes saved player 1, then leaves the lobby: the host's screen shows saved player 1 again and does not load the shop. The client joins again (invite accepted), is taken to the resume screen, takes saved player 1 again, the host takes saved player 2, and the shop loads with both. With two saved players the client joins first: had the host taken one first, the client's join would take the last one and load the shop at once. |
-| `join_wave_shop` | Lobby, Start, both join character selection, character, weapon and difficulty by accept, wave 1 with XP and gold given, the level-up panels, the shop, and the client buys the item under its cursor (checked on the host: gold down, one more item or weapon). |
-| `language` | Both games switch to German and Russian (the options' call) at the title screen with the lobby, in character selection and in the wave (the damage meter at each life bar). Screenshots only, no checks of the text. |
+In `resume_leave_rejoin` the client joins first on the resume screen: had the host taken one of
+the two saved players first, the client's join would take the last one and load the shop at once.
 
 For an agent: run a scenario, read its `scenario.log`, then look at the screenshots of the steps
 the change is about. To try something else, start a session (`tools\play-local.ps1`) and drive it

@@ -307,7 +307,9 @@ Steam-shaped emulator under the unchanged transport (`Transport.bind_steam`, [St
 object](#steam-object)) and links the games over TCP on 127.0.0.1. Status: the emulator, the
 in-process wire, the wire between game processes, the activation rules, the launcher
 `tools\play-local.ps1` ([Play locally](../../../docs/testing.md#play-locally)) with its scenario
-director, and the link profiles ([Link profiles](#link-profiles)) are in.
+director, the link profiles ([Link profiles](#link-profiles)) and the headless pair tests
+`tools/check-pair.sh` ([Pair tests](../../../docs/testing.md#pair-tests)), which run the same
+scenarios, are in.
 
 **Layout.** `mods/brotato-together/dev/einfluffles-TogetherLocal/`, next to `src/` and `tests/`:
 
@@ -324,6 +326,8 @@ director, and the link profiles ([Link profiles](#link-profiles)) are in.
 | `local_instance.gd` | The instance's side of the launcher: settings and `status.json`. |
 | `director.gd` | The scenario director: JSON commands in the instance's `control\` folder, answers in `out\`. |
 | `menu_driver.gd` | Menus driven as a player drives them (keys, buttons by focus and accept), screenshots, the screen's state. The test mod's `director` suite uses it too. |
+| `scenario_runner.gd` | Runs a scenario in every game of a session at once, in step: each step's answers go through the instances' `out\` folders. |
+| `scenarios.gd` | The scenarios, one coroutine each, for the windows (`-Scenario`) and the headless pair tests (`tools/check-pair.sh`). |
 
 Nothing under `dev/` is packaged: `tools/package.sh` takes `mods/*/src/<mod_id>/` only, and the zip
 guard fails on any second mod folder in a zip, also one whose manifest sits in `dev/`
@@ -445,15 +449,45 @@ from separate calls keep their order. Menus are driven as a player drives them: 
 | `stall` | `msec` | Nothing this game sends moves for that long (`stall`); the queues keep it. |
 | `debug` | `invulnerable`, `wave_sec`, `xp`, `gold` | The game's own test settings (`DebugService.invulnerable`, `custom_wave_duration`; read at run start and wave start) and, in a run, XP and gold for every player. Host. |
 | `language` | `locale` (`de`, `ru`, ... of `ProgressData.languages`) | What the options' language choice calls (`ProgressData.change_language`). |
+| `kick` | `peer` (a steam id; default every other member), `timeout_sec` | Host: what the lobby page's kick does (`LobbyMenu.kick`, `Session.kick`), then waits until the transport no longer lists the player. |
+| `mod_version` | `version` (`""`: the real one again) | This game's brotato:together version from now on: the manifest's `version_number` in the Mod Loader's data, which `Compat` reads for `HELLO`, as a game with another build would have it. |
+| `scenario` | `name`, `run` (the same id in every game), `peers` (instance names, default `host`, `client1`), `shots`, `timeout_sec` (900) | Runs this game's part of a scenario (`scenarios.gd`) in step with the others (below). The result has `passed`, the scenario's `lines` and the `shots`; a game that quit in the scenario closes after the answer. |
 | `quit` | | Answers, then closes the game as its window's close button does: the others see it leave. |
 
 The state (`MenuDriver.snapshot` plus the lobby): `scene`, `scene_path`, `paused`, `locale`,
 `focus` (the focused control's name), `players` (`CoopService.connected_players`), `listening`,
 `run` (`coop`, `count`, `wave`, per player `gold`, `levels`, `items`, `weapons`; `saved`: a run to
-continue), `lobby` (`in`, `is_host`, `members` with this game, `id`), `role`; on the co-op resume
-screen `resume_shown` (the saved player shown), `resume_gold` and `resume_progress`; in a wave
-`wave_left` and `upgrades` (the level-up or crate panels are shown). A client's copy of a screen
-is the game's own scene, so its state reads the same way.
+continue), `lobby` (`in`, `is_host`, `members` with this game, `id`), `session` (`ready`: peers
+whose handshake is done, `peer_ready`: the Session's `peer_ready` signals so far, a handshake
+each and then one per full resync, `error`: the lobby error shown last, `LobbyMenu.last_error`,
+`mod_version`), `role`; on the co-op resume screen `resume_shown` (the saved player shown),
+`resume_gold` and `resume_progress`; in a wave `wave_left` and `upgrades` (the level-up or crate
+panels are shown). A client's copy of a screen is the game's own scene, so its state reads the
+same way.
+
+Godot's headless build never flushes the input events `Input.parse_input_event` buffers (the
+desktop builds do it every frame), so in a headless game the director flushes them every frame;
+the test mod does the same for its suites.
+
+**Scenarios (`scenario_runner.gd`, `scenarios.gd`).** A scenario is one GDScript coroutine,
+`scenario_<name>(r)`, that every game of the session runs at the same time: the director's
+`scenario` command, from `tools\play-local.ps1 -Scenario` (every game at once, with screenshots),
+or `BT_LOCAL_SCENARIO` from the start, which `tools/check-pair.sh` sets for its headless pairs
+(`BT_LOCAL_RUN`: the run id, `BT_LOCAL_PEERS`: the instance names; the game closes after its
+verdict). A step, `r.on(games, command)`, names the games that act, with one command for all or
+one each. Each of them runs its command through its director (`execute`, the same path as a
+command file), takes the answer through JSON (as the others will read it) and writes it to its
+`out/` as `scn-<run>-<NNNN>.json`; every game then reads the others' answers from their folders
+(sibling folders: a game's name is its folder's name). So every game sees the same answers,
+takes the same branches and comes to the same checks; a scenario may only branch or loop on
+answers and counts, never on a game's own clock. `r.check` prints `  ok   ...` or fails the
+scenario; a game that fails (a failed command, a check, no answer within the command's timeout
+plus 30 s) writes `scn-<run>-abort.json`, so the others stop waiting at once, and its coroutine
+never resumes. A game that runs `quit` in a scenario ends its part there; the others go on without
+it (`host_quits`, `client_quits`). Each game prints `PAIR-TESTS: START`, its steps, the commands
+with their answers, its checks and `PAIR-TESTS: PASS` or `PAIR-TESTS: FAIL <why>`, to stdout and
+to the Mod Loader log. The scenarios and how to add one:
+[Pair tests](../../../docs/testing.md#pair-tests).
 
 **Launcher (`tools\play-local.ps1`).** Builds `%LOCALAPPDATA%\brotato-modtools\play\game`, a copy
 of `reference/` without `mods-unpacked` and without the line `_custom_features="steam"`: the game
