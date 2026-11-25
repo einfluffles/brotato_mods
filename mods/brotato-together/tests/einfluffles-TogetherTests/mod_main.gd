@@ -121,6 +121,9 @@ const EmulatorTests := preload("res://mods-unpacked/einfluffles-TogetherTests/em
 const EmulatorTransportTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/emulator_transport_tests.gd"
 )
+const EmulatorWireTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/emulator_wire_tests.gd"
+)
 const ClientReportTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/client_report_tests.gd"
 )
@@ -192,6 +195,7 @@ const SUITES := [
 	"traffic",
 	"emulator",
 	"emulator_transport",
+	"emulator_wire",
 	"progress",
 	"client_report",
 	"axolotl",
@@ -557,6 +561,10 @@ func _suite_emulator(_together: Node) -> void:
 
 func _suite_emulator_transport(_together: Node) -> void:
 	EmulatorTransportTests.new(self).run()
+
+
+func _suite_emulator_wire(_together: Node) -> void:
+	EmulatorWireTests.new(self).run()
 
 
 func _suite_progress(together: Node) -> void:
