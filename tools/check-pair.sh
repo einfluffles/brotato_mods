@@ -279,7 +279,7 @@ start_scenario() {
     -e PAIR_CLIENT_DLCS="${client_dlcs_of[$1]:-}" -e PAIR_NO_JOIN="${no_join_of[$1]:-0}" \
     -e PAIR_REF_SIDE="${ref_side_of[$1]:-}" -e PAIR_REF_LABEL="${ref_label_of[$1]:-}" \
     -v "$GAME:/proj${label:+:${label#,}}" --tmpfs "$empty_mods" "${mounts[@]}" "${more[@]}" \
-    -v "$dir:/pair$label" brotato-modtools bash /pair-tool/check-pair.sh --inside "$scenario" \
+    -v "$dir:/pair${label:+:${label#,}}" brotato-modtools bash /pair-tool/check-pair.sh --inside "$scenario" \
     > "$dir/container.log" 2>&1
   date +%s > "$dir/ended"
 }
