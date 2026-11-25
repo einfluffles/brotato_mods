@@ -62,12 +62,12 @@ in_env tools/check.sh -q "${mods[@]}"
 pair=""
 if [[ " ${mods[*]} " == *" mods/brotato-together "* ]]; then
   if in_env tools/check-pair.sh -q; then
-    pair="; pair tests passed"
+    pair=" (pair tests passed)"
   elif [ "$PAIR_BLOCKING" = 1 ]; then
     echo "the pair tests failed" >&2
     exit 1
   else
-    pair="; pair tests FAILED (not blocking yet)"
+    pair=" (pair tests FAILED, not blocking yet)"
     echo "the pair tests failed: informative for now, the check goes on" >&2
   fi
 fi

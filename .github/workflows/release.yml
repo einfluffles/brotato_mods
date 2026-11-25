@@ -47,7 +47,9 @@ jobs:
             echo "::error::$sha has no commit status local-check = success (got: '${status:-none}'). Run tools/local-check.sh mods/$mod on it, then re-run this workflow."
             exit 1
           fi
-          case " $description " in
+          # Mods are matched as whole words: punctuation after the list (an older ";") does not count.
+          words=" $(printf '%s' "$description" | tr ';,()' '    ') "
+          case "$words" in
             *" mods/$mod "*) ;;
             *) echo "::error::local-check on $sha did not cover mods/$mod ($description)"; exit 1 ;;
           esac
