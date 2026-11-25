@@ -39,7 +39,9 @@ feature `steam`, the game's own user folder) and logs one line; the suites check
 - `emulator` tests the stand-in itself, `emulator_transport` a real `Transport` and `Session` per
   player on it (handshake, messages, send results and the full resync, leave, kick, failures),
   `emulator_wire` the wire between game processes (`wire_tcp.gd`) with real sockets on 127.0.0.1,
-  all ends in one process.
+  all ends in one process, `emulator_profiles` the link profiles and, with a real `Transport` and
+  `Session` per player, that `bad` brings out the host's path, Slow answer, traffic and gap lines
+  and `lan` none of them (that part waits in real time, about 9 s).
 - The dev mod's design, activation rules and coverage of GodotSteam:
   [Local play](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
 
@@ -84,6 +86,11 @@ Options:
 | `-Stop` | Closes the windows of the running session (the games leave as a closed window does), then ends what is left. Closing the windows by hand does the same; a new start closes the previous session first. |
 | `-Screenshot <name> [-On <instance>]` | Every running game (or one) saves its window to `<instance>\shots\<name>.png`. |
 | `-Key <name> [-HoldMs <msec>] [-On <instance>]` | A key press in a game, by Godot key name (`Enter`, `Escape`, `Right`, `D`, ...). Joining a co-op slot needs a hold: `-Key Enter -HoldMs 1000 -On client1`. |
+| `-Profile <name>` | The link profile every game starts with: `lan` (default), `relay-good`, `relay-typical`, `bad`, `stall`, or `none` (no latency at all). See below. |
+| `-Profile <name> -On <instance>\|all` | Switches a running game's profile (`-On all`: every game) and waits until its `status.json` shows it. A game's profile is the line for what it sends, so `-Profile bad -On client1` makes only the client's way to the host bad. |
+| `-FailSession [-Reason <n>] [-On <instance>]` | That game's sessions fail at both ends with Steam's end reason (default 5003, timed out); the next message opens new ones. |
+| `-FailSend [-Count <n>] [-On <instance>]` | The game's next reliable send(s) fail with LimitExceeded; on the host the mod then runs a full resync for that client. |
+| `-Stall <msec> [-On <instance>]` | Nothing the game sends moves for that long. |
 
 Everything is in `%LOCALAPPDATA%\brotato-modtools\play`: `game\` (the game copy, refreshed when
 `reference/project.godot` changes, mods replaced on every start), `engine\` (refreshed when the
@@ -99,12 +106,28 @@ and turns all mods off after an error in it that names a mod. Expected in `stder
 initialized: getSteamID" (the dev mod asking whether Steam is logged on) and "CrashReporter:
 Failed to find engine logs" (the deleted logs).
 
+Link profiles, from the measured sessions
+([Link profiles](../mods/brotato-together/docs/implementation.md#link-profiles) has the numbers
+and their sources):
+
+| Profile | Steam ping | What the host's log shows |
+|---|---|---|
+| `lan` | 2 ms | the first path line per client, nothing else from the network |
+| `relay-good` | 26 ms | as `lan`, a POP change line after 10 minutes |
+| `relay-typical` | 40 ms, 0.5 % loss | a short stall every minute or two: now and then a gap line or a Slow answer |
+| `bad` | 200 ms, 3 % loss, 64 KB/s | path changes, Slow answers with the traffic summary, "Reliable burst" in the shop, input gaps after its stalls (every 4 to 10 s) |
+| `stall` | 16 ms | the direct route of 2026-11-16: gaps of 300 ms to 3.3 s, the long ones about every half minute |
+
+The log is each game's `appdata\Brotato\logs\modloader.log`; `status.json` has the profile and
+per client Steam's numbers (ping, queue, pending bytes, quality, bytes per second).
+
 What it shows and what it cannot: the mod's transport runs unchanged on the stand-in, so lobby,
-handshake, sessions, sends, leaves and kicks take the same code paths as with Steam. The line
-itself is loopback: no latency, loss or Steam relay (link profiles come later), no real Steam
-overlay, invites, friends-only lobbies, DLC ownership, achievements or Workshop. Both games share
-one PC's CPU and GPU, and the game copy is decompiled code, not the shipped `.pck`. Real sessions
-between two Steam accounts stay the check before a release.
+handshake, sessions, sends, leaves and kicks take the same code paths as with Steam, and the
+profiles put measured latency, jitter, loss, slow lines and stalls under them. The line itself is
+still loopback in the end: no real Steam relay, NAT or route choice, no real Steam overlay,
+invites, friends-only lobbies, DLC ownership, achievements or Workshop. Both games share one PC's
+CPU and GPU, and the game copy is decompiled code, not the shipped `.pck`. Real sessions between
+two Steam accounts stay the check before a release.
 
 ## With real graphics
 

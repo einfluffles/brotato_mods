@@ -305,9 +305,9 @@ still was not after 15 s.
 Host and clients as game instances on one PC, without Steam's networking. A dev mod puts a
 Steam-shaped emulator under the unchanged transport (`Transport.bind_steam`, [Steam
 object](#steam-object)) and links the games over TCP on 127.0.0.1. Status: the emulator, the
-in-process wire, the wire between game processes, the activation rules and the launcher
-`tools\play-local.ps1` ([Play locally](../../../docs/testing.md#play-locally)) are in; the link
-profiles and the scenario director come later.
+in-process wire, the wire between game processes, the activation rules, the launcher
+`tools\play-local.ps1` ([Play locally](../../../docs/testing.md#play-locally)) and the link
+profiles ([Link profiles](#link-profiles)) are in; the scenario director comes later.
 
 **Layout.** `mods/brotato-together/dev/einfluffles-TogetherLocal/`, next to `src/` and `tests/`:
 
@@ -316,7 +316,9 @@ profiles and the scenario director come later.
 | `manifest.json` | Mod `einfluffles-TogetherLocal`, depends on `einfluffles-BrotatoTogether`, so it loads after it. |
 | `mod_main.gd` | Activation rules; when active, builds an emulator, binds it to the transport, starts the wire, hosts or joins. |
 | `local_transport.gd` | Script extension of `net/steam_transport.gd`, installed only when active: `setup` hands the transport to the dev mod instead of binding GodotSteam. |
-| `steam_emulator.gd` | The Steam stand-in: lobbies, sessions, queues, pacing, link, connection info. No sockets. |
+| `steam_emulator.gd` | The Steam stand-in: lobbies, sessions, queues, pacing, connection info. No sockets. |
+| `link.gd` | The line one emulator sends over: latency, jitter, loss, retransmits, line rate, stalls, relay POP changes. |
+| `link_profiles.gd` | The named link profiles and the sessions their numbers come from. |
 | `wire_memory.gd` | A wire for two or more emulators in one process, with a clock that moves only when told to. |
 | `wire_tcp.gd` | The wire between game processes: TCP on 127.0.0.1, the host listens, clients connect. |
 | `local_instance.gd` | The instance's side of the launcher: settings, `status.json`, the `control\` folder (screenshots, key presses, quit). |
@@ -414,8 +416,13 @@ hand, never blocking: what a socket does not take waits in the connection's outb
 - `control\`: each file is one command, handled and deleted within 0.25 s: `screenshot-<name>`
   (the viewport after the frame is drawn, to `shots\<name>.png`), `key-<Name>[-<msec>]` (an
   `InputEventKey` down, held at least 150 ms or the given time, then up: the client's input
-  reaches the host's game in samples, so a 3-frame tap can fall between them), `quit`. The
-  scenario director replaces this later.
+  reaches the host's game in samples, so a 3-frame tap can fall between them), `quit`, and the
+  link commands of [Link profiles](#link-profiles) (`profile-<name>`,
+  `fail-session[-<reason>]`, `fail-send[-<count>]`, `stall-<msec>`). The scenario director
+  replaces this later.
+- `status.json` also has `link`: the profile, its main numbers, stalls and POP changes so far,
+  messages sent, dropped and refused, and per peer what Steam would show (state, ping, queue time,
+  pending bytes, both qualities, bytes per second out and in, relayed).
 
 **Launcher (`tools\play-local.ps1`).** Builds `%LOCALAPPDATA%\brotato-modtools\play\game`, a copy
 of `reference/` without `mods-unpacked` and without the line `_custom_features="steam"`: the game
@@ -452,10 +459,15 @@ editor profile, and the only choice for headless runs. Zipped mods (`--mods-path
   owner answers with the lobby (members, data, joinable, names) and sends every change to the
   members, which keep a copy. The owner leaving hands the lobby to the next member, as Steam does.
 - Messages: `sendMessageToUser` checks, queues in the session's send queue, `poll()` paces the
-  queue out with a token bucket at the send rate (`BURST_BYTES` 4380), the link adds latency,
-  jitter, loss and stalls, then the packet goes to the wire. Reliable messages keep their order
-  (a lost one arrives `retransmit_msec` later, and the ones after it wait); unreliable ones can be
-  dropped or overtake. The receiver stamps `time_received` from its own `getLocalTimestamp()`.
+  queue out with a token bucket at the send rate, or the line's rate when the profile's is lower
+  (`BURST_BYTES` 4380), the link adds latency, jitter, loss and stalls, then the packet goes to
+  the wire. Reliable messages keep their order (a lost one arrives `retransmit_msec` later, and
+  the ones after it wait); unreliable ones can be dropped or overtake. The receiver stamps
+  `time_received` from its own `getLocalTimestamp()`.
+- Lobby traffic and session control (join, lobby updates, accepted, close, fail, refused) reach
+  the wire after the link's latency without jitter, loss or stalls: Steam's servers carry them,
+  not the session. Without latency they go at once, as before. A delayed join the wire then
+  cannot carry answers "no such lobby".
 - Sessions: the first message to a peer opens one. The receiver holds its messages and fires
   `network_messages_session_request` until `acceptSessionWithUser` (or a send to that peer, which
   accepts too); then both sides are connected. A session nobody accepts fails at the sender after
@@ -484,12 +496,79 @@ GodotSteam calls of the mod and what the emulator does with them:
 | `getLocalTimestamp` | the emulator's clock plus its own origin (another one per emulator) |
 | `network_messages_session_request`, `acceptSessionWithUser`, `closeSessionWithUser` | as above |
 | `network_messages_session_failed` | reason, remote id, state 5, debug text: `fail_session(remote_id, reason, debug, both_sides)`, a session nobody accepts (5003), a peer gone from the wire (4001) |
-| `getSessionConnectionInfo` | state, end reason and debug text, relayed flag and POP, ping (twice the link's latency), send rate, pending reliable / unreliable bytes, unacknowledged reliable bytes in flight, queue time, local quality (1 - loss) |
+| `getSessionConnectionInfo` | state, end reason and debug text, relayed flag and POP (`lcl`, `lcx` after a POP change), ping, send rate (the configured one, also on a slower line), pending reliable / unreliable bytes, unacknowledged reliable bytes in flight, queue time (at the rate the line carries), local and remote quality, packets and bytes per second out and in |
 
-Control (not GodotSteam): `attach_wire(wire)`, `poll()`, `set_link({latency_msec, jitter_msec,
-loss, retransmit_msec, relay_latency_msec})` for what this side sends, `seed_link(seed)`,
-`stall(msec)`, `fail_session(...)`, `fire_join_requested(...)`, `wire_lost(remote_id)`,
-`send_rate()`, `is_relayed(remote_id)`, and the clock (`clock.now_usec()`, a real one by default).
+Control (not GodotSteam): `attach_wire(wire)`, `poll()`, `set_link({...})` (link.gd's keys) and
+`set_profile(name)` for what this side sends, `seed_link(seed)`, `stall(msec)`,
+`fail_session(...)`, `fail_sessions(reason, debug)` (every live one), `fail_next_sends(count,
+result)`, `fire_join_requested(...)`, `wire_lost(remote_id)`, `send_rate()`,
+`is_relayed(remote_id)`, `link_status()` (for `status.json`), and the clock (`clock.now_usec()`, a
+real one by default).
+
+#### Link profiles
+
+Each emulator's `link` (`link.gd`) is the line for what that game sends, so a profile is one
+direction: the launcher gives every game the same one, and switching one game changes only its
+way out. Settings: `latency_msec` (one way), `relay_latency_msec` (more on a relayed session),
+`jitter_msec` (+- per message), `loss` (an unreliable message is dropped, a reliable one comes
+`retransmit_msec` later per loss, retransmits can be lost too), `line_rate` (B/s the line carries;
+0: Steam's send rate), `stalls` (kinds of burst stalls: every `[min, max]` msec, a `chance` per
+turn, `[min, max]` msec long; nothing this side sends moves meanwhile, the queues keep it) and
+`pop_switch_msec` (the relay POP alternates between `lcl` and `lcx`). Jitter and loss draw from
+one random stream, the stall and POP schedule from another, both seeded by the instance number,
+so when a stall comes does not depend on how much is sent.
+
+The profiles (`link_profiles.gd`), with the sessions of
+[Measurements](#12-measurements-and-session-findings) they are taken from:
+
+| Profile | Steam ping (relayed) | Jitter, loss | Line | Stalls, POP | Source |
+|---|---|---|---|---|---|
+| `lan` | 2 ms | none | Steam's rate | none | no session: the floor of a wired LAN |
+| `relay-good` | 26 ms (8 + 5 one way) | 2 ms, none | Steam's rate | POP change every 10 min | 2026-11-16, two players relayed via fra for 8 waves: no network stall, one POP change; direct ping on the same lines 15 to 18 ms, the relay's 10 ms estimated |
+| `relay-typical` | 40 ms (12 + 8) | 6 ms, 0.5 % | Steam's rate | 150 to 300 ms every 1 to 2 min | the stall tests' client (Steam ping 25 ms) through a relay; the three-player session of 2026-11-16, whose gaps were almost all scene changes; loss never logged, assumed |
+| `bad` | 200 ms (70 + 30) | 25 ms, 3 % | 64 KB/s | 300 to 800 ms every 4 to 10 s; POP change every minute | the worst of each measurement, more often: the three-player session's backlogs (20 to 250 KB, pings of about 1 s), a slow upload ([Send rate](#send-rate)), the direct route's stalls (300 to 500 ms), a POP change; loss assumed |
+| `stall` | 16 ms (8 + 0) | 2 ms, none | Steam's rate | 300 to 500 ms every 20 to 50 s, and 0.5 to 3.3 s on a 12 s beat (0.44 a beat) | the direct route of 2026-11-16 as measured (22 long stalls in 10 minutes) |
+
+`none` (and no `BT_LOCAL_PROFILE`) is no latency at all, the emulator's default. The ping is the
+sum of both sides' one-way base latency (each side's packets carry its own), without jitter or
+queue, as Steam reports it.
+
+What each shows in the host's log ([Diagnostics](#11-diagnostics)):
+
+- `lan`: the first path line per member ("relayed via lcl (Steam ping 2 ms)") and nothing else
+  from the network: the baseline for a change that should stay quiet.
+- `relay-good`: as `lan` with a realistic ping (the lobby page's ping and "with frame time"), and
+  after 10 minutes one path line for the POP change.
+- `relay-typical`: now and then a short stall: a gap line ("held up on the way") at most every
+  minute or two, a Slow answer when a PING falls into it.
+- `bad`: every line: path changes ("relayed via lcx (peer's POP lcl)"), Slow answers with
+  Steam's numbers and "; reliable in the last 2 s: ...", "Reliable burst to ..." when the shop's
+  states back up on the 64 KB/s line, input gaps on the host and snapshot gaps on a client after
+  each stall, and lower quality values. The game stays playable but visibly behind.
+- `stall`: the direct-route stalls: gap lines of 300 ms to 3.3 s, the long ones about every
+  half minute, and the render delay and prediction riding out the short ones.
+
+Switching at run time: `set_profile(name)` (control file `profile-<name>`, launcher `-Profile
+<name> -On <instance>`) applies to what is sent from then on. What is on its way keeps its time:
+an unreliable message sent after a switch to a faster profile overtakes, a reliable one waits for
+the reliable ones before it. The stall and POP schedule starts again with the new profile.
+`link.bring_forward(now, msec)` moves every scheduled stall and POP change to at most msec from
+now, for tests.
+
+Failures on command: `fail_next_sends(count, result)` makes the next reliable sends answer
+LimitExceeded (25) or another EResult: the transport reports `send_failed`, and on the host the
+Session queues a full resync and runs it ("Full resync for ..."). `fail_sessions(reason)` fails
+every live session at both ends with Steam's end reason (default 5003): the transport logs the
+failure, and after the next message link_watch logs "Session with ... up again ... after it
+failed: relayed via lcl". `stall(msec)` stalls the line now.
+
+Quality and rates: `remote_quality` is the share of this side's transmissions that arrived (a
+reliable message lost twice is three transmissions, one arrived), `local_quality` the same for
+the peer's transmissions, as its packets report it. Both are -1 until connected and counted once;
+after that a second's counts make a new value once 20 or more transmissions weigh in, each
+second's counts half as much in the next. Packets and bytes per second out and in are the last
+full second's, by GodotSteam 3.x's names (`packets_out_per_second`, `bytes_out_per_second`, ...);
+the mod does not read them, `status.json` shows them.
 
 **Wires.** A wire has `send_packet(packet: Dictionary) -> bool` (false: the peer is unknown or
 gone) and hands what arrives to the target's `receive_packet(packet)`; when a peer's game is gone
@@ -502,14 +581,14 @@ polls every emulator by steam id), so a test runs the same every time.
 Not there yet, or simplified:
 
 - Gamepads are not routed per window yet: play with keyboard and mouse. The scenario director
-  (scripted runs, waiting for screens) is not there; the control folder has screenshots and key
-  presses only.
-- Link profiles (`lan`, `relay-good`, `bad`, ...) from the measured sessions and switching them at
-  run time: `set_link` takes the numbers, nobody sets them yet.
-- Lobby traffic and session control go straight to the wire, without the link's delay; Steam's
-  real ordering races between lobby updates and messages are not injected yet.
-- Nagle (`SEND_NO_NAGLE`) is not modelled; the remote side's quality is -1 (unknown); bytes and
-  packets per second are not reported.
+  (scripted runs, waiting for screens) is not there; the control folder has screenshots, key
+  presses and the link commands.
+- Steam's real ordering races between lobby updates and messages are not injected: both take the
+  same base latency.
+- Nagle (`SEND_NO_NAGLE`) is not modelled. A stall holds messages, not lobby traffic. A long stall
+  never times a session out (Steam would after 10 s); `fail_sessions` does that on command.
+- The profiles' loss and the relayed pings of `relay-good` and `relay-typical` are assumptions:
+  no session logged them.
 - A lobby whose owner left keeps the first owner in its id, so a later join finds no lobby.
 
 Tests: the suites `emulator` (the emulator on the memory wire), `emulator_transport` (a real
@@ -517,7 +596,14 @@ Tests: the suites `emulator` (the emulator on the memory wire), `emulator_transp
 messages both ways, send results down to the full resync, leave, kick, a game that is gone, a
 failed session and its restart, another version's lobby tag) and `emulator_wire` (`wire_tcp.gd`
 with real sockets on 127.0.0.1 in one process: framing, token, roster, join, messages, relay
-through the host, a client and the host leaving; every dev mod script compiles).
+through the host, a client and the host leaving; every dev mod script compiles) and
+`emulator_profiles` (each profile's ping, both directions, the stall profile over two minutes,
+the line rate, loss and quality, rates, lobby latency, switching, forced failures, the control
+commands; then a real `Transport` and `Session` per player under `bad` and `lan`: under `bad` the
+host's path change, Slow answer, traffic and gap lines and a full resync after a forced failed
+send, under `lan` none of these lines). That last part keeps real time at or behind the
+emulators' clock, because the Session times with `OS.get_ticks_msec()`: a delay the profile
+makes is then certain to show, and about 9 s of the suite are this wait.
 
 ## 5. State stream and run state
 
