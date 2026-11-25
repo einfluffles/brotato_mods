@@ -34,7 +34,7 @@ function Test-ScenarioName([string]$Name) { return $ScenarioNames -contains $Nam
 # is the newest tag brotato-together/*; a given -ClientRef or -HostRef replaces the scenario's ref.
 function Get-ScenarioDefaults([string]$Name, [string[]]$Given) {
     $text = [IO.File]::ReadAllText($ScenariosFile)
-    $block = [regex]::Match($text, '(?s)const LAUNCH := \{(.*?)\n\}')
+    $block = [regex]::Match($text, '(?s)const LAUNCH := \{(.*?)\r?\n\}')
     $line = [regex]::Match($block.Groups[1].Value, "`"$Name`": `"([^`"]*)`"")
     $defaults = @{}
     if (-not $line.Success) { return $defaults }
