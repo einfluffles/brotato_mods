@@ -329,7 +329,8 @@ same scenarios, are in.
 | `director.gd` | The scenario director: JSON commands in the instance's `control\` folder, answers in `out\`. |
 | `menu_driver.gd` | Menus driven as a player drives them (keys, buttons by focus and accept), screenshots, the screen's state. The test mod's `director` suite uses it too. |
 | `scenario_runner.gd` | Runs a scenario in every game of a session at once, in step: each step's answers go through the instances' `out\` folders. |
-| `scenarios.gd` | The scenarios, one coroutine each, for the windows (`-Scenario`) and the headless pair tests (`tools/check-pair.sh`). |
+| `scenarios.gd` | The scenarios, one coroutine each, for the windows (`-Scenario`) and the headless pair tests (`tools/check-pair.sh`), and what each needs from the launcher (`LAUNCH`: clients, DLCs, another build, no join). |
+| `scenario_steps.gd` | The steps several scenarios share (lobby, character selection, the selection screens, a wave into the shop, buying, quitting the run), for a host and any number of clients; `scenarios.gd` extends it. |
 
 Nothing under `dev/` is packaged: `tools/package.sh` takes `mods/*/src/<mod_id>/` only, and the zip
 guard fails on any second mod folder in a zip, also one whose manifest sits in `dev/`
@@ -482,6 +483,7 @@ from separate calls keep their order. Menus are driven as a player drives them: 
 | `stall` | `msec` | Nothing this game sends moves for that long (`stall`); the queues keep it. |
 | `debug` | `invulnerable`, `wave_sec`, `xp`, `gold` | The game's own test settings (`DebugService.invulnerable`, `custom_wave_duration`; read at run start and wave start) and, in a run, XP and gold for every player. Host. |
 | `language` | `locale` (`de`, `ru`, ... of `ProgressData.languages`) | What the options' language choice calls (`ProgressData.change_language`). |
+| `text` | `key`, `args` | What this game shows for a translation key with its arguments in its language now (the game's `Text.text`): a scenario's expected text in another game's language. Fails for a key no translation has. |
 | `kick` | `peer` (a steam id; default every other member), `timeout_sec` | Host: what the lobby page's kick does (`LobbyMenu.kick`, `Session.kick`), then waits until the transport no longer lists the player. |
 | `mod_version` | `version` (`""`: the real one again) | This game's brotato:together version from now on: the manifest's `version_number` in the Mod Loader's data, which `Compat` reads for `HELLO`, as a game with another build would have it. |
 | `scenario` | `name`, `run` (the same id in every game), `peers` (instance names, default `host`, `client1`), `shots`, `timeout_sec` (900) | Runs this game's part of a scenario (`scenarios.gd`) in step with the others (below). The result has `passed`, the scenario's `lines` and the `shots`; a game that quit in the scenario closes after the answer. |
@@ -504,7 +506,10 @@ is the game's own scene, so its state reads the same way.
 
 Godot's headless build never flushes the input events `Input.parse_input_event` buffers (the
 desktop builds do it every frame), so in a headless game the director flushes them every frame;
-the test mod does the same for its suites.
+the test mod does the same for its suites. The director's flush runs first in the frame
+(`process_priority` -1000), as a desktop build's does at the frame's start: code that polls
+`Input.is_action_just_pressed`, such as the client's pause (`PauseControl`), only sees a key in
+the frame it came in.
 
 **Scenarios (`scenario_runner.gd`, `scenarios.gd`).** A scenario is one GDScript coroutine,
 `scenario_<name>(r)`, that every game of the session runs at the same time: the director's
@@ -542,10 +547,11 @@ folder would be `%APPDATA%\Brotato`, and starts the engine with `--path <game> -
 `BT_LOCAL_*` variables (set for the child only: also `BT_LOCAL_DLCS` from `-HostDlcs` /
 `-ClientDlcs` and `BT_LOCAL_JOYPAD` from `-Joypad`). With `-ClientRef` / `-HostRef` that side runs
 `play\game-ref`, a copy of the game copy (refreshed with it) whose `mods-unpacked` has the commit's
-brotato:together and `-With` mods (`git archive` of `mods\` into `playefs\<commit>`, once per
-commit) and this worktree's dev mod. It waits until the host is bound and every client is in the
-lobby (or refused: `lobby_error` in its status), then returns; `session.json` lists the processes (id and start time) for `-Stop`,
-which closes the windows and ends what is left after 10 s.
+brotato:together and `-With` mods (`git archive` of `mods\` into `play\refs\<commit>`, once per
+commit) and this worktree's dev mod, with `BT_LOCAL_REF` (the build's name: `ref` in the
+director's state). It waits until the host is bound and every client is in the lobby (or
+refused: `lobby_error` in its status), then returns; `session.json` lists the processes (id and
+start time) for `-Stop`, which closes the windows and ends what is left after 10 s.
 
 Engine spike (2026-11-25): both the game's engine copy and stock Godot 3.6.2 boot the patched game
 copy with the mods to the title screen (warm boot 8-10 s, a first boot after fresh files up to

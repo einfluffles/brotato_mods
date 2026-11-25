@@ -49,9 +49,10 @@ feature `steam`, the game's own user folder) and logs one line; the suites check
 ## Pair tests
 
 `tools/check-pair.sh [-q] [scenario ...]` runs brotato:together's local-play scenarios with a host
-and a client as two headless game processes, each scenario in its own container (four at once,
-`PAIR_JOBS`). Without names it runs every scenario in `HEADLESS` of the dev mod's `scenarios.gd`
-(all but `language`, which only takes screenshots). The whole set takes about a minute.
+and one or more clients as headless game processes, each scenario in its own container (four at
+once, `PAIR_JOBS`). Without names it runs every scenario in `HEADLESS` of the dev mod's
+`scenarios.gd` (all but `language`, which only takes screenshots). The whole set takes about two
+minutes.
 
 ```
 CONTAINER=docker tools/check-pair.sh                  # all of them
@@ -65,57 +66,77 @@ CONTAINER=docker tools/check-pair.sh kick bad_resync  # some
 - Each process has its own `HOME` and `XDG_DATA_HOME` (user folder `/pair/<name>/data/Brotato`),
   the dev mod's `BT_LOCAL_*` variables as `tools\play-local.ps1` sets them (role, id, name, a port
   and a random token for the wire on 127.0.0.1 inside the container, its folder, the link profile
-  `lan`), the host `BT_LOCAL_AUTOHOST=1` and the client `+connect_lobby <the host's first lobby>`.
+  `lan`), the host `BT_LOCAL_AUTOHOST=1` and the clients `+connect_lobby <the host's first lobby>`.
   The dev mod's refusal rules hold there as in a window: stock Godot has no Steam singleton, the
   copy has no feature `steam`, and the user folder is not `$HOME/.local/share/Brotato`.
+- A scenario's launch settings (`LAUNCH` in `scenarios.gd`, the same ones `-Scenario` uses in
+  windows) decide the rest: `clients` (games `client1` to `clientN`), `host_dlcs` and `client_dlcs`
+  (`BT_LOCAL_DLCS`), `no_join` (no autohost, no `+connect_lobby`), and `client_ref` or `host_ref`:
+  that side runs brotato:together of a git ref (`last_release`: the newest tag
+  `brotato-together/*`). Its `src/` comes from `git archive` into the run's folder (`refs/`; Git
+  for Windows through WSL's interop when the checkout is a Windows worktree) and is mounted with
+  this worktree's dev mod over a second mount of the same game, `/proj-ref`: nothing is copied.
+  `PAIR_CLIENT_REF=<ref>` or `PAIR_HOST_REF=<ref>` replace the ref of such a scenario (the other
+  direction: `PAIR_HOST_REF=brotato-together/2026-11-23-1930`).
 - `BT_LOCAL_SCENARIO`, `BT_LOCAL_RUN` and `BT_LOCAL_PEERS` make each game run its part of the
   scenario from the start (see below), print `PAIR-TESTS: PASS` or `PAIR-TESTS: FAIL <why>` and
-  close. A scenario passes when both games print PASS within `PAIR_TIMEOUT` (420 s), with no
+  close. A scenario passes when every game prints PASS within `PAIR_TIMEOUT` (420 s), with no
   script error in mod code and none of the engine errors `tools/check.sh` fails on.
-- On a failure it prints both games' steps, checks and verdicts, their script errors and the
-  mods' warnings, and keeps the scenario's folder (`host/` and `client1/`: `stdout.log`, the user
+- On a failure it prints every game's steps, checks and verdicts, their script errors and the
+  mods' warnings, and keeps the scenario's folder (`host/`, `client1/`, ...: `stdout.log`, the user
   folder, `out/` with every answer). `PAIR_KEEP=1` keeps passed ones too, `PAIR_DIR` picks the
   folder, `-q` prints the summary lines only.
 - Godot 3.6.2's headless build sometimes crashes in its own teardown when a client closes in a
   run (signal 11 after every script has ended). That comes after the game's verdict, so it is
   printed as an `info:` line and does not fail the scenario; a crash before the verdict does.
-- `PAIR_BREAK=token` gives the client another wire token than the host: the host's game refuses
-  it, the lobby never fills, and every scenario must fail (about three minutes, the first wait's
-  timeout). A check of the layer itself.
+- `PAIR_BREAK=token` gives the clients another wire token than the host: the host's game refuses
+  them, the lobby never fills, and every scenario that joins must fail (about three minutes, the
+  first wait's timeout). A check of the layer itself.
 - `tools/local-check.sh` runs the pair tests after `tools/check.sh` when brotato:together is among
   its mods. For now they are informative: a failure is printed and named in the commit status's
   description, but the status is still posted. `PAIR_BLOCKING=1` at the top of the script makes a
   failure stop the check, once they have run stable for a few releases. Not in GitHub's CI:
   `reference/` never goes there.
 
-**One scenario, two games.** The scenarios are GDScript, `scenarios.gd` in the dev mod, and
-`scenario_runner.gd` runs one in every game of a session at once: each game runs the same
-scenario code. A step names the games that act (`r.on("host", {...})`, `r.on(BOTH, {...})`, or a
-command per game); each of them carries out its director command and writes the answer to its
-`out/` folder, and every game reads the others' answers from their folders (the instance folders
-are siblings). So each step is a meeting point, every game sees the same answers, takes the same
-branches and comes to the same checks. The same code runs in game windows through
-`tools\play-local.ps1 -Scenario <name>` (the director's `scenario` command, with screenshots).
+**One scenario, every game.** The scenarios are GDScript, `scenarios.gd` in the dev mod (its
+shared steps in `scenario_steps.gd`), and `scenario_runner.gd` runs one in every game of a session
+at once: each game runs the same scenario code. A step names the games that act
+(`r.on("host", {...})`, `r.on("all", {...})`, `r.on(clients(r), {...})`, or a command per game);
+each of them carries out its director command and writes the answer to its `out/` folder, and
+every game reads the others' answers from their folders (the instance folders are siblings). So
+each step is a meeting point, every game sees the same answers, takes the same branches and comes
+to the same checks. The same code runs in game windows through `tools\play-local.ps1 -Scenario
+<name>` (the director's `scenario` command, with screenshots). There is no other scenario
+mechanism: `tools\play-scenarios.ps1` only starts them and collects what they say.
 
-| Scenario | What it checks |
-|---|---|
-| `join` | The client joins through `+connect_lobby`: both in one lobby, the host's session has the client ready and the client has the host's `WELCOME`, no lobby error. |
-| `join_wave_shop` | Lobby, Start, both join character selection, character, weapon and difficulty by accept, wave 1 with XP and gold, the level-up panels, the shop; the client buys the item under its cursor (checked on the host: gold down, one more item or weapon). |
-| `resume_leave_rejoin` | Wave 1 into the shop; the host quits to the title screen and continues the saved run. On the co-op resume screen the client takes saved player 1, leaves (the host gets saved player 1 back and stays on the screen), joins again, takes saved player 1 again; the host takes saved player 2 and the shop loads with both. |
-| `host_quits` | The host's game closes mid-wave: the client drops back to its title screen with "The host left the lobby", out of client mode. |
-| `client_quits` | The client's game closes mid-wave: the host plays on in its lobby with the client's slot kept, and the closing game logs no script error. |
-| `kick` | The host kicks the client: it leaves with "The host removed you from the lobby"; it can join again. |
-| `version_mismatch` | The client leaves, takes another brotato:together version (the director's `mod_version`) and joins again: rejected with the code `mod` and both versions, in its language; with its own version it joins. |
-| `bad_resync` | Both games on the `bad` profile, the host's next reliable send fails (`fail_send`): the host runs a full resync for the client, and both still get through character selection into a wave with the session up. |
-| `language` | Windows only (screenshots): both games switch to German and Russian at the title screen, in character selection, in the wave and in the shop. |
+| Scenario | Games | What it checks |
+|---|---|---|
+| `join` | host, client | The client joins through `+connect_lobby`: both in one lobby, the host's session has the client ready and the client has the host's `WELCOME`, no lobby error. |
+| `join_wave_shop` | host, client | Lobby, Start, both join character selection, character, weapon and difficulty by accept, wave 1 with XP and gold, the level-up panels, the shop; the client buys the item under its cursor (checked on the host: gold down, one more item or weapon). |
+| `resume_leave_rejoin` | host, client | Wave 1 into the shop; the host quits to the title screen and continues the saved run. On the co-op resume screen the client takes saved player 1, leaves (the host gets saved player 1 back and stays on the screen), joins again, takes saved player 1 again; the host takes saved player 2 and the shop loads with both. |
+| `host_quits` | host, client | The host's game closes mid-wave: the client drops back to its title screen with "The host left the lobby", out of client mode. |
+| `client_quits` | host, client | The client's game closes mid-wave: the host plays on in its lobby with the client's slot kept, and the closing game logs no script error. |
+| `kick` | host, client | The host kicks the client: it leaves with "The host removed you from the lobby"; it can join again. |
+| `version_mismatch` | host, client | One build, in memory: the client leaves, takes another brotato:together version (the director's `mod_version`) and joins again: the host rejects its `HELLO` with the code `mod` and both versions, shown in its language; with its own version it joins. |
+| `version_mismatch_build` | host, client on the last release (`no_join=1 client_ref=last_release`) | A real older build: nobody joins by itself; the host opens its lobby, the clients switch to German and accept an invite. The lobby's mod tag (mod id and protocol) turns each client away before `HELLO`: it is not in the lobby and its error line names both tags; a client of this worktree (`-HostRef`, `PAIR_HOST_REF`) shows the German `BT_ERR_LOBBY_VERSION` word for word (the director's `text`). The host keeps its lobby, alone, with no error. |
+| `bad_resync` | host, client | Both games on the `bad` profile, the host's next reliable send fails (`fail_send`): the host runs a full resync for the client, and both still get through character selection into a wave with the session up. |
+| `three_players` | host, two clients (`clients=2`; in windows `-Clients 3`: three) | All in the lobby, each joins character selection in turn (player index = join order), character, weapon and difficulty, wave 1 with its level-up panels, the shop; every client buys the item under its cursor (checked on the host per player). |
+| `dlc_borrow` | host with every DLC, client with none (`host_dlcs=all client_dlcs=none`) | At the title screen in the lobby the client's game is its own (the borrowed DLC is parked); from character selection on it uses the host's DLC it lacks and its lobby details say "Using the host's DLC for this session: ..." (also on the lobby page, opened from the pause menu in the shop); back at the title screen it is parked again, and after leaving the lobby the client has only its own. |
+| `language` | host, client | Windows only (screenshots): both games switch to German and Russian at the title screen, in character selection, in the wave and in the shop. |
 
-To add a scenario: a function `scenario_<name>(r)` in `scenarios.gd` (the shared parts are there:
-`lobby_step`, `character_join_step`, `select_until`, `wave_to_shop`, `host_quits_run`,
-`join_hold`), its name in `NAMES` and, when it has checks, in `HEADLESS`, and its row here. Every
-step begins with `yield(r.step("<label>"), "completed")`. Rules: branch and loop only on answers
-(`r.state(name)`, the answers of `r.on`) and on counts, never on a game's own clock or state,
-since each game decides for itself; wait for states (`wait_for`) rather than fixed times; give a
-check a text with the values it saw (`r.check(condition, text)`). A command the director lacks
+Every scenario but `language` runs in both places, headless here and in windows; the windows add
+a screenshot of every game after every step.
+
+To add a scenario: a function `scenario_<name>(r)` in `scenarios.gd` (the shared steps are in
+`scenario_steps.gd`: `lobby_step`, `character_join_step`, `select_until`, `wave_to_shop`,
+`clients_buy`, `host_quits_run`, `join_hold`, `state_when_size`, `clients(r)`; they work for any
+number of clients), its name in `NAMES` and, when it has checks, in `HEADLESS`, its launch
+settings in `LAUNCH` when it needs any, and its row here. Every step begins with
+`yield(r.step("<label>"), "completed")`. Rules: branch and loop only on answers (`r.state(name)`,
+the answers of `r.on`) and on counts, never on a game's own clock or state, since each game
+decides for itself; a text that depends on a game's language comes from that game (the director's
+`text`), not from the game that checks; wait for states (`wait_for`) rather than fixed times; give
+a check a text with the values it saw (`r.check(condition, text)`). A command the director lacks
 goes into `director.gd` (its table in the implementation notes). Run it here
 (`tools/check-pair.sh <name>`) and once in windows (`tools\play-local.ps1 -Scenario <name>`).
 
