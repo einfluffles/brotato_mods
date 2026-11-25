@@ -117,6 +117,10 @@ const NetworkStallTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/network_stall_tests.gd"
 )
 const TrafficTests := preload("res://mods-unpacked/einfluffles-TogetherTests/traffic_tests.gd")
+const EmulatorTests := preload("res://mods-unpacked/einfluffles-TogetherTests/emulator_tests.gd")
+const EmulatorTransportTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/emulator_transport_tests.gd"
+)
 const ClientReportTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/client_report_tests.gd"
 )
@@ -186,6 +190,8 @@ const SUITES := [
 	"lobby_menu",
 	"network_stalls",
 	"traffic",
+	"emulator",
+	"emulator_transport",
 	"progress",
 	"client_report",
 	"axolotl",
@@ -542,6 +548,15 @@ func _suite_network_stalls(together: Node) -> void:
 
 func _suite_traffic(_together: Node) -> void:
 	TrafficTests.new(self).run()
+
+
+# The local-play dev mod (mods/brotato-together/dev, mounted by tools/check.sh for tests only).
+func _suite_emulator(_together: Node) -> void:
+	EmulatorTests.new(self).run()
+
+
+func _suite_emulator_transport(_together: Node) -> void:
+	EmulatorTransportTests.new(self).run()
 
 
 func _suite_progress(together: Node) -> void:
