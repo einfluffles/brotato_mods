@@ -41,47 +41,12 @@ while getopts "qs:" opt; do
 done
 shift $((OPTIND - 1))
 
-RUNTIME="${CONTAINER:-$(command -v podman > /dev/null 2>&1 && echo podman || echo docker)}"
-if [ "$(basename "$RUNTIME")" = podman ]; then
-  run_as=(--userns=keep-id)
-  label=",z"  # shared label: several containers mount the same folders at once
-  empty_mods="/proj/mods-unpacked:notmpcopyup"  # podman would copy the folder's content in
-else
-  run_as=(--user "$(id -u):$(id -g)")
-  label=""
-  empty_mods="/proj/mods-unpacked"
-fi
-
-# The game reads ~17000 files while booting. Over a network-style mount (a Windows drive under WSL
-# is 9p) that takes close to a minute instead of a few seconds, so the game then runs from a copy
-# on the local filesystem. The copy is refreshed when reference/project.godot changes.
-GAME="$ROOT/reference"
-use_cache="${MOD_CHECK_CACHE:-auto}"
-if [ "$use_cache" = auto ]; then
-  case "$(df --output=fstype "$ROOT" 2> /dev/null | tail -1)" in
-    9p | drvfs | cifs | smb3 | virtiofs | vboxsf) use_cache=1 ;;
-    *) use_cache=0 ;;
-  esac
-fi
-if [ "$use_cache" = 1 ]; then
-  GAME="${XDG_CACHE_HOME:-$HOME/.cache}/brotato-modtools/reference"
-  stamp="$(stat -c '%Y %s' "$ROOT/reference/project.godot")"
-  if [ "${MOD_CHECK_RESYNC:-0}" = 1 ] || [ "$(cat "$GAME/.source-stamp" 2> /dev/null)" != "$stamp" ]; then
-    echo "copying reference/ to $GAME (once per game version) ..."
-    mkdir -p "$GAME"
-    if command -v rsync > /dev/null 2>&1; then
-      rsync -a --delete --exclude /mods-unpacked/ --exclude /.source-stamp "$ROOT/reference/" "$GAME/" || exit 1
-    else
-      rm -rf "$GAME" && mkdir -p "$GAME" && cp -a "$ROOT/reference/." "$GAME/" || exit 1
-      rm -rf "$GAME/mods-unpacked"
-    fi
-    echo "$stamp" > "$GAME/.source-stamp"
-  fi
-fi
+# The container runtime and the game (reference/, or its copy on a slow mount): GAME, RUNTIME, ...
+# shellcheck source=tools/game-env.sh
+. "$ROOT/tools/game-env.sh"
 
 # run_game <log> <suites> <mount args...>. mods-unpacked/ is a tmpfs per process: the Mod Loader
 # stops at a mod folder without a manifest, which another mod's check would leave behind.
-mkdir -p "$GAME/mods-unpacked"
 run_game() {
   local log="$1" suites="$2"
   shift 2

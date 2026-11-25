@@ -37,6 +37,7 @@ NAMES=(host client1)
 # --- In the container: one scenario's two games ---
 if [ "${1:-}" = --inside ]; then
   scenario="$2"
+  ulimit -c 0  # a crash leaves no core file
   hex() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
   port=$((20000 + RANDOM % 20000))
   token="$(hex)"
@@ -116,6 +117,7 @@ mounts+=(-v "$ROOT/tools/check-pair.sh:/pair-tool/check-pair.sh:ro$label")
 cleanup_done=0
 cleanup() {
   [ "$cleanup_done" = 1 ] && return
+  local scenario
   for scenario in "${scenarios[@]}"; do
     "$RUNTIME" rm -f "brotato-pair-$$-$scenario" > /dev/null 2>&1 || true
   done
@@ -141,24 +143,35 @@ own_errors() {
     | grep -v -F "apply_settings (res://mods-unpacked" || true
 }
 
+# Engine errors that always mean a script bug, from the scenario's start (as tools/check.sh's).
+engine_errors() {
+  awk '/^PAIR-TESTS: START/{f=1} f' "$1" \
+    | grep -E "^ERROR: (The object does not have any 'meta' values|Index p_index = .* is out of bounds \(data\.children|\(?Node not found: |Parameter \"p_node\" is null)" \
+    | sort -u || true
+}
+
 # Prints a scenario's result; true when it passed.
 report() {
-  local scenario="$1" dir="$work/$1" passed=1 checks=0 took name log count errors
+  local scenario="$1" dir="$work/$1" passed=1 checks=0 took name log count errors best=""
   took=$(($(cat "$dir/ended") - $(cat "$dir/started")))
   for name in "${NAMES[@]}"; do
     log="$dir/$name/stdout.log"
     [ -f "$log" ] || { passed=0; continue; }
     grep -q "^PAIR-TESTS: PASS" "$log" || passed=0
-    [ -z "$(own_errors "$log")" ] || passed=0
+    [ -z "$(own_errors "$log")$(engine_errors "$log")" ] || passed=0
     count=$(grep -c "^  ok   " "$log")
-    [ "$count" -gt "$checks" ] && checks=$count
+    if [ "$count" -gt "$checks" ] || [ -z "$best" ]; then checks=$count; best="$log"; fi
   done
   if [ "$passed" = 1 ]; then
     echo "== $scenario: passed ($checks checks, ${took} s)"
-    if [ "$quiet" = 0 ]; then
-      log="$dir/client1/stdout.log"
-      grep "^  ok   " "$log" | sort -u
-    fi
+    [ "$quiet" = 1 ] || grep "^  ok   " "$best"
+    for name in "${NAMES[@]}"; do
+      # Godot 3.6.2's headless build can crash in its own teardown, after everything else; a
+      # crash before the verdict leaves none and fails above.
+      if awk '/^PAIR-TESTS: PASS/{f=1} f' "$dir/$name/stdout.log" | grep -q "^handle_crash"; then
+        echo "  info: $name crashed while closing, after its verdict ($(grep -m1 -o "signal [0-9]*" "$dir/$name/stdout.log"))"
+      fi
+    done
     return 0
   fi
   echo "== $scenario: FAILED (${took} s; folder: $dir)"
@@ -170,10 +183,12 @@ report() {
       tail -20 "$dir/container.log"
       continue
     fi
-    grep -E "^(PAIR-TESTS|step )|^  " "$log" | grep -v "^  ok   " | tail -40
+    grep -E "^(PAIR-TESTS|step )|^  [^ \"]" "$log" | grep -v "^  ok   " | tail -40
     grep -q "^PAIR-TESTS: \(PASS\|FAIL\)" "$log" || echo "   no PAIR-TESTS verdict (timed out or crashed)"
     errors="$(own_errors "$log")"
     [ -z "$errors" ] || { echo "   script errors in mod code:"; echo "$errors"; }
+    errors="$(engine_errors "$log")"
+    [ -z "$errors" ] || { echo "   engine errors during the scenario:"; echo "$errors"; }
     grep -E "(WARNING|ERROR).*(TogetherLocal|BrotatoTogether)" "$log" | tail -12 | sed 's/^/   /'
   done
   return 1
