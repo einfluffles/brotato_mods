@@ -14,9 +14,19 @@
 # "+<mod folder>" (repeatable): that process also loads the mod in mods/<mod folder>/src, for
 # tests of one mod next to another ("together +brotato-together").
 #
-# Usage: tools/check.sh [-q] [-s suite[,suite...]] [mods/<folder> ...]
+# Every mod of this repo has a translations.csv: a process also fails when one of its mods from
+# src/ did not log "Init (<n> translated texts)" with n > 0 (tools/game-env.sh).
+#
+# -p (packaged) runs the mods as players get them: src/ as the zips tools/package.sh builds (what
+# tools/release.sh uploads), tests/ and dev/ zipped the same way (into a temporary folder, never by
+# package.sh), all of them loaded by the Mod Loader from a folder of zips (--mods-path, with the
+# Workshop switched off in its options: tools/game-env.sh) instead of folders in mods-unpacked/. A
+# file in a zip reads differently from one in a folder (docs/testing.md).
+#
+# Usage: tools/check.sh [-q] [-p] [-s suite[,suite...]] [mods/<folder> ...]
 #   -s  run only these suites, in one process
 #   -q  print failures, info lines and the summary only
+#   -p  packaged: every mod from a zip
 # Environment:
 #   CONTAINER         container runtime (default: podman, else docker)
 #   MOD_CHECK_CACHE   1: always run from a copy of reference/ in ~/.cache, 0: never (default: only
@@ -31,12 +41,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KNOWN_ARTIFACTS="set_locale' in base 'TranslationServer'"
 
 quiet=0
+packaged=0
 only_suites=""
-while getopts "qs:" opt; do
+while getopts "qps:" opt; do
   case "$opt" in
     q) quiet=1 ;;
+    p) packaged=1 ;;
     s) only_suites="$OPTARG" ;;
-    *) echo "Usage: tools/check.sh [-q] [-s suite[,suite...]] [mods/<folder> ...]" >&2; exit 2 ;;
+    *) echo "Usage: tools/check.sh [-q] [-p] [-s suite[,suite...]] [mods/<folder> ...]" >&2; exit 2 ;;
   esac
 done
 shift $((OPTIND - 1))
@@ -45,18 +57,40 @@ shift $((OPTIND - 1))
 # shellcheck source=tools/game-env.sh
 . "$ROOT/tools/game-env.sh"
 
-# run_game <log> <suites> <mount args...>. mods-unpacked/ is a tmpfs per process: the Mod Loader
-# stops at a mod folder without a manifest, which another mod's check would leave behind.
+# run_game <log> <suites> <mod folder...>: the folders mounted in mods-unpacked/, or (-p) their
+# zips in a folder of their own, mounted as /mods. mods-unpacked/ is a tmpfs per process: the Mod
+# Loader stops at a mod folder without a manifest, which another mod's check would leave behind.
 run_game() {
-  local log="$1" suites="$2"
+  local log="$1" suites="$2" dir mounts=() args=()
   shift 2
+  if [ "$packaged" = 1 ]; then
+    local zips="$log.zips"
+    mkdir -p "$zips"
+    for dir in "$@"; do
+      cp "$(zip_of "$dir")" "$zips/$(basename "$dir").zip" || return 1
+    done
+    mounts=(-v "$zips:/mods:ro$label" -v "$pack/steam.tres:/proj/$STEAM_PROFILE:ro$label")
+    args=(--mods-path=/mods)
+  else
+    for dir in "$@"; do mounts+=(-v "${dir%/}:/proj/mods-unpacked/$(basename "$dir"):ro$label"); done
+  fi
   "$RUNTIME" run --rm "${run_as[@]}" -e HOME=/tmp -e MOD_TEST_SUITES="$suites" \
-    -v "$GAME:/proj${label:+:${label#,}}" --tmpfs "$empty_mods" "$@" \
-    brotato-modtools timeout 240 godot3 --path /proj --no-window > "$log" 2>&1
+    -v "$GAME:/proj${label:+:${label#,}}" --tmpfs "$empty_mods" "${mounts[@]}" \
+    brotato-modtools timeout 240 godot3 --path /proj --no-window "${args[@]}" > "$log" 2>&1
 }
 
+# -p: a mod folder's zip, package.sh's for src/, one of zip_folders' for the others.
+zip_of() {
+  case "$1" in
+    */src/*) src_zip "$pack" "$1" ;;
+    *) echo "$pack/extra/$(basename "$1").zip" ;;
+  esac
+}
+
+# report <log> <src mod_id...>
 report() {
-  local log="$1" errors own_errors runtime_errors engine_errors
+  local log="$1" errors own_errors runtime_errors engine_errors untranslated
+  shift
   # The log without the known artifact and its "at: apply_settings" line: the boot splash that sets
   # the locale can also end after the tests started. The same error from elsewhere stays.
   errors=$(awk -v known="$KNOWN_ARTIFACTS" '
@@ -82,9 +116,19 @@ report() {
   if [ -n "$own_errors" ]; then echo "Script errors in mod code:"; echo "$own_errors"; fi
   if [ -n "$runtime_errors" ]; then echo "Game script errors during tests:"; echo "$runtime_errors"; fi
   if [ -n "$engine_errors" ]; then echo "Engine errors during tests:"; echo "$engine_errors"; fi
+  untranslated="$(translations_unloaded "$log" "$@")"
+  if [ -n "$untranslated" ]; then echo "Translations not loaded:"; echo "$untranslated"; fi
   [ -z "$own_errors" ] && [ -z "$runtime_errors" ] && [ -z "$engine_errors" ] \
-    && grep -q "MOD-TESTS: PASS" "$log"
+    && [ -z "$untranslated" ] && grep -q "MOD-TESTS: PASS" "$log"
 }
+
+pack=""
+if [ "$packaged" = 1 ]; then
+  pack="$(mktemp -d "${TMPDIR:-/tmp}/mod-check-zips.XXXXXX")"
+  trap 'rm -rf "$pack"' EXIT
+  echo "packaged: every mod from a zip (tools/package.sh's for src/, in $pack)"
+  package_zips "$pack" && steam_profile "$pack/steam.tres" || exit 1
+fi
 
 if [ $# -gt 0 ]; then folders=("$@"); else folders=("$ROOT"/mods/*/); fi
 overall=0
@@ -92,14 +136,13 @@ for folder in "${folders[@]}"; do
   folder="$(cd "$folder" && pwd)"
   [ -d "$folder/tests" ] || { echo "== ${folder#"$ROOT"/}: no tests, skipped"; continue; }
   echo "== ${folder#"$ROOT"/}"
-  mounts=()
+  dirs=()  # the folder's mods: src/, tests/, dev/
   shards=()
   extras=()  # per shard: the other mod folders its process loads, "+"-separated
   only_extra=""
   for dir in "$folder"/src/*/ "$folder"/tests/*/ "$folder"/dev/*/; do
     [ -d "$dir" ] || continue  # no dev/ (an unmatched glob stays as it is)
-    id="$(basename "$dir")"
-    mounts+=(-v "${dir%/}:/proj/mods-unpacked/$id:ro$label")
+    dirs+=("${dir%/}")
     [ -f "$dir/shards.txt" ] || continue
     while IFS= read -r line; do
       line="$(echo "$line" | tr -d ' \t\r')"
@@ -133,20 +176,31 @@ for folder in "${folders[@]}"; do
     done
   done
 
+  if [ "$packaged" = 1 ]; then
+    others=()
+    for dir in "${dirs[@]}"; do
+      case "$dir" in */src/*) ;; *) others+=("$dir") ;; esac
+    done
+    [ ${#others[@]} -eq 0 ] || zip_folders "$pack/extra" "${others[@]}" || exit 1
+  fi
+
   started=$(date +%s)
   logs=()
   pids=()
+  translated=()  # per shard: the mod_ids of its src/ mods, whose translations must load
   for i in "${!shards[@]}"; do
     log="$(mktemp "${TMPDIR:-/tmp}/mod-check.XXXXXX")"
     logs+=("$log")
-    shard_mounts=("${mounts[@]}")
+    shard_dirs=("${dirs[@]}")
     for other in ${extras[$i]//+/ }; do
-      for dir in "$ROOT/mods/$other"/src/*/; do
-        id="$(basename "$dir")"
-        shard_mounts+=(-v "${dir%/}:/proj/mods-unpacked/$id:ro$label")
-      done
+      for dir in "$ROOT/mods/$other"/src/*/; do shard_dirs+=("${dir%/}"); done
     done
-    run_game "$log" "${shards[$i]}" "${shard_mounts[@]}" &
+    src_ids=""
+    for dir in "${shard_dirs[@]}"; do
+      case "$dir" in */src/*) src_ids+=" $(basename "$dir")" ;; esac
+    done
+    translated+=("$src_ids")
+    run_game "$log" "${shards[$i]}" "${shard_dirs[@]}" &
     pids+=($!)
   done
   wait "${pids[@]}"
@@ -156,8 +210,9 @@ for folder in "${folders[@]}"; do
   for i in "${!shards[@]}"; do
     [ ${#shards[@]} -gt 1 ] && echo "-- ${shards[$i]}"
     checks=$((checks + $(grep -c "^  ok   " "${logs[$i]}")))
-    if report "${logs[$i]}"; then
-      rm -f "${logs[$i]}"
+    # shellcheck disable=SC2086 # the mod_ids, one argument each
+    if report "${logs[$i]}" ${translated[$i]}; then
+      rm -rf "${logs[$i]}" "${logs[$i]}.zips"
     else
       echo "FAILED${shards[$i]:+ (${shards[$i]})} (full log: ${logs[$i]})"
       failed=1

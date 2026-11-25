@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run gdlint, the headless tests and (for brotato:together) the pair tests on a clean, pushed HEAD,
+# Run gdlint, the headless tests (with the mods as package.sh zips: tools/check.sh -p) and (for
+# brotato:together) the pair tests (packaged too) on a clean, pushed HEAD,
 # then mark that commit on GitHub with the commit status "local-check" = success. The release
 # workflow refuses a tag without it: the tests need the decompiled game (reference/), so they
 # cannot run in CI.
@@ -58,7 +59,7 @@ in_env() {
 
 echo "local-check of $sha: ${mods[*]}"
 in_env tools/lint.sh
-in_env tools/check.sh -q "${mods[@]}"
+in_env tools/check.sh -q -p "${mods[@]}"  # packaged: the mods from the zips players get
 pair=""
 if [[ " ${mods[*]} " == *" mods/brotato-together "* ]]; then
   if in_env tools/check-pair.sh -q; then
@@ -73,7 +74,7 @@ if [[ " ${mods[*]} " == *" mods/brotato-together "* ]]; then
 fi
 
 [ "$(clean_head)" = "$sha" ] || { echo "HEAD moved while the checks ran: run again" >&2; exit 1; }
-description="gdlint + check.sh passed: ${mods[*]}$pair"
+description="gdlint + check.sh -p passed: ${mods[*]}$pair"
 body="$(printf '{"state":"success","context":"local-check","description":"%s"}' "$description")"
 if [ "$dry" = 1 ]; then
   echo "dry run, would post to repos/$repo/statuses/$sha: $body"

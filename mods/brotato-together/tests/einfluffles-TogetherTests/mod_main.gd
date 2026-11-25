@@ -288,8 +288,11 @@ func _check_shards() -> void:
 		_check(false, "shards.txt readable")
 		return
 	var shards := {}  # suite -> number of lines naming it
-	while not file.eof_reached():
-		var line := file.get_line().strip_edges()
+	# In one piece: a loop on eof_reached() can end at once or never in a zip (tools/check.sh -p;
+	# the mod's l10n.gd says why).
+	var text := file.get_buffer(file.get_len()).get_string_from_utf8()
+	for raw_line in text.split("\n"):
+		var line: String = raw_line.strip_edges()
 		if line == "" or line.begins_with("#"):
 			continue
 		for entry in line.split(",", false):

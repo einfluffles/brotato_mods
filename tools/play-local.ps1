@@ -23,7 +23,7 @@
 #            [-With mods\<folder>[,...] | -With none] [-GameDir <Brotato install>] [-Run <name>]
 #            [-Fresh] [-Profile lan|relay-good|relay-typical|bad|stall|none]
 #            [-HostDlcs ...] [-ClientDlcs ...] [-ClientRef <git ref> | -HostRef <git ref>]
-#            [-Joypad host|client1|none|all|"host=0,client1=1"]
+#            [-Joypad host|client1|none|all|"host=0,client1=1"] [-Packaged [-Dist <dir>]]
 #        tools\play-local.ps1 -Scenario <name> [-Run <name>] [-Engine ...] [-With ...] [-Profile ...]
 #                                   fresh games play a scripted scenario through the director
 #                                   (the dev mod's scenarios.gd, also run headless by
@@ -64,6 +64,11 @@
 #                  e.g. a release tag, from a second game copy play\game-ref; the dev mod stays this
 #                  worktree's. -HostRef: the same for the host. Never both. The commit's files come
 #                  from git archive into play\refs\<commit>; the checkout is not touched.
+#   -Packaged      the mods as players get them: zips loaded through --mods-path, not folders in
+#                  mods-unpacked (docs/testing.md, "Mods from zips"). brotato:together and the -With
+#                  mods are tools/package.sh's zips in -Dist (default dist: run package.sh first);
+#                  the dev mod (and a -ClientRef / -HostRef build) is zipped here, into
+#                  play\zips\<game>. Zips and folders cannot be mixed in one game.
 #   -Joypad        which game the gamepads drive: host (default), client1..3, none, all, or pads by
 #                  device number per game ("host=0,client1=1"); keyboard and mouse always act in
 #                  the focused window
@@ -94,6 +99,8 @@ param(
     [string]$ClientRef = "",
     [string]$HostRef = "",
     [string]$Joypad = "",
+    [switch]$Packaged,
+    [string]$Dist = "dist",
     [int]$Width = 0,
     [string]$GodotVersion = "3.6.2",
     [int]$TimeoutSec = 180
@@ -320,12 +327,40 @@ if ((Read-Stamp $stampFile) -ne $stamp) {
     [IO.File]::WriteAllText($stampFile, $stamp)
 }
 
+# A zip of one mod folder as tools/package.sh lays it out: mods-unpacked/<mod_id>/..., entry names
+# with "/" (PowerShell 5.1's Compress-Archive writes "\", which the game's zip reader keeps).
+function New-ModZip([string]$Folder, [string]$Zip) {
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    if (Test-Path $Zip) { Remove-Item -Force $Zip }
+    $id = Split-Path -Leaf $Folder
+    $base = (Resolve-Path $Folder).Path.TrimEnd('\')
+    $archive = [IO.Compression.ZipFile]::Open($Zip, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in Get-ChildItem -Recurse -File $base) {
+            $relative = $file.FullName.Substring($base.Length + 1).Replace('\', '/')
+            if ($relative -match '(^|/)\.' -or $relative.EndsWith(".import")) { continue }
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $archive, $file.FullName, "mods-unpacked/$id/$relative")
+        }
+    } finally {
+        $archive.Dispose()
+    }
+}
+
+# -Packaged: the folder of a game copy's zips (its --mods-path).
+function Get-ZipDir([string]$Game) { return Join-Path $Play "zips\$(Split-Path -Leaf $Game)" }
+
 # Mods, fresh, into a game copy: brotato:together and the -With mods from $Source (this worktree,
 # or a commit's files), the dev mod always from this worktree. Returns the mod folders' names.
+# -Packaged: mods-unpacked stays empty, and the mods go as zips to Get-ZipDir: this worktree's
+# from -Dist (tools/package.sh's), a commit's and the dev mod zipped here.
 function Copy-Mods([string]$Game, [string]$Source) {
     $mods = Join-Path $Game "mods-unpacked"
     if (Test-Path $mods) { Remove-Item -Recurse -Force $mods }
     New-Item -ItemType Directory -Force $mods | Out-Null
+    $zips = Get-ZipDir $Game
+    if (Test-Path $zips) { Remove-Item -Recurse -Force $zips }
+    if ($Packaged) { New-Item -ItemType Directory -Force $zips | Out-Null }
     $dirs = @(Get-ChildItem -Directory (Join-Path $Source "mods\brotato-together\src")) +
         @(Get-ChildItem -Directory (Join-Path $Root "mods\brotato-together\dev"))
     foreach ($other in $With) {
@@ -335,10 +370,29 @@ function Copy-Mods([string]$Game, [string]$Source) {
         $dirs += @(Get-ChildItem -Directory $src)
     }
     foreach ($dir in $dirs) {
+        if ($Packaged) {
+            $zip = Join-Path $zips "$($dir.Name).zip"
+            $isDev = $dir.Parent.FullName -ieq (Join-Path $Root "mods\brotato-together\dev")
+            if ($Source -eq $Root -and -not $isDev) {
+                $manifest = Get-Content -Raw (Join-Path $dir.FullName "manifest.json") | ConvertFrom-Json
+                $dist = if ([IO.Path]::IsPathRooted($Dist)) { $Dist } else { Join-Path $Root $Dist }
+                $built = Join-Path $dist "$($manifest.name)\$($manifest.name).zip"
+                if (-not (Test-Path $built)) { throw "-Packaged: no $built (run tools/package.sh first)" }
+                if ((Get-Item $built).LastWriteTimeUtc -lt (Get-ChildItem -Recurse -File $dir.FullName |
+                        Measure-Object -Property LastWriteTimeUtc -Maximum).Maximum) {
+                    Write-Note "warning: $built is older than $($dir.Name)'s files (run tools/package.sh again)"
+                }
+                Copy-Item -LiteralPath $built -Destination $zip
+            } else {
+                New-ModZip $dir.FullName $zip
+            }
+            continue
+        }
         robocopy $dir.FullName (Join-Path $mods $dir.Name) /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "copying $($dir.Name) failed (robocopy $LASTEXITCODE)" }
     }
-    return ($dirs | ForEach-Object { $_.Name }) -join ", "
+    $how = if ($Packaged) { " as zips in $zips" } else { "" }
+    return (($dirs | ForEach-Object { $_.Name }) -join ", ") + $how
 }
 
 # A commit's mods (git archive of mods\, into play\refs\<commit>; the checkout is not touched).
@@ -506,6 +560,7 @@ try {
         $x = $area.X + $gap + $column * ($w + $gap)
         $y = $area.Y + $gap + $row * ($h + $titleBar + $gap) + $titleBar
         $arguments = @("--path", "`"$game`"", "--windowed", "--resolution", "${w}x$h", "--position", "$x,$y")
+        if ($Packaged) { $arguments += @("--mods-path=`"$(Get-ZipDir $game)`"") }
         if ($role -eq "client" -and -not $NoJoin) { $arguments += @("+connect_lobby", "$FirstLobby") }
         $muted = ($Mute -eq "all") -or ($Mute -eq "client" -and $role -eq "client")
         $environment = [ordered]@{

@@ -19,6 +19,7 @@ const ScenarioRunner := preload(
 	"res://mods-unpacked/einfluffles-TogetherLocal/scenario_runner.gd"
 )
 const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
+const LOBBY_FRAME := "BrotatoTogetherLobbyFrame"  # ui/lobby_frame.gd's NODE_NAME
 const POLL_SEC := 0.1
 const WAIT_SEC := 30.0  # default timeout of the commands that wait
 const RESERVED := ["id", "cmd", "timeout_sec"]
@@ -218,7 +219,29 @@ func state() -> Dictionary:
 	snapshot["role"] = local.role
 	snapshot["dlcs"] = dlc_state()
 	snapshot["ref"] = OS.get_environment("BT_LOCAL_REF")  # the other build this game runs, or ""
+	if snapshot.scene == "title_screen":
+		snapshot["frame_texts"] = _frame_texts()
 	return snapshot
+
+
+# What the title screen's lobby frame (ui/lobby_frame.gd) shows: the text of each visible label
+# and button in it, translated as the control draws it. A text that is a key (BT_...) means the
+# mod's translations did not load. Empty without the frame (not in a lobby).
+func _frame_texts() -> Array:
+	var texts := []
+	var scene := get_tree().current_scene
+	var frame: Node = scene.find_node(LOBBY_FRAME, true, false) if scene != null else null
+	if frame == null:
+		return texts
+	var pending := [frame]
+	while not pending.empty():
+		var node: Node = pending.pop_back()
+		if node is CanvasItem and not node.visible:
+			continue
+		if (node is Label or node is Button) and node.text != "":
+			texts.append(tr(node.text))
+		pending += node.get_children()
+	return texts
 
 
 # The mod's session as the scenarios check it: ready peers (the handshake done), peer_ready

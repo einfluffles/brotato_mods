@@ -9,11 +9,14 @@ with a host and a client as two headless games (`tools/check-pair.sh`).
 ## Headless
 
 `tools/check.sh [mods/<folder> ...]` boots the game headless with each mod and its test mod. It
-fails when the test mod does not print `MOD-TESTS: PASS`, on any script error in mod code, and on a
-game-script error or a `get_meta` / `get_child` / `get_node` engine error while the tests run.
+fails when the test mod does not print `MOD-TESTS: PASS`, on any script error in mod code, on a
+game-script error or a `get_meta` / `get_child` / `get_node` engine error while the tests run, and
+when a mod of the repo did not load its translations (its `mod_main.gd` must log
+`Init (<n> translated texts)` with n > 0, and the loader must not warn about the mod's own file).
 
 - A test mod is split into named suites. `tools/check.sh -s <suite>[,<suite>]` runs only those, in
   one game process. `-q` prints failures, info lines and the summary only.
+- `-p` runs every mod from a zip, as players get it: see [Mods from zips](#mods-from-zips).
 - `tests/<test_mod_id>/shards.txt` lists one group of suites per line. A full check starts one game
   process per line, all at the same time.
 - A line that ends in `+<mod folder>` also loads that mod's `src/` in its process. brotato:trade
@@ -26,6 +29,31 @@ game-script error or a `get_meta` / `get_child` / `get_node` engine error while 
 - Besides `src/` and `tests/`, a mod folder can have `dev/<dev_mod_id>/`: dev-only mods that
   `tools/check.sh` and `tools\check-window.ps1` mount for the tests too, and that are never
   packaged. Every process loads them, so they must stay inert in a test run. See below.
+
+### Mods from zips
+
+Players get each mod as the zip `tools/package.sh` builds (the Workshop item), and the Mod Loader
+mounts it into `res://` with `ProjectSettings.load_resource_pack`. The engine then reads the mod's
+files through another `FileAccess` than for a folder in `mods-unpacked/`, and the two do not
+behave the same: Godot 3.6's zip reader leaves its end-of-file flag uninitialized until the first
+read, so `File.get_csv_line` (and any loop on `eof_reached()` before a read) can return nothing or
+never end. The 2026-11-25 releases read no translations that way and showed every text as its key
+(`BT_INVITE_FRIENDS`), although every test with folders passed. Whether a given game hits it
+depends on memory contents: the Windows game did every time, the Linux container in some runs
+only. So the mods read their files in one piece (`get_buffer`, `get_as_text`), and the tests also
+run on zips:
+
+- `tools/check.sh -p` (packaged): `src/` as package.sh's zips (built into a temporary folder;
+  `dist/` is not touched), `tests/` and `dev/` zipped the same way by the script (never by
+  package.sh: its zip guard keeps them out of a release), all of a process's mods in one folder of
+  zips, mounted as `/mods` and passed as `--mods-path=/mods`. A game that has loaded a zip no
+  longer lists `res://mods-unpacked/`, so zips and folders cannot be mixed in one game: in this
+  mode every mod of a process is a zip. The Steam build (feature `steam`) has the Mod Loader take
+  zips from the Workshop's subscriptions, which need Steam; the run mounts a copy of the Mod
+  Loader's `steam` options profile with `steam_workshop_enabled = false` over it, in the container
+  only, so the Mod Loader takes `--mods-path` instead.
+- `tools/check-pair.sh` runs packaged by default (`-u`: folders), see [Pair tests](#pair-tests).
+- `tools/local-check.sh` runs `tools/check.sh -p` for the release check.
 
 ## Local play (emulator)
 
@@ -62,8 +90,15 @@ CONTAINER=docker tools/check-pair.sh kick bad_resync  # some
 
 - The game is the one `tools/check.sh` boots (`reference/` or its copy), with its `project.godot`
   replaced, in the container only, by one without the feature `steam`: the game's local build, as
-  in [Play locally](#play-locally). The mounted mods are brotato:together's `src/` and the dev mod,
-  not the test mod.
+  in [Play locally](#play-locally). The mods are brotato:together's `src/` and the dev mod, not
+  the test mod: by default as zips ([Mods from zips](#mods-from-zips): package.sh's zip of
+  brotato:together, the dev mod zipped by the script, both in the run's folder under `zips/`,
+  loaded through `--mods-path`; the local build's Mod Loader takes no Workshop items), with `-u`
+  as folders in `mods-unpacked/`.
+- Every game of this worktree's build must log `Init (<n> translated texts)` with n > 0, and the
+  shared lobby step (`scenario_steps.gd`'s `texts_check`) checks that each game's lobby frame on
+  the title screen shows the mod's texts, not their keys (`BT_...`; the director's `query` has
+  them as `frame_texts`). A game that runs a ref's build is left out of both.
 - Each process has its own `HOME` and `XDG_DATA_HOME` (user folder `/pair/<name>/data/Brotato`),
   the dev mod's `BT_LOCAL_*` variables as `tools\play-local.ps1` sets them (role, id, name, a port
   and a random token for the wire on 127.0.0.1 inside the container, its folder, the link profile
@@ -134,7 +169,7 @@ Every scenario but `language` runs in both places, headless here and in windows;
 a screenshot of every game after every step.
 
 To add a scenario: a function `scenario_<name>(r)` in `scenarios.gd` (the shared steps are in
-`scenario_steps.gd`: `lobby_step`, `character_join_step`, `select_until`, `wave_to_shop`,
+`scenario_steps.gd`: `lobby_step` (with `texts_check`), `character_join_step`, `select_until`, `wave_to_shop`,
 `clients_buy`, `host_quits_run`, `join_hold`, `state_when_size`, `clients(r)`; they work for any
 number of clients), its name in `NAMES` and, when it has checks, in `HEADLESS`, its launch
 settings in `LAUNCH` when it needs any, and its row here. Every step begins with

@@ -516,7 +516,9 @@ details text; `tag`: this build's lobby tag), `session` (`ready`: peers whose ha
 resync, `error`: the lobby error shown last, `LobbyMenu.last_error`, also after a refused join,
 `mod_version`, `mods`: `Compat.local_mods`), `dlcs` (`owned`: `DebugService.owned_dlc_ids`; `available`:
 `ProgressData.available_dlc_ids`; `borrowed`: available but not owned), `ref` (`BT_LOCAL_REF`:
-the other build this game runs, empty for this worktree's), `role`; on the co-op resume screen
+the other build this game runs, empty for this worktree's), `role`; on the title screen
+`frame_texts` (what the lobby frame's visible labels and buttons show, translated as drawn; empty
+without the frame); on the co-op resume screen
 `resume_shown` (the saved player shown), `resume_gold` and `resume_progress`; in a wave
 `wave_left` and `upgrades` (the level-up or crate panels are shown). A client's copy of a screen
 is the game's own scene, so its state reads the same way.
@@ -2822,12 +2824,22 @@ switch of it while the game runs.
   (the game's languages in the game's order), one row per text, quoted cells for commas and line
   breaks. Placeholders are `{0}`, `{1}` as in the game's own texts.
 - **Loader.** `l10n.gd`, `load_csv(path) -> int`, called from `mod_main.gd` `_init`, before any
-  screen exists. It reads the file with `File.get_csv_line` and adds one `Translation` per
+  screen exists. It reads the whole file with `get_buffer(get_len())`, parses it itself
+  (`parse_csv`: RFC 4180 quoting, CRLF or LF, an optional BOM) and adds one `Translation` per
   language column to the `TranslationServer`, as the game does for its announcements
   (`singletons/announcement_manager.gd`). The CSV ships in the zip as is: the game cannot import
   it at runtime, and `tools/package.sh` leaves out `.import` files. A missing or malformed file
   is a warning in `modloader.log`, never an error. brotato:trade has the same file with the same
   API (each mod must work alone).
+- **No `get_csv_line`.** A mod from a zip (the Workshop's form; `tools/check.sh -p` and the pair
+  tests run it so) reads its files through Godot 3.6's `FileAccessZip`, whose end-of-file flag
+  `at_eof` is left uninitialized by `open` and set only by the first read. `File.get_csv_line`
+  asks `eof_reached()` before it reads: with a stale flag it returns `[""]` without reading, and a
+  loop `while not file.eof_reached()` around it never ends (the flag is never set). The game read
+  no header, so every text showed as its key (`BT_INVITE_FRIENDS`). Unpacked mods (folders) use
+  another `FileAccess` and were not affected. `get_buffer`, `get_line` and `get_as_text` set the
+  flag before they ask it; files of a mod are read in one piece with `get_buffer`, never with
+  `get_csv_line` or a loop on `eof_reached()`.
 - **Fallback.** Every cell is filled (the `l10n` suite fails on an empty one). The loader still
   skips an empty cell, so the game's fallback would show the English text; for `zh_TW` the engine
   first takes the `zh` text (same language code), then English, and `zh` may take the `zh_TW`

@@ -39,7 +39,7 @@ podman build -t brotato-modtools -f tools/Containerfile tools   # or: docker bui
 | Command | What it does |
 |---|---|
 | `tools/lint.sh` | Runs gdlint over `mods/`. |
-| `tools/check.sh [mods/<folder> ...]` | Boots the game headless with each mod and its test mod ([Testing](docs/testing.md)). |
+| `tools/check.sh [-p] [mods/<folder> ...]` | Boots the game headless with each mod and its test mod; `-p` loads them from zips, as players get them ([Testing](docs/testing.md)). |
 | `tools\check-window.ps1 [-Mod mods\<folder>] [-Suites <suite>[,...]]` | Windows: runs a mod's tests in a real game window, with graphics and audio ([Testing](docs/testing.md#with-real-graphics)). |
 | `tools\play-local.ps1 [-Clients 1..3] [-Scenario <name>]` | Windows: brotato:together as a host and clients in game windows on this PC, connected without Steam; `-Scenario` plays a scripted scenario with screenshots and ends with PASS or FAIL ([Play locally](docs/testing.md#play-locally)). |
 | `tools/package.sh [target]` | Writes `<target>/<name>/<name>.zip` and `preview.png` for every mod (default target: `dist/`). |
