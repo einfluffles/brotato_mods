@@ -58,23 +58,26 @@ func run(test_mod: Node, mod: Node):
 	var rows := _read_csv()
 	_test_csv(rows)
 	_test_vanilla_keys(rows)
+	_test_parser()
 	_test_loader()
 	yield(_test_switch(), "completed")
 	yield(_test_screens(), "completed")
 
 
-# [header, row, ...] as the loader reads them.
+# [header, row, ...] as the loader reads them: in one piece, with its parser (File.get_csv_line
+# fails on a file in the mod's zip, l10n.gd).
 func _read_csv() -> Array:
 	var rows := []
 	var file := File.new()
 	if file.open(CSV_PATH, File.READ) != OK:
 		t._check(false, "l10n: translations.csv is in the mod")
 		return rows
-	while not file.eof_reached():
-		var row := file.get_csv_line()
-		if not (row.size() == 1 and row[0] == ""):
-			rows.append(Array(row))
+	var text := file.get_buffer(file.get_len()).get_string_from_utf8()
 	file.close()
+	for row in L10n.parse_csv(text):
+		if not (row.size() == 1 and row[0] == ""):
+			rows.append(row)
+	t._check(rows.size() > 1, "l10n: translations.csv has a header and rows (%d)" % rows.size())
 	return rows
 
 
@@ -190,6 +193,59 @@ func _test_loader() -> void:
 	)
 	t._check(
 		L10n.load_csv("user://no_such_file.csv") == 0, "l10n: no file, no keys (and a warning)"
+	)
+	# CRLF line ends, doubled quotes, a line break in a cell, an empty line, a row whose quote
+	# never closes (skipped, with a warning).
+	if file.open(TEST_CSV_PATH, File.WRITE) != OK:
+		t._check(false, "l10n: test CSV written")
+		return
+	file.store_string(
+		"key,en,de\r\n"
+		+ "L10N_TEST_CRLF,\"Say \"\"hi\"\"\",\"Zeile eins\r\nZeile zwei\"\r\n"
+		+ "\r\n"
+		+ "L10N_TEST_OPEN,\"never closed,x\r\n"
+	)
+	file.close()
+	keys = L10n.load_csv(TEST_CSV_PATH)
+	Directory.new().remove(TEST_CSV_PATH)
+	var texts := []
+	for locale in ["en", "de"]:
+		TranslationServer.set_locale(locale)
+		texts += [tr("L10N_TEST_CRLF"), tr("L10N_TEST_OPEN")]
+	TranslationServer.set_locale(saved)
+	var wanted := ["Say \"hi\"", "L10N_TEST_OPEN", "Zeile eins\nZeile zwei", "L10N_TEST_OPEN"]
+	t._check(
+		keys == 1 and JSON.print(texts) == JSON.print(wanted),
+		"l10n: the loader reads CRLF and doubled quotes, skips an open quote (%d keys, %s)"
+		% [keys, JSON.print(texts)]
+	)
+
+
+# The CSV parser alone: [text, the rows it must give].
+func _test_parser() -> void:
+	var cases := [
+		["a,b\nc,d\n", [["a", "b"], ["c", "d"]]],  # a line break at the end: no empty row
+		["a,b\nc,d", [["a", "b"], ["c", "d"]]],
+		["a,b\r\nc,d\r\n", [["a", "b"], ["c", "d"]]],
+		[char(0xFEFF) + "key,en\n", [["key", "en"]]],
+		["\"x, y\",\"say \"\"hi\"\"\"\n", [["x, y", "say \"hi\""]]],
+		["\"one\ntwo\",b\r\nc,d", [["one\ntwo", "b"], ["c", "d"]]],
+		["\"one\r\ntwo\",b", [["one\ntwo", "b"]]],
+		["a,,\n\nb\n\n", [["a", "", ""], [""], ["b"], [""]]],
+		["\"\",x,\"\"", [["", "x", ""]]],
+		["ab\"c,\"d\"e", [["ab\"c", "de"]]],
+		["a,b\nc,\"open\nd,e\n", [["a", "b"], []]],
+		["", []],
+	]
+	var wrong := []
+	for example in cases:
+		var got := L10n.parse_csv(example[0])
+		if JSON.print(got) != JSON.print(example[1]):
+			wrong.append("%s gave %s" % [JSON.print(example[0]), JSON.print(got)])
+	t._check(
+		wrong.empty(),
+		"l10n: the CSV parser: quotes, doubled quotes, line breaks in cells, CRLF, BOM, empty lines,"
+		+ " an open quote (%d cases) %s" % [cases.size(), wrong]
 	)
 
 

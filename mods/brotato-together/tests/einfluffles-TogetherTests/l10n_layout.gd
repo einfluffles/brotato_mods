@@ -3,6 +3,7 @@ extends Reference
 # the game's fonts, and texts that fit (no clipped text, nothing past the screen, the places that
 # keep their width keep it). Used by l10n_tests.gd and coop_mode_tests.gd.
 
+const L10n := preload("res://mods-unpacked/einfluffles-BrotatoTogether/l10n.gd")
 const CSV_PATH := "res://mods-unpacked/einfluffles-BrotatoTogether/translations.csv"
 const MOD_DIR := "res://mods-unpacked/einfluffles-BrotatoTogether/"
 # The game's languages in its order (translations.csv's columns).
@@ -13,15 +14,18 @@ const SCREENSHOT_LOCALES := ["de", "ru", "ja", "zh"]
 const SLACK := 1.0  # px: rounding
 
 
-# key -> {locale: text}.
+# key -> {locale: text}, read as the mod's loader reads it (no File.get_csv_line: l10n.gd).
 static func read_csv() -> Dictionary:
 	var texts := {}
 	var file := File.new()
 	if file.open(CSV_PATH, File.READ) != OK:
 		return texts
-	var header := Array(file.get_csv_line())
-	while not file.eof_reached():
-		var row := Array(file.get_csv_line())
+	var rows := L10n.parse_csv(file.get_buffer(file.get_len()).get_string_from_utf8())
+	if rows.empty():
+		return texts
+	var header: Array = rows[0]
+	for r in range(1, rows.size()):
+		var row: Array = rows[r]
 		if row.size() != header.size():
 			continue
 		var cells := {}

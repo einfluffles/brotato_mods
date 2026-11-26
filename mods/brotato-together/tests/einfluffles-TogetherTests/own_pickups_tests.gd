@@ -15,6 +15,7 @@ const FAST := 1200  # px/s, the own player's speed in the gold test: 20 px per i
 const INPUTS_PER_FRAME := 3  # a slow client: 50 ms frames
 const GOLD_GAP := 150.0  # px from the attract circle to the gold
 const SWEEP_ROW := 3  # the crate between two frames is passed after this many frames
+const UNTIL_MSEC := 2000  # _feed_until gives up after this
 
 var _t: Node
 var _host_t := 0
@@ -286,7 +287,7 @@ func _test_client(client: Node, scene: Dictionary):
 	)
 	_t._hold_sounds(true)
 	_moved.clear()
-	yield(_feed(client, scene.all, 0, 300), "completed")
+	yield(_feed_until(client, scene.all, 0, 300, "_taken", [client, crate_id]), "completed")
 	var queued := 0
 	for entry in SoundManager.sounds_to_play:
 		queued += 1 if entry[0].resource_path in _paths(client, scene.crate_sounds) else 0
@@ -311,7 +312,7 @@ func _test_client(client: Node, scene: Dictionary):
 		),
 		"the host took it: its pickup sound is not played a second time"
 	)
-	yield(_feed(client, scene.taken, walk, 300), "completed")
+	yield(_feed_until(client, scene.taken, walk, 300, "_gone", [client, crate_id]), "completed")
 	_t._check(
 		not client._entities.has(crate_id) and not client._pickups.holds(crate_id),
 		"gone for good once the render reached the host's pickup"
@@ -449,7 +450,7 @@ func _test_gold(client: Node, scene: Dictionary):
 		),
 		"the host took the gold: its pickup sound is not played a second time"
 	)
-	yield(_feed(client, scene.gold_taken, seq, 300), "completed")
+	yield(_feed_until(client, scene.gold_taken, seq, 300, "_gone", [client, gold_id]), "completed")
 	_t._check(
 		not client._entities.has(gold_id) and not client._pickups.holds(gold_id),
 		"the gold is gone for good once the render reached the host's pickup"
@@ -489,6 +490,30 @@ func _feed(client: Node, msg: Array, ack: int, msec: int, health = null):
 	while OS.get_ticks_msec() < until:
 		_send(client, msg, ack, health)
 		yield(_t.get_tree().create_timer(1.0 / 30.0), "timeout")
+
+
+# _feed for msec, then on until the method named check holds for args (UNTIL_MSEC in all at most).
+# For what waits on the client's render: it trails the newest snapshot by its render delay, 100 ms,
+# but after a stall (one long frame on a loaded machine) by up to RenderDelay.MAX_HOLD_MSEC, given
+# back slowly (sync/render_delay.gd). A fixed msec then ends before the render got there.
+func _feed_until(
+	client: Node, msg: Array, ack: int, msec: int, check: String, args: Array, health = null
+):
+	var started := OS.get_ticks_msec()
+	yield(_feed(client, msg, ack, msec, health), "completed")
+	while not callv(check, args) and OS.get_ticks_msec() - started < UNTIL_MSEC:
+		_send(client, msg, ack, health)
+		yield(_t.get_tree().create_timer(1.0 / 30.0), "timeout")
+
+
+# The client took the item: gone from the screen, held until the host confirms.
+func _taken(client: Node, id: int) -> bool:
+	return not client._entities.has(id) and client._pickups.holds(id)
+
+
+# The item is gone for good: not shown, not held any more.
+func _gone(client: Node, id: int) -> bool:
+	return not client._entities.has(id) and not client._pickups.holds(id)
 
 
 # The own player's predicted reach covers an item at `at`.

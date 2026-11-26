@@ -4,7 +4,7 @@ Online co-op for [Brotato](https://store.steampowered.com/app/1942280/Brotato/) 
 networking, in place of Steam Remote Play's video stream. Every player runs the game on their own
 machine, and their own character and menus react at once.
 
-**Status (2026-11-23, protocol 33):** early development. Sessions over Steam with friends work;
+**Status (2026-11-26, protocol 35):** early development. Sessions over Steam with friends work;
 the sessions measured in the implementation notes were played on 2026-11-16. Expect rough edges
 and please report them (see [Reporting problems](#reporting-problems)).
 
@@ -16,8 +16,11 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
 - Every player subscribes to the mod's Workshop item and unsubscribes from other online co-op
   mods.
 - Every player needs the same game version, the same version of the mod and the same protocol
-  (30 on 2026-11-18). The host refuses a join that differs, and the *Online co-op* page of the
+  (34 on 2026-11-26). The host refuses a join that differs, and the *Online co-op* page of the
   player who tried shows the reason.
+- Every player needs the same other mods in the same versions, also mods that only change the
+  interface. The host refuses a join otherwise, and the *Online co-op* page of the player who
+  tried names the mods that differ: theirs and the host's.
 - A lobby holds up to 4 players and is open to Steam friends only.
 - Clients do not need the host's DLCs (see [Features](#features)).
 
@@ -154,7 +157,9 @@ used like them, with mouse, keyboard or gamepad.
     player's own highest and lowest stats, and `modloader.log` gets a warning
     (`einfluffles-BrotatoTogether:Axolotl`).
 - **Other mods** can add shop and level-up / crate decisions of their own that reach the host
-  the same way. [brotato:trade](../brotato-trade) does.
+  the same way. [brotato:trade](../brotato-trade) does. Enemies whose scenes a mod builds during
+  the wave (TreasureCastle does) exist only in the host's memory; the host sends them to clients
+  once per session, so clients show them too.
 
 ## Launch options
 
@@ -203,7 +208,7 @@ language. How it works: [`docs/implementation.md`](docs/implementation.md#locali
 
 ## Limitations
 
-As of 2026-11-23 (protocol 33):
+As of 2026-11-26 (protocol 35):
 
 - Not shared with clients yet: the species challenges of Primal Dread (trophy hunter, clever
   girl, egg hunt) and the codex's kill counts.
@@ -312,3 +317,4 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `axolotl` | The Axolotl's text in the state the game's own roll leaves in co-op, and the Mod Loader's backup of every extended game script. |
 | `own_pickups` | The own player's pickups shown at once on a client. |
 | `l10n` | The mod's texts in the game's languages: `translations.csv` (header, keys, placeholders), its loader, the game's keys the mod uses, the title screen's lobby frame, the lobby page, the client's waiting screen, the pause banner, the options' damage meter switch and the damage board switched from English to German (character selection: `lobby_menu`). |
+| `runtime_scenes` | A scene another mod packed in memory (an enemy with stats of its own): which scenes count, sent once per client before the message that names it, rebuilt on a client from its description, every enemy of the game's waves and a TreasureCastle-like enemy that way (compared node by node), a type defined before its scene, what the host does not send, the limits per description, message and session, and the descriptions a client refuses without running anything of them (inline scripts, scripts and scenes outside the scene folders, node classes off the list, connections to methods of a class, inline animations and scenes, unlisted properties, objects, paths out of `res://` as resources and as strings the game's code loads, a scene rebuilt from a description inside another). |

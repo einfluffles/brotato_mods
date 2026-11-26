@@ -32,6 +32,28 @@ func lobby_step(r, wave_sec: int):
 	for name in others:
 		each[name] = _with(lobby, {"lobby.in": true, "session.ready": 1})
 	yield(r.on("all", each), "completed")
+	yield(texts_check(r), "completed")
+
+
+# Every game of this worktree's build shows the mod's texts in its lobby frame, not their keys
+# (BT_...): the mod's translations loaded. With tools/check-pair.sh's zips (the default) this
+# reads the mod's files as the Workshop delivers them. Another build's game (state.ref) is left
+# out: a release before the zip fix shows keys there.
+func texts_check(r):
+	var answers = yield(r.on("all", {"cmd": "query"}), "completed")
+	for i in r.peers.size():
+		var state: Dictionary = answers[i].state
+		if str(state.get("ref", "")) != "":
+			continue
+		var shown: Array = state.get("frame_texts", [])
+		var keys := []
+		for text in shown:
+			if str(text).begins_with("BT_"):
+				keys.append(text)
+		r.check(
+			not shown.empty() and keys.empty(),
+			"%s's lobby frame shows the mod's texts, no key (%s)" % [r.peers[i], shown]
+		)
 
 
 static func _with(command: Dictionary, more: Dictionary) -> Dictionary:

@@ -189,7 +189,9 @@ As of 2026-11-21:
 - **Texts** (`l10n.gd`): `mod_main.gd` reads `translations.csv` at start into one Godot
   `Translation` per language (an empty cell falls back to English; between `zh` and `zh_TW` the
   other Chinese text comes first). brotato:together's loader has the same interface
-  (`load_csv(path)`); this mod keeps its own copy so it runs alone. The buttons hold the key and
+  (`load_csv(path)`); this mod keeps its own copy so it runs alone. It reads the file in one piece
+  and parses it itself, without `File.get_csv_line`, which fails on a file in the mod's zip
+  (brotato:together's implementation notes, "Localization"). The buttons hold the key and
   translate themselves; the hint, which the game's `CoopShopHint` translates once, is built again
   on a language change.
 - **The trade key** (`trade/hotkey.gd`): the InputMap action `brotato_trade` with the key and

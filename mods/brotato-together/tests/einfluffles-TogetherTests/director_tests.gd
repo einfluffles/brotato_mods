@@ -14,6 +14,7 @@ const ScenarioRunner := preload(
 	"res://mods-unpacked/einfluffles-TogetherLocal/scenario_runner.gd"
 )
 const Scenarios := preload("res://mods-unpacked/einfluffles-TogetherLocal/scenarios.gd")
+const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session/compat.gd")
 const TEST_DIR := "user://director_tests"
 const ANSWER_MSEC := 3000
 const TEST_PAD := 12  # device numbers no real pad of a test run has (the engine has 16)
@@ -206,9 +207,34 @@ func _test_commands():
 		),
 		"director: text answers a translation in the game's language (%s)" % [text.get("result")]
 	)
-	t._check(director.done == 14, "director: every command was handled once (%d)" % director.done)
+	yield(_test_mods(), "completed")
+	t._check(director.done == 17, "director: every command was handled once (%d)" % director.done)
 	local.queue_free()
 	_clear()
+
+
+# mods: another mod and another version of a real one in what HELLO carries, then the real ones.
+func _test_mods():
+	var real := str(Compat.local_mods())
+	var changed := {"einfluffles-PairExtra": "1.0.0", "einfluffles-TogetherTests": "9.9.9"}
+	_command("0015-mods", {"cmd": "mods", "mods": changed})
+	var answer = yield(_answer("0015-mods"), "completed")
+	var mods := Compat.local_mods()
+	_command("0016-mods", {"cmd": "mods", "mods": {}})
+	var back = yield(_answer("0016-mods"), "completed")
+	_command("0017-mods", {"cmd": "mods", "mods": {"no_dash": "1.0.0"}})
+	var wrong = yield(_answer("0017-mods"), "completed")
+	t._check(
+		answer.get("ok") == true and mods.get("einfluffles-PairExtra") == "1.0.0"
+		and mods.get("einfluffles-TogetherTests") == "9.9.9",
+		"director: mods adds a mod and changes a version (%s)" % [mods]
+	)
+	t._check(
+		back.get("ok") == true and str(Compat.local_mods()) == real
+		and not ModLoaderMod.get_mod_data_all().has("einfluffles-PairExtra"),
+		"director: mods {} gives back the real ones (%s)" % [Compat.local_mods()]
+	)
+	t._check(wrong.get("ok") == false, "director: mods refuses an id that is no mod id")
 
 
 # The link commands (tools\play-local.ps1 -Profile -On, -FailSession, -FailSend, -Stall) act on

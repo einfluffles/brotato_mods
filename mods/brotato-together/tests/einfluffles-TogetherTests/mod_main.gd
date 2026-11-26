@@ -33,6 +33,7 @@ const PerfTests := preload("res://mods-unpacked/einfluffles-TogetherTests/battle
 const SessionLifecycleTests := preload(
 	"res://mods-unpacked/einfluffles-TogetherTests/session_lifecycle_tests.gd"
 )
+const CompatTests := preload("res://mods-unpacked/einfluffles-TogetherTests/compat_tests.gd")
 const DlcBorrowTests := preload("res://mods-unpacked/einfluffles-TogetherTests/dlc_borrow_tests.gd")
 const LocalShopTests := preload("res://mods-unpacked/einfluffles-TogetherTests/local_shop_tests.gd")
 const LiveMenuTests := preload("res://mods-unpacked/einfluffles-TogetherTests/live_menu_tests.gd")
@@ -154,6 +155,9 @@ const NonFiniteTests := preload(
 )
 const L10nTests := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_tests.gd")
 const DirectorTests := preload("res://mods-unpacked/einfluffles-TogetherTests/director_tests.gd")
+const RuntimeScenesTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/runtime_scenes_tests.gd"
+)
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -216,17 +220,20 @@ const SUITES := [
 	"level_up_options",
 	"non_finite",
 	"l10n",
+	"runtime_scenes",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
 const DEVICE := VirtualDevices.FIRST
 const BIT_ACCEPT := 1
+const SCHEDSTAT := "/proc/thread-self/schedstat"  # Linux: this thread's CPU time in ns first
 
 var _failures := []
 var _finished := false
 var _seq := 0
 var _presses = PressCounter.new()
 var _suite = null  # the running suite's test object, kept alive across its yields
+var _cpu_clock = null  # _cpu_usec: null until its first call, then whether it reads schedstat
 
 
 func _ready() -> void:
@@ -283,8 +290,11 @@ func _check_shards() -> void:
 		_check(false, "shards.txt readable")
 		return
 	var shards := {}  # suite -> number of lines naming it
-	while not file.eof_reached():
-		var line := file.get_line().strip_edges()
+	# In one piece: a loop on eof_reached() can end at once or never in a zip (tools/check.sh -p;
+	# the mod's l10n.gd says why).
+	var text := file.get_buffer(file.get_len()).get_string_from_utf8()
+	for raw_line in text.split("\n"):
+		var line: String = raw_line.strip_edges()
 		if line == "" or line.begins_with("#"):
 			continue
 		for entry in line.split(",", false):
@@ -616,6 +626,11 @@ func _suite_late_load(together: Node):
 	yield(_suite.run(together), "completed")
 
 
+func _suite_runtime_scenes(together: Node):
+	_suite = RuntimeScenesTests.new(self)
+	_suite.run(together)
+
+
 func _suite_input_hints(together: Node):
 	coop_run(2)
 	_suite = InputHintTests.new(self)
@@ -735,6 +750,7 @@ func _suite_core(together: Node):
 
 	_test_host_timeout(together)
 	SessionLifecycleTests.new().run(self, together)
+	CompatTests.new().run(self)
 	DlcBorrowTests.new().run(self, together)
 	_test_run_state_round_trip()
 
@@ -795,6 +811,39 @@ func _pose_floats(snapshot: Dictionary) -> int:
 
 func _angle_diff(a: float, b: float) -> float:
 	return abs(wrapf(a - b, -PI, PI))
+
+
+# The CPU time this thread has had, in usec (Linux: /proc/thread-self/schedstat), for a cost that
+# must not count the time other processes had the CPU (a loaded machine: the other shards, a
+# second check). It moves at the scheduler's ticks (4 ms in the WSL kernel): time spans of
+# several. Where that file cannot be read (Windows) the wall clock: the first call decides, so the
+# values of one run are all of one clock.
+func _cpu_usec() -> int:
+	if _cpu_clock == null:
+		_cpu_clock = _schedstat_usec() >= 0
+	return _schedstat_usec() if _cpu_clock else OS.get_ticks_usec()
+
+
+static func _schedstat_usec() -> int:
+	var file := File.new()
+	if file.open(SCHEDSTAT, File.READ) != OK:
+		return -1
+	var fields := file.get_line().split(" ", false)
+	file.close()
+	if fields.empty() or not fields[0].is_valid_integer():
+		return -1
+	return fields[0].to_int() / 1000
+
+
+# Until the pause menu's back guard is over (extensions/ui/pause_menu.gd): it reopens and steps
+# back only back_guard_msec after the last open or step, by OS.get_ticks_msec(). A SceneTreeTimer
+# of that length is not enough: its first step is the whole frame it started in, which on a loaded
+# machine can hold a stall from before the guard began. Resumes as a timer does (after the
+# frame's _process).
+func _past_back_guard(menu: Node):
+	yield(get_tree().create_timer(menu.back_guard_msec / 1000.0), "timeout")
+	while OS.get_ticks_msec() - menu._back_msec < menu.back_guard_msec:
+		yield(get_tree().create_timer(0.01), "timeout")
 
 
 # Stops the sound managers so their queues show what was played; returns the muted count so far.

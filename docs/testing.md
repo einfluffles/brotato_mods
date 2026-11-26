@@ -9,11 +9,14 @@ with a host and a client as two headless games (`tools/check-pair.sh`).
 ## Headless
 
 `tools/check.sh [mods/<folder> ...]` boots the game headless with each mod and its test mod. It
-fails when the test mod does not print `MOD-TESTS: PASS`, on any script error in mod code, and on a
-game-script error or a `get_meta` / `get_child` / `get_node` engine error while the tests run.
+fails when the test mod does not print `MOD-TESTS: PASS`, on any script error in mod code, on a
+game-script error or a `get_meta` / `get_child` / `get_node` engine error while the tests run, and
+when a mod of the repo did not load its translations (its `mod_main.gd` must log
+`Init (<n> translated texts)` with n > 0, and the loader must not warn about the mod's own file).
 
 - A test mod is split into named suites. `tools/check.sh -s <suite>[,<suite>]` runs only those, in
   one game process. `-q` prints failures, info lines and the summary only.
+- `-p` runs every mod from a zip, as players get it: see [Mods from zips](#mods-from-zips).
 - `tests/<test_mod_id>/shards.txt` lists one group of suites per line. A full check starts one game
   process per line, all at the same time.
 - A line that ends in `+<mod folder>` also loads that mod's `src/` in its process. brotato:trade
@@ -22,10 +25,49 @@ game-script error or a `get_meta` / `get_child` / `get_node` engine error while 
   `~/.cache/brotato-modtools`, because the game reads about 17000 files while booting and such a
   mount makes that slow. The copy is refreshed when `reference/project.godot` changes.
   `MOD_CHECK_CACHE=1` or `0` forces the copy on or off, and `MOD_CHECK_RESYNC=1` refreshes it.
+- Headless frames are uncapped, and a loaded machine (all shards at once, a second check, `-p`)
+  stalls some of them. A test that waits for something the mod or the game times with the wall
+  clock waits for that condition, with a generous limit, rather than for a fixed time of about the
+  same length: the pause menu's back guard (`_past_back_guard` in the together tests), a client's
+  render delay, which a stall makes longer (`own_pickups`' `_feed_until`). A SceneTreeTimer is no
+  exact wall-clock wait either: its first step is the whole frame it was made in.
 - The scripts use podman, or docker when podman is missing (`CONTAINER=...` picks one).
 - Besides `src/` and `tests/`, a mod folder can have `dev/<dev_mod_id>/`: dev-only mods that
   `tools/check.sh` and `tools\check-window.ps1` mount for the tests too, and that are never
   packaged. Every process loads them, so they must stay inert in a test run. See below.
+
+### Mods from zips
+
+Players get each mod as the zip `tools/package.sh` builds (the Workshop item), and the Mod Loader
+mounts it into `res://` with `ProjectSettings.load_resource_pack`. The engine then reads the mod's
+files through another `FileAccess` than for a folder in `mods-unpacked/`, and the two do not
+behave the same: Godot 3.6's zip reader leaves its end-of-file flag uninitialized until the first
+read, so `File.get_csv_line` (and any loop on `eof_reached()` before a read) can return nothing or
+never end. The 2026-11-25 releases read no translations that way and showed every text as its key
+(`BT_INVITE_FRIENDS`), although every test with folders passed. Whether a given game hits it
+depends on memory contents: the Windows game did every time, the Linux container in some runs
+only. So the mods read their files in one piece (`get_buffer`, `get_as_text`), and the tests also
+run on zips, with glibc filling every new allocation with a nonzero byte (`MALLOC_PERTURB_=1`,
+its per-thread cache off: `PACKAGED_ENV` in `tools/game-env.sh`), so that such a read fails in
+every packaged run, as in the Windows game:
+
+- `tools/check.sh -p` (packaged): `src/` as package.sh's zips (built into a temporary folder;
+  `dist/` is not touched), `tests/` and `dev/` zipped the same way by the script (never by
+  package.sh: its zip guard keeps them out of a release), all of a process's mods in one folder of
+  zips, mounted as `/mods` and passed as `--mods-path=/mods`. A game that has loaded a zip no
+  longer lists `res://mods-unpacked/`, so zips and folders cannot be mixed in one game: in this
+  mode every mod of a process is a zip. The Steam build (feature `steam`) has the Mod Loader take
+  zips from the Workshop's subscriptions, which need Steam; the run mounts a copy of the Mod
+  Loader's `steam` options profile with `steam_workshop_enabled = false` over it, in the container
+  only, so the Mod Loader takes `--mods-path` instead.
+- `tools/check-pair.sh` runs packaged by default (`-u`: folders), see [Pair tests](#pair-tests).
+- `tools/local-check.sh` runs `tools/check.sh` and then `tools/check.sh -p` for the release check.
+  The memory fill makes allocations slower; the one check that compares timings of two code paths
+  (a crate item's state against before issue #110, `upgrades_change`) is an info line under it.
+  Checks of a cost (that one without the fill, the damage meter's measurement in a late run) take
+  the main thread's CPU time (`/proc/thread-self/schedstat`, `_cpu_usec` in the together tests;
+  the wall clock where that is missing), the fastest of several samples: other work on the
+  machine (the other shards, a second check) then neither counts nor makes a sample faster.
 
 ## Local play (emulator)
 
@@ -62,8 +104,15 @@ CONTAINER=docker tools/check-pair.sh kick bad_resync  # some
 
 - The game is the one `tools/check.sh` boots (`reference/` or its copy), with its `project.godot`
   replaced, in the container only, by one without the feature `steam`: the game's local build, as
-  in [Play locally](#play-locally). The mounted mods are brotato:together's `src/` and the dev mod,
-  not the test mod.
+  in [Play locally](#play-locally). The mods are brotato:together's `src/` and the dev mod, not
+  the test mod: by default as zips ([Mods from zips](#mods-from-zips): package.sh's zip of
+  brotato:together, the dev mod zipped by the script, both in the run's folder under `zips/`,
+  loaded through `--mods-path`; the local build's Mod Loader takes no Workshop items), with `-u`
+  as folders in `mods-unpacked/`.
+- Every game of this worktree's build must log `Init (<n> translated texts)` with n > 0, and the
+  shared lobby step (`scenario_steps.gd`'s `texts_check`) checks that each game's lobby frame on
+  the title screen shows the mod's texts, not their keys (`BT_...`; the director's `query` has
+  them as `frame_texts`). A game that runs a ref's build is left out of both.
 - Each process has its own `HOME` and `XDG_DATA_HOME` (user folder `/pair/<name>/data/Brotato`),
   the dev mod's `BT_LOCAL_*` variables as `tools\play-local.ps1` sets them (role, id, name, a port
   and a random token for the wire on 127.0.0.1 inside the container, its folder, the link profile
@@ -123,6 +172,7 @@ mechanism: `tools\play-scenarios.ps1` only starts them and collects what they sa
 | `client_quits` | host, client | The client's game closes mid-wave: the host plays on in its lobby with the client's slot kept, and the closing game logs no script error. |
 | `kick` | host, client | The host kicks the client: it leaves with "The host removed you from the lobby"; it can join again. |
 | `version_mismatch` | host, client | One build, in memory: the client leaves, takes another brotato:together version (the director's `mod_version`) and joins again: the host rejects its `HELLO` with the code `mod` and both versions, shown in its language; with its own version it joins. |
+| `mod_mismatch` | host, client | The client leaves, switches to German, reports a mod the host lacks (the director's `mods`) and joins again: the host rejects its `HELLO` with the code `mods`, and the client's error is its German text (the director's `text`) naming that mod; with its real mods it joins. |
 | `version_mismatch_build` | host, client on the last release (`no_join=1 client_ref=last_release`) | A real older build: nobody joins by itself; the host opens its lobby, the clients switch to German and accept an invite. The lobby's mod tag (mod id and protocol) turns each client away before `HELLO`: it is not in the lobby and its error line names both tags; a client of this worktree (`-HostRef`, `PAIR_HOST_REF`) shows the German `BT_ERR_LOBBY_VERSION` word for word (the director's `text`). The host keeps its lobby, alone, with no error. |
 | `bad_resync` | host, client | Both games on the `bad` profile, the host's next reliable send fails (`fail_send`): the host runs a full resync for the client, and both still get through character selection into a wave with the session up. |
 | `three_players` | host, two clients (`clients=2`; in windows `-Clients 3`: three) | All in the lobby, each joins character selection in turn (player index = join order), character, weapon and difficulty, wave 1 with its level-up panels, the shop; every client buys the item under its cursor (checked on the host per player). |
@@ -133,7 +183,7 @@ Every scenario but `language` runs in both places, headless here and in windows;
 a screenshot of every game after every step.
 
 To add a scenario: a function `scenario_<name>(r)` in `scenarios.gd` (the shared steps are in
-`scenario_steps.gd`: `lobby_step`, `character_join_step`, `select_until`, `wave_to_shop`,
+`scenario_steps.gd`: `lobby_step` (with `texts_check`), `character_join_step`, `select_until`, `wave_to_shop`,
 `clients_buy`, `host_quits_run`, `join_hold`, `state_when_size`, `clients(r)`; they work for any
 number of clients), its name in `NAMES` and, when it has checks, in `HEADLESS`, its launch
 settings in `LAUNCH` when it needs any, and its row here. Every step begins with
@@ -217,9 +267,9 @@ from the instance's `control\` folder, one at a time, and answers each in `out\<
 `ok`, `error`, a `result` and the screen's `state` (scene, players, run, lobby, the co-op resume
 screen's saved player, ...). It drives the menus as a player does: keys through the game's input,
 buttons by focus and accept. Commands: `press`, `button`, `wait_for`, `query`, `screenshot`,
-`host_lobby`, `join`, `invite`, `leave`, `kick`, `debug`, `language`, `mod_version`, `text`,
-`joypad`, `scenario`, `quit`, and on the link of what the game sends `set_profile`, `fail_session`,
-`fail_send` and `stall`; fields and state:
+`host_lobby`, `join`, `invite`, `leave`, `kick`, `debug`, `language`, `mod_version`, `mods`,
+`text`, `joypad`, `scenario`, `quit`, and on the link of what the game sends `set_profile`,
+`fail_session`, `fail_send` and `stall`; fields and state:
 [the director](../mods/brotato-together/docs/implementation.md#local-play-dev-mod).
 `-Key`, `-Screenshot`, `-Do` and the link switches (`-Profile` with `-On`, `-FailSession`,
 `-FailSend`, `-Stall`) send them to a running session: the director is the one way to control a
@@ -246,11 +296,11 @@ other build of `version_mismatch_build`, the DLCs of `dlc_borrow`) apply unless 
 is given; `-Run` and the others work as for any start.
 
 Which build refuses whom: the lobby carries brotato:together's tag (mod id and protocol, for
-example `einfluffles-BrotatoTogether/p33`), and a client that finds another tag than its own leaves
+example `einfluffles-BrotatoTogether/p35`), and a client that finds another tag than its own leaves
 the lobby at once (`BT_ERR_LOBBY_VERSION`). So two builds with different protocols never get as
-far as `HELLO`: the codes of `WELCOME` (protocol, game, mod version; Join compatibility in the
-implementation notes) are reached only by builds that share the tag, for example two builds of
-one protocol with different mod versions. The last release before the translations shows its
+far as `HELLO`: the codes of `WELCOME` (protocol, game, mod version, other mods; Join
+compatibility in the implementation notes) are reached only by builds that share the tag, for
+example two builds of one protocol with different mod versions. The last release before the translations shows its
 refusal in English, whatever the language.
 
 Gamepads (`-Joypad`): the game's engine polls XInput and DirectInput itself, so every game process

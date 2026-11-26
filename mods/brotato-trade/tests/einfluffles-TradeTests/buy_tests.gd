@@ -156,7 +156,11 @@ func _buy_unique():
 		"a unique item: not for the player who has it (%s)" % [entries]
 	)
 	_t.check(not _shop.trade_buy(node, 0, 1), "and not bought for it")
-	_t.check(not _shop.trade_buy(node, 0, 2), "(not inside the buy delay of the last buy)")
+	# The buy delay as a buy starts it (the last buy's can be over on a slow run, such as -p's).
+	var container = _shop._get_shop_items_container(0)
+	container._is_delay_active = true
+	container._buy_delay_timer.start()
+	_t.check(not _shop.trade_buy(node, 0, 2), "(not inside the buy delay of a buy)")
 	yield(_press_delay(), "completed")
 	_t.check(_shop.trade_buy(node, 0, 2), "bought for the other")
 	_t.check(

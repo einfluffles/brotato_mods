@@ -42,19 +42,27 @@ func run(t: Node):
 	yield(t.frames(1), "completed")
 
 
+# Read as the loader reads it: in one piece, with its parser (File.get_csv_line fails on a file
+# in the mod's zip, l10n.gd).
 func _csv() -> void:
 	var file := File.new()
 	_t.check(file.open(CSV, File.READ) == OK, "the mod ships translations.csv")
 	if not file.is_open():
 		return
-	var header := Array(file.get_csv_line())
+	var rows := L10n.parse_csv(file.get_buffer(file.get_len()).get_string_from_utf8())
+	file.close()
+	var header: Array = rows[0] if not rows.empty() else []
 	_t.check(header == HEADER, "its columns are the game's languages in the game's order")
 	var cells_ok := true
 	var placeholders_ok := true
 	var keys_ok := true
-	while not file.eof_reached():
-		var row := Array(file.get_csv_line())
+	for r in range(1, rows.size()):
+		var row: Array = rows[r]
 		if row.size() == 1 and row[0] == "":
+			continue
+		if row.empty():
+			cells_ok = false
+			_t.check(false, "a row's quote never closes")
 			continue
 		var key: String = row[0]
 		keys_ok = keys_ok and key.begins_with(PREFIX) and not key in _rows
@@ -73,7 +81,6 @@ func _csv() -> void:
 				placeholders_ok = false
 				_t.check(false, "%s: %s has the placeholders of en" % [key, HEADER[column]])
 		_rows[key] = texts
-	file.close()
 	_t.check(not _rows.empty() and keys_ok, "its keys are unique and start with %s" % PREFIX)
 	_t.check(cells_ok, "every language has every text (%d keys)" % _rows.size())
 	_t.check(placeholders_ok, "every text has the {n} placeholders of its English one")
@@ -114,7 +121,51 @@ func _loader() -> void:
 	file.close()
 	_t.check(L10n.load_csv(path) == 0, "a file without the key column adds nothing")
 	_t.check(L10n.load_csv("user://trade_l10n_missing.csv") == 0, "nor does a missing file")
+	file.open(path, File.WRITE)
+	file.store_string(
+		char(0xFEFF) + "key,en,de\r\n"
+		+ "TRADE_TEST_CRLF,\"Say \"\"hi\"\"\",\"Zeile eins\r\nZeile zwei\"\r\n"
+		+ "\r\n"
+		+ "TRADE_TEST_OPEN,\"never closed,x\r\n"
+	)
+	file.close()
+	_t.check(L10n.load_csv(path) == 1, "a BOM, CRLF, an empty line: one key, the open quote out")
+	TranslationServer.set_locale("de")
+	_t.check(tr("TRADE_TEST_CRLF") == "Zeile eins\nZeile zwei", "CRLF in a quoted cell is LF")
+	_t.check(tr("TRADE_TEST_OPEN") == "TRADE_TEST_OPEN", "a row whose quote never closes is skipped")
+	TranslationServer.set_locale("en")
+	_t.check(tr("TRADE_TEST_CRLF") == "Say \"hi\"", "doubled quotes are one quote")
+	TranslationServer.set_locale(_locale)
 	Directory.new().remove(path)
+	_parser()
+
+
+# The CSV parser alone: [text, the rows it must give].
+func _parser() -> void:
+	var cases := [
+		["a,b\nc,d\n", [["a", "b"], ["c", "d"]]],  # a line break at the end: no empty row
+		["a,b\nc,d", [["a", "b"], ["c", "d"]]],
+		["a,b\r\nc,d\r\n", [["a", "b"], ["c", "d"]]],
+		[char(0xFEFF) + "key,en\n", [["key", "en"]]],
+		["\"x, y\",\"say \"\"hi\"\"\"\n", [["x, y", "say \"hi\""]]],
+		["\"one\ntwo\",b\r\nc,d", [["one\ntwo", "b"], ["c", "d"]]],
+		["\"one\r\ntwo\",b", [["one\ntwo", "b"]]],
+		["a,,\n\nb\n\n", [["a", "", ""], [""], ["b"], [""]]],
+		["\"\",x,\"\"", [["", "x", ""]]],
+		["ab\"c,\"d\"e", [["ab\"c", "de"]]],
+		["a,b\nc,\"open\nd,e\n", [["a", "b"], []]],
+		["", []],
+	]
+	var wrong := []
+	for example in cases:
+		var got := L10n.parse_csv(example[0])
+		if JSON.print(got) != JSON.print(example[1]):
+			wrong.append("%s gave %s" % [JSON.print(example[0]), JSON.print(got)])
+	_t.check(
+		wrong.empty(),
+		"the CSV parser: quotes, doubled quotes, line breaks in cells, CRLF, BOM, empty lines, an"
+		+ " open quote (%d cases) %s" % [cases.size(), wrong]
+	)
 
 
 func _vanilla() -> void:

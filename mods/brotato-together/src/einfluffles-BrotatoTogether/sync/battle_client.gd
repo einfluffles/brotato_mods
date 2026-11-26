@@ -243,7 +243,7 @@ func _adopt_start(body: Dictionary) -> void:
 	var types = body.get("types")
 	if typeof(types) == TYPE_DICTIONARY:
 		for idx in types:
-			if not _types.has(idx):
+			if _types.get(idx) == null:  # also one whose SCENE came after its TYPE_DEF (a resync)
 				_define_type(idx, types[idx])
 
 

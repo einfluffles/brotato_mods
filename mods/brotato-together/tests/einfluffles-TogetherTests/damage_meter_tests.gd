@@ -23,6 +23,7 @@ const MenuOptionsButton := preload(
 )
 const Layout := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_layout.gd")
 const PISTOL := "weapon_pistol_1"
+const COST_ROUNDS := 5  # rounds of measurements in _test_cost; the fastest counts
 
 var _t: Node
 var _changes := 0
@@ -772,10 +773,15 @@ func _test_cost(meter: Node) -> void:
 				if typeof(tracked[key]) == TYPE_INT:
 					tracked[key] += 100 + call
 	var setting := (OS.get_ticks_usec() - started) / float(calls)
-	started = OS.get_ticks_usec()
-	for _i in calls:
-		meter.measure()
-	var live := (OS.get_ticks_usec() - started) / float(calls)
+	# CPU time (mod_main._cpu_usec), the fastest of a few rounds: other work on the machine (the
+	# other shards, a second check) takes the CPU away for a while; what is left of it makes a
+	# round slower, never faster.
+	var live := INF
+	for _round in COST_ROUNDS:
+		var cpu_started: int = _t._cpu_usec()
+		for _i in calls:
+			meter.measure()
+		live = min(live, (_t._cpu_usec() - cpu_started) / float(calls))
 	var live_size := var2bytes([StateStream.DAMAGE, 1, meter.state_body(StateStream.DAMAGE)]).size()
 	started = OS.get_ticks_usec()
 	for _i in calls:
@@ -785,7 +791,9 @@ func _test_cost(meter: Node) -> void:
 	var sources := 0
 	for entry in meter.board.players:
 		sources += entry[1].size()
-	_t._check(live < 1500.0, "a measurement in a late run stays under 1.5 ms (%.0f usec)" % live)
+	_t._check(
+		live < 1500.0, "a measurement in a late run stays under 1.5 ms of CPU (%.0f usec)" % live
+	)
 	_t._check(live_size < 1100, "the board of a running wave stays under 1100 B (%d)" % live_size)
 	print(
 		(

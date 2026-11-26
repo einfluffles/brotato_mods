@@ -47,3 +47,111 @@ if [ "$use_cache" = 1 ]; then
   fi
 fi
 mkdir -p "$GAME/mods-unpacked"  # the mount point of each process's own tmpfs
+
+# Known headless artifacts: no Steam -> no language -> set_locale(Nil) in ProgressData.apply_settings,
+# which surfaces through script extensions of ProgressData.
+KNOWN_ARTIFACTS="set_locale' in base 'TranslationServer'"
+
+# without_known_artifacts <log>: the log without the known artifact and its "at: apply_settings"
+# line (the boot splash that sets the locale can also end after the tests started). The same error
+# from elsewhere stays.
+without_known_artifacts() {
+  awk -v known="$KNOWN_ARTIFACTS" '
+    held != "" { if ($0 ~ /at: apply_settings \(/) { held = ""; next } print held; held = "" }
+    index($0, known) { held = $0; next }
+    1
+    END { if (held != "") print held }' "$1"
+}
+
+# own_script_errors <log>: script errors in mod code, each with its location line (nothing when
+# there are none). Only the location line counts: with zips (-p) the Mod Loader's warning about
+# resource packs names res://mods-unpacked/ too, and under load it can come right after the
+# missing Steam's error at boot.
+own_script_errors() {
+  without_known_artifacts "$1" | grep -A2 "SCRIPT ERROR" \
+    | grep -i -B1 -E "^[[:space:]]+at: .*res://mods-unpacked/" || true
+}
+
+# --- Packaged mode: the mods as players get them, zips instead of folders in mods-unpacked/ ---
+# The Mod Loader loads every zip in the folder that --mods-path names. A game that has loaded a
+# zip no longer lists res://mods-unpacked/, so zips and folders cannot be mixed in one game: in
+# this mode every mod of a game is a zip, the dev and test mods too.
+#
+# The Steam build (project.godot's feature "steam", as tools/check.sh runs the game) has the Mod
+# Loader take zips from the Steam Workshop's subscriptions, which need Steam; the local build
+# (tools/check-pair.sh) takes them from --mods-path. STEAM_PROFILE: the Mod Loader's options for
+# the feature "steam"; steam_profile writes a copy without the Workshop, to mount over it.
+STEAM_PROFILE=addons/mod_loader/options/profiles/steam.tres
+#
+# PACKAGED_ENV: the container's environment for a game with zips. Godot 3.6's zip reader leaves
+# its end-of-file flag uninitialized until the first read (docs/testing.md, "Mods from zips"), so
+# a file read that asks that flag first behaves as the heap's leftover byte says: always wrong in
+# the Windows game, now and then in a Linux container. glibc fills each new allocation with a
+# nonzero byte (MALLOC_PERTURB_; its per-thread cache, which skips that, off), so such a read
+# fails in every packaged run, as in the Windows game.
+PACKAGED_ENV=(-e MALLOC_PERTURB_=1 -e GLIBC_TUNABLES=glibc.malloc.tcache_count=0)
+
+# steam_profile <file>: the Mod Loader's steam profile with steam_workshop_enabled = false.
+steam_profile() {
+  local line="steam_workshop_enabled = true"
+  grep -q -x -F "$line" "$GAME/$STEAM_PROFILE" \
+    || { echo "$STEAM_PROFILE has no line '$line': the Mod Loader changed" >&2; return 1; }
+  sed "s/^$line\$/steam_workshop_enabled = false/" "$GAME/$STEAM_PROFILE" > "$1"
+}
+
+# package_zips <dir>: tools/package.sh's zips of every mod (what tools/release.sh uploads) in
+# <dir>/dist/<name>/<name>.zip.
+package_zips() {
+  CONTAINER="$RUNTIME" "$ROOT/tools/package.sh" "$1/dist" > "$1/package.log" 2>&1 \
+    || { cat "$1/package.log" >&2; echo "tools/package.sh failed" >&2; return 1; }
+}
+
+# zip_folders <out dir> <mod folder>...: a zip per folder (<out dir>/<mod_id>.zip), laid out as
+# package.sh lays out a mod's zip (mods-unpacked/<mod_id>/...). For the mods package.sh never
+# packages (tests/, dev/) and for another build's src/ (tools/check-pair.sh's refs).
+zip_folders() {
+  local out="$1" dir id mounts=() ids=()
+  shift
+  mkdir -p "$out"
+  for dir in "$@"; do
+    id="$(basename "$dir")"
+    mounts+=(-v "${dir%/}:/in/$id:ro$label")
+    ids+=("$id")
+  done
+  # shellcheck disable=SC2016 # expands in the container
+  "$RUNTIME" run --rm "${run_as[@]}" -e HOME=/tmp "${mounts[@]}" -v "$out:/out${label:+:${label#,}}" \
+    brotato-modtools bash -euc '
+      for id in "$@"; do
+        stage=$(mktemp -d)
+        mkdir -p "$stage/mods-unpacked"
+        cp -r "/in/$id" "$stage/mods-unpacked/$id"
+        rm -f "/out/$id.zip"
+        (cd "$stage" && zip -qr "/out/$id.zip" mods-unpacked -x "*/.*" "*.import")
+      done
+    ' _ "${ids[@]}"
+}
+
+# src_zip <dir> <src mod folder>: the path of package.sh's zip of that mod in <dir>/dist (the
+# manifest's "name" names it, as in package.sh).
+src_zip() {
+  local name
+  name="$(sed -n 's/^[[:space:]]*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${2%/}/manifest.json" | head -n 1)"
+  if [ -z "$name" ] || [ ! -f "$1/dist/$name/$name.zip" ]; then
+    echo "no zip of ${2%/} in $1/dist" >&2
+    return 1
+  fi
+  echo "$1/dist/$name/$name.zip"
+}
+
+# translations_unloaded <log> <mod_id>...: prints a line for each of the mods (those with a
+# translations.csv: every mod of this repo) whose mod_main.gd did not log "Init (<n> translated
+# texts)" with n > 0, and the loader's warnings about the mods' own files. Nothing when all loaded.
+translations_unloaded() {
+  local log="$1" id
+  shift
+  for id in "$@"; do
+    grep -q -E "$id:Main: Init \([1-9][0-9]* translated texts\)" "$log" \
+      || echo "$id: no translated texts ($(grep -o -m1 "$id:Main: Init ([0-9]* translated texts)" "$log" || echo 'no Init line'))"
+  done
+  grep "L10n: .*res://mods-unpacked/" "$log" || true
+}

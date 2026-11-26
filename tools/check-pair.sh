@@ -27,9 +27,18 @@
 # code. On a failure every log's relevant lines are printed; the folders are kept. The games'
 # containers have no network (--network none): the wire runs on the container's own loopback.
 #
-# Usage: tools/check-pair.sh [-q] [scenario ...]   (default: every one in scenarios.gd's HEADLESS)
+# The mods come as players get them (packaged, the default): brotato:together as the zip
+# tools/package.sh builds, the dev mod and a ref's src/ zipped the same way (into the run's folder,
+# never by package.sh), loaded by the Mod Loader from a folder of zips (--mods-path; the local
+# build's Mod Loader takes no Workshop items) instead of folders in mods-unpacked/. A file in a zip
+# reads differently from one in a folder (docs/testing.md). -u mounts the folders instead.
+# Every game of this worktree's build must also log "Init (<n> translated texts)" with n > 0 and
+# show the mod's texts in its lobby frame (scenario_steps.gd's texts_check), not their keys.
+#
+# Usage: tools/check-pair.sh [-q] [-u] [scenario ...]   (default: every one in scenarios.gd's HEADLESS)
 #        tools/check-pair.sh --last-release        prints the tag last_release names, or nothing
 #   -q  print the summary lines only
+#   -u  unpacked: the mods' folders in mods-unpacked/, not zips
 # Environment:
 #   CONTAINER, MOD_CHECK_CACHE, MOD_CHECK_RESYNC   as for tools/check.sh
 #   PAIR_JOBS     scenarios at once (default 4)
@@ -42,7 +51,6 @@
 #                 the clients' (or the host's) build instead of the scenario's own
 set -uo pipefail
 
-KNOWN_ARTIFACTS="set_locale' in base 'TranslationServer'"  # as in tools/check.sh
 FIRST_LOBBY=$(((1 << 55) + (1 << 8) + 1))  # steam_emulator.gd: the host's (number 1) first lobby
 
 # --- In the container: one scenario's games ---
@@ -76,10 +84,13 @@ if [ "${1:-}" = --inside ]; then
       dlcs="${PAIR_CLIENT_DLCS:-}"
     fi
     project=/proj
+    mods=/mods
     if [ "${PAIR_REF_SIDE:-}" = "$role" ]; then
       project=/proj-ref
+      mods=/mods-ref
       env_more+=(BT_LOCAL_REF="$PAIR_REF_LABEL")
     fi
+    [ "${PAIR_PACKAGED:-0}" = 1 ] && args=(--mods-path="$mods" "${args[@]}")
     [ -z "$dlcs" ] || env_more+=(BT_LOCAL_DLCS="$dlcs")
     env HOME="$dir/home" XDG_DATA_HOME="$dir/data" BT_LOCAL_ROLE="$role" BT_LOCAL_ID="$((i + 1))" \
       BT_LOCAL_NAME="$([ "$i" = 0 ] && echo Host || echo "Client $i")" BT_LOCAL_PORT="$port" \
@@ -149,10 +160,12 @@ fi
 [ -f "$ROOT/reference/project.godot" ] || { echo "reference/ missing: decompile the game first (docs/game-code.md)" >&2; exit 1; }
 
 quiet=0
-while getopts "q" opt; do
+packaged=1
+while getopts "qu" opt; do
   case "$opt" in
     q) quiet=1 ;;
-    *) echo "Usage: tools/check-pair.sh [-q] [scenario ...]" >&2; exit 2 ;;
+    u) packaged=0 ;;
+    *) echo "Usage: tools/check-pair.sh [-q] [-u] [scenario ...]" >&2; exit 2 ;;
   esac
 done
 shift $((OPTIND - 1))
@@ -181,10 +194,23 @@ for needed in 'config/name="Brotato"' 'config/use_custom_user_dir=true'; do
 done
 
 mounts=(-v "$project:/proj/project.godot:ro$label")
-for dir in "$MOD"/src/*/ "$MOD"/dev/*/; do
-  [ -d "$dir" ] || continue
-  mounts+=(-v "${dir%/}:/proj/mods-unpacked/$(basename "$dir"):ro$label")
-done
+dev_dirs=()
+for dir in "$MOD"/dev/*/; do [ -d "$dir" ] && dev_dirs+=("${dir%/}"); done
+if [ "$packaged" = 1 ]; then
+  # /mods: package.sh's zip of brotato:together and the dev mod's zip(s).
+  rm -rf "$work/zips" && mkdir -p "$work/zips/main"
+  package_zips "$work/zips" || exit 1
+  for dir in "$MOD"/src/*/; do
+    cp "$(src_zip "$work/zips" "$dir")" "$work/zips/main/$(basename "$dir").zip" || exit 1
+  done
+  zip_folders "$work/zips/dev" "${dev_dirs[@]}" || exit 1
+  cp "$work/zips/dev/"*.zip "$work/zips/main/"
+  mounts+=(-v "$work/zips/main:/mods:ro$label" "${PACKAGED_ENV[@]}")
+else
+  for dir in "$MOD"/src/*/ "${dev_dirs[@]}"; do
+    mounts+=(-v "${dir%/}:/proj/mods-unpacked/$(basename "$dir"):ro$label")
+  done
+fi
 mounts+=(-v "$ROOT/tools/check-pair.sh:/pair-tool/check-pair.sh:ro$label")
 
 # A scenario's LAUNCH settings in scenarios.gd ("<name>": "key=value ..."), one per line.
@@ -219,6 +245,7 @@ prepare_ref() {
 # Each scenario's launch settings, before any container starts (the refs are unpacked once).
 declare -A clients_of host_dlcs_of client_dlcs_of no_join_of ref_side_of ref_label_of ref_dir_of
 declare -A skipped_why  # scenario -> why it does not run (an info, not a failure)
+declare -A ref_zipped  # ref folder -> 1 once its zips are built (packaged)
 for scenario in "${scenarios[@]}"; do
   side="" ref=""
   while IFS='=' read -r key value; do
@@ -243,6 +270,13 @@ for scenario in "${scenarios[@]}"; do
     3) skipped_why[$scenario]="$skip_why"; continue ;;
     *) exit 1 ;;
   esac
+  if [ "$packaged" = 1 ] && [ -z "${ref_zipped[$ref_dir]:-}" ]; then
+    # /mods-ref: the ref's brotato:together and this worktree's dev mod, as zips.
+    rm -rf "$ref_dir/zips"
+    zip_folders "$ref_dir/zips" "$ref_dir"/mods/brotato-together/src/*/ || exit 1
+    cp "$work/zips/dev/"*.zip "$ref_dir/zips/" || exit 1
+    ref_zipped[$ref_dir]=1
+  fi
   ref_side_of[$scenario]="$side"
   ref_label_of[$scenario]="$ref_label"
   ref_dir_of[$scenario]="$ref_dir"
@@ -269,25 +303,28 @@ start_scenario() {
   if [ -n "${ref_side_of[$1]:-}" ]; then
     more=(-v "$GAME:/proj-ref${label:+:${label#,}}" --tmpfs "/proj-ref${empty_mods#/proj}")
     more+=(-v "$project:/proj-ref/project.godot:ro$label")
-    for mod in "${ref_dir_of[$1]}"/mods/brotato-together/src/*/ "$MOD"/dev/*/; do
-      [ -d "$mod" ] && more+=(-v "${mod%/}:/proj-ref/mods-unpacked/$(basename "$mod"):ro$label")
-    done
+    if [ "$packaged" = 1 ]; then
+      more+=(-v "${ref_dir_of[$1]}/zips:/mods-ref:ro$label")
+    else
+      for mod in "${ref_dir_of[$1]}"/mods/brotato-together/src/*/ "${dev_dirs[@]}"; do
+        [ -d "$mod" ] && more+=(-v "${mod%/}:/proj-ref/mods-unpacked/$(basename "$mod"):ro$label")
+      done
+    fi
   fi
   "$RUNTIME" run --rm --name "$name" --network none "${run_as[@]}" -e HOME=/tmp \
-    -e PAIR_TIMEOUT="${PAIR_TIMEOUT:-420}" -e PAIR_BREAK="${PAIR_BREAK:-}" \
+    -e PAIR_TIMEOUT="${PAIR_TIMEOUT:-420}" -e PAIR_BREAK="${PAIR_BREAK:-}" -e PAIR_PACKAGED="$packaged" \
     -e PAIR_CLIENTS="$clients" -e PAIR_HOST_DLCS="${host_dlcs_of[$1]:-}" \
     -e PAIR_CLIENT_DLCS="${client_dlcs_of[$1]:-}" -e PAIR_NO_JOIN="${no_join_of[$1]:-0}" \
     -e PAIR_REF_SIDE="${ref_side_of[$1]:-}" -e PAIR_REF_LABEL="${ref_label_of[$1]:-}" \
     -v "$GAME:/proj${label:+:${label#,}}" --tmpfs "$empty_mods" "${mounts[@]}" "${more[@]}" \
-    -v "$dir:/pair$label" brotato-modtools bash /pair-tool/check-pair.sh --inside "$scenario" \
+    -v "$dir:/pair${label:+:${label#,}}" brotato-modtools bash /pair-tool/check-pair.sh --inside "$scenario" \
     > "$dir/container.log" 2>&1
   date +%s > "$dir/ended"
 }
 
 # Script errors in mod code (as tools/check.sh's report): nothing when there are none.
 own_errors() {
-  grep -A2 "SCRIPT ERROR" "$1" | grep -v -F "$KNOWN_ARTIFACTS" | grep -B1 "mods-unpacked" \
-    | grep -v -F "apply_settings (res://mods-unpacked" || true
+  own_script_errors "$1"  # tools/game-env.sh
 }
 
 # Engine errors that always mean a script bug, from the scenario's start (as tools/check.sh's).
@@ -295,6 +332,15 @@ engine_errors() {
   awk '/^PAIR-TESTS: START/{f=1} f' "$1" \
     | grep -E "^ERROR: (The object does not have any 'meta' values|Index p_index = .* is out of bounds \(data\.children|\(?Node not found: |Parameter \"p_node\" is null)" \
     | sort -u || true
+}
+
+# Translations of this worktree's brotato:together that did not load in a game of the scenario
+# (tools/game-env.sh): nothing when they did, or when the game runs a ref's build.
+untranslated() {
+  local role=host
+  [ "$2" = host ] || role=client
+  [ "${ref_side_of[$1]:-}" = "$role" ] && return 0
+  translations_unloaded "$work/$1/$2/stdout.log" einfluffles-BrotatoTogether
 }
 
 # Prints a scenario's result; true when it passed.
@@ -306,7 +352,7 @@ report() {
     log="$dir/$name/stdout.log"
     [ -f "$log" ] || { passed=0; continue; }
     grep -q "^PAIR-TESTS: PASS" "$log" || passed=0
-    [ -z "$(own_errors "$log")$(engine_errors "$log")" ] || passed=0
+    [ -z "$(own_errors "$log")$(engine_errors "$log")$(untranslated "$scenario" "$name")" ] || passed=0
     count=$(grep -c "^  ok   " "$log")
     if [ "$count" -gt "$checks" ] || [ -z "$best" ]; then checks=$count; best="$log"; fi
   done
@@ -337,6 +383,8 @@ report() {
     [ -z "$errors" ] || { echo "   script errors in mod code:"; echo "$errors"; }
     errors="$(engine_errors "$log")"
     [ -z "$errors" ] || { echo "   engine errors during the scenario:"; echo "$errors"; }
+    errors="$(untranslated "$scenario" "$name")"
+    [ -z "$errors" ] || { echo "   translations not loaded:"; echo "$errors"; }
     grep -E "(WARNING|ERROR).*(TogetherLocal|BrotatoTogether)" "$log" | tail -12 | sed 's/^/   /'
   done
   return 1

@@ -116,6 +116,8 @@ func _ready() -> void:
 
 	battle_host = _add("sync/battle_host.gd", "BattleHost")
 	battle_host.state_stream = state_stream
+	battle_host.runtime_scenes = _load_script("sync/runtime_scenes.gd").new()
+	battle_host.runtime_scenes.setup(session)  # also the client's side: it takes SCENE itself
 	battle_host.setup(session, input_sync)
 
 	battle_client = _add("sync/battle_client.gd", "BattleClient")

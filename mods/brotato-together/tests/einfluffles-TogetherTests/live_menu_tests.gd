@@ -105,12 +105,12 @@ func _test_host(main: Node, session: Node):
 	menu._menus.on_restart_button_pressed()
 	# No GUI focus owner headless; the page goes back to it.
 	menu._menus._menu_restart.focus_before_created = menu._main_menu._resume_button
-	yield(_wait(GUARD_SEC), "completed")
+	yield(t._past_back_guard(menu), "completed")
 	yield(t._tap_key(KEY_ESCAPE), "completed")
 	t._check(
 		menu.live_open and menu._main_menu.visible, "Esc on a sub page goes one step back"
 	)
-	yield(_wait(GUARD_SEC), "completed")
+	yield(t._past_back_guard(menu), "completed")
 	yield(t._tap_key(KEY_ESCAPE), "completed")
 	t._check(not menu.live_open and not menu.visible and not tree.paused, "Esc again closes it")
 	for _i in 3:
@@ -161,7 +161,7 @@ func _test_client(main: Node):
 	main.set_process(false)
 	PauseControl.disable_local_pause(main)
 	input_sync.blocked_by.erase(PauseControl.BLOCK_KEY)
-	yield(_wait(GUARD_SEC), "completed")
+	yield(t._past_back_guard(menu), "completed")
 	pause_control.client_update(main, you)
 	t._check(menu.live and not menu.live_open, "client: the wave's menu is live")
 	t._check(
@@ -210,9 +210,9 @@ func _test_client(main: Node):
 	Input.action_release("analog_move_right")
 	input_sync.sample_local()
 
-	yield(_wait(GUARD_SEC), "completed")
+	yield(t._past_back_guard(menu), "completed")
 	yield(_client_pause_tap(main, you), "completed")
-	yield(_wait(GUARD_SEC), "completed")
+	yield(t._past_back_guard(menu), "completed")
 	yield(_client_pause_tap(main, you), "completed")
 	t._check(not menu.live_open, "pause again closes it")
 
