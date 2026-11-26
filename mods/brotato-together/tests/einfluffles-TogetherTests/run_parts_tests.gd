@@ -25,6 +25,7 @@ const P2 := 4747
 const LATE_ITEMS := 250
 const GOLD := 1000000
 const VIEW_LIMIT := 1024  # bytes on the wire for a change that moves no run part
+const BUY_ITEM := "item_helmet"  # what the reroll offers first, for the purchase
 
 var _t: Node = null
 var _together: Node = null
@@ -113,6 +114,10 @@ func _shop(players: int):
 		_change("unlock", ["s"])
 	shop._free_rerolls[0] = 0
 	shop._reroll_price[0] = int(max(shop._reroll_price[0], 1))
+	# The reroll puts this item in the first slot (BaseShop.fill_shop_items): the purchase below
+	# needs one. A late run's 6 weapon slots are full, and about 1 roll in 80 offers only weapons
+	# it cannot buy.
+	RunData.add_item_next_shop(_t._find_by_id(ItemService.items, BUY_ITEM), 0)
 	FocusEmulatorSignal.emit(shop._get_reroll_button(0), "pressed", 0)
 	yield(_frames(1), "completed")
 	var before: Array = _state.players_data.duplicate()

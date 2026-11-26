@@ -29,6 +29,7 @@ const LATE_ITEMS := 250
 const LATE_WEAPONS := 6
 const IDLE_CHECKS := 20
 const BUTTON_DELAY_SEC := 0.15  # UpgradesUIPlayerContainer's ButtonDelayTimer: 0.1 s
+const BEFORE_SAMPLES := 5  # runs of the code before issue #110; the fastest counts
 const CLIENT_KINDS := ["crate item", "reroll", "upgrade choice"]
 const NEW_PANELS := "new panels"
 const STATS_MARK := "-"  # a stat value no update leaves (the level shown in each panel's stats)
@@ -543,7 +544,8 @@ func _measure(label: String, slow_calls: int) -> float:
 	var before := (OS.get_ticks_usec() - started) / float(slow_calls)
 	var calls := 200
 	var serialized: int = _cache.serialized
-	_cache._checked_msec = OS.get_ticks_msec()
+	# No safety net (RunCache.SAFETY_NET_MSEC) in the calls: loaded, they can take longer than it
+	_cache._checked_msec = OS.get_ticks_msec() + 60000
 	started = OS.get_ticks_usec()
 	for _i in calls:
 		_sync.state_key(section)
@@ -594,6 +596,7 @@ func _client_replay(label: String, players: int):
 	var all := range(players)
 	var times := {}  # kind -> [usec, states]
 	var crate := []  # the first crate item's [player, body]
+	var crate_cpu := []  # each crate item state's CPU usec
 	for recorded in _bodies:
 		var kind: String = recorded[0]
 		var p: int = recorded[1]
@@ -627,6 +630,8 @@ func _client_replay(label: String, players: int):
 				% [what, done.instanced, done.made, most]
 			)
 		)
+		if kind == CLIENT_KINDS[0]:
+			crate_cpu.append(done.cpu)
 		if kind == CLIENT_KINDS[0] and crate.empty():
 			crate = [p, recorded[2]]
 	_sync._guarded_ui = null
@@ -650,44 +655,50 @@ func _client_replay(label: String, players: int):
 		var split := []
 		for value in times[CLIENT_KINDS[0]][2]:
 			split.append(value / count)
-		var before: int = yield(_old_crate_apply(crate[0], crate[1], players), "completed")
+		# CPU time (mod_main._cpu_usec), not what other work on the machine took; of each side the
+		# fastest sample, as what is left of that work makes a sample slower, never faster.
+		var befores := []
+		for _i in BEFORE_SAMPLES:
+			befores.append(yield(_old_crate_apply(crate[0], crate[1], players), "completed"))
+		var before: int = befores.min()
+		var fastest: int = crate_cpu.min()
 		print(
 			(
 				"  info: upgrades client, %s: a crate item's state %d usec (run parse %d,"
-				+ " deserialize %d, apply %d, panels %d); before issue #110 %d"
+				+ " deserialize %d, apply %d, panels %d; on the CPU %d); before issue #110 %d on the CPU"
 			)
-			% [label, now, split[0], split[1], split[2], split[4], before]
+			% [label, now, split[0], split[1], split[2], split[4], fastest, before]
 		)
 		var claim := (
 			(
 				"%s, client: a crate item's state applies in under half the time it took before"
-				+ " issue #110 (%d usec, then %d)"
+				+ " issue #110 (CPU usec, fastest of %d states %d, of %d runs then %d)"
 			)
-			% [label, now, before]
+			% [label, count, fastest, BEFORE_SAMPLES, before]
 		)
 		# tools/check.sh -p fills every allocation (MALLOC_PERTURB_): the run parse's many
 		# allocations then cost several times more, so the ratio says nothing there.
 		if OS.get_environment("MALLOC_PERTURB_") != "":
 			print("  info: not measured with MALLOC_PERTURB_: %s" % claim)
 		else:
-			_t._check(now * 2 < before, claim)
+			_t._check(fastest * 2 < before, claim)
 	_sync._on_battle_left()  # the client's state of these panels goes
 	_sync.run_store = saved_store
 	client._you = saved_you
 
 
-# What applying a crate item's state cost before issue #110, in usec: that player deserialized
+# What applying a crate item's state cost before issue #110, in CPU usec: that player deserialized
 # with all of its items, its gear page rebuilt (the game's update_inventory).
 func _old_crate_apply(p: int, body: Dictionary, players: int):
 	var store = RunParts.Store.new()
 	var run: Dictionary = body.run.duplicate(true)
 	store.ingest(run)
-	var started := OS.get_ticks_usec()
+	var started: int = _t._cpu_usec()
 	store.state_for(run.ids)
-	var whole := OS.get_ticks_usec() - started  # every player: a client had the others already
-	started = OS.get_ticks_usec()
+	var whole: int = _t._cpu_usec() - started  # every player: a client had the others already
+	started = _t._cpu_usec()
 	_ui._get_player_container(p).update_inventory()
-	var rebuild := OS.get_ticks_usec() - started
+	var rebuild: int = _t._cpu_usec() - started
 	yield(_t.get_tree(), "idle_frame")
 	return whole / players + rebuild
 
@@ -695,7 +706,7 @@ func _old_crate_apply(p: int, body: Dictionary, players: int):
 # Applies body as a client, one frame later (the freed elements are gone): {gear, stats: the
 # players whose gear page shows other item objects / whose stats were updated, shows_run: every
 # gear page shows its player's run objects, instanced: gear elements new, made: items
-# deserialized, usec}.
+# deserialized, usec, cpu: usec of this thread on the CPU (mod_main._cpu_usec)}.
 func _client_apply(body: Dictionary, players: int):
 	var views := []
 	for p in players:
@@ -707,15 +718,18 @@ func _client_apply(body: Dictionary, players: int):
 	var was_active: bool = report.active
 	report.active = true  # its marks: run parse, deserialize, apply, level-up panels
 	report._marks = report._no_marks()
+	var cpu_started: int = _t._cpu_usec()
 	var started := OS.get_ticks_usec()
 	_sync.accept_state(StateStream.UPGRADES, body, 0)
 	_sync.apply(_main, body)
 	var usec := OS.get_ticks_usec() - started
+	var cpu: int = _t._cpu_usec() - cpu_started
 	var marks: Array = report._marks.duplicate()
 	report._marks = report._no_marks()
 	report.active = was_active
 	var done := {
 		"usec": usec,
+		"cpu": cpu,
 		"marks": marks,
 		"made": _sync.run_store.items_made - made,
 		"gear": [],

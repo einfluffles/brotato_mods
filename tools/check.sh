@@ -89,7 +89,7 @@ report() {
   local log="$1" errors own_errors runtime_errors engine_errors untranslated
   shift
   errors=$(without_known_artifacts "$log")  # tools/game-env.sh
-  own_errors=$(grep -A2 "SCRIPT ERROR" <<<"$errors" | grep -B1 "mods-unpacked" || true)
+  own_errors=$(own_script_errors "$log")  # tools/game-env.sh
   runtime_errors=$(awk '/MOD-TESTS: START/{f=1} f' <<<"$errors" | grep -A1 "SCRIPT ERROR" \
     | grep -v -e "in base 'Nil'" -e "SteamPlatform" -e "^--" | grep -B1 "  at: " | sort -u || true)
   # Engine errors that always mean a script bug (a script carries on after them, so they are no

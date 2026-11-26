@@ -25,6 +25,12 @@ when a mod of the repo did not load its translations (its `mod_main.gd` must log
   `~/.cache/brotato-modtools`, because the game reads about 17000 files while booting and such a
   mount makes that slow. The copy is refreshed when `reference/project.godot` changes.
   `MOD_CHECK_CACHE=1` or `0` forces the copy on or off, and `MOD_CHECK_RESYNC=1` refreshes it.
+- Headless frames are uncapped, and a loaded machine (all shards at once, a second check, `-p`)
+  stalls some of them. A test that waits for something the mod or the game times with the wall
+  clock waits for that condition, with a generous limit, rather than for a fixed time of about the
+  same length: the pause menu's back guard (`_past_back_guard` in the together tests), a client's
+  render delay, which a stall makes longer (`own_pickups`' `_feed_until`). A SceneTreeTimer is no
+  exact wall-clock wait either: its first step is the whole frame it was made in.
 - The scripts use podman, or docker when podman is missing (`CONTAINER=...` picks one).
 - Besides `src/` and `tests/`, a mod folder can have `dev/<dev_mod_id>/`: dev-only mods that
   `tools/check.sh` and `tools\check-window.ps1` mount for the tests too, and that are never
@@ -58,6 +64,10 @@ every packaged run, as in the Windows game:
 - `tools/local-check.sh` runs `tools/check.sh` and then `tools/check.sh -p` for the release check.
   The memory fill makes allocations slower; the one check that compares timings of two code paths
   (a crate item's state against before issue #110, `upgrades_change`) is an info line under it.
+  Checks of a cost (that one without the fill, the damage meter's measurement in a late run) take
+  the main thread's CPU time (`/proc/thread-self/schedstat`, `_cpu_usec` in the together tests;
+  the wall clock where that is missing), the fastest of several samples: other work on the
+  machine (the other shards, a second check) then neither counts nor makes a sample faster.
 
 ## Local play (emulator)
 

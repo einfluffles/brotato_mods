@@ -63,6 +63,15 @@ without_known_artifacts() {
     END { if (held != "") print held }' "$1"
 }
 
+# own_script_errors <log>: script errors in mod code, each with its location line (nothing when
+# there are none). Only the location line counts: with zips (-p) the Mod Loader's warning about
+# resource packs names res://mods-unpacked/ too, and under load it can come right after the
+# missing Steam's error at boot.
+own_script_errors() {
+  without_known_artifacts "$1" | grep -A2 "SCRIPT ERROR" \
+    | grep -i -B1 -E "^[[:space:]]+at: .*res://mods-unpacked/" || true
+}
+
 # --- Packaged mode: the mods as players get them, zips instead of folders in mods-unpacked/ ---
 # The Mod Loader loads every zip in the folder that --mods-path names. A game that has loaded a
 # zip no longer lists res://mods-unpacked/, so zips and folders cannot be mixed in one game: in

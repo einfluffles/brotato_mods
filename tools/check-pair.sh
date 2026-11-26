@@ -324,7 +324,7 @@ start_scenario() {
 
 # Script errors in mod code (as tools/check.sh's report): nothing when there are none.
 own_errors() {
-  without_known_artifacts "$1" | grep -A2 "SCRIPT ERROR" | grep -B1 "mods-unpacked" || true
+  own_script_errors "$1"  # tools/game-env.sh
 }
 
 # Engine errors that always mean a script bug, from the scenario's start (as tools/check.sh's).

@@ -12,7 +12,7 @@ func client(s, together: Node, shop: Node, emulator: Node):
 	var local = s._sync.local
 	var you: int = local.you
 	pause_control.set_process(false)  # no session here: its steps are called directly
-	yield(s._t.get_tree().create_timer(0.25), "timeout")  # past the menu's back guard
+	yield(s._t._past_back_guard(menu), "completed")
 	pause_control.client_shop_update(shop, you)
 	s._t._check(menu.live and not menu.live_open, "client shop: the menu is its own")
 	s._t._check(
@@ -48,10 +48,10 @@ func client(s, together: Node, shop: Node, emulator: Node):
 		and emulator.is_processing_input() and local.local_panel.has_own(),
 		"closed: the own panel takes the buttons and the mouse again"
 	)
-	yield(s._t.get_tree().create_timer(0.25), "timeout")
+	yield(s._t._past_back_guard(menu), "completed")
 	yield(_pause_tap(s, pause_control, shop, you), "completed")
 	s._t._check(menu.live_open, "the menu opens again")
-	yield(s._t.get_tree().create_timer(0.25), "timeout")
+	yield(s._t._past_back_guard(menu), "completed")
 	yield(_pause_tap(s, pause_control, shop, you), "completed")
 	s._t._check(
 		not menu.live_open and s._input._local_buttons != null and shop.is_processing_input(),
@@ -65,7 +65,7 @@ func client(s, together: Node, shop: Node, emulator: Node):
 func _dispatch(s, together: Node, shop: Node, emulator: Node):
 	var pause_control: Node = together.pause_control
 	var menu: Node = shop._pause_menu
-	yield(s._t.get_tree().create_timer(0.25), "timeout")
+	yield(s._t._past_back_guard(menu), "completed")
 	_client_step(s, together)
 	s._t._check(
 		menu.live and not menu.live_open, "dispatch: a client's shop goes to client_shop_update"
@@ -81,7 +81,7 @@ func _dispatch(s, together: Node, shop: Node, emulator: Node):
 		and s._input.menu_device() == -1 and s._input._local_buttons != null,
 		"dispatch: no session any more, the menu closes and the shop takes its input again"
 	)
-	yield(s._t.get_tree().create_timer(0.25), "timeout")
+	yield(s._t._past_back_guard(menu), "completed")
 	var saved := _fake_client(s, together)
 	pause_control._update_live_menu()
 	var asked = pause_control.open_menu()  # LobbyMenu.open: an invite or leave question
@@ -106,7 +106,7 @@ func client_leave(s, together: Node, shop: Node):
 	pause_control.set_process(false)
 	local.guard(shop, s._sync._client_shop_id)
 	local.take_over(0)
-	yield(tree.create_timer(0.25), "timeout")
+	yield(s._t._past_back_guard(menu), "completed")
 	_client_step(s, together)
 	yield(_client_tap(s, together), "completed")
 	menu._main_menu.emit_signal("codex_button_pressed")

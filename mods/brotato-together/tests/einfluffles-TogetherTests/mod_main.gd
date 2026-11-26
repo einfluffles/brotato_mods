@@ -226,12 +226,14 @@ const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
 const DEVICE := VirtualDevices.FIRST
 const BIT_ACCEPT := 1
+const SCHEDSTAT := "/proc/thread-self/schedstat"  # Linux: this thread's CPU time in ns first
 
 var _failures := []
 var _finished := false
 var _seq := 0
 var _presses = PressCounter.new()
 var _suite = null  # the running suite's test object, kept alive across its yields
+var _cpu_clock = null  # _cpu_usec: null until its first call, then whether it reads schedstat
 
 
 func _ready() -> void:
@@ -809,6 +811,39 @@ func _pose_floats(snapshot: Dictionary) -> int:
 
 func _angle_diff(a: float, b: float) -> float:
 	return abs(wrapf(a - b, -PI, PI))
+
+
+# The CPU time this thread has had, in usec (Linux: /proc/thread-self/schedstat), for a cost that
+# must not count the time other processes had the CPU (a loaded machine: the other shards, a
+# second check). It moves at the scheduler's ticks (4 ms in the WSL kernel): time spans of
+# several. Where that file cannot be read (Windows) the wall clock: the first call decides, so the
+# values of one run are all of one clock.
+func _cpu_usec() -> int:
+	if _cpu_clock == null:
+		_cpu_clock = _schedstat_usec() >= 0
+	return _schedstat_usec() if _cpu_clock else OS.get_ticks_usec()
+
+
+static func _schedstat_usec() -> int:
+	var file := File.new()
+	if file.open(SCHEDSTAT, File.READ) != OK:
+		return -1
+	var fields := file.get_line().split(" ", false)
+	file.close()
+	if fields.empty() or not fields[0].is_valid_integer():
+		return -1
+	return fields[0].to_int() / 1000
+
+
+# Until the pause menu's back guard is over (extensions/ui/pause_menu.gd): it reopens and steps
+# back only back_guard_msec after the last open or step, by OS.get_ticks_msec(). A SceneTreeTimer
+# of that length is not enough: its first step is the whole frame it started in, which on a loaded
+# machine can hold a stall from before the guard began. Resumes as a timer does (after the
+# frame's _process).
+func _past_back_guard(menu: Node):
+	yield(get_tree().create_timer(menu.back_guard_msec / 1000.0), "timeout")
+	while OS.get_ticks_msec() - menu._back_msec < menu.back_guard_msec:
+		yield(get_tree().create_timer(0.01), "timeout")
 
 
 # Stops the sound managers so their queues show what was played; returns the muted count so far.
