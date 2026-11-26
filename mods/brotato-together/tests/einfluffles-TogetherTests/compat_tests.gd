@@ -96,6 +96,18 @@ func _test_mod_lists(host: Dictionary) -> void:
 		diff.client == ["a-One 1.0.1"] and diff.host == ["a-One 1.0.0"],
 		"another version on both sides %s" % [diff]
 	)
+	var long_mods := same.duplicate()
+	long_mods["x".repeat(5000)] = "9".repeat(5000)
+	diff = Compat.mod_differences(same, long_mods)
+	t._check(
+		(
+			diff.client.size() == 1
+			and diff.client[0].length() == Compat.MOD_ENTRY_MAX
+			and diff.client[0].begins_with("xxx")
+			and diff.client[0].ends_with("...")
+		),
+		"a very long mod id and version cut to %d characters" % Compat.MOD_ENTRY_MAX
+	)
 
 	var host_info := host.duplicate()
 	host_info.mods = same

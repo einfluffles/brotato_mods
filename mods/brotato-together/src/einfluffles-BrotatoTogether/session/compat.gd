@@ -16,6 +16,7 @@ const REJECTION_KEYS := {
 }
 const MODS_SHOWN := 3  # a side's mods in a rejection's text, the rest as "+N"
 const MODS_LOGGED := 50  # the same in the host's log line
+const MOD_ENTRY_MAX := 80  # characters of one "<mod id> <version>" entry, longer ones cut
 
 
 # What this machine sends in HELLO / compares against.
@@ -100,7 +101,10 @@ static func _only_in(mods: Dictionary, other: Dictionary) -> Array:
 	for mod_id in mods:
 		var version := str(mods[mod_id])
 		if not other.has(mod_id) or str(other[mod_id]) != version:
-			entries.append("%s %s" % [mod_id, version])
+			var entry := "%s %s" % [mod_id, version]
+			if entry.length() > MOD_ENTRY_MAX:  # a client's id or version can be any length
+				entry = entry.left(MOD_ENTRY_MAX - 3) + "..."
+			entries.append(entry)
 	entries.sort()
 	return entries
 
