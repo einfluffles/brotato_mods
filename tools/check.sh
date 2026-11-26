@@ -78,10 +78,13 @@ run_game() {
 
 # -p: a mod folder's zip, package.sh's for src/, one of zip_folders' for the others.
 zip_of() {
-  case "$1" in
-    */src/*) src_zip "$pack" "$1" ;;
-    *) echo "$pack/extra/$(basename "$1").zip" ;;
-  esac
+  if in_src "$1"; then src_zip "$pack" "$1"; else echo "$pack/extra/$(basename "$1").zip"; fi
+}
+
+# in_src <mod folder>: a mod of a folder's src/ (not tests/ or dev/). By the parent folder's name,
+# not by "/src/" anywhere in the path: the repo itself can sit under a folder named src.
+in_src() {
+  [ "$(basename "$(dirname "$1")")" = src ]
 }
 
 # report <log> <src mod_id...>
@@ -170,7 +173,7 @@ for folder in "${folders[@]}"; do
   if [ "$packaged" = 1 ]; then
     others=()
     for dir in "${dirs[@]}"; do
-      case "$dir" in */src/*) ;; *) others+=("$dir") ;; esac
+      in_src "$dir" || others+=("$dir")
     done
     [ ${#others[@]} -eq 0 ] || zip_folders "$pack/extra" "${others[@]}" || exit 1
   fi
@@ -188,7 +191,7 @@ for folder in "${folders[@]}"; do
     done
     src_ids=""
     for dir in "${shard_dirs[@]}"; do
-      case "$dir" in */src/*) src_ids+=" $(basename "$dir")" ;; esac
+      if in_src "$dir"; then src_ids+=" $(basename "$dir")"; fi
     done
     translated+=("$src_ids")
     run_game "$log" "${shards[$i]}" "${shard_dirs[@]}" &
