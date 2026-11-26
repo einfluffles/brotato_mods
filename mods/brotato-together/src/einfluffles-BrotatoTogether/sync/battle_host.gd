@@ -4,6 +4,7 @@ extends Node
 #   wave's start health, in parts (sync/run_parts.gd), plus the entity type table
 # - SNAPSHOT (unreliable) at SNAPSHOT_HZ with players, entities and wave time
 # - BATTLE_END (reliable) when the battle scene goes away
+# - SCENE (reliable) before the first message that names a scene only this machine's memory holds
 # - section PAUSE_BATTLE of the state stream while the battle is paused
 
 # What is known about a mirrored node once it has its net id (see _record): looked up per
@@ -61,6 +62,7 @@ var input_sync: Node = null
 var snapshot_bytes := 0  # size of the last snapshot, for the lobby page
 var pause_control: Node = null  # who paused (section PAUSE_BATTLE)
 var run_sender = null  # RunParts.Sender, shared with ShopSync and UpgradesSync
+var runtime_scenes = null  # RuntimeScenes (sync/runtime_scenes.gd)
 
 var _main: Node = null
 var _battle_live := false  # between _start_battle and _end_battle
@@ -275,6 +277,7 @@ func _battle_start_body() -> Dictionary:
 
 
 func _on_peer_ready(steam_id: int) -> void:
+	runtime_scenes.forget(steam_id)  # a resync: it may have missed a SCENE
 	if session.is_host() and is_in_battle():
 		run_sender.forget(steam_id)
 		_send_battle_start(steam_id, _battle_start_body())
@@ -302,8 +305,15 @@ func _send_battle_start(steam_id: int, start: Dictionary) -> void:
 	var view_bytes := var2bytes(body).size()
 	run_sender.offer(_run_cache)
 	body["run"] = run_sender.run_for(steam_id)
+	_send_scenes(steam_id, body.types.values())
 	session.send_reliable(steam_id, Protocol.Msg.BATTLE_START, body)
 	run_sender.commit(steam_id, view_bytes)
+
+
+# Before the message that names them: the clients rebuild them from their descriptions.
+func _send_scenes(steam_id: int, type_keys: Array) -> void:
+	for body in runtime_scenes.bodies_for(steam_id, type_keys):
+		session.send_reliable(steam_id, Protocol.Msg.SCENE, body)
 
 
 func _player_index_of(steam_id: int) -> int:
@@ -648,6 +658,9 @@ func _type_idx(path: String) -> int:
 	if not _types.has(path):
 		var idx := _types.size()
 		_types[path] = idx
+		for steam_id in session.peers:
+			if session.peers[steam_id].ready:
+				_send_scenes(steam_id, [path])
 		session.broadcast_reliable(
 			Protocol.Msg.TYPE_DEF, {"battle_id": _battle_id, "idx": idx, "path": path}
 		)

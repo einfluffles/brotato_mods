@@ -50,6 +50,10 @@ enum Msg {
 	# client -> host: scene (its filename), scrolls ([[target, value]]: how far each
 	# ScrollContainer of the sender's own panel is scrolled)
 	PANEL_SCROLL,
+	# host -> client: path, size (bytes of the description), data (the description, var2bytes and
+	# zstd): a scene that exists only in the host's memory, before the first message that names it
+	# (sync/runtime_scenes.gd, sync/scene_description.gd)
+	SCENE,
 	# host -> client: [section (a StateStream constant), revision, body or null (the section has
 	# no state now)]; the body is built by the section's provider (state_body)
 	STATE,

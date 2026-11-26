@@ -49,6 +49,11 @@ class FakeSession:
 	func send_reliable(steam_id: int, msg_type: int, body = null) -> void:
 		sent.append([steam_id, msg_type, bytes2var(var2bytes(body), false)])
 
+	func broadcast_reliable(msg_type: int, body = null) -> void:
+		for steam_id in peers:
+			if peers[steam_id].ready:
+				send_reliable(steam_id, msg_type, body)
+
 
 # Provider and handler of one or more sections.
 class Probe:

@@ -155,6 +155,9 @@ const NonFiniteTests := preload(
 )
 const L10nTests := preload("res://mods-unpacked/einfluffles-TogetherTests/l10n_tests.gd")
 const DirectorTests := preload("res://mods-unpacked/einfluffles-TogetherTests/director_tests.gd")
+const RuntimeScenesTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/runtime_scenes_tests.gd"
+)
 const SHARDS_PATH := "res://mods-unpacked/einfluffles-TogetherTests/shards.txt"
 # Suite name -> _suite_<name>(together). Selected suites always run in this order.
 const SUITES := [
@@ -217,6 +220,7 @@ const SUITES := [
 	"level_up_options",
 	"non_finite",
 	"l10n",
+	"runtime_scenes",
 ]
 const FAKE_PEER := 4242
 const WATCHDOG_SEC := 120.0
@@ -615,6 +619,11 @@ func _suite_own_pickups(together: Node):
 func _suite_late_load(together: Node):
 	_suite = LateLoadTests.new(self)
 	yield(_suite.run(together), "completed")
+
+
+func _suite_runtime_scenes(together: Node):
+	_suite = RuntimeScenesTests.new(self)
+	_suite.run(together)
 
 
 func _suite_input_hints(together: Node):
