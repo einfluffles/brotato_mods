@@ -10,15 +10,6 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
-- Online co-op: the host refuses a join when the players run different mods, or other versions of
-  them, also mods that only change the interface. The joining player's *Online co-op* page names
-  the mods that differ on both sides. Before, such a player could join and the run broke.
-- Online co-op: enemies of mods that build their scenes during the wave, such as TreasureCastle,
-  are now shown to clients.
-- Needs everybody on this update (protocol 35).
-
-## 2026-11-25 20:42 UTC
-
 - Languages: the mod's texts now follow the game's language, in all 13 of the game's languages.
   Corrections from players are welcome (see the README's Languages section).
 - Online co-op: when the host continues a saved co-op run, clients now see the resume screen (the
@@ -32,9 +23,14 @@ upload; three of them are marked where the upload may have differed.
   start.
 - Online co-op: with Steam not running or not logged on, online co-op is now turned off with a
   hint instead of waiting for a lobby that never comes.
+- Online co-op: the host refuses a join when the players run different mods, or other versions of
+  them, also mods that only change the interface. The joining player's *Online co-op* page names
+  the mods that differ on both sides. Before, such a player could join and the run broke.
+- Online co-op: enemies of mods that build their scenes during the wave, such as TreasureCastle,
+  are now shown to clients.
 - A few English texts read differently, for example "Player 2" instead of "P2" in the retry
   prompt.
-- Needs everybody on this update (protocol 33).
+- Needs everybody on this update (protocol 35).
 
 ## 2026-11-23 19:30 UTC
 

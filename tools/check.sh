@@ -36,10 +36,6 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$ROOT/reference/project.godot" ] || { echo "reference/ missing: decompile the game first (docs/game-code.md)" >&2; exit 1; }
 
-# Known headless artifacts: no Steam -> no language -> set_locale(Nil) in ProgressData.apply_settings,
-# which surfaces through script extensions of ProgressData.
-KNOWN_ARTIFACTS="set_locale' in base 'TranslationServer'"
-
 quiet=0
 packaged=0
 only_suites=""
@@ -92,13 +88,7 @@ zip_of() {
 report() {
   local log="$1" errors own_errors runtime_errors engine_errors untranslated
   shift
-  # The log without the known artifact and its "at: apply_settings" line: the boot splash that sets
-  # the locale can also end after the tests started. The same error from elsewhere stays.
-  errors=$(awk -v known="$KNOWN_ARTIFACTS" '
-    held != "" { if ($0 ~ /at: apply_settings \(/) { held = ""; next } print held; held = "" }
-    index($0, known) { held = $0; next }
-    1
-    END { if (held != "") print held }' "$log")
+  errors=$(without_known_artifacts "$log")  # tools/game-env.sh
   own_errors=$(grep -A2 "SCRIPT ERROR" <<<"$errors" | grep -B1 "mods-unpacked" || true)
   runtime_errors=$(awk '/MOD-TESTS: START/{f=1} f' <<<"$errors" | grep -A1 "SCRIPT ERROR" \
     | grep -v -e "in base 'Nil'" -e "SteamPlatform" -e "^--" | grep -B1 "  at: " | sort -u || true)

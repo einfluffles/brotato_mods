@@ -6,8 +6,6 @@ changed, newest first. Headings are the time of the release PR in UTC
 
 ## Unreleased
 
-## 2026-11-25 20:42 UTC
-
 - The Trade button and its hint now follow the game's language, in all 13 of the game's
   languages. Corrections from players are welcome (see the README's Languages section).
 

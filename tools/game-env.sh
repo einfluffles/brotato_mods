@@ -48,6 +48,21 @@ if [ "$use_cache" = 1 ]; then
 fi
 mkdir -p "$GAME/mods-unpacked"  # the mount point of each process's own tmpfs
 
+# Known headless artifacts: no Steam -> no language -> set_locale(Nil) in ProgressData.apply_settings,
+# which surfaces through script extensions of ProgressData.
+KNOWN_ARTIFACTS="set_locale' in base 'TranslationServer'"
+
+# without_known_artifacts <log>: the log without the known artifact and its "at: apply_settings"
+# line (the boot splash that sets the locale can also end after the tests started). The same error
+# from elsewhere stays.
+without_known_artifacts() {
+  awk -v known="$KNOWN_ARTIFACTS" '
+    held != "" { if ($0 ~ /at: apply_settings \(/) { held = ""; next } print held; held = "" }
+    index($0, known) { held = $0; next }
+    1
+    END { if (held != "") print held }' "$1"
+}
+
 # --- Packaged mode: the mods as players get them, zips instead of folders in mods-unpacked/ ---
 # The Mod Loader loads every zip in the folder that --mods-path names. A game that has loaded a
 # zip no longer lists res://mods-unpacked/, so zips and folders cannot be mixed in one game: in
@@ -95,7 +110,7 @@ zip_folders() {
     ids+=("$id")
   done
   # shellcheck disable=SC2016 # expands in the container
-  "$RUNTIME" run --rm "${run_as[@]}" -e HOME=/tmp "${mounts[@]}" -v "$out:/out$label" \
+  "$RUNTIME" run --rm "${run_as[@]}" -e HOME=/tmp "${mounts[@]}" -v "$out:/out${label:+:${label#,}}" \
     brotato-modtools bash -euc '
       for id in "$@"; do
         stage=$(mktemp -d)

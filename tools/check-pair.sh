@@ -51,7 +51,6 @@
 #                 the clients' (or the host's) build instead of the scenario's own
 set -uo pipefail
 
-KNOWN_ARTIFACTS="set_locale' in base 'TranslationServer'"  # as in tools/check.sh
 FIRST_LOBBY=$(((1 << 55) + (1 << 8) + 1))  # steam_emulator.gd: the host's (number 1) first lobby
 
 # --- In the container: one scenario's games ---
@@ -325,8 +324,7 @@ start_scenario() {
 
 # Script errors in mod code (as tools/check.sh's report): nothing when there are none.
 own_errors() {
-  grep -A2 "SCRIPT ERROR" "$1" | grep -v -F "$KNOWN_ARTIFACTS" | grep -B1 "mods-unpacked" \
-    | grep -v -F "apply_settings (res://mods-unpacked" || true
+  without_known_artifacts "$1" | grep -A2 "SCRIPT ERROR" | grep -B1 "mods-unpacked" || true
 }
 
 # Engine errors that always mean a script bug, from the scenario's start (as tools/check.sh's).
