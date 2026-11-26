@@ -2,9 +2,10 @@ extends Reference
 # A scene that exists only in the host's memory, as data a client rebuilds under its own rules
 # (sync/runtime_scenes.gd sends it). A description holds no code: the client makes nodes and
 # inline resources only of the classes below, attaches a script only by the path of a script file
-# it has, takes every other resource by a res:// path it can load itself, sets only properties
-# the object lists for storage, and connects signals only to methods of the target's script.
-# One instance per describe or rebuild.
+# it has, takes every other resource by a res:// path it can load itself (never a scene rebuilt
+# from a description), takes a string that names a path only as a plain res:// path, sets only
+# properties the object lists for storage, and connects signals only to methods of the target's
+# script. One instance per describe or rebuild.
 #
 # Description: [nodes, resources, connections]
 # - node: [parent index (-1: the root), name, class, scene path, script path, properties]. With a
@@ -53,6 +54,9 @@ const SCENE_ROOTS := [
 const NOT_SCENE_ROOTS := ["res://mods-unpacked/einfluffles-BrotatoTogether/"]
 const CONNECT_FLAGS := 1 | 2 | 4  # CONNECT_DEFERRED, CONNECT_PERSIST, CONNECT_ONESHOT
 const NOT_SENT := "__meta__"  # the game's enemies hold editor notes there, nothing else
+# Meta of a scene rebuilt from a description: one inside the next would grow without end.
+const REBUILT := "einfluffles_together_rebuilt"
+const DRIVE_LETTERS := "abcdefghijklmnopqrstuvwxyz"
 
 const MAX_NODES := 128
 const MAX_RESOURCES := 64
@@ -153,6 +157,8 @@ func _encode(value, depth: int):
 			return _encode_object(value)
 		TYPE_RID:
 			_fail("a RID")
+		TYPE_STRING, TYPE_STRING_ARRAY:
+			_check_strings(value)
 	return value
 
 
@@ -194,6 +200,12 @@ func _fail(reason: String) -> void:
 		why = reason
 
 
+func _check_strings(value) -> void:
+	for text in [value] if value is String else value:
+		if not plain_string(text):
+			_fail("the string %s" % text)
+
+
 # Client: the scene of a description, or why not. Nothing outside the rules is made or run.
 func rebuild(description):
 	if typeof(description) != TYPE_ARRAY or description.size() != 3:
@@ -223,7 +235,10 @@ func rebuild(description):
 		_fail("it did not pack")
 	if not _nodes.empty():
 		_nodes[0].free()
-	return scene if why == "" else why
+	if why != "":
+		return why
+	scene.set_meta(REBUILT, true)
+	return scene
 
 
 func _add_resource(entry) -> void:
@@ -383,6 +398,8 @@ func _decode(encoded, depth: int):
 					_fail("the node path %s" % encoded)
 			if encoded.is_absolute():
 				_fail("the node path %s" % encoded)
+		TYPE_STRING, TYPE_STRING_ARRAY:
+			_check_strings(encoded)
 	return encoded
 
 
@@ -408,8 +425,8 @@ func _decode_tagged(encoded: Array, depth: int):
 	return null
 
 
-# A resource this game loads itself: a file (or its import or remap) or one in its cache; one
-# inside a file ("<file>::<id>") once that file is loaded.
+# A resource this game loads itself: a file (or its import or remap) or one in its cache, not a
+# scene rebuilt from a description; one inside a file ("<file>::<id>") once that file is loaded.
 func _by_path(path: String) -> Resource:
 	if _paths.has(path):
 		return _paths[path]
@@ -420,6 +437,8 @@ func _by_path(path: String) -> Resource:
 	if parts.size() == 2:
 		ok = ok and parts[1].is_valid_integer()
 	var resource: Resource = load(file) if ok else null
+	if resource != null and resource.has_meta(REBUILT):
+		resource = null
 	if resource != null and parts.size() == 2:
 		_files.append(resource)  # holds the file's inner resources while they are taken
 		resource = load(path) if ResourceLoader.has_cached(path) else null
@@ -445,6 +464,16 @@ static func res_path(path: String) -> bool:
 	if not path.begins_with("res://") or ":" in path.substr(6):
 		return false
 	return path.simplify_path() == path and path.length() > 6
+
+
+# Text that is no path, or a plain res:// path. A path that the game's load() would take from
+# outside res:// is neither: "/x", "\\host\x", "user://x", "C:x", "../x".
+static func plain_string(text: String) -> bool:
+	var drive := text.length() > 1 and text[1] == ":" and text[0].to_lower() in DRIVE_LETTERS
+	var rooted := text.begins_with("/") or text.begins_with("\\") or drive
+	if rooted or ":/" in text or ":\\" in text:
+		return res_path(text)
+	return not ("/../" in "/%s/" % text.replace("\\", "/"))
 
 
 static func scene_source(path: String) -> bool:

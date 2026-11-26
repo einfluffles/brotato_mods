@@ -162,6 +162,7 @@ static func unpack(body: Dictionary):
 	return result
 
 
-# bytes2var stops the function it is called in at bytes it cannot read: this one returns null.
+# At bytes it cannot read, bytes2var stops this function in a debug build (null) and returns its
+# error text in a release build. rebuild refuses both.
 static func _decode(bytes: PoolByteArray):
 	return bytes2var(bytes, false)

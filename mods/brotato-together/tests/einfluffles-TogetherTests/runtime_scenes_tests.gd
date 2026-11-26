@@ -33,6 +33,9 @@ const PAYLOAD := (
 	'extends Node\nfunc _init():\n\tEngine.set_meta("bt_runtime_scenes_hostile_ran", 1)\n'
 )
 const USER_SCRIPT := "user://bt_runtime_scenes_hostile.gd"
+const USER_SCENE := "user://bt_runtime_scenes_hostile.tscn"  # the payload in a scene of its own
+const LOOTER := "res://entities/units/enemies/crash_zone/basic/looter/looter.tscn"
+const WHISTLE := "res://dlcs/dlc_1/items/whistle/whistle_fx.tscn"  # Looter's animation_whistle
 const FLASH_END := "_on_FlashTimer_timeout"
 const MENU_ANIMATION := (
 	"res://ui/menus/title_screen/title_screen_background/base_title_screen_background.tscn::4"
@@ -60,6 +63,8 @@ func run(together: Node) -> void:
 	_test_host_refuses()
 	_test_payload_runs()
 	_test_hostile_code()
+	_test_hostile_strings()
+	_test_rebuilt_scenes()
 	_test_hostile_shapes()
 	_test_hostile_limits()
 	_test_session_limits()
@@ -413,6 +418,9 @@ func _test_host_refuses() -> void:
 	var bound: Node = load(ENEMY).instance()
 	bound.get_node("FlashTimer").connect("timeout", bound, "_on_BurningTimer_timeout", [1], 2)
 	cases["a connection with arguments"] = bound
+	var pointing: Node = load(FIXTURES + "castle_skin.gd").new()
+	pointing.profiles = {"x": {"fx": "user://x.tscn"}}
+	cases["a path out of res://"] = pointing
 	for label in cases:
 		var scene := PackedScene.new()
 		scene.pack(cases[label])
@@ -554,6 +562,100 @@ func _test_hostile_code() -> void:
 	for label in connections:
 		_refused([[enemy], [], connections[label]], label)
 	Directory.new().remove(USER_SCRIPT)
+
+
+# A string the game load()s (Looter's animation_whistle, a mod's data) names a path out of res://:
+# a share on another machine, user://, the disk, a res:// path out of the plain form.
+func _test_hostile_strings() -> void:
+	var node := Node.new()
+	var script := GDScript.new()
+	script.source_code = PAYLOAD
+	script.reload()
+	node.set_script(script)
+	var payload := PackedScene.new()
+	payload.pack(node)
+	node.free()
+	ResourceSaver.save(USER_SCENE, payload)
+	payload = null
+	Engine.remove_meta(RAN)
+	var gadget: Node = load(FIXTURES + "whistle_gadget.gd").new()
+	gadget.effect = USER_SCENE
+	gadget.free()
+	var ran := Engine.has_meta(RAN)
+	Engine.remove_meta(RAN)
+	_t._check(ran, "runtime scenes: a gadget given the path of the payload's scene runs it")
+	var gadget_node := [0, "G", "Node2D", "", FIXTURES + "whistle_gadget.gd", ["effect", USER_SCENE]]
+	_refused(_with_node(gadget_node), "a user:// scene in a gadget's path")
+	var paths := [
+		"//host/share/x.tscn",
+		"\\\\host\\share\\x.tscn",
+		"user://x.tscn",
+		"/tmp/x.tscn",
+		"C:/x.tscn",
+		"c:\\x.tscn",
+		"C:x.tscn",
+		"res://../x.tscn",
+		"res:///x.tscn",
+		"res://x.tscn::1",
+		"../x.tscn",
+		"art\\..\\..\\x.tscn",
+	]
+	for path in paths:
+		var values := {
+			"as the value": path,
+			"in an array": [TAG.ARRAY, [1, path]],
+			"in a PoolStringArray": PoolStringArray(["x", path]),
+			"as a dictionary key": [TAG.DICTIONARY, [path, 1]],
+			"as a dictionary value": [TAG.DICTIONARY, ["fx", path]],
+		}
+		for label in values:
+			var looter := [[[-1, "L", "", LOOTER, "", ["animation_whistle", values[label]]]], [], []]
+			_refused(looter, "Looter's animation_whistle %s %s" % [label, path])
+	var texts := [WHISTLE, "whistle_fx", "art/rigs/castle_regular_111.png", "Wave 3: 2..5"]
+	for text in texts:
+		var looter := [[[-1, "L", "", LOOTER, "", ["animation_whistle", text]]], [], []]
+		var result = SceneDescription.new().rebuild(looter)
+		var instance: Node = result.instance() if result is PackedScene else null
+		_t._check(
+			instance != null and instance.animation_whistle == text,
+			"runtime scenes: Looter's animation_whistle %s stays (%s)" % [text, result]
+		)
+		if instance != null:
+			instance.free()
+	Directory.new().remove(USER_SCENE)
+
+
+# A scene rebuilt from a host's description never goes into another one, instanced or as a value
+# (each could hold 127 of the one before). One this client made itself in memory does.
+func _test_rebuilt_scenes() -> void:
+	var made := GENERATED + "made.tscn"
+	var own := GENERATED + "own.tscn"
+	var text := var2bytes(_plain())
+	var body := {"path": made, "size": text.size(), "data": text.compress(RuntimeScenes.COMPRESSION)}
+	var scenes = RuntimeScenes.new()
+	scenes.receive(body)
+	var kept = load(made) if ResourceLoader.has_cached(made) else null  # as a warm pool holds it
+	_t._check(kept is PackedScene, "runtime scenes: the client took the host's scene")
+	var own_scene := _memory_scene(own)
+	for session in ["", ", after the session that took it"]:
+		_refused(_with_node([0, "B", "", made, "", []]), "an instance of a rebuilt scene" + session)
+		_refused(_holding(made), "a rebuilt scene as a value" + session)
+		scenes.clear()
+	for description in [_with_node([0, "B", "", own, "", []]), _holding(own)]:
+		var result = SceneDescription.new().rebuild(description)
+		_t._check(
+			result is PackedScene,
+			"runtime scenes: a scene this client made in memory goes into one (%s)" % [result]
+		)
+	own_scene.take_over_path("")
+	if kept is PackedScene:
+		kept.take_over_path("")
+
+
+# A mod's node that holds the scene at path in its data.
+static func _holding(path: String) -> Array:
+	var textures := [TAG.DICTIONARY, ["s", [TAG.PATH, path]]]
+	return _with_node([0, "S", "Node", "", FIXTURES + "castle_skin.gd", ["textures", textures]])
 
 
 # Descriptions of the wrong shape, Objects where data goes, paths out of the plain form.
