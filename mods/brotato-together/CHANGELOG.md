@@ -13,6 +13,8 @@ upload; three of them are marked where the upload may have differed.
 - Online co-op: the host refuses a join when the players run different mods, or other versions of
   them, also mods that only change the interface. The joining player's *Online co-op* page names
   the mods that differ on both sides. Before, such a player could join and the run broke.
+- Online co-op: enemies of mods that build their scenes during the wave, such as TreasureCastle,
+  are now shown to clients.
 - Needs everybody on this update (protocol 34).
 
 ## 2026-11-25 20:42 UTC

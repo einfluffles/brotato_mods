@@ -157,7 +157,9 @@ used like them, with mouse, keyboard or gamepad.
     player's own highest and lowest stats, and `modloader.log` gets a warning
     (`einfluffles-BrotatoTogether:Axolotl`).
 - **Other mods** can add shop and level-up / crate decisions of their own that reach the host
-  the same way. [brotato:trade](../brotato-trade) does.
+  the same way. [brotato:trade](../brotato-trade) does. Enemies whose scenes a mod builds during
+  the wave (TreasureCastle does) exist only in the host's memory; the host sends them to clients
+  once per session, so clients show them too.
 
 ## Launch options
 
@@ -315,3 +317,4 @@ The suites are the entries of `SUITES` in the test mod's `mod_main.gd`:
 | `axolotl` | The Axolotl's text in the state the game's own roll leaves in co-op, and the Mod Loader's backup of every extended game script. |
 | `own_pickups` | The own player's pickups shown at once on a client. |
 | `l10n` | The mod's texts in the game's languages: `translations.csv` (header, keys, placeholders), its loader, the game's keys the mod uses, the title screen's lobby frame, the lobby page, the client's waiting screen, the pause banner, the options' damage meter switch and the damage board switched from English to German (character selection: `lobby_menu`). |
+| `runtime_scenes` | A scene another mod packed in memory (an enemy with stats of its own): which scenes count, sent once per client before the message that names it, rebuilt on a client from its description, every enemy of the game's waves and a TreasureCastle-like enemy that way (compared node by node), a type defined before its scene, what the host does not send, the limits per description, message and session, and the descriptions a client refuses without running anything of them (inline scripts, scripts and scenes outside the scene folders, node classes off the list, connections to methods of a class, inline animations and scenes, unlisted properties, objects, paths out of `res://`). |

@@ -30,7 +30,7 @@ which lists every message with its fields).
 | Flow | Messages | Delivery | Content |
 |---|---|---|---|
 | Handshake and session | `HELLO`, `WELCOME`, `PING`, `PONG`, `KICK` | reliable (PING / PONG unreliable) | compatibility check, DLC list, round-trip time |
-| Battle world, host to client | `BATTLE_START`, `TYPE_DEF`, `BATTLE_END` (reliable), `SNAPSHOT` (unreliable, 30 per second) | mixed | run state, type table, then positions, stats and one-shot events |
+| Battle world, host to client | `BATTLE_START`, `TYPE_DEF`, `SCENE`, `BATTLE_END` (reliable), `SNAPSHOT` (unreliable, 30 per second) | mixed | run state, type table, scenes another mod made in memory, then positions, stats and one-shot events |
 | Player input, client to host | `INPUT` | unreliable, every physics frame | movement, aim, buttons |
 | Screen state, host to client | `STATE` | reliable, ordered | shop, level-up panels, menus, pause, cursors and more, in sections (see [State stream](#5-state-stream-and-run-state)) |
 | Decisions, client to host | `SHOP_INTENT`, `UPGRADE_INTENT` | reliable | a press on the client's own panel that changes the run |
@@ -1052,7 +1052,8 @@ Mirrored nodes are the entity spawner's lists (`bosses`, `enemies`, `neutrals`, 
   dropped on `tree_exiting`: the game's pools take nodes out of the tree and are LIFO, so a
   projectile or gold can be pooled and reused between two snapshots.
 - **Types.** A type is the node's `filename`, sent once per battle. Some types carry a tag after
-  `#` (spawn markers, puddles, see below).
+  `#` (spawn markers, puddles, see below). A scene that exists only in the host's memory goes
+  along as text ([Scenes made at run time](#scenes-made-at-run-time)).
 - **Records.** The host keeps `[net id, type idx, kind bits, node, quantized x / y, still count]`
   per mirrored node (`BattleHost._record`), the client the kind bits of each puppet
   (`BattleClient._kind_of`). The per-snapshot and per-frame loops read those records and do not ask
@@ -1083,6 +1084,126 @@ Mirrored nodes are the entity spawner's lists (`bosses`, `enemies`, `neutrals`, 
     whose boss is missing, and nothing while another BATTLE_START waits to replace the scene.
   - **Measuring:** the GPU wait does not exist headless. The suite `wave_start` measures it with
     `tools\check-window.ps1 -Suites wave_start` ([docs/testing.md](../../../docs/testing.md#with-real-graphics)).
+
+### Scenes made at run time
+
+`sync/runtime_scenes.gd` sends, holds and limits the scenes. `sync/scene_description.gd` builds a
+scene's description on the host and rebuilds the scene from it on a client. One instance of
+`RuntimeScenes` serves both roles. A client `load()`s a type's scene path. A mod that builds a
+scene during the run (`PackedScene.pack`, then `take_over_path` to a `res://` path without a
+file) has it only in memory. TreasureCastle makes one per enemy kind and role each wave, from a
+game enemy with a script and stats of its own (`_tc_origin_scene` in its
+`extensions/entity_spawner.gd`). On a client that path names nothing ("Cannot open file"), and the
+enemy hits the client's player without being drawn. So the host sends a description of such a
+scene, and the client rebuilds the scene by rules that let no code arrive from the network.
+
+- **Which scenes.** The path of a type key (before `#`) that ends in `.tscn`, is in the resource
+  cache (`ResourceLoader.has_cached`) as a `PackedScene` and has no file: neither the path nor
+  `<path>.remap` (an exported game's converted scene) exists, which is where `ResourceLoader` would
+  look. A scene file of the game or of a mod is never sent.
+- **When.** `SCENE` `{path, size, data}`, reliable, to a ready peer before the first message that
+  names the type: before `BATTLE_START` (`BattleHost._send_battle_start`: a battle's start, a late
+  join, a full resync) and before a `TYPE_DEF` (`_type_idx`). Reliable messages keep their order,
+  so the scene is there when the type arrives. Once per path, peer and session (lobby): the host
+  forgets what a peer had when it leaves and on `peer_ready`. A failed send queues a full resync,
+  which sends the scene again before its `BATTLE_START`, but the `TYPE_DEF` after the failed send
+  arrives first and resolves to nothing. `BattleClient._adopt_start` therefore defines every type
+  of a `BATTLE_START` again that is still unresolved, so the type resolves in the same battle. The
+  client holds every scene it rebuilt until it leaves the lobby, so a later battle's `TYPE_DEF`,
+  the warm pools and the pose layouts (keyed by scene path) find it in the cache.
+- **What is sent.** The description, `var2bytes` and zstd, built from the scene's `SceneState`
+  (`get_state()`) once per path and session. It holds every node's parent, name, class or
+  instanced scene, script path and stored properties, the connections, and every resource made at
+  run time (one without a path) as its class, script path and stored properties. A property value
+  is a plain value, a resource by its path (`<file>::<id>` for one inside a file), or one of the
+  resources made at run time. The layout is in the header of `scene_description.gd`. Nothing is
+  written to `user://`. Metadata is left out: the game's enemies keep only editor notes there. The
+  host does not send a scene it cannot describe, and logs one warning: a script without a file of
+  its own, an object that is no resource (a client would have to make it with a class and
+  properties of the host's choice), groups, a placeholder, a connection with arguments, or a node
+  under one the scene does not hold. A scene the mod builds anew under the
+  same path later in the session goes as it was first sent.
+- **The client's rules** (`SceneDescription.rebuild`). The description comes from the network, so
+  the client reads it as data and makes the scene with its own code. Every list below is what the
+  game's wave enemies and TreasureCastle's enemies need. The suite `runtime_scenes` surveyed the
+  first, and TreasureCastle 1.2.1's code was read for the second.
+  - Nodes: `ClassDB` makes only `AnimationPlayer`, `Area2D`, `CollisionShape2D`, `Node2D`,
+    `RigidBody2D`, `Sprite` and `Timer` (the classes the wave enemies make themselves) and `Node`
+    (TreasureCastle's variant skin). Any other node comes only as part of a scene the client
+    instances itself.
+  - Resources made at run time: only `Resource` (stats with the game's script), `ShaderMaterial`
+    (a material local to its scene, duplicated per instance: one wave enemy's projectile shader),
+    `CircleShape2D` (TreasureCastle's resized collision shapes), and `ImageTexture` with `Image`
+    (TreasureCastle's blank sprite). `Script`, `PackedScene`, `Animation`, `Shader` and anything
+    else that carries code or names paths come only by path.
+  - Scripts: only by the path of a `.gd` file that the client has, as the file or as the `.remap`
+    of an exported game's compiled script. The script's base class fits the object. The script and
+    every script it extends lie in a scene folder: `res://entities/`, `res://overlap/`,
+    `res://particles/`, `res://projectiles/` or `res://mods-unpacked/`. Three files outside them
+    count too: `res://global/behavior.gd` (the base of the game's behaviours) and
+    `res://ui/hud/ui_progress_bar.gd` and `.tscn` (the life bar a boss in a wave instances). A
+    mod's `mod_main.gd` and this mod's folder are out. So no script of a singleton, a menu, the
+    Mod Loader or a mod's start runs as part of an enemy. For example, `progress_data.gd` resets
+    `RunData` in its `_ready`.
+  - Resources by path: a plain `res://` path (no `..`, `.`, `//`, `\` and no `:` after the
+    prefix) with the extension of a data file (`gdshader`, `ogg`, `png`, `res`, `scn`, `shader`,
+    `tres`, `tscn`, `wav`). The client loads the resource itself: from the file, its import or its
+    remap, or from its own cache (a resource a mod registered at load). For a resource inside a
+    file, the client loads the file and takes the resource from its cache. A scene or an animation,
+    instanced or as a value, comes only from the scene folders: `res://singletons/bug_reporter.tscn`
+    holds an `HTTPRequest`, and a menu's animation calls a menu's methods.
+  - Properties: only those that the object lists with storage usage (`get_property_list`). The
+    client reads the list again for a name it lacks, because some properties come with an earlier
+    one (a shader's parameters). `script` and metadata are never properties. `AnimationPlayer`'s
+    `anims/<name>` takes only an `Animation` by path.
+  - Node paths in values: relative and without `..`, so they point inside the scene.
+  - Connections: a signal of the source, to a method of the target's script or of a script it
+    extends, which the target's class does not have (`queue_free`, `set` and `call` are out). No
+    arguments, and the flags `CONNECT_DEFERRED`, `CONNECT_PERSIST` and `CONNECT_ONESHOT` only. The
+    game's enemies need their connections: `FlashTimer.timeout` ends the hit flash that a client
+    shows.
+  - A node without class and scene is a node of a scene instanced above it, changed (the game's
+    enemies resize `Hurtbox/Collision`). The client marks that scene editable, so the change is
+    packed.
+  - Then the client packs the rebuilt root and registers the scene under the host's path
+    (`take_over_path`), only when nothing is cached under that path and no file is there.
+    Anything outside the rules gets one warning with the reason, and the type stays unresolved,
+    as before this feature.
+- **What the rules leave.** No code comes from the network. A hostile host can still put the
+  client's own scripts and scenes from the scene folders together with values of its choice. That
+  code is the client's own, and it runs as the enemy it belongs to: inside the battle, on the
+  enemy's nodes. A value can also make a node use much memory (a particle node's `amount`).
+- **Limits.** Per description: 128 nodes, 64 resources made at run time, 64 connections, 256
+  resources by path, 32768 values and 16 levels of nesting. The wave enemies, bosses included,
+  need at most 31 nodes, 2 resources, 7 connections, 49 paths, 646 values and 1 level, the
+  TreasureCastle-like enemy of the suite 17 nodes, 5 resources, 37 paths, 327 values and 4
+  levels (suite `runtime_scenes`). TreasureCastle's own definition and rig data have up to about
+  2400 values and 7 levels (its `catalog.json` and `enemy_rigs_111.json`). Per message: 64 KB
+  compressed, an eighth of Steam's 512 KB, its limit for one message and for the send queue (a
+  late joiner gets all of a battle's scenes in one burst with its `BATTLE_START`), and 4 MB of
+  description. Above either the host logs one warning and the type goes without its scene, not
+  drawn on clients.
+  Per session on a client: 512 scenes and 64 MB of descriptions. Then the client logs one warning
+  and takes no more scenes from that host. TreasureCastle makes at most about 120 paths: a path
+  is the hash of a TreasureCastle enemy and a game enemy, and its `waves.json` maps 16 game
+  enemies to a few TreasureCastle enemies each.
+- **Sizes and cost,** measured headless (suite `runtime_scenes`): the 79 to 81 enemies of the
+  game's waves (as many as the test's zones hold), each packed in memory with stats of its own,
+  make at most 18.3 KB of description and 3.9 KB compressed (the predator boss). All of them are
+  described, rebuilt and compared in 1.5 s. A TreasureCastle-like enemy makes 23 KB, 2.8 KB
+  compressed. An image made at run time is in the description byte for byte. TreasureCastle hides
+  an enemy's own sprite behind a transparent one: 260x260 makes 279 KB (2.2 KB compressed), and
+  770x350, the size of the biggest boss sprite, 1.09 MB (2.3 KB compressed; host 0.7 ms, client
+  9 ms).
+- **Client.** A scene this game has cached itself (a mod built it at load on both machines) stays,
+  and the description is not used. One log line per received path, and one when the session's
+  limit is reached. A rejected path is not tried again in the session.
+- **Logs.** Host: "Sending the scene P to clients (N B, M B packed)", "The scene P cannot go to
+  clients: why", "The scene P is too big for clients (...)". Client: "Loaded the host's scene P
+  (N B)", "The host's scene P (N B) is loaded here already", "Rejected the host's scene P (N B):
+  why", "The host's scenes reached a session's limit (...)".
+- **Protocol 34.** `SCENE` goes before `STATE`, which stays the last message, so `STATE`'s number
+  moved and a build of protocol 33 would misread it.
 
 ### Puppets
 
@@ -2899,6 +3020,7 @@ All of this is for the log only. Every line has a rate limit (log memory, see
 | "Run part p1 [...] is not readable: ..." | `RunParts.Store` | client: once per stored part | a part whose JSON does not parse; the run state stays as it was |
 | "Client X entered ...", "Client X frames ...", "Client X corrections ..." | `sync/client_report.gd` | see below | a client's timings in the host's log |
 | "Wave N damage: total ..." | `DamageMeter` | once per wave, at the wave's last measurement, on the machine that runs the wave | the meter's totals against the health the enemies lost, per player rows, biggest hit and kills, see [Damage meter](#damage-meter) |
+| "Sending the scene ...", "The scene ... cannot go to clients: why", "The scene ... is too big for clients ...", "Loaded the host's scene ...", "The host's scene ... is loaded here already", "Rejected the host's scene ...: why", "The host's scenes reached a session's limit ..." | `sync/runtime_scenes.gd` | host and client: once per scene path and session, the limit once per session | a scene another mod made in memory, its size, why the host did not send it, and why a client did not take it, see [Scenes made at run time](#scenes-made-at-run-time) |
 
 **Traffic.** `Session.send_reliable` notes every message with its encoded size, per peer. Steam's
 queue is asked after every message of 4 KB or more, and after smaller ones at most once per 250 ms
@@ -3032,6 +3154,10 @@ As of 2026-11-26, protocol 34.
 
 **Not mirrored in a battle**
 
+- A scene another mod made in memory that the host cannot describe, that a client's rules
+  reject or that is over the limits ([Scenes made at run time](#scenes-made-at-run-time)), and the
+  changes of one the mod builds anew under the same path later in the session (TreasureCastle:
+  stats from wave 11 on).
 - The bigger sprite of bonus-boosted gold.
 - The music dip and the won-run animation at the wave's end.
 - The brachiosaurus foot's shadow scale and position animations, and the jump-attack shadow's
