@@ -1120,8 +1120,9 @@ scene, and the client rebuilds the scene by rules that let no code arrive from t
   written to `user://`. Metadata is left out: the game's enemies keep only editor notes there. The
   host does not send a scene it cannot describe, and logs one warning: a script without a file of
   its own, an object that is no resource (a client would have to make it with a class and
-  properties of the host's choice), groups, a placeholder, a connection with arguments, or a node
-  under one the scene does not hold. A scene the mod builds anew under the
+  properties of the host's choice), groups, a placeholder, a connection with arguments, a node
+  under one the scene does not hold, or a string that names a path out of `res://` (see Strings
+  below). A scene the mod builds anew under the
   same path later in the session goes as it was first sent.
 - **The client's rules** (`SceneDescription.rebuild`). The description comes from the network, so
   the client reads it as data and makes the scene with its own code. Every list below is what the
@@ -1151,12 +1152,26 @@ scene, and the client rebuilds the scene by rules that let no code arrive from t
     remap, or from its own cache (a resource a mod registered at load). For a resource inside a
     file, the client loads the file and takes the resource from its cache. A scene or an animation,
     instanced or as a value, comes only from the scene folders: `res://singletons/bug_reporter.tscn`
-    holds an `HTTPRequest`, and a menu's animation calls a menu's methods.
+    holds an `HTTPRequest`, and a menu's animation calls a menu's methods. A scene the client
+    rebuilt from a description is never instanced or a value in another one, also when it stays
+    cached after its session (a warm pool holds it): a description could instance the one before
+    127 times, and the scenes would grow without end. The rebuilt scene carries a meta for that
+    (`SceneDescription.REBUILT`). A scene a mod made in memory on the client itself is the
+    client's own and counts (TreasureCastle's scenes name what it made at load).
   - Properties: only those that the object lists with storage usage (`get_property_list`). The
     client reads the list again for a name it lacks, because some properties come with an earlier
     one (a shader's parameters). `script` and metadata are never properties. `AnimationPlayer`'s
     `anims/<name>` takes only an `Animation` by path.
   - Node paths in values: relative and without `..`, so they point inside the scene.
+  - Strings in values, also in arrays, a `PoolStringArray` and a dictionary's keys and values: one
+    that names a path outside `res://` (it starts with `/`, `\` or a drive letter and `:`, or has
+    `:/` or `:\`) must be a plain `res://` path as above, and a relative one has no `..` part.
+    The game's code `load()`s some strings: Looter's `animation_whistle` and `effect_exclamation`
+    when a player holds the whistle. Such a path could name a scene with an embedded script on
+    another machine's share (`//host/share/x.tscn` on Windows), in `user://` or anywhere on the
+    disk. A `res://` path need not lie in the scene folders: Looter's own lies in `res://dlcs/`.
+    Other text stays. The host checks its strings the same way and does not send a scene that
+    names such a path.
   - Connections: a signal of the source, to a method of the target's script or of a script it
     extends, which the target's class does not have (`queue_free`, `set` and `call` are out). No
     arguments, and the flags `CONNECT_DEFERRED`, `CONNECT_PERSIST` and `CONNECT_ONESHOT` only. The
@@ -1169,10 +1184,13 @@ scene, and the client rebuilds the scene by rules that let no code arrive from t
     (`take_over_path`), only when nothing is cached under that path and no file is there.
     Anything outside the rules gets one warning with the reason, and the type stays unresolved,
     as before this feature.
-- **What the rules leave.** No code comes from the network. A hostile host can still put the
-  client's own scripts and scenes from the scene folders together with values of its choice. That
-  code is the client's own, and it runs as the enemy it belongs to: inside the battle, on the
-  enemy's nodes. A value can also make a node use much memory (a particle node's `amount`).
+- **What the rules leave.** No code comes from the network: every script and scene is the
+  client's own, a file of its `res://` or a scene a mod made on it. A hostile host can still put
+  the client's own scripts and scenes from the scene folders together with values of its choice.
+  That code is the client's own, and it runs as the enemy it belongs to: inside the battle, on the
+  enemy's nodes. A string that this code `load()`s (Looter's) can name any `res://` file of the
+  client, also outside the scene folders, so the enemy's code can instance a scene of a menu or a
+  singleton. A value can also make a node use much memory (a particle node's `amount`).
 - **Limits.** Per description: 128 nodes, 64 resources made at run time, 64 connections, 256
   resources by path, 32768 values and 16 levels of nesting. The wave enemies, bosses included,
   need at most 31 nodes, 2 resources, 7 connections, 49 paths, 646 values and 1 level, the
