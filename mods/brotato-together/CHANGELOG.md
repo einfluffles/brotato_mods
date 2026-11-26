@@ -10,6 +10,8 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+## 2026-11-26 19:46 UTC
+
 - Languages: the mod's texts now follow the game's language, in all 13 of the game's languages.
   Corrections from players are welcome (see the README's Languages section).
 - Online co-op: when the host continues a saved co-op run, clients now see the resume screen (the
