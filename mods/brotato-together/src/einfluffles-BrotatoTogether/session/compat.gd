@@ -15,6 +15,7 @@ const REJECTION_KEYS := {
 	"mods": "BT_REJECT_MODS",
 }
 const MODS_SHOWN := 3  # a side's mods in a rejection's text, the rest as "+N"
+const MODS_LOGGED := 50  # the same in the host's log line
 
 
 # What this machine sends in HELLO / compares against.
@@ -81,7 +82,9 @@ static func rejection(host: Dictionary, client) -> Dictionary:
 	var differences := mod_differences(host.mods, mods)
 	if not differences.client.empty() or not differences.host.empty():
 		var args := [mods_text(differences.client), mods_text(differences.host)]
-		var all := [mods_text(differences.client, -1), mods_text(differences.host, -1)]
+		var all := [
+			mods_text(differences.client, MODS_LOGGED), mods_text(differences.host, MODS_LOGGED)
+		]
 		return _rejected("mods", args, "different mods (client: %s; host: %s)" % all)
 	return {"code": "", "args": [], "reason": ""}
 

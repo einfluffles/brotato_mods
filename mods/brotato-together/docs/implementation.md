@@ -127,10 +127,12 @@ ownership never rejects (see [Host DLC on clients](#host-dlc-on-clients)).
 - The `args` are the two versions, for `mods` the two sides of `Compat.mod_differences`: the
   entries `<mod id> <version>` the client has and the host lacks or has in another version, then
   the other way round, each sorted. A side shows its first three (`Compat.MODS_SHOWN`) and `+N`
-  for the rest, `-` when it is empty; the host's log line has every entry.
+  for the rest, `-` when it is empty; the host's log line has up to 50 (`Compat.MODS_LOGGED`).
 - Strict on purpose: any difference rejects, mods that only change the UI too (a product decision
   of 2026-11-26). A mod that changes items, characters or rules breaks the run state a client
   rebuilds, and the mod cannot tell such a mod from a harmless one.
+- Only id and `version_number` are compared: a mod re-uploaded with other content but the same
+  version, or other settings of a mod, still pass.
 - A `HELLO` whose `mods` is not a Dictionary is malformed, as one whose `dlcs` is not an Array.
 
 Consequence for wire changes: a build with another mod version is turned away, so a message does

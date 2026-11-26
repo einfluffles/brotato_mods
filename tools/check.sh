@@ -57,9 +57,13 @@ run_game() {
 
 report() {
   local log="$1" errors own_errors runtime_errors engine_errors
-  # The log without the known artifacts, each with its "at:" line: the boot splash that sets the
-  # locale can also end after the tests started.
-  errors=$(awk -v known="$KNOWN_ARTIFACTS" 'skip {skip=0; next} index($0, known) {skip=1; next} 1' "$log")
+  # The log without the known artifact and its "at: apply_settings" line: the boot splash that sets
+  # the locale can also end after the tests started. The same error from elsewhere stays.
+  errors=$(awk -v known="$KNOWN_ARTIFACTS" '
+    held != "" { if ($0 ~ /at: apply_settings \(/) { held = ""; next } print held; held = "" }
+    index($0, known) { held = $0; next }
+    1
+    END { if (held != "") print held }' "$log")
   own_errors=$(grep -A2 "SCRIPT ERROR" <<<"$errors" | grep -B1 "mods-unpacked" || true)
   runtime_errors=$(awk '/MOD-TESTS: START/{f=1} f' <<<"$errors" | grep -A1 "SCRIPT ERROR" \
     | grep -v -e "in base 'Nil'" -e "SteamPlatform" -e "^--" | grep -B1 "  at: " | sort -u || true)

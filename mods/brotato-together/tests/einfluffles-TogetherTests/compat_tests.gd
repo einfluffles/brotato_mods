@@ -62,6 +62,21 @@ func _test_mod_lists(host: Dictionary) -> void:
 		mods.get("einfluffles-TogetherTests") == "0.1.0" and not Compat.MOD_ID in mods,
 		"the other loaded mods with their versions, not brotato:together itself %s" % [mods]
 	)
+	var own = ModLoaderMod.get_mod_data("einfluffles-TogetherTests")
+	for flag in ["is_active", "is_loadable"]:
+		own.set(flag, false)
+		var listed: bool = Compat.local_mods().has("einfluffles-TogetherTests")
+		own.set(flag, true)
+		t._check(not listed, "a mod with %s false is not listed" % flag)
+	var crowded := host.duplicate()
+	crowded.mods = {}
+	for i in Compat.MODS_LOGGED + 10:
+		crowded.mods["m-Mod%03d" % i] = "1.0.0"
+	var logged: String = Compat.rejection(host, crowded).reason
+	t._check(
+		"+10" in logged and not "m-Mod%03d" % Compat.MODS_LOGGED in logged,
+		"the host's log line names at most %d mods per side" % Compat.MODS_LOGGED
+	)
 	var same := {"a-One": "1.0.0", "b-Two": "2.0.0"}
 	var diff := Compat.mod_differences(same, same.duplicate())
 	t._check(diff.client.empty() and diff.host.empty(), "the same mods: no difference")
