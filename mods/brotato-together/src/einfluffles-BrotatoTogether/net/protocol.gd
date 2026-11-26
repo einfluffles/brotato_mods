@@ -59,7 +59,7 @@ enum Msg {
 	STATE,
 }
 
-const VERSION := 34
+const VERSION := 35
 # How long a client predicts without snapshots and the host keeps a remote player's last INPUT.
 # One value for both: a gap the client rides out must not release its buttons on the host.
 const STALL_LIMIT_MSEC := 600

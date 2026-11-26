@@ -64,6 +64,9 @@ const MAX_CONNECTIONS := 64
 const MAX_PATHS := 256
 const MAX_VALUES := 32768
 const MAX_DEPTH := 16
+# An inline Image (TreasureCastle's blank sprite is at most a boss sprite's size).
+const IMAGE_FORMATS := [Image.FORMAT_L8, Image.FORMAT_LA8, Image.FORMAT_RGB8, Image.FORMAT_RGBA8]
+const MAX_IMAGE_SIDE := 2048
 
 var why := ""  # the first reason a describe or rebuild failed
 
@@ -248,9 +251,10 @@ func _add_resource(entry) -> void:
 		_fail("an inline %s" % entry[0])
 	else:
 		var resource: Resource = ClassDB.instance(entry[0])
-		_resources.append(resource)
 		_attach_script(resource, entry[1])
 		_apply(resource, entry[2])
+		# Only now: an [INLINE, own index] in its own properties would be a reference cycle.
+		_resources.append(resource)
 
 
 func _add_node(entry, i: int) -> void:
@@ -338,8 +342,33 @@ func _apply(object: Object, properties: Array) -> void:
 		var animation: bool = object is AnimationPlayer and name.begins_with("anims/")
 		if why == "" and not names.has(name) and not (animation and value is Animation):
 			_fail("the property %s of a %s" % [name, object.get_class()])
+		if why == "" and object is Image and name == "data" and not image_data(value):
+			_fail("the image %s" % [_image_shape(value)])
 		if why == "":
 			object.set(name, value)
+
+
+# An inline Image's data: an uncompressed format and at most MAX_IMAGE_SIDE pixels a side. A
+# compressed format would go to the GPU as the host sent it once a texture takes the image.
+static func image_data(value) -> bool:
+	if typeof(value) != TYPE_DICTIONARY:
+		return false
+	var names := []
+	for format in IMAGE_FORMATS:
+		var sample := Image.new()
+		sample.create(1, 1, false, format)
+		names.append(sample.get("data").format)
+	var width = value.get("width")
+	var height = value.get("height")
+	if not (width is int and height is int and value.get("format") in names):
+		return false
+	return width > 0 and height > 0 and width <= MAX_IMAGE_SIDE and height <= MAX_IMAGE_SIDE
+
+
+static func _image_shape(value) -> String:
+	if typeof(value) != TYPE_DICTIONARY:
+		return "of a %s" % typeof(value)
+	return "%sx%s %s" % [value.get("width"), value.get("height"), value.get("format")]
 
 
 static func _storage(object: Object) -> Dictionary:

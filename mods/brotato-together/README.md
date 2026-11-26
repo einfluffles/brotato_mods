@@ -4,7 +4,7 @@ Online co-op for [Brotato](https://store.steampowered.com/app/1942280/Brotato/) 
 networking, in place of Steam Remote Play's video stream. Every player runs the game on their own
 machine, and their own character and menus react at once.
 
-**Status (2026-11-26, protocol 34):** early development. Sessions over Steam with friends work;
+**Status (2026-11-26, protocol 35):** early development. Sessions over Steam with friends work;
 the sessions measured in the implementation notes were played on 2026-11-16. Expect rough edges
 and please report them (see [Reporting problems](#reporting-problems)).
 
@@ -208,7 +208,7 @@ language. How it works: [`docs/implementation.md`](docs/implementation.md#locali
 
 ## Limitations
 
-As of 2026-11-26 (protocol 34):
+As of 2026-11-26 (protocol 35):
 
 - Not shared with clients yet: the species challenges of Primal Dread (trophy hunter, clever
   girl, egg hunt) and the codex's kill counts.

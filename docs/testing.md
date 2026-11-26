@@ -247,7 +247,7 @@ other build of `version_mismatch_build`, the DLCs of `dlc_borrow`) apply unless 
 is given; `-Run` and the others work as for any start.
 
 Which build refuses whom: the lobby carries brotato:together's tag (mod id and protocol, for
-example `einfluffles-BrotatoTogether/p34`), and a client that finds another tag than its own leaves
+example `einfluffles-BrotatoTogether/p35`), and a client that finds another tag than its own leaves
 the lobby at once (`BT_ERR_LOBBY_VERSION`). So two builds with different protocols never get as
 far as `HELLO`: the codes of `WELCOME` (protocol, game, mod version, other mods; Join
 compatibility in the implementation notes) are reached only by builds that share the tag, for

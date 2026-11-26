@@ -2,7 +2,7 @@
 
 How the mod works, for a developer who is new to it. The game hooks it builds on are listed in
 [`docs/brotato-hooks.md`](../../../docs/brotato-hooks.md). This document describes the code as of
-2026-11-26 (protocol 34, mod version 0.2.1). File paths are relative to
+2026-11-26 (protocol 35, mod version 0.2.1). File paths are relative to
 `src/einfluffles-BrotatoTogether/`, test suites live in `tests/einfluffles-TogetherTests/`.
 
 Contents: [Overview](#1-overview), [Glossary](#2-glossary), [Session](#3-session),
@@ -1136,7 +1136,10 @@ scene, and the client rebuilds the scene by rules that let no code arrive from t
     (a material local to its scene, duplicated per instance: one wave enemy's projectile shader),
     `CircleShape2D` (TreasureCastle's resized collision shapes), and `ImageTexture` with `Image`
     (TreasureCastle's blank sprite). `Script`, `PackedScene`, `Animation`, `Shader` and anything
-    else that carries code or names paths come only by path.
+    else that carries code or names paths come only by path. An `Image` takes only an
+    uncompressed format (L8, LA8, RGB8, RGBA8; a compressed one would reach the GPU as sent) and
+    at most 2048 pixels a side. A resource is listed for `[INLINE, index]` only after its own
+    properties, so none holds itself.
   - Scripts: only by the path of a `.gd` file that the client has, as the file or as the `.remap`
     of an exported game's compiled script. The script's base class fits the object. The script and
     every script it extends lie in a scene folder: `res://entities/`, `res://overlap/`,
@@ -1220,8 +1223,8 @@ scene, and the client rebuilds the scene by rules that let no code arrive from t
   clients: why", "The scene P is too big for clients (...)". Client: "Loaded the host's scene P
   (N B)", "The host's scene P (N B) is loaded here already", "Rejected the host's scene P (N B):
   why", "The host's scenes reached a session's limit (...)".
-- **Protocol 34.** `SCENE` goes before `STATE`, which stays the last message, so `STATE`'s number
-  moved and a build of protocol 33 would misread it.
+- **Protocol 35.** `SCENE` goes before `STATE`, which stays the last message, so `STATE`'s number
+  moved and a build of protocol 34 (the mod-list check alone) would misread it.
 
 ### Puppets
 
@@ -3168,7 +3171,7 @@ slow-answer lines' `rate` should read 524288 B/s).
 
 ## 13. Known gaps
 
-As of 2026-11-26, protocol 34.
+As of 2026-11-26, protocol 35.
 
 **Not mirrored in a battle**
 

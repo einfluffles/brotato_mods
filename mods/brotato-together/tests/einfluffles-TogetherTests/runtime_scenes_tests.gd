@@ -451,6 +451,23 @@ static func _plain() -> Array:
 	return [[[-1, "A", "Node2D", "", "", []]], [], []]
 
 
+# A description with an inline Image: an RGBA8 image's data, its size and format as given.
+static func _image(width: int, height: int, format = null) -> Array:
+	var image := Image.new()
+	image.create(int(max(width, 1)), int(max(height, 1)), false, Image.FORMAT_RGBA8)
+	var data: Dictionary = image.get("data")
+	data.width = width
+	data.height = height
+	if format != null:
+		data.format = format
+	var pairs := []
+	for key in data:
+		pairs += [key, data[key]]
+	var description := _plain()
+	description[1].append(["Image", "", ["data", [TAG.DICTIONARY, pairs]]])
+	return description
+
+
 static func _with_node(entry: Array, connections := []) -> Array:
 	var description := _plain()
 	description[0].append(entry)
@@ -689,6 +706,22 @@ func _test_hostile_shapes() -> void:
 	}
 	for label in shapes:
 		_refused(shapes[label], label)
+	var side: int = SceneDescription.MAX_IMAGE_SIDE
+	var images := {
+		"a resource inside itself":
+		[_plain()[0], [["Resource", "", ["resource_name", [TAG.INLINE, 0]]]], []],
+		"a compressed image": _image(4, 4, "DXT5"),
+		"an image wider than %d" % side: _image(side + 1, 1),
+		"an image taller than %d" % side: _image(1, side + 1),
+		"an image of no width": _image(0, 4),
+		"an image's data of no dictionary": [_plain()[0], [["Image", "", ["data", 5]]], []],
+	}
+	for label in images:
+		_refused(images[label], label)
+	var blank = SceneDescription.new().rebuild(_image(64, 48))
+	_t._check(
+		blank is PackedScene, "runtime scenes: an RGBA8 image of 64x48 rebuilds (%s)" % [blank]
+	)
 	var scenes = RuntimeScenes.new()
 	for wrong in ["x", [], null, {"path": 5}, {"path": PATH, "size": "1", "data": []}]:
 		scenes.receive(wrong)
