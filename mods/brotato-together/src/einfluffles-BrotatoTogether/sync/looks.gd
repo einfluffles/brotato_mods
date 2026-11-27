@@ -190,7 +190,7 @@ func set_look(node: Node, look: int) -> void:
 
 
 # The look's outlines, through the entity's own Entity._set_outlines; other outlines a puppet
-# may carry stay. A hit flash keeps its material and gets the new one back when it ends.
+# may carry stay. Unit._set_outlines keeps a running hit flash on top.
 static func _set_outlines(entity: Node, look: int) -> void:
 	var colors := []
 	var look_colors := [
@@ -213,16 +213,7 @@ static func _set_outlines(entity: Node, look: int) -> void:
 	entity._outline_colors = colors
 	entity._current_material_alpha = CHARM_ALPHA if charmed else 1.0
 	entity._current_material_desaturation = CHARM_DESATURATION if charmed else 0.0
-	var sprite = entity.sprite
-	var flash = sprite.material if entity is Unit else null
-	var flashing: bool = flash != null and flash in [entity.flash_mat, entity.flash_shield_mat]
 	entity._set_outlines()
-	if flashing:
-		if flash == entity.flash_mat:
-			entity._non_flash_material = sprite.material
-		else:
-			entity._non_flash_shield_material = sprite.material
-		sprite.material = flash
 
 
 # The evolved sprite, like Meca / MutantEnemyEffectBehavior.init; the scene's own comes back when

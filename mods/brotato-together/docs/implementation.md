@@ -1248,9 +1248,9 @@ players) stays on.
 ### Flags, poses and animations
 
 **Flags.** Four bits per entity: `sprite.scale.x < 0` (facing: behaviours turn units toward their
-target, and knockback would otherwise flip puppets), `!visible` (stampede dinos hide before
-charging), `sprite.flip_h` (`JumpAttackBehavior` turns the sprite toward its landing spot and never
-resets it) and `FLAG_REST`.
+target, `JumpAttackBehavior` toward its landing spot, and knockback would otherwise flip puppets),
+`!visible` (stampede dinos hide before charging), `sprite.flip_h` (no unit sets it since game
+1.2.0.4, where jumps turned from `flip_h` to `scale.x`) and `FLAG_REST`.
 
 **Poses** (`sync/pose.gd`). Parts that physics code turns are sent sparsely, only for scenes that
 have them, and interpolated with `lerp_angle`. The layout is a per-scene list of (node path, kind),
