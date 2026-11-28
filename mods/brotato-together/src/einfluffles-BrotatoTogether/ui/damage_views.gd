@@ -75,9 +75,6 @@ const OUTLINE_NODE := "Outline"
 const OUTLINE_WIDTH := 2.0  # on screen
 const OUTLINE_DIRECTIONS := 16
 const TOTAL_OUTLINE := Color.black  # the HUD font's outline_color
-# The HUD's total icon: drawn 26 px high, in a slot as wide as a source icon's, so the total lines
-# up with the sources' numbers.
-const HUD_TOTAL_ICON := Vector2(32, 26)
 
 var meter: Node = null
 
@@ -173,7 +170,7 @@ func _build_rows(main: Node) -> void:
 		lines.add_constant_override("separation", 2)
 		row.add_child(lines)
 		var main_line := _hud_line("Main", right, [
-			_icon(HUD_TOTAL_ICON, "Icon", load(TOTAL_ICON)),
+			_icon(HUD_ICON, "Icon", load(TOTAL_ICON)),
 			_label(_hud_font(HUD_MAIN_SIZE), "Total"),
 			_label(_hud_font(HUD_MAIN_SIZE), "Share", MUTED),
 			_label(_hud_font(HUD_MAIN_SIZE), "Dps", DPS_COLOR),

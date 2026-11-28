@@ -2782,8 +2782,7 @@ of the same protocol ignores the key, so it needed no protocol bump.
 its tier's color (`ItemService.get_color_from_tier`, so the player's color settings), as the game
 outlines such weapons in a wave (`Weapon.update_highlighting`); tier I none, as in the game. The
 biggest hit's source is outlined in the hit's gold instead, so that line stays apart from the
-sources, and the HUD's total icon (drawn 26 px high in a slot as wide as a source icon's 32, so its number lines
-up with theirs) in black like the texts' outline: the
+sources, and the HUD's total icon (a source icon's 32 px, so its number lines up with theirs) in black like the texts' outline: the
 stat icons have no dark edge of their own. The outline (`_set_outline`) is a `TextureRect` behind
 the icon (`show_behind_parent`), 2 px larger on each side, colored by its `self_modulate`, with a
 shader built in code: it draws the texture's shape in white at the icon's size, widened in 16

@@ -469,11 +469,9 @@ func _test_hud(meter: Node, item):
 	var fist: TextureRect = rows[0].get_node("Lines/Main/Icon")
 	var edge = fist.get_node_or_null(DamageViews.OUTLINE_NODE)
 	_t._check(
-		fist.rect_min_size == DamageViews.HUD_TOTAL_ICON
-		and DamageViews.HUD_TOTAL_ICON.y < DamageViews.HUD_ICON.y
-		and DamageViews.HUD_TOTAL_ICON.x == DamageViews.HUD_ICON.x
+		fist.rect_min_size == DamageViews.HUD_ICON
 		and edge != null and edge.visible and edge.self_modulate == DamageViews.TOTAL_OUTLINE,
-		"the total's icon: smaller, dark outline, in a slot as wide as a source's (numbers line up)"
+		"the total's icon: a source icon's size (numbers line up), with a dark outline like the texts"
 	)
 	_t._check(
 		not rows[0].get_node("Lines/Sources/Source1").visible,
