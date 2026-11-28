@@ -529,6 +529,15 @@ func _check_reset(client: Node, puppets: Dictionary) -> void:
 		charmed._outline_colors.empty() and charmed.sprite.material == null,
 		"charm look removed"
 	)
+	charmed.flash_shield()
+	client._looks.set_look(charmed, Looks.CHARMED)
+	var shielded: bool = charmed.sprite.material == charmed.flash_shield_mat
+	charmed._on_FlashTimer_timeout()
+	_t._check(
+		shielded and charmed.sprite.material is ShaderMaterial,
+		"a look change during a shield flash lands after the flash"
+	)
+	client._looks.set_look(charmed, 0)
 	_t._check(not puppets.burning._burning_particles.emitting, "flames stopped")
 	_t._check(puppets.cursed.get_node_or_null(Looks.CURSE_NODE) == null, "curse particles removed")
 	_t._check(

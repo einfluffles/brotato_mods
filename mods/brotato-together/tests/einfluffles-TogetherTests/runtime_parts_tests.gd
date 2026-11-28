@@ -55,7 +55,7 @@ func test_pivot_restore(client: Node, tree: Node, host_pose: PoolRealArray):
 
 
 # Parts the game adds or shows at runtime: boss pivots from a phase change (eel), a jump attack's
-# landing warning, shadow and flip_h (dimetrodon), a charge warning line (velociraptor++), an enemy
+# landing warning, shadow and facing (dimetrodon), a charge warning line (velociraptor++), an enemy
 # laser's aim and beam. The ring's bullets live inside the boss: not mirrored as projectiles.
 func test_runtime_parts(together: Node):
 	var host: Node = together.battle_host
@@ -120,7 +120,7 @@ func test_runtime_parts(together: Node):
 	_check_runtime_layouts(client._pose)
 
 
-# Eel boss, a dimetrodon that jumps at its target right away (from the right: flip_h), a
+# Eel boss, a dimetrodon that jumps at its target right away (from the right: faces left), a
 # velociraptor++ showing its charge warning, an enemy laser. Players don't shoot.
 func _spawn_runtime_parts(main: Node) -> Dictionary:
 	var players: Array = main.get("_players")
@@ -193,7 +193,7 @@ func _runtime_host_values(nodes: Dictionary) -> Dictionary:
 		values["bullet"] = ring.get_child(0).position.x
 	var dimetrodon: Node = nodes.dimetrodon
 	var jump = dimetrodon._current_attack_behavior
-	values["flip_h"] = dimetrodon.sprite.flip_h
+	values["faces_left"] = dimetrodon.sprite.scale.x < 0
 	values["warning_visible"] = jump._land_shadow_warning.visible
 	values["warning"] = jump._land_shadow_warning.global_position
 	values["shadow_y"] = jump._shadow.position.y
@@ -291,7 +291,8 @@ func _check_runtime_snapshots(early, last, index: Dictionary, host_values: Dicti
 	)
 	var flags: int = Snapshot.get_flags(last.flags, index.dimetrodon)
 	_t._check(
-		host_values.flip_h and bool(flags & Snapshot.FLAG_FLIP_H), "jumping dimetrodon flagged flip_h"
+		host_values.faces_left and bool(flags & Snapshot.FLAG_FACING_LEFT),
+		"jumping dimetrodon flagged facing left"
 	)
 	_t._check(
 		host_values.warning_visible and sizes[1] == 4,
@@ -340,7 +341,9 @@ func _check_runtime_puppets(client: Node, puppets: Dictionary, host_values: Dict
 	_t._check(not bar.get_node("Timer").paused, "and its hit tint ends")
 	var dimetrodon: Node = puppets.dimetrodon
 	var jump = dimetrodon._current_attack_behavior
-	_t._check(dimetrodon.sprite.flip_h == host_values.flip_h, "jump flip_h mirrored")
+	_t._check(
+		(dimetrodon.sprite.scale.x < 0) == host_values.faces_left, "jump facing mirrored"
+	)
 	var warning: Node2D = jump._land_shadow_warning
 	_t._check(
 		warning.visible and warning.global_position.distance_to(host_values.warning) < 1.0,
