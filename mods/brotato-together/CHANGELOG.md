@@ -10,6 +10,10 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Damage meter: weapons and items of tier II and up get an outline in their rarity's color, as the
+  game outlines weapons in a wave. The biggest hit's weapon is outlined in gold, like its number, and
+  the total's icon is smaller, with a dark outline.
+
 ## 2026-11-26 19:46 UTC
 
 - Languages: the mod's texts now follow the game's language, in all 13 of the game's languages.

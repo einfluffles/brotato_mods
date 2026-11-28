@@ -123,7 +123,8 @@ used like them, with mouse, keyboard or gamepad.
 - **Sounds:** clients hear the host's battle, menu and shop sounds, not those of their own
   mirrored screens.
 - **Damage meter:** during a wave, a block at each player's life bar shows that player's damage,
-  the damage per second, the strongest sources and the biggest hit. The co-op shop and the end of
+  the damage per second, the strongest sources (outlined in their rarity's color from tier II on,
+  as the game outlines weapons) and the biggest hit. The co-op shop and the end of
   a co-op run have a **Damage** page per player (LB / RB or the arrows, after the stats pages):
   the shop's for the wave before, the end of run's for the whole run, with each player's kills and
   damage taken. The solo shop and the end of a solo run have it as a third tab of the stats panel.

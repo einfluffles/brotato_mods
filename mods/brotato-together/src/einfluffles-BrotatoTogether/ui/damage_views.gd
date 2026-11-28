@@ -67,6 +67,17 @@ const DPS_COLOR := Color(0.6, 0.85, 1.0)
 const HIT_COLOR := Color(1.0, 0.8, 0.35)
 const LINE_COLOR := Color(1, 1, 1, 0.12)
 const PAGE_META := "brotato_together_damage_page"  # on a container: the page's carousel index
+# Icon outlines (_set_outline): a source of tier II and up in its tier's color, as the game
+# outlines such weapons in a wave (Weapon.update_highlighting); the biggest hit's source in the
+# hit's color instead, so that line stays apart from the sources; the HUD's total icon in the
+# texts' outline color (the stat icons have no dark edge of their own, the weapon icons do).
+const OUTLINE_NODE := "Outline"
+const OUTLINE_WIDTH := 2.0  # on screen
+const OUTLINE_DIRECTIONS := 16
+const TOTAL_OUTLINE := Color.black  # the HUD font's outline_color
+# The HUD's total icon: drawn 26 px high, in a slot as wide as a source icon's, so the total lines
+# up with the sources' numbers.
+const HUD_TOTAL_ICON := Vector2(32, 26)
 
 var meter: Node = null
 
@@ -76,6 +87,7 @@ var _rows := []  # per player: the HUD row, or null
 # run's, which shows the run.
 var _views := []
 var _hud_fonts := {}  # size -> the HUD font at that size
+var _outline_shader_cache: Shader = null
 
 
 func _ready() -> void:
@@ -161,11 +173,12 @@ func _build_rows(main: Node) -> void:
 		lines.add_constant_override("separation", 2)
 		row.add_child(lines)
 		var main_line := _hud_line("Main", right, [
-			_icon(HUD_ICON, "Icon", load(TOTAL_ICON)),
+			_icon(HUD_TOTAL_ICON, "Icon", load(TOTAL_ICON)),
 			_label(_hud_font(HUD_MAIN_SIZE), "Total"),
 			_label(_hud_font(HUD_MAIN_SIZE), "Share", MUTED),
 			_label(_hud_font(HUD_MAIN_SIZE), "Dps", DPS_COLOR),
 		])
+		_set_outline(main_line.get_node("Icon"), TOTAL_OUTLINE)
 		var gap := Control.new()
 		gap.name = "Gap"
 		gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -251,6 +264,95 @@ func _show_hit_source(burst: TextureRect, id: String) -> void:
 	burst.self_modulate = HUD_HIT_BURST if data != null else Color.white
 	if data != null:
 		source.texture = data.icon
+		_set_outline(source, HIT_COLOR)
+
+
+# The icon of a source, outlined from tier II on in its tier's color
+# (ItemService.get_color_from_tier: the player's color settings).
+func _set_source_icon(icon: TextureRect, data) -> void:
+	icon.texture = data.icon
+	var tier: int = data.tier
+	_set_outline(icon, ItemService.get_color_from_tier(tier) if tier > 0 else Color.transparent)
+
+
+# The icon's texture outlined in `color` (transparent: none). The outline is a node behind the
+# icon, larger by the outline's width on each side: many icons reach their texture's edge, past
+# which the game's outline shader has nothing to draw on. Its shader draws the texture's shape at
+# the icon's size, widened.
+func _set_outline(icon: TextureRect, color: Color) -> void:
+	var outline: TextureRect = icon.get_node_or_null(OUTLINE_NODE)
+	var shown: bool = color.a > 0 and icon.texture != null
+	if outline == null:
+		if not shown:
+			return
+		outline = _icon(Vector2.ZERO, OUTLINE_NODE)
+		outline.show_behind_parent = true
+		outline.anchor_right = 1.0
+		outline.anchor_bottom = 1.0
+		outline.margin_left = -OUTLINE_WIDTH
+		outline.margin_top = -OUTLINE_WIDTH
+		outline.margin_right = OUTLINE_WIDTH
+		outline.margin_bottom = OUTLINE_WIDTH
+		var material := ShaderMaterial.new()
+		material.shader = _outline_shader()
+		outline.material = material
+		icon.add_child(outline)
+	outline.visible = shown
+	if not shown:
+		return
+	outline.texture = icon.texture
+	# The icons' size is fixed (rect_min_size): the containers shrink them to it.
+	outline.self_modulate = color  # the engine multiplies the shader's white by it
+	var params := outline_params(icon.rect_min_size, icon.texture.get_size())
+	for key in params:
+		outline.material.set_shader_param(key, params[key])
+
+
+# The outline shader's scale (the icon's drawn size over the outline node's; both keep the
+# texture's aspect) and width (the outline's, in the icon's UV) for an icon of size `box` showing
+# a texture of `size`.
+static func outline_params(box: Vector2, size: Vector2) -> Dictionary:
+	var scale: float = min(box.x / size.x, box.y / size.y)
+	var wide: float = min(
+		(box.x + 2 * OUTLINE_WIDTH) / size.x, (box.y + 2 * OUTLINE_WIDTH) / size.y
+	)
+	return {"scale": scale / wide, "width": Vector2.ONE * OUTLINE_WIDTH / (size * scale)}
+
+func _outline_shader() -> Shader:
+	if _outline_shader_cache == null:
+		_outline_shader_cache = Shader.new()
+		_outline_shader_cache.code = outline_code()
+	return _outline_shader_cache
+
+
+# UV is the outline node's, mapped to the icon's by scale (the icon is drawn smaller, centered);
+# the shape is the texture's alpha there or within width in one of OUTLINE_DIRECTIONS directions.
+# Written out, without loops or arrays (GLES2).
+static func outline_code() -> String:
+	var lines := PoolStringArray([
+		"shader_type canvas_item;",
+		"render_mode unshaded;",
+		"uniform float scale = 1.0;",
+		"uniform vec2 width = vec2(0.0);",
+		"float alpha_at(sampler2D tex, vec2 uv) {",
+		"	if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {",
+		"		return 0.0;",
+		"	}",
+		"	return texture(tex, uv).a;",
+		"}",
+		"void fragment() {",
+		"	vec2 uv = (UV - vec2(0.5)) / scale + vec2(0.5);",
+		"	float a = alpha_at(TEXTURE, uv);",
+	])
+	for k in OUTLINE_DIRECTIONS:
+		var angle: float = TAU * k / OUTLINE_DIRECTIONS
+		lines.append(
+			"	a = max(a, alpha_at(TEXTURE, uv + width * vec2(%.4f, %.4f)));"
+			% [cos(angle), sin(angle)]
+		)
+	lines.append("	COLOR = vec4(1.0, 1.0, 1.0, a);")
+	lines.append("}")
+	return lines.join("\n")
 
 
 static func _hud_back(right: bool) -> PanelContainer:
@@ -290,7 +392,7 @@ func _fill_row(row: Control, entry: Array, share: int, hit: Array) -> void:
 		var data = meter.data_of(source[0]) if source != null else null
 		line.visible = data != null
 		if data != null:
-			line.get_node("Icon").texture = data.icon
+			_set_source_icon(line.get_node("Icon"), data)
 			_set_text(line.get_node("Icon/Count"), "x%d" % source[1] if source[1] > 1 else "")
 			line.get_node("Amount").text = short(source[2], HUD_SHORT_FROM)
 	var hit_line: Node = lines.get_node("Hit")
@@ -516,7 +618,7 @@ func _fill_board(list: Node, entry: Array, team_share: int, hit: Array, shown: D
 		var color: Color = ItemService.get_color_from_tier(data.tier)
 		var alpha := INCLUDED_FILL_ALPHA if included else ROW_FILL_ALPHA
 		var content: Node = row.get_node("Content")
-		content.get_node("Icon").texture = data.icon
+		_set_source_icon(content.get_node("Icon"), data)
 		var name_text: String = tr(data.name) + (" x%d" % source[1] if source[1] > 1 else "")
 		content.get_node("Name").text = name_text
 		row.value = 1000.0 * source[2] / max(1, top)

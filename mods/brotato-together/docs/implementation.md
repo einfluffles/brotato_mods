@@ -2778,7 +2778,17 @@ same way (a malformed run rejects the board). A board without `run` has no run v
 of the same protocol ignores the key, so it needed no protocol bump.
 
 **Views.** Numbers are shortened by `DamageViews.short`. Each view drops itself from
-`DamageViews._views` when its panel leaves the tree.
+`DamageViews._views` when its panel leaves the tree. A source of tier II and up gets an outline in
+its tier's color (`ItemService.get_color_from_tier`, so the player's color settings), as the game
+outlines such weapons in a wave (`Weapon.update_highlighting`); tier I none, as in the game. The
+biggest hit's source is outlined in the hit's gold instead, so that line stays apart from the
+sources, and the HUD's total icon (drawn 26 px high in a slot as wide as a source icon's 32, so its number lines
+up with theirs) in black like the texts' outline: the
+stat icons have no dark edge of their own. The outline (`_set_outline`) is a `TextureRect` behind
+the icon (`show_behind_parent`), 2 px larger on each side, colored by its `self_modulate`, with a
+shader built in code: it draws the texture's shape in white at the icon's size, widened in 16
+directions. The game's own outline shader draws inside the texture only, and many icons reach
+their texture's edge (margins of 0 to 5 px of 96).
 
 - **HUD.** A panel in `UI/HUD/LifeContainerP<n>`, hidden while the total is 0.
 - **Co-op shop and co-op end of run.** A fourth carousel page. A `Carousel` takes as many pages as

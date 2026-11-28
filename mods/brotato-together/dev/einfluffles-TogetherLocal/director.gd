@@ -611,7 +611,7 @@ func _cmd_stall(command: Dictionary):
 
 
 # Test settings of the game's own DebugService (host): invulnerable, wave_sec (the next waves'
-# length), and in a run xp and gold for every player.
+# length), and in a run xp, gold and weapons for every player.
 func _cmd_debug(command: Dictionary):
 	yield(get_tree(), "idle_frame")
 	var applied := {}
@@ -630,9 +630,37 @@ func _cmd_debug(command: Dictionary):
 				else:
 					RunData.add_gold(int(command[key]), p)
 			applied[key] = int(command[key])
+	if command.has("weapons"):
+		var given = _give_weapons(command.weapons)
+		if given is String:
+			return [given, {}]
+		applied["weapons"] = given
 	if applied.empty():
-		return ["nothing to set (invulnerable, wave_sec, xp, gold)", {}]
+		return ["nothing to set (invulnerable, wave_sec, xp, gold, weapons)", {}]
 	return ["", applied]
+
+
+# weapons: ids (an array, or one string with commas), added to every player's run and, in a wave,
+# to the player's node at once (Player.add_weapon), as a wave's start does.
+func _give_weapons(ids):
+	if ids is String:
+		ids = ids.split(",", false)
+	var main := get_tree().current_scene
+	var players = main.get("_players") if main != null else null
+	var given := []
+	for id in ids:
+		var data = null
+		for weapon in ItemService.weapons:
+			if weapon.my_id == id:
+				data = weapon
+		if data == null:
+			return "no weapon '%s'" % id
+		for p in RunData.get_player_count():
+			var taken = RunData.add_weapon(data, p)
+			if players is Array and p < players.size() and is_instance_valid(players[p]):
+				players[p].add_weapon(taken, RunData.get_player_weapons(p).size() - 1)
+		given.append(id)
+	return given
 
 
 # The options' language choice (menu_options.gd calls the same).

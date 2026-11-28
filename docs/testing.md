@@ -94,7 +94,7 @@ check that.
 `tools/check-pair.sh [-q] [scenario ...]` runs brotato:together's local-play scenarios with a host
 and one or more clients as headless game processes, each scenario in its own container (four at
 once, `PAIR_JOBS`). Without names it runs every scenario in `HEADLESS` of the dev mod's
-`scenarios.gd` (all but `language`, which only takes screenshots). The whole set takes about two
+`scenarios.gd` (all but `language` and `damage_tiers`, which only take screenshots). The whole set takes about two
 minutes.
 
 ```
@@ -178,8 +178,9 @@ mechanism: `tools\play-scenarios.ps1` only starts them and collects what they sa
 | `three_players` | host, two clients (`clients=2`; in windows `-Clients 3`: three) | All in the lobby, each joins character selection in turn (player index = join order), character, weapon and difficulty, wave 1 with its level-up panels, the shop; every client buys the item under its cursor (checked on the host per player). |
 | `dlc_borrow` | host with every DLC, client with none (`host_dlcs=all client_dlcs=none`) | At the title screen in the lobby the client's game is its own (the borrowed DLC is parked); from character selection on it uses the host's DLC it lacks and its lobby details say "Using the host's DLC for this session: ..." (also on the lobby page, opened from the pause menu in the shop); back at the title screen it is parked again, and after leaving the lobby the client has only its own. |
 | `language` | host, client | Windows only (screenshots): both games switch to German and Russian at the title screen, in character selection, in the wave and in the shop. |
+| `damage_tiers` | host, client | Windows only (screenshots): in wave 1 every player gets a weapon of tier II, III and IV (the director's `debug` with `weapons`); the damage meter at each life bar outlines its sources in their tier's color. |
 
-Every scenario but `language` runs in both places, headless here and in windows; the windows add
+Every scenario but `language` and `damage_tiers` runs in both places, headless here and in windows; the windows add
 a screenshot of every game after every step.
 
 To add a scenario: a function `scenario_<name>(r)` in `scenarios.gd` (the shared steps are in

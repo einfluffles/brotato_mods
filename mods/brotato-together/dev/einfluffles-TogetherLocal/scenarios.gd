@@ -17,9 +17,10 @@ const Compat := preload("res://mods-unpacked/einfluffles-BrotatoTogether/session
 const NAMES := [
 	"join", "join_wave_shop", "resume_leave_rejoin", "host_quits", "client_quits", "kick",
 	"version_mismatch", "mod_mismatch", "bad_resync", "language", "three_players", "dlc_borrow",
-	"version_mismatch_build"
+	"version_mismatch_build", "damage_tiers"
 ]
-# What tools/check-pair.sh runs by default: every scenario with checks (language has none).
+# What tools/check-pair.sh runs by default: every scenario with checks (language and damage_tiers
+# have none).
 const HEADLESS := [
 	"join", "join_wave_shop", "resume_leave_rejoin", "host_quits", "client_quits", "kick",
 	"version_mismatch", "mod_mismatch", "bad_resync", "three_players", "dlc_borrow",
@@ -515,3 +516,18 @@ func scenario_version_mismatch_build(r):
 		]
 	)
 	r.check(host.scene == "title_screen", "the host is on the title screen (%s)" % host.scene)
+
+# Host and client in wave 1, each given a weapon of tier II, III and IV (the debug command's
+# weapons): the damage meter's sources at both life bars show their tier's outline, on both
+# screens. Screenshots only, no checks.
+func scenario_damage_tiers(r):
+	var wave_sec := 40
+	yield(lobby_step(r, wave_sec), "completed")
+	yield(character_join_step(r), "completed")
+	yield(select_until(r, "main"), "completed")
+	yield(r.step("weapons"), "completed")
+	var weapons := ["weapon_smg_2", "weapon_minigun_3", "weapon_thunder_sword_4"]
+	yield(r.on(H, {"cmd": "debug", "weapons": weapons}), "completed")
+	yield(r.pause(10.0), "completed")
+	yield(r.step("hud"), "completed")
+	yield(r.pause(1.0), "completed")
