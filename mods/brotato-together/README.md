@@ -16,7 +16,7 @@ Mod id: `einfluffles-BrotatoTogether` · source: [`src/einfluffles-BrotatoTogeth
 - Every player subscribes to the mod's Workshop item and unsubscribes from other online co-op
   mods.
 - Every player needs the same game version, the same version of the mod and the same protocol
-  (34 on 2026-11-26). The host refuses a join that differs, and the *Online co-op* page of the
+  (35 since 2026-11-26). The host refuses a join that differs, and the *Online co-op* page of the
   player who tried shows the reason.
 - Every player needs the same other mods in the same versions, also mods that only change the
   interface. The host refuses a join otherwise, and the *Online co-op* page of the player who
@@ -123,7 +123,8 @@ used like them, with mouse, keyboard or gamepad.
 - **Sounds:** clients hear the host's battle, menu and shop sounds, not those of their own
   mirrored screens.
 - **Damage meter:** during a wave, a block at each player's life bar shows that player's damage,
-  the damage per second, the strongest sources and the biggest hit. The co-op shop and the end of
+  the damage per second, the strongest sources (outlined in their rarity's color from tier II on,
+  as the game outlines weapons) and the biggest hit. The co-op shop and the end of
   a co-op run have a **Damage** page per player (LB / RB or the arrows, after the stats pages):
   the shop's for the wave before, the end of run's for the whole run, with each player's kills and
   damage taken. The solo shop and the end of a solo run have it as a third tab of the stats panel.

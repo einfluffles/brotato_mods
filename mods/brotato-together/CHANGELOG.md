@@ -13,6 +13,9 @@ upload; three of them are marked where the upload may have differed.
 - Online co-op (game 1.2.0.4): on a client, an enemy whose outline changed (charmed, cursed,
   boosted) during a hit flash could stay white, and during a shield flash the change logged a
   script error.
+- Damage meter: weapons and items of tier II and up get an outline in their rarity's color, as the
+  game outlines weapons in a wave. The biggest hit's weapon is outlined in gold, like its number, and
+  the total's icon has a dark outline.
 
 ## 2026-11-26 19:46 UTC
 

@@ -5,6 +5,9 @@ extends Reference
 
 const DamageMeter := preload("res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_meter.gd")
 const DamageViews := preload("res://mods-unpacked/einfluffles-BrotatoTogether/ui/damage_views.gd")
+const OutlineTests := preload(
+	"res://mods-unpacked/einfluffles-TogetherTests/damage_outline_tests.gd"
+)
 const DamageLedger := preload(
 	"res://mods-unpacked/einfluffles-BrotatoTogether/sync/damage_ledger.gd"
 )
@@ -45,6 +48,7 @@ func run(together: Node):
 	_test_short()
 	_test_board(meter)
 	_test_run_board(meter)
+	OutlineTests.new(_t).run(together.get_node("DamageViews"))
 	yield(_test_hud(meter, item), "completed")
 	yield(_test_shop(meter, item), "completed")
 	yield(_test_coop_end_run(), "completed")
@@ -460,6 +464,15 @@ func _test_hud(meter: Node, item):
 		first.get_node("Amount").text == "1.23K" and first.get_node("Icon/Count").text == "x2",
 		"on its own line with its number, the count of equal weapons in the icon's corner"
 	)
+	var outline: Node = first.get_node_or_null("Icon/" + DamageViews.OUTLINE_NODE)
+	_t._check(outline == null or not outline.visible, "a tier I weapon's icon without an outline")
+	var fist: TextureRect = rows[0].get_node("Lines/Main/Icon")
+	var edge = fist.get_node_or_null(DamageViews.OUTLINE_NODE)
+	_t._check(
+		fist.rect_min_size == DamageViews.HUD_ICON
+		and edge != null and edge.visible and edge.self_modulate == DamageViews.TOTAL_OUTLINE,
+		"the total's icon: a source icon's size (numbers line up), with a dark outline like the texts"
+	)
 	_t._check(
 		not rows[0].get_node("Lines/Sources/Source1").visible,
 		"no second source line where there is none"
@@ -587,6 +600,11 @@ func _test_shop(meter: Node, item):
 		var theirs: Node = _list(panels[1]).get_node("Sources").get_child(0)
 		var item_icon: Texture = theirs.get_node("Content/Icon").texture
 		_t._check(theirs.visible and item_icon == item.icon, "player 2's page: its own item")
+		var outline: Node = theirs.get_node_or_null("Content/Icon/" + DamageViews.OUTLINE_NODE)
+		_t._check(
+			(outline != null and outline.visible) == (item.tier > 0),
+			"its icon outlined by its tier (%d)" % item.tier
+		)
 	_t._check(
 		not rows.get_node(DamageViews.OTHER_ROW).visible and meter.board.has("run"),
 		"the shop shows the wave, though its board has the run; nothing past the rows: no other"
