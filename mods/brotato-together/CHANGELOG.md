@@ -10,6 +10,10 @@ upload; three of them are marked where the upload may have differed.
 
 ## Unreleased
 
+- Online co-op (game 1.2.0.4): on a client, an enemy whose outline changed (charmed, cursed,
+  boosted) during a hit flash could stay white, and during a shield flash the change logged a
+  script error.
+
 ## 2026-11-26 19:46 UTC
 
 - Languages: the mod's texts now follow the game's language, in all 13 of the game's languages.
